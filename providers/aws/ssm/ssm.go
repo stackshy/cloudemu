@@ -18,6 +18,7 @@ package ssm
 import (
 	"context"
 	"encoding/base64"
+	stderrors "errors"
 	"regexp"
 	"sort"
 	"strconv"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
@@ -45,6 +47,9 @@ type version struct {
 	labels         []string
 	keyID          string
 	allowedPattern string
+	// policies are the parameter policies in force for this version. A
+	// version that did not resend policies shares the previous slice.
+	policies []*policy
 }
 
 // paramData holds all versions and current metadata for a parameter name.
@@ -55,7 +60,10 @@ type paramData struct {
 	versions    []*version
 	latest      int64
 	tags        map[string]string
-	mu          sync.RWMutex
+	// deleted is set, under mu, when a policy expired the parameter. A write
+	// that got this record before the deletion then retries as a create.
+	deleted bool
+	mu      sync.RWMutex
 }
 
 // KMSCrypto is the KMS seam SSM uses to encrypt SecureString values. Encrypt
@@ -68,13 +76,29 @@ type KMSCrypto interface {
 
 // Mock is an in-memory mock implementation of SSM Parameter Store.
 type Mock struct {
-	params           *memstore.Store[*paramData]
-	commands         *memstore.Store[driver.CommandInvocation]
+	params *memstore.Store[*paramData]
+	// commands holds every Run Command send, keyed by command id. cmdMu
+	// guards the records' mutable fields.
+	commands         *memstore.Store[*commandRecord]
+	cmdMu            sync.RWMutex
 	instanceResolver InstanceResolver
+	// outputStore, when wired, receives Run Command output for commands that
+	// name an S3 bucket.
+	outputStore OutputStore
 	// kmsCrypto, when wired via SetKMSCrypto, encrypts SecureString values through
 	// real KMS. Nil stores them verbatim (library plaintext fallback).
 	kmsCrypto KMSCrypto
-	opts      *config.Options
+	// events publishes Parameter Store change events to the EventBridge
+	// default bus; inactive until wired by the provider.
+	events awsevents.Emitter
+	opts   *config.Options
+	// settings holds the Parameter Store service settings.
+	settings *serviceSettings
+	// documents holds customer SSM documents and catalog the read-only
+	// AWS-owned ones. docMu guards every document's fields.
+	documents *memstore.Store[*document]
+	catalog   map[string]*document
+	docMu     sync.RWMutex
 }
 
 // SetKMSCrypto wires the KMS backend so SecureString values are encrypted at
@@ -130,9 +154,12 @@ func (m *Mock) revealValue(ctx context.Context, v *version, withDecryption bool)
 // New creates a new SSM Parameter Store mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		params:   memstore.New[*paramData](),
-		commands: memstore.New[driver.CommandInvocation](),
-		opts:     opts,
+		params:    memstore.New[*paramData](),
+		commands:  memstore.New[*commandRecord](),
+		opts:      opts,
+		settings:  newServiceSettings(opts.Clock.Now()),
+		documents: memstore.New[*document](),
+		catalog:   loadCatalog(),
 	}
 }
 
@@ -197,6 +224,17 @@ func resolveKeyID(effectiveType, keyID string) (string, error) {
 	return keyID, nil
 }
 
+// resolveOverwriteKeyID is resolveKeyID for an overwrite. An omitted KeyId on
+// a SecureString keeps the key of the latest version, so a value-only update
+// does not move the parameter to alias/aws/ssm.
+func resolveOverwriteKeyID(effectiveType, keyID, prevKeyID string) (string, error) {
+	if keyID == "" && effectiveType == driver.TypeSecureString && prevKeyID != "" {
+		return prevKeyID, nil
+	}
+
+	return resolveKeyID(effectiveType, keyID)
+}
+
 // validateAllowedPattern checks that value satisfies pattern. An empty pattern
 // is a no-op. A pattern that is not a valid regexp is rejected, as is a value
 // that does not match it — matching real Parameter Store validation.
@@ -239,6 +277,20 @@ func resolveOverwriteType(existing *paramData, requested string) (string, error)
 	return "", driver.ErrTypeMismatch
 }
 
+// Parameter name limits, per the PutParameter API reference. The name you
+// specify, plus the ARN prefix before it, can be at most 1011 characters.
+const (
+	maxParameterNameLength = 2048
+	maxNameWithARNLength   = 1011
+	maxHierarchyLevels     = 15
+	maxNamesPerBatch       = 10
+)
+
+var parameterNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_./-]+$`)
+
+// defaultDataType is the DataType a parameter gets when none is sent.
+const defaultDataType = "text"
+
 // Parameter tiers, matching AWS SSM Parameter Store.
 const (
 	tierStandard    = "Standard"
@@ -246,33 +298,57 @@ const (
 	tierIntelligent = "Intelligent-Tiering"
 )
 
+// resolveTier resolves a requested tier. Intelligent-Tiering picks Advanced
+// when the parameter needs it (policies, or a value over the Standard limit)
+// and Standard otherwise. A resolved Standard tier can't carry policies.
+func resolveTier(requested, value string, hasPolicies bool) (string, error) {
+	tier := requested
+	if tier == tierIntelligent {
+		tier = tierStandard
+		if hasPolicies || len(value) > driver.StandardTierMaxValueBytes {
+			tier = tierAdvanced
+		}
+	}
+
+	if tier == tierStandard && hasPolicies {
+		return "", driver.ErrPoliciesRequireAdvanced
+	}
+
+	return tier, nil
+}
+
 // resolveOverwriteTier decides the tier of a new version appended to an
 // existing parameter. A tier isn't required when updating: omitting it
 // retains the existing tier, rather than resetting to Standard. Explicitly
-// requesting Standard on a parameter that is currently Advanced is rejected —
-// real Parameter Store never lets an Advanced parameter revert to Standard.
-func resolveOverwriteTier(existing *paramData, requested string) (string, error) {
+// requesting Standard on a parameter that is currently Advanced is rejected.
+// Real Parameter Store never lets an Advanced parameter revert to Standard,
+// so Intelligent-Tiering keeps an Advanced parameter Advanced.
+func resolveOverwriteTier(existing *paramData, requested, value string, hasPolicies bool) (string, error) {
 	existingTier := existing.tier
 	if existingTier == "" {
 		existingTier = tierStandard
 	}
 
 	if requested == "" {
-		return existingTier, nil
+		requested = existingTier
 	}
 
 	if existingTier == tierAdvanced && requested == tierStandard {
 		return "", driver.ErrCannotRevertTier
 	}
 
-	return requested, nil
+	if existingTier == tierAdvanced && requested == tierIntelligent {
+		requested = tierAdvanced
+	}
+
+	return resolveTier(requested, value, hasPolicies)
 }
 
 // maxValueBytes is the value-size limit for tier: 8 KB for Advanced (and for
 // Intelligent-Tiering, which self-selects up to the Advanced ceiling), 4 KB
 // for Standard (the default when Tier is omitted).
 func maxValueBytes(tier string) int {
-	if tier == tierAdvanced || tier == tierIntelligent {
+	if tier == tierAdvanced {
 		return driver.AdvancedTierMaxValueBytes
 	}
 
@@ -294,11 +370,59 @@ func validateValueSize(tier, value string) error {
 // stripping an optional leading "/") is "aws" or "ssm" (case-insensitive).
 // Real Parameter Store reserves that namespace for AWS-published parameters
 // and rejects a customer PutParameter there with ValidationException.
+//
+// It also applies the name format rules. A name is 1 to 2048 characters of
+// [a-zA-Z0-9_.-] plus "/" as the hierarchy separator, and has at most 15
+// levels. Deeper names get their own error code.
 func validateParameterName(name string) error {
 	lower := strings.ToLower(strings.TrimPrefix(name, "/"))
 
 	if strings.HasPrefix(lower, "aws") || strings.HasPrefix(lower, "ssm") {
 		return driver.ErrReservedNamePrefix
+	}
+
+	if len(name) > maxParameterNameLength || !parameterNamePattern.MatchString(name) {
+		return errors.New(errors.InvalidArgument,
+			`Parameter name: can't be prefixed with "aws" or "ssm" (case-insensitive). `+
+				"If formed as a path, it can consist of sub-paths divided by slash symbol; "+
+				"each sub-path can be formed as a mix of letters, numbers and the following 3 symbols .-_")
+	}
+
+	// A name in a hierarchy must start with "/".
+	if strings.Contains(name, "/") && !strings.HasPrefix(name, "/") {
+		return driver.ErrNameNotFullyQualified
+	}
+
+	if strings.Count(strings.TrimPrefix(name, "/"), "/")+1 > maxHierarchyLevels {
+		return driver.ErrHierarchyLevelLimit
+	}
+
+	return nil
+}
+
+// validateNameWithARN applies the 1011-character limit, which counts the ARN
+// prefix (arn:aws:ssm:<region>:<account>:parameter/) as part of the name.
+func (m *Mock) validateNameWithARN(name string) error {
+	if len(m.arn(name)) > maxNameWithARNLength {
+		return errors.Newf(errors.InvalidArgument,
+			"Parameter name must be %d characters or fewer, including the ARN prefix.", maxNameWithARNLength)
+	}
+
+	return nil
+}
+
+// validateNamesBatch applies the GetParameters and DeleteParameters limit of
+// 1 to 10 names per call.
+func validateNamesBatch(names []string) error {
+	switch {
+	case len(names) < 1:
+		return errors.New(errors.InvalidArgument,
+			"1 validation error detected: Value '[]' at 'names' failed to satisfy constraint: "+
+				"Member must have length greater than or equal to 1")
+	case len(names) > maxNamesPerBatch:
+		return errors.Newf(errors.InvalidArgument,
+			"1 validation error detected: Value '[%s]' at 'names' failed to satisfy constraint: "+
+				"Member must have length less than or equal to %d", strings.Join(names, ", "), maxNamesPerBatch)
 	}
 
 	return nil
@@ -345,41 +469,100 @@ func validatePutParameter(cfg driver.PutConfig) error {
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, string, error) {
+	// The service removes spaces at the start or end of a name. Inner spaces
+	// still fail the name check.
+	cfg.Name = strings.Trim(cfg.Name, " ")
+
+	ver, tier, err := m.putParameter(ctx, cfg)
+	if err != nil {
+		return 0, "", err
+	}
+
+	operation := opUpdate
+	if ver == 1 {
+		operation = opCreate
+	}
+
+	m.emitParameterChange(ctx, operation, cfg.Name)
+
+	return ver, tier, nil
+}
+
+// putParameter is PutParameter's core, without event emission, so the
+// create-race retry in createParameter does not publish twice.
+//
+//nolint:gocritic // hugeParam: mirrors the PutParameter interface signature.
+func (m *Mock) putParameter(ctx context.Context, cfg driver.PutConfig) (int64, string, error) {
 	if err := validatePutParameter(cfg); err != nil {
 		return 0, "", err
 	}
 
-	dataType := cfg.DataType
-	if dataType == "" {
-		dataType = "text"
+	if err := m.validateNameWithARN(cfg.Name); err != nil {
+		return 0, "", err
 	}
 
 	now := m.now()
 
-	if existing, ok := m.params.Get(cfg.Name); ok {
-		return m.overwriteParameter(ctx, existing, &cfg, dataType, now)
+	var sent []*policy
+
+	if cfg.Policies != nil {
+		parsed, err := parsePolicies(*cfg.Policies, m.opts.Clock.Now(), true)
+		if err != nil {
+			return 0, "", err
+		}
+
+		sent = parsed
 	}
 
-	tier := cfg.Tier
-	if tier == "" {
-		tier = tierStandard
+	// An expired parameter is gone, so the put creates it again.
+	m.evaluateNamedPolicies(ctx, cfg.Name)
+
+	if existing, ok := m.params.Get(cfg.Name); ok {
+		ver, tier, err := m.overwriteParameter(ctx, existing, &cfg, sent, now)
+		if !stderrors.Is(err, errExpiredDuringWrite) {
+			return ver, tier, err
+		}
+
+		// The parameter expired after it was read. It is gone from the store,
+		// so the write goes ahead as a create.
+	}
+
+	dataType := cfg.DataType
+	if dataType == "" {
+		dataType = defaultDataType
+	}
+
+	requested := cfg.Tier
+	if requested == "" {
+		requested = m.settings.defaultTier()
+	}
+
+	tier, err := resolveTier(requested, cfg.Value, len(sent) > 0)
+	if err != nil {
+		return 0, "", err
 	}
 
 	if err := validateValueSize(tier, cfg.Value); err != nil {
 		return 0, "", err
 	}
 
-	return m.createParameter(ctx, &cfg, tier, dataType, now)
+	return m.createParameter(ctx, &cfg, sent, tier, dataType, now)
 }
 
 // overwriteParameter appends a new version to an existing parameter (the
 // Overwrite path). Overwrite without the flag is rejected, and changing the
-// type is rejected via resolveOverwriteType.
+// type is rejected via resolveOverwriteType. Fields the request leaves out
+// (Description, KeyId, DataType) keep their stored values, as Terraform relies
+// on when it sends only what changed.
 func (m *Mock) overwriteParameter(
-	ctx context.Context, existing *paramData, cfg *driver.PutConfig, dataType, now string,
+	ctx context.Context, existing *paramData, cfg *driver.PutConfig, sent []*policy, now string,
 ) (ver int64, assignedTier string, err error) {
 	existing.mu.Lock()
 	defer existing.mu.Unlock()
+
+	if existing.deleted {
+		return 0, "", errExpiredDuringWrite
+	}
 
 	if !cfg.Overwrite {
 		return 0, "", errors.Newf(errors.AlreadyExists,
@@ -391,7 +574,15 @@ func (m *Mock) overwriteParameter(
 		return 0, "", err
 	}
 
-	tier, err := resolveOverwriteTier(existing, cfg.Tier)
+	policies := sent
+	cur, hasCur := existing.versionByNumber(existing.latest)
+
+	// Kept policies are copied, so older versions keep their own status.
+	if cfg.Policies == nil && hasCur {
+		policies = clonePolicies(cur.policies)
+	}
+
+	tier, err := resolveOverwriteTier(existing, cfg.Tier, cfg.Value, len(policies) > 0)
 	if err != nil {
 		return 0, "", err
 	}
@@ -400,7 +591,16 @@ func (m *Mock) overwriteParameter(
 		return 0, "", sizeErr
 	}
 
-	keyID, err := resolveKeyID(newType, cfg.KeyID)
+	prevKeyID, dataType := "", defaultDataType
+	if hasCur {
+		prevKeyID, dataType = cur.keyID, cur.dataType
+	}
+
+	if cfg.DataType != "" {
+		dataType = cfg.DataType
+	}
+
+	keyID, err := resolveOverwriteKeyID(newType, cfg.KeyID, prevKeyID)
 	if err != nil {
 		return 0, "", err
 	}
@@ -408,6 +608,11 @@ func (m *Mock) overwriteParameter(
 	storedValue, err := m.sealValue(ctx, newType, keyID, cfg.Value)
 	if err != nil {
 		return 0, "", err
+	}
+
+	// The parameter changed, so a kept NoChangeNotification starts over.
+	if cfg.Policies == nil {
+		resetNoChange(policies)
 	}
 
 	next := existing.latest + 1
@@ -419,17 +624,21 @@ func (m *Mock) overwriteParameter(
 		lastModified:   now,
 		keyID:          keyID,
 		allowedPattern: cfg.AllowedPattern,
+		policies:       policies,
 	})
 	existing.latest = next
-	existing.description = cfg.Description
 	existing.tier = tier
+
+	if cfg.Description != "" || cfg.DescriptionSet {
+		existing.description = cfg.Description
+	}
 
 	return next, tier, nil
 }
 
 // createParameter stores a brand-new parameter (version 1) with its tags.
 func (m *Mock) createParameter(
-	ctx context.Context, cfg *driver.PutConfig, tier, dataType, now string,
+	ctx context.Context, cfg *driver.PutConfig, policies []*policy, tier, dataType, now string,
 ) (ver int64, assignedTier string, err error) {
 	newType := defaultType(cfg.Type)
 
@@ -456,6 +665,7 @@ func (m *Mock) createParameter(
 			lastModified:   now,
 			keyID:          keyID,
 			allowedPattern: cfg.AllowedPattern,
+			policies:       policies,
 		}},
 		tags: copyTags(cfg.Tags),
 	}
@@ -470,11 +680,15 @@ func (m *Mock) createParameter(
 
 		cfg.Overwrite = true
 
-		return m.PutParameter(ctx, *cfg)
+		return m.putParameter(ctx, *cfg)
 	}
 
 	return 1, tier, nil
 }
+
+// errExpiredDuringWrite tells putParameter that the record it was about to
+// overwrite expired first. It never leaves the package.
+var errExpiredDuringWrite = errors.New(errors.NotFound, "parameter expired during the write")
 
 // resolveSelector splits a name of the form "name:selector" into its base name
 // and selector (a version number or a label). An empty selector means latest.
@@ -566,6 +780,7 @@ func (m *Mock) GetParameter(ctx context.Context, name string, withDecryption boo
 	// AWS-published parameters are readable from every account without having
 	// been put, so resolving one must not answer NotFound.
 	m.ensurePublicParameter(base)
+	m.evaluateNamedPolicies(ctx, base)
 
 	pd, ok := m.params.Get(base)
 	if !ok {
@@ -580,7 +795,7 @@ func (m *Mock) GetParameter(ctx context.Context, name string, withDecryption boo
 		// Parameter exists but this version/label doesn't — distinct from the
 		// parameter being absent, so the handler can return the specific
 		// ParameterVersionNotFound wire error.
-		return nil, driver.ErrVersionNotFound
+		return nil, driver.NewVersionNotFound(base, selector)
 	}
 
 	p, err := m.toParameter(ctx, pd, v, selector, withDecryption)
@@ -596,6 +811,10 @@ func (m *Mock) GetParameter(ctx context.Context, name string, withDecryption boo
 func (m *Mock) GetParameters(
 	ctx context.Context, names []string, withDecryption bool,
 ) ([]driver.Parameter, []string, error) {
+	if err := validateNamesBatch(names); err != nil {
+		return nil, nil, err
+	}
+
 	found := make([]driver.Parameter, 0, len(names))
 
 	var invalid []string
@@ -604,6 +823,7 @@ func (m *Mock) GetParameters(
 		base, selector := resolveSelector(name)
 
 		m.ensurePublicParameter(base)
+		m.evaluateNamedPolicies(ctx, base)
 
 		pd, ok := m.params.Get(base)
 		if !ok {
@@ -660,6 +880,8 @@ func (m *Mock) GetParametersByPath(ctx context.Context, in driver.GetByPathInput
 		prefix += "/"
 	}
 
+	m.evaluateAllPolicies(ctx, m.opts.Clock.Now())
+
 	var out []driver.Parameter
 
 	for _, pd := range m.params.All() {
@@ -712,23 +934,47 @@ func (m *Mock) pathParameter(
 // DeleteParameter removes a parameter and all its versions. A ":version"/
 // ":label" selector is stripped first, matching the read paths — SSM has no
 // per-version delete, so a selector addresses the base parameter.
-func (m *Mock) DeleteParameter(_ context.Context, name string) error {
+func (m *Mock) DeleteParameter(ctx context.Context, name string) error {
 	base, _ := resolveSelector(name)
-	if !m.params.Delete(base) {
+	m.evaluateNamedPolicies(ctx, base)
+
+	if !m.deleteParameter(ctx, base) {
 		return errors.Newf(errors.NotFound, "parameter %q not found", base)
 	}
 
 	return nil
 }
 
+// deleteParameter removes one parameter, publishing its Delete change event.
+// The event carries the parameter's type and description, so they are read
+// before the record is dropped.
+func (m *Mock) deleteParameter(ctx context.Context, base string) bool {
+	pd, ok := m.params.Get(base)
+	if !ok {
+		return false
+	}
+
+	typ, description := pd.typeAndDescription()
+
+	if !m.params.Delete(base) {
+		return false
+	}
+
+	m.emitParameterChangeOf(ctx, opDelete, base, typ, description)
+
+	return true
+}
+
 // DeleteParameters removes multiple parameters, returning the names deleted and
 // the names that did not exist.
-func (m *Mock) DeleteParameters(_ context.Context, names []string) ([]string, []string, error) {
-	var deleted, invalid []string
+func (m *Mock) DeleteParameters(ctx context.Context, names []string) (deleted, invalid []string, err error) {
+	if err := validateNamesBatch(names); err != nil {
+		return nil, nil, err
+	}
 
 	for _, name := range names {
 		base, _ := resolveSelector(name)
-		if m.params.Delete(base) {
+		if m.deleteParameter(ctx, base) {
 			deleted = append(deleted, name)
 		} else {
 			invalid = append(invalid, name)
@@ -739,7 +985,11 @@ func (m *Mock) DeleteParameters(_ context.Context, names []string) ([]string, []
 }
 
 // DescribeParameters lists metadata (no values) for all parameters.
-func (m *Mock) DescribeParameters(_ context.Context) ([]driver.ParameterMetadata, error) {
+func (m *Mock) DescribeParameters(ctx context.Context) ([]driver.ParameterMetadata, error) {
+	// Run due policies first in their own pass, so expired parameters are
+	// gone before the read pass below.
+	m.evaluateAllPolicies(ctx, m.opts.Clock.Now())
+
 	all := m.params.All()
 
 	out := make([]driver.ParameterMetadata, 0, len(all))
@@ -759,6 +1009,7 @@ func (m *Mock) DescribeParameters(_ context.Context) ([]driver.ParameterMetadata
 				LastModifiedUser: idgen.AWSARN("iam", "", m.opts.AccountID, "user/cloudemu"),
 				KeyID:            v.keyID,
 				AllowedPattern:   v.allowedPattern,
+				Policies:         toDriverPolicies(v.policies),
 			})
 		}
 		pd.mu.RUnlock()
@@ -773,6 +1024,8 @@ func (m *Mock) DescribeParameters(_ context.Context) ([]driver.ParameterMetadata
 // withDecryption controls SecureString decryption, mirroring GetParameter: when
 // false each version's value is the opaque ciphertext blob.
 func (m *Mock) GetParameterHistory(ctx context.Context, name string, withDecryption bool) ([]driver.Parameter, error) {
+	m.evaluateNamedPolicies(ctx, name)
+
 	pd, ok := m.params.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "parameter %q not found", name)
@@ -805,6 +1058,7 @@ func (m *Mock) GetParameterHistory(ctx context.Context, name string, withDecrypt
 			LastModifiedUser: lastModifiedUser,
 			KeyID:            v.keyID,
 			AllowedPattern:   v.allowedPattern,
+			Policies:         toDriverPolicies(v.policies),
 		})
 	}
 
@@ -815,12 +1069,30 @@ func (m *Mock) GetParameterHistory(ctx context.Context, name string, withDecrypt
 // returning the version the labels were applied to and any labels rejected.
 // A label attached to a new version is removed from any older version that held
 // it, matching real SSM semantics.
-func (m *Mock) LabelParameterVersion(_ context.Context, name string, ver int64, labels []string) (int64, []string, error) {
+func (m *Mock) LabelParameterVersion(
+	ctx context.Context, name string, ver int64, labels []string,
+) (labeled int64, invalid []string, err error) {
+	m.evaluateNamedPolicies(ctx, name)
+
 	pd, ok := m.params.Get(name)
 	if !ok {
 		return 0, nil, errors.Newf(errors.NotFound, "parameter %q not found", name)
 	}
 
+	labeled, invalid, err = labelVersion(pd, ver, labels)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	if len(invalid) < len(labels) {
+		m.emitParameterChange(ctx, opLabelParameterVersion, name)
+	}
+
+	return labeled, invalid, nil
+}
+
+// labelVersion is LabelParameterVersion's locked core.
+func labelVersion(pd *paramData, ver int64, labels []string) (labeled int64, invalid []string, err error) {
 	pd.mu.Lock()
 	defer pd.mu.Unlock()
 
@@ -830,10 +1102,8 @@ func (m *Mock) LabelParameterVersion(_ context.Context, name string, ver int64, 
 
 	target, ok := pd.versionByNumber(ver)
 	if !ok {
-		return 0, nil, errors.Newf(errors.NotFound, "parameter %q version %d not found", name, ver)
+		return 0, nil, driver.NewVersionNotFound(pd.name, strconv.FormatInt(ver, 10))
 	}
-
-	var invalid []string
 
 	for _, label := range labels {
 		// Real SSM rejects labels that begin with a digit or with "aws"/"ssm"

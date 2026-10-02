@@ -56,7 +56,7 @@ func createWidgetCRDWithFinalizer(t *testing.T, base string) {
 }
 
 // Finding 1: a CRD deleted via the finalizer-drain path must still run onDelete,
-// tearing down its custom-resource store + discovery entry — not just when the
+// tearing down its custom-resource store + discovery entry, not just when the
 // CRD is deleted immediately.
 func TestCRD_FinalizerDrainDeregistersCRStore(t *testing.T) {
 	base, done := newFixture(t)
@@ -108,7 +108,7 @@ func TestCRD_FinalizerDrainDeregistersCRStore(t *testing.T) {
 	}
 }
 
-// Finding 2: owner GC must honor a child's finalizers — a child carrying a
+// Finding 2: owner GC must honor a child's finalizers: a child carrying a
 // finalizer goes Terminating rather than being hard-reaped, and only vanishes
 // once its finalizers drain. A finalizer-free sibling is deleted immediately.
 func TestOwnerGC_ChildFinalizerGoesTerminating(t *testing.T) {
@@ -190,7 +190,7 @@ func TestOwnerGC_ChildFinalizerGoesTerminating(t *testing.T) {
 }
 
 // Finding 3: a merge-patch nulling deletionTimestamp must not resurrect a
-// Terminating object — the server-owned timestamp is restored after the patch.
+// Terminating object; the server-owned timestamp is restored after the patch.
 func TestPatch_CannotResurrectTerminatingPod(t *testing.T) {
 	base, done := newFixture(t)
 	defer done()

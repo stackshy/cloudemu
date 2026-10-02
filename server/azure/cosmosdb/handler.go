@@ -123,7 +123,7 @@ func New(db dbdriver.Database) *Handler {
 }
 
 // nsPrefix returns the driver-table namespace prefix for an account. The
-// default account (empty name — the legacy single-account and official-emulator
+// default account (empty name, the legacy single-account and official-emulator
 // "https://host:port/" usage) has no prefix, so its tables keep the historical
 // "{db}/{coll}" names; a named account (addressed via the
 // {account}.documents.azure.com host, modeled here as a leading /{account} path
@@ -238,9 +238,9 @@ func (h *Handler) cascadeDeleteDatabase(ctx context.Context, account, db string)
 //
 // The leading segment is peeled as an account ONLY when it names a Cosmos
 // databaseAccount actually registered through the shared ARM control plane
-// (isAccount). Any other first segment — "dbs"/"offers" of the default account,
+// (isAccount). Any other first segment ("dbs"/"offers" of the default account,
 // or a blob container/virtual-directory prefix when blob and cosmos share one
-// listener — is left unpeeled so Matches declines it and the request falls
+// listener) is left unpeeled so Matches declines it and the request falls
 // through to the blob handler. This keeps an account literally named "dbs" or
 // "offers" reachable while never stealing a blob path.
 func (h *Handler) splitAccount(p string) (account, rest string) {
@@ -298,7 +298,7 @@ func (h *Handler) isAccount(name string) bool {
 
 // Matches returns true for the Cosmos data plane URLs we serve: the account
 // root probe (GET / or GET /{account}), the /dbs/... resource tree, and the
-// /offers throughput resource — each optionally under a /{account} prefix.
+// /offers throughput resource, each optionally under a /{account} prefix.
 func (h *Handler) Matches(r *http.Request) bool {
 	account, rest := h.splitAccount(r.URL.Path)
 
@@ -419,7 +419,7 @@ func (h *Handler) databaseCollection(w http.ResponseWriter, r *http.Request, acc
 	case http.MethodPost:
 		// Cosmos overloads POST /dbs: a create (JSON body with an id) or, when the
 		// isquery flag is set, a query the SDK's database pager fires. Drain the
-		// query body but ignore its predicate — we list all databases.
+		// query body but ignore its predicate: we list all databases.
 		if isQuery(r) {
 			_, _ = decodeQueryBody(w, r)
 			h.writeDatabaseList(w, account)
@@ -460,7 +460,7 @@ func (h *Handler) createDatabase(w http.ResponseWriter, r *http.Request, account
 
 	// A database created with ThroughputProperties (shared, database-level
 	// provisioned throughput) gets its own offer, keyed by the same _rid
-	// makeDatabaseResource assigns it — recordOffer's containerRID(dbNS) derives
+	// makeDatabaseResource assigns it: recordOffer's containerRID(dbNS) derives
 	// exactly that "rid-{account-qualified-db}" key, so ReadThroughput round-trips
 	// without a container ever having been created.
 	h.recordOffer(key, r)
@@ -551,12 +551,12 @@ type accountPurger interface {
 // bookkeeping) and, via the driver, the account's own table, its container
 // tables and its discovery attributes. The account control plane calls this on
 // DELETE so a deleted account stops listing (no ghost) and a same-name recreate
-// starts from an empty namespace. It is idempotent — purging an unknown account
+// starts from an empty namespace. It is idempotent: purging an unknown account
 // is a no-op.
 func (h *Handler) PurgeAccount(ctx context.Context, account string) {
 	// Guard against an empty account: nsPrefix("")=="" makes HasPrefix always
 	// true, so an empty account would match and reap every container's
-	// bookkeeping (and, via the driver, every table) — a match-all data-loss
+	// bookkeeping (and, via the driver, every table): a match-all data-loss
 	// footgun. Purging the empty/default account is a no-op.
 	if account == "" {
 		return
@@ -852,7 +852,7 @@ func (h *Handler) replaceDocument(
 // deleteDocument removes a document and its TTL bookkeeping under the
 // container's write lock, keeping the delete and forget serialized against
 // creates, replaces and TTL reaps. A delete of a missing (id, partition key) is
-// a 404 (real Cosmos), and a stale If-Match precondition is a 412 — both checked
+// a 404 (real Cosmos), and a stale If-Match precondition is a 412; both checked
 // under the same lock so they stay atomic with the delete.
 func (h *Handler) deleteDocument(
 	ctx context.Context, coll string, cfg *dbdriver.TableConfig, keyMap map[string]any, ifMatch string,
@@ -910,7 +910,7 @@ func (h *Handler) newETag() string {
 // _etag and the write timestamp _ts (from the injected clock, so both are
 // deterministic under a FakeClock). It returns the etag so the caller can echo
 // it in the ETag response header. Called on every create/replace/upsert so the
-// stored document — and later reads of it — reflect the last write, not the read.
+// stored document, and later reads of it, reflect the last write, not the read.
 func (h *Handler) stampWrite(item map[string]any) string {
 	etag := h.newETag()
 	item["_etag"] = etag
@@ -983,7 +983,7 @@ func (h *Handler) pointRead(
 }
 
 // dropExpired filters out items whose TTL has elapsed AND reaps them from the
-// store — deleting the document and forgetting its TTL bookkeeping — matching a
+// store (deleting the document and forgetting its TTL bookkeeping), matching a
 // real Cosmos TTL background sweep, which does not merely hide expired items but
 // removes them. Reaping runs under the container's write lock so a document a
 // concurrent create/replace just wrote is never mistaken for the expired one
@@ -1212,7 +1212,7 @@ func docPartitionKey(r *http.Request) string {
 // multi-partition container would leak every partition's rows, since the WHERE
 // clause alone does not constrain the partition. The azcosmos SDK sends
 // x-ms-documentdb-query-enablecrosspartition on every query by default, so the
-// presence of the partition-key header — not that flag — is what scopes: a
+// presence of the partition-key header, not that flag, is what scopes: a
 // specific partition key always wins over the cross-partition permission, and
 // only a query with no partition key header fans out across the container.
 func scopeToPartition(r *http.Request, cfg *dbdriver.TableConfig, items []map[string]any) []map[string]any {
@@ -1256,7 +1256,7 @@ func buildKey(pkAttr, pkVal, id string) map[string]any {
 // a different partition than the one addressed by the request. Cosmos treats the
 // partition key as immutable, so the body's partition-key value must match the
 // x-ms-documentdb-partitionkey header. Only meaningful for a custom partition
-// key — an /id (or unset) partition key is pinned by the request URL's document
+// key: an /id (or unset) partition key is pinned by the request URL's document
 // id. A body omitting the partition-key attribute is left to the normal write
 // path (it stores under the same identity), so only a present-and-different
 // value is flagged.
@@ -1292,7 +1292,7 @@ func partitionKeyAttribute(pk *partitionKeyDef) string {
 		return idAttr
 	}
 
-	// Cosmos paths look like "/myKey" — strip the leading slash.
+	// Cosmos paths look like "/myKey"; strip the leading slash.
 	return strings.TrimPrefix(pk.Paths[0], "/")
 }
 

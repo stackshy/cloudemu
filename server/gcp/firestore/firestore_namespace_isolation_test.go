@@ -4,7 +4,7 @@
 // collection path and document id are identical. Cross-project isolation is
 // exercised with the REAL cloud.google.com/go/firestore REST SDK (two clients,
 // distinct project ids, one server). Cross-database isolation is exercised over
-// raw REST — the REST SDK constructor hard-codes the "(default)" database, so
+// raw REST. The REST SDK constructor hard-codes the "(default)" database, so
 // named databases are only reachable at the wire level.
 package firestore_test
 
@@ -58,7 +58,7 @@ func newRESTClientForProject(t *testing.T, ts *httptest.Server, project string) 
 
 // TestCrossProjectDocumentIsolation writes the same collection/doc under two
 // different projects through the real SDK and asserts each project sees only
-// its own document — the historical bug collapsed both projects into one
+// its own document. The historical bug collapsed both projects into one
 // collection namespace, so project B could read (and clobber) project A's data.
 func TestCrossProjectDocumentIsolation(t *testing.T) {
 	ts := newIsolationServer(t)

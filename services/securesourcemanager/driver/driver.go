@@ -1,6 +1,6 @@
 // Package driver defines the portable interface for the Google Secure Source
 // Manager control plane (securesourcemanager.googleapis.com/v1). It is
-// control-plane only — the two location-scoped resource collections a Terraform
+// control-plane only: the two location-scoped resource collections a Terraform
 // google provider or a real Secure Source Manager client CRUDs are modeled:
 //
 //	projects/{p}/locations/{loc}/instances/{id}
@@ -20,7 +20,7 @@
 // create and stay stable across reads so a Terraform refresh does not drift. An
 // instance also carries a computed state and hostConfig{html,api,gitHttp,gitSsh}
 // and a repository a computed uid and uris{html,gitHttps,api}, all minted once
-// at create, stored, and stable across reads (the classic drift point — these
+// at create, stored, and stable across reads (the classic drift point: these
 // output-only URL blocks must be byte-identical on the create response and every
 // later GET). Every other caller-supplied body key (labels, description,
 // kmsKey, privateConfig, initialConfig, instance, …) is carried as Fields
@@ -38,7 +38,7 @@ import (
 // repository). Name components are stored separately so the full resource name
 // and location scoping can be rebuilt without re-parsing. CreateTime/UpdateTime
 // are derived deterministically and stay stable across reads. Fields holds every
-// caller-supplied, non-computed body key verbatim — plus any computed body value
+// caller-supplied, non-computed body key verbatim, plus any computed body value
 // seeded once at create (an instance's state + hostConfig, a repository's uid +
 // uris), which then round-trips as a stable passthrough value.
 type Resource struct {
@@ -76,7 +76,7 @@ type SecureSourceManager interface {
 	// CreateInstance provisions a new instance and returns its completed LRO.
 	// Instances have no update RPC in the real API (labels/kmsKey/privateConfig
 	// are immutable; a change recreates), so there is deliberately no
-	// PatchInstance — offering one would mask a real Terraform recreate.
+	// PatchInstance: offering one would mask a real Terraform recreate.
 	CreateInstance(ctx context.Context, cfg *Config) (*Resource, *Operation, error)
 	// GetInstance returns an instance by identity.
 	GetInstance(ctx context.Context, project, location, id string) (*Resource, error)

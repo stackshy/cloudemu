@@ -63,7 +63,7 @@ func newBlobServicesClient(t *testing.T, cloudP *azureprovider.Provider) *armsto
 
 // TestSDKSetServicePropertiesDoesNotWipeAccount is the regression test for the
 // blocker bug: a PUT to blobServices/default (BlobServicesClient.
-// SetServiceProperties — the call the SDK/CLI use to enable blob versioning,
+// SetServiceProperties, the call the SDK/CLI use to enable blob versioning,
 // soft delete, CORS, or the change feed) was misrouted into the account
 // create/update handler and silently reset the account's SKU/kind/tags to
 // their zero-value defaults.

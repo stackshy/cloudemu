@@ -68,7 +68,7 @@ func TestSDKSnapshotRoundTrip(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create a source disk via the disks SDK client first — snapshots need a
+	// Create a source disk via the disks SDK client first: snapshots need a
 	// real source.
 	disksClient, err := armcompute.NewDisksClient("sub-1", fakeCred{}, &arm.ClientOptions{
 		ClientOptions: azcore.ClientOptions{

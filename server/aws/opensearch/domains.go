@@ -221,10 +221,7 @@ func (h *Handler) updateDomainConfig(w http.ResponseWriter, r *http.Request, nam
 		DryRun:          req.DryRun,
 	}
 
-	if req.ClusterConfig != nil {
-		cc := req.ClusterConfig.toDriver()
-		in.ClusterConfig = &cc
-	}
+	in.ClusterConfig = req.ClusterConfig.toPatch()
 
 	out, _, err := h.os.UpdateDomainConfig(r.Context(), in)
 	if err != nil {

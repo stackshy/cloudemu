@@ -1,5 +1,5 @@
-// index_projection_sdk_roundtrip_test.go —
-// Real-user-journey tests driving the genuine aws-sdk-go-v2 DynamoDB client
+// index_projection_sdk_roundtrip_test.go holds real-user-journey tests driving
+// the genuine aws-sdk-go-v2 DynamoDB client
 // against the emulator for secondary-index attribute projection (GSI/LSI
 // KEYS_ONLY / INCLUDE / ALL) and per-table BatchGetItem ProjectionExpression.
 package dynamodb_test

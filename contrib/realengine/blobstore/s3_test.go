@@ -67,8 +67,8 @@ func getBody(t *testing.T, client *awss3.Client, bucket, key string) []byte {
 	return body
 }
 
-// TestS3BlobstoreE2E runs the exact flow a real user runs against AWS S3 — the
-// real service/s3 SDK against CloudEmu's wire server — but with object bytes
+// TestS3BlobstoreE2E runs the exact flow a real user runs against AWS S3: the
+// real service/s3 SDK against CloudEmu's wire server, but with object bytes
 // persisted to a real local filesystem by blobstore. It then reads the backing
 // file directly off disk to prove the bytes really landed there.
 func TestS3BlobstoreE2E(t *testing.T) {
@@ -87,7 +87,7 @@ func TestS3BlobstoreE2E(t *testing.T) {
 
 	body := []byte("quarterly revenue up 12% — bytes on real disk\n")
 
-	// 1. CreateBucket — exactly like `aws s3 mb`.
+	// 1. CreateBucket, like `aws s3 mb`.
 	if _, err := client.CreateBucket(ctx, &awss3.CreateBucketInput{Bucket: aws.String(bucket)}); err != nil {
 		t.Fatalf("CreateBucket: %v", err)
 	}
@@ -102,12 +102,12 @@ func TestS3BlobstoreE2E(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	// 3. GetObject — bytes must round-trip through the engine.
+	// 3. GetObject: bytes must round-trip through the engine.
 	if got := getBody(t, client, bucket, key); !bytes.Equal(got, body) {
 		t.Fatalf("GetObject body mismatch: got %q, want %q", got, body)
 	}
 
-	// 4. HeadObject / ListObjectsV2 — metadata (Size, ContentType) is served from
+	// 4. HeadObject / ListObjectsV2: metadata (Size, ContentType) is served from
 	// the in-memory Mock even though the bytes live in the engine.
 	head, err := client.HeadObject(ctx, &awss3.HeadObjectInput{
 		Bucket: aws.String(bucket),
@@ -138,7 +138,7 @@ func TestS3BlobstoreE2E(t *testing.T) {
 		t.Fatalf("ListObjectsV2 size: got %d, want %d", aws.ToInt64(listed.Contents[0].Size), len(body))
 	}
 
-	// 5. CopyObject then GetObject(copy) — server-side copy through the engine.
+	// 5. CopyObject then GetObject(copy): server-side copy through the engine.
 	if _, err := client.CopyObject(ctx, &awss3.CopyObjectInput{
 		Bucket:     aws.String(bucket),
 		Key:        aws.String(copyKey),
@@ -163,7 +163,7 @@ func TestS3BlobstoreE2E(t *testing.T) {
 		t.Fatalf("backing file bytes mismatch: got %q, want %q", raw, body)
 	}
 
-	// 7. DeleteObject then GetObject must 404 — and the backing file is gone.
+	// 7. DeleteObject then GetObject must 404, and the backing file is gone.
 	if _, err := client.DeleteObject(ctx, &awss3.DeleteObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),

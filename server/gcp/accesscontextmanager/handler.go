@@ -8,16 +8,16 @@
 //
 // Coverage (VPC Service Controls control plane):
 //
-//	POST   /v1/accessPolicies                                    — CreatePolicy (LRO)
-//	GET    /v1/accessPolicies?parent=organizations/{org}         — ListPolicies
-//	GET    /v1/accessPolicies/{p}                                — GetPolicy
-//	PATCH  /v1/accessPolicies/{p}?updateMask=                    — PatchPolicy (LRO)
-//	DELETE /v1/accessPolicies/{p}                                — DeletePolicy (LRO)
-//	POST   /v1/accessPolicies/{p}/accessLevels?accessLevelId=    — CreateAccessLevel (LRO)
-//	…                                                            — Get/List/Patch/Delete
-//	POST   /v1/accessPolicies/{p}/servicePerimeters?servicePerimeterId= — CreateServicePerimeter (LRO)
-//	…                                                            — Get/List/Patch/Delete
-//	GET    /v1/operations/{id}                                   — Operations.Get
+//	POST   /v1/accessPolicies                                    : CreatePolicy (LRO)
+//	GET    /v1/accessPolicies?parent=organizations/{org}         : ListPolicies
+//	GET    /v1/accessPolicies/{p}                                : GetPolicy
+//	PATCH  /v1/accessPolicies/{p}?updateMask=                    : PatchPolicy (LRO)
+//	DELETE /v1/accessPolicies/{p}                                : DeletePolicy (LRO)
+//	POST   /v1/accessPolicies/{p}/accessLevels?accessLevelId=    : CreateAccessLevel (LRO)
+//	…                                                            : Get/List/Patch/Delete
+//	POST   /v1/accessPolicies/{p}/servicePerimeters?servicePerimeterId= : CreateServicePerimeter (LRO)
+//	…                                                            : Get/List/Patch/Delete
+//	GET    /v1/operations/{id}                                   : Operations.Get
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting resource embedded in `response` as an Any, so an SDK or
@@ -25,7 +25,7 @@
 //
 // Organization-scoped routing: unlike every /v1/projects/ handler, Access
 // Context Manager's resources are rooted at /v1/accessPolicies and its
-// operations at the service root /v1/operations/{id} — NOT under
+// operations at the service root /v1/operations/{id}, not under
 // projects/locations. The shared GCP LRO poller owns only /v1/projects/.../
 // operations, so it never sees these root operations. Cloud Functions gen1
 // also mints root /v1/operations/{id} names, so this handler claims a root

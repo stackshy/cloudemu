@@ -71,7 +71,7 @@ func TestSDKSNSCreateTopicFifoFlags(t *testing.T) {
 
 // TestSDKSNSCreateTopicFifoNameRequiresSuffix guards real SNS's documented
 // naming rule (API_CreateTopic.html: "For a FIFO topic, the name must end with
-// the .fifo suffix") — FifoTopic=true with a non-.fifo name must be rejected.
+// the .fifo suffix"): FifoTopic=true with a non-.fifo name must be rejected.
 func TestSDKSNSCreateTopicFifoNameRequiresSuffix(t *testing.T) {
 	sns := newSDKClient(t)
 	ctx := context.Background()

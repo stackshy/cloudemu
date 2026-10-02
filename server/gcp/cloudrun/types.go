@@ -21,7 +21,7 @@ type jobResource struct {
 	Etag                   string              `json:"etag,omitempty"`
 }
 
-// execTemplate is Job.template — an ExecutionTemplate wrapping a TaskTemplate.
+// execTemplate is Job.template: an ExecutionTemplate wrapping a TaskTemplate.
 type execTemplate struct {
 	Parallelism int          `json:"parallelism,omitempty"`
 	TaskCount   int          `json:"taskCount,omitempty"`
@@ -48,7 +48,7 @@ type container struct {
 	Resources *resourceRequirements `json:"resources,omitempty"`
 }
 
-// resourceRequirements is Container.resources — cpu/memory limits and CPU
+// resourceRequirements is Container.resources: cpu/memory limits and CPU
 // behavior toggles that every Terraform/gcloud deploy sends and reads back.
 type resourceRequirements struct {
 	Limits          map[string]string `json:"limits,omitempty"`

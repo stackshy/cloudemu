@@ -140,7 +140,7 @@ func (s *ClusterState) createPod(w http.ResponseWriter, r *http.Request, namespa
 
 	if isDryRun(r) {
 		// A dry-run must still report the 403 a real create would when the
-		// namespace is at its Pod quota — check (without reserving) before echo.
+		// namespace is at its Pod quota: check (without reserving) before echo.
 		if status := s.checkQuotaLocked(namespace, "Pod", resourcePods); status != nil {
 			writeJSON(w, int(status.Code), status)
 
@@ -164,7 +164,7 @@ func (s *ClusterState) createPod(w http.ResponseWriter, r *http.Request, namespa
 	s.materializeNewPodLocked(&pod)
 
 	s.pods[key] = &pod
-	// A new Pod may satisfy a Service selector — refresh endpoints.
+	// A new Pod may satisfy a Service selector, so refresh endpoints.
 	s.resyncEndpointsForNamespaceLocked(namespace)
 	s.wPods.publish(EventAdded, namespace, *pod.DeepCopy())
 	writeJSON(w, http.StatusCreated, &pod)
@@ -335,7 +335,7 @@ func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespa
 	in.CreationTimestamp = cur.CreationTimestamp
 	in.ResourceVersion = s.rvForRequestLocked(r)
 	in.TypeMeta = cur.TypeMeta
-	// deletionTimestamp is server-owned — preserve it across a PUT.
+	// deletionTimestamp is server-owned, so preserve it across a PUT.
 	in.DeletionTimestamp = cur.DeletionTimestamp
 	// A plain PUT takes/shares ownership: preserve prior managedFields and record
 	// an Update entry for this fieldManager covering the fields it set.
@@ -360,7 +360,7 @@ func (s *ClusterState) updatePod(w http.ResponseWriter, r *http.Request, namespa
 	}
 
 	pod := in
-	// A spec-only PUT (no status) must not drop the Pod out of Running — keep it
+	// A spec-only PUT (no status) must not drop the Pod out of Running, so keep it
 	// materialized like createPod does.
 	if pod.Status.Phase == "" {
 		s.markPodRunningLocked(&pod)
@@ -422,7 +422,7 @@ func (s *ClusterState) patchPod(w http.ResponseWriter, r *http.Request, namespac
 
 	patched.ResourceVersion = s.rvForRequestLocked(r)
 	// Server-owned metadata: a merge-patch nulling deletionTimestamp (RFC 7396)
-	// must not resurrect a Terminating Pod — carry it (and uid/creation) forward,
+	// must not resurrect a Terminating Pod, so carry it (and uid/creation) forward,
 	// mirroring updatePod.
 	patched.DeletionTimestamp = cur.DeletionTimestamp
 	patched.UID = cur.UID
@@ -499,7 +499,7 @@ func (s *ClusterState) deletePod(w http.ResponseWriter, r *http.Request, namespa
 	delete(s.pods, key)
 	// A quota-counted Pod going away must drop status.used back to the live count.
 	s.releaseQuotaLocked(namespace, "Pod", resourcePods)
-	// A Service may have been pointing at this Pod — refresh its endpoints.
+	// A Service may have been pointing at this Pod, so refresh its endpoints.
 	s.resyncEndpointsForNamespaceLocked(namespace)
 	s.wPods.publish(EventDeleted, namespace, *pod.DeepCopy())
 	writeJSON(w, http.StatusOK, pod.DeepCopy())
@@ -548,7 +548,7 @@ func (s *ClusterState) servePodSubresource(w http.ResponseWriter, r *http.Reques
 
 // servePodLog writes a deterministic synthetic log line for the requested
 // container. Streaming query params (follow, tail, previous) are accepted and
-// ignored — the response is a single flush, which kubectl handles fine.
+// ignored; the response is a single flush, which kubectl handles fine.
 func servePodLog(w http.ResponseWriter, r *http.Request, route *Route, defaultContainer string) {
 	if r.Method != http.MethodGet {
 		writeMethodNotAllowed(w, "k8s api: pods/log: method not allowed: "+r.Method)

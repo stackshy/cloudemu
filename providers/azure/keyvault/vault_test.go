@@ -14,7 +14,7 @@ import (
 // TestVaultLazyCreateIsRaceSafe exercises the concurrent first-touch path in
 // Mock.vault: many goroutines racing to address the same brand-new vault name
 // (each writing its own distinct secret) must all end up sharing exactly one
-// store for that vault — the SetIfAbsent/Get double-check in vault() must
+// store for that vault: the SetIfAbsent/Get double-check in vault() must
 // never let two goroutines settle on two different winning stores, which
 // would silently split the vault's secrets across them. Run with -race.
 func TestVaultLazyCreateIsRaceSafe(t *testing.T) {

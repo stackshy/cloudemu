@@ -16,7 +16,7 @@ func TestParseKeyConditionPartitionOnly(t *testing.T) {
 }
 
 func TestParseKeyConditionSpacingTolerant(t *testing.T) {
-	// No spaces around '=' or the sort operator — the lexer handles it.
+	// No spaces around '=' or the sort operator; the lexer handles it.
 	kc, err := ParseKeyCondition("id=:i AND sk>:s", nil, map[string]any{":i": "u1", ":s": float64(5)})
 	require.NoError(t, err)
 	assert.Equal(t, "id", kc.PartitionKey)

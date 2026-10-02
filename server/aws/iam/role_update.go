@@ -32,7 +32,7 @@ type updateAssumeRolePolicyResponse struct {
 }
 
 // updateRoleDescriptionResponse mirrors the real IAM UpdateRoleDescription
-// response, which — unlike UpdateRole — returns the modified role. Terraform's
+// response, which (unlike UpdateRole) returns the modified role. Terraform's
 // aws_iam_role resource calls this action when only the description changes.
 type updateRoleDescriptionResponse struct {
 	XMLName  xml.Name                    `xml:"UpdateRoleDescriptionResponse"`
@@ -72,7 +72,7 @@ func (h *Handler) updateRole(w http.ResponseWriter, r *http.Request) {
 }
 
 // optionalFormString returns a pointer to the form value when the key is
-// present, or nil when it is absent — so an omitted parameter leaves the target
+// present, or nil when it is absent, so an omitted parameter leaves the target
 // field unchanged.
 func optionalFormString(r *http.Request, key string) *string {
 	if !r.Form.Has(key) {

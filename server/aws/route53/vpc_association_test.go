@@ -306,8 +306,8 @@ func TestSDKListHostedZonesByVPC(t *testing.T) {
 
 // TestSDKListHostedZonesByVPCPaginates associates several private zones with one
 // VPC and walks ListHostedZonesByVPC with a small MaxItems, asserting each page
-// is bounded by MaxItems, NextToken continues, and every zone is returned exactly
-// once — no duplicate, no skip — across the NextToken walk.
+// is bounded by MaxItems, NextToken continues, and every zone is returned once
+// (no duplicate, no skip) across the NextToken walk.
 func TestSDKListHostedZonesByVPCPaginates(t *testing.T) {
 	client := newRoute53Client(t)
 	ctx := context.Background()

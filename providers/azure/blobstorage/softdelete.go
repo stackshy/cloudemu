@@ -40,8 +40,8 @@ func (m *Mock) SoftDeleteEnabled(_ context.Context) (bool, error) {
 // stamping the deletion time and the retention window so RemainingRetentionDays
 // can count down. The caller has already confirmed soft delete is active.
 //
-// The objects.Delete + softDeleted.Set pair runs under ctr.mu — the same lock
-// UndeleteBlob takes for the reverse move — so the blob is transferred between
+// The objects.Delete + softDeleted.Set pair runs under ctr.mu (the same lock
+// UndeleteBlob takes for the reverse move) so the blob is transferred between
 // the two stores atomically. Without it a racing Delete and Undelete on the same
 // blob could interleave their per-store writes and drop the blob from BOTH
 // stores (permanent loss).
@@ -85,8 +85,8 @@ func (m *Mock) UndeleteBlob(_ context.Context, container, blob string) error {
 		return cerrors.Newf(cerrors.NotFound, "container %q not found", container)
 	}
 
-	// The whole read-check-move runs under ctr.mu — the same lock softDeleteObject
-	// takes — so the soft-deleted lookup and the softDeleted→objects transfer are
+	// The whole read-check-move runs under ctr.mu (the same lock softDeleteObject
+	// takes) so the soft-deleted lookup and the softDeleted→objects transfer are
 	// one atomic critical section against a racing Delete on the same blob. The
 	// objects.Set precedes softDeleted.Delete so a concurrent reader sees the blob
 	// in both stores at worst, never in neither.
@@ -96,7 +96,7 @@ func (m *Mock) UndeleteBlob(_ context.Context, container, blob string) error {
 	retained, ok := ctr.softDeleted.Get(blob)
 	if !ok {
 		if ctr.objects.Has(blob) {
-			return nil // already active — Undelete is a no-op
+			return nil // already active: Undelete is a no-op
 		}
 
 		return cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", blob, container)
@@ -120,7 +120,7 @@ func (m *Mock) UndeleteBlob(_ context.Context, container, blob string) error {
 
 // ListDeletedBlobs implements driver.AzureSoftDeleteBlob, returning the
 // soft-deleted blobs matching opts.Prefix, sorted by name. Records whose
-// retention window has elapsed are purged and omitted (lazy expiry — there is no
+// retention window has elapsed are purged and omitted (lazy expiry: there is no
 // background sweeper).
 func (m *Mock) ListDeletedBlobs(
 	_ context.Context, container string, opts driver.ListOptions,

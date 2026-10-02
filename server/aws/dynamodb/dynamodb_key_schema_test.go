@@ -1,9 +1,9 @@
-// dynamodb_key_schema_test.go — real aws-sdk-go-v2 round-trips proving that
+// dynamodb_key_schema_test.go: real aws-sdk-go-v2 round-trips proving that
 // GetItem/DeleteItem/UpdateItem/BatchGetItem/TransactGetItems reject a Key
 // parameter that doesn't name exactly the table's key schema (missing the
 // sort key, or an extra unrecognized attribute), on both a hash-only and a
-// composite (hash+range) table — and that the exact correct key still
-// succeeds, and that Query/Scan (which take no standalone Key map) are
+// composite (hash+range) table. They also prove the correct key still
+// succeeds and that Query/Scan (which take no standalone Key map) are
 // unaffected by this validation.
 package dynamodb_test
 

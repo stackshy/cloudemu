@@ -1,4 +1,4 @@
-// Internal tests for unexported helpers — route parsing, JSON-merge-patch
+// Internal tests for unexported helpers: route parsing, JSON-merge-patch
 // semantics, resource-version bumping, and the wire-level status helpers
 // that don't get hit by the external HTTP tests.
 
@@ -56,7 +56,7 @@ func TestParseRoute(t *testing.T) {
 		{name: "too_short_core", path: "/api", want: nil},
 		{name: "too_short_group", path: "/apis/apps", want: nil},
 		// Reaches parseCoreRoute() but parts after the "api" segment is just
-		// the version — too short for fillResourceRoute, so parseCoreRoute
+		// the version, too short for fillResourceRoute, so parseCoreRoute
 		// returns nil from its own early-return.
 		{name: "core_version_only", path: "/api/v1", want: nil},
 		// Reaches parseGroupRoute() but only carries group+version, no resource.
@@ -179,7 +179,7 @@ func TestMergePatch_BadJSONReturnsError(t *testing.T) {
 	}
 }
 
-// brokenReader always errors on Read — used to drive applyJSONPatch's
+// brokenReader always errors on Read; used to drive applyJSONPatch's
 // io.ReadAll failure branch.
 type brokenReader struct{}
 

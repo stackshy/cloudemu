@@ -9,8 +9,8 @@ import (
 // TestComputeInstanceBillable pins the state-aware compute gate: running/pending
 // (and an unknown/empty state) bill compute; the canonical non-running VM
 // lifecycle states the walker surfaces (stopping/stopped/shutting-down/
-// terminated — the latter also covers GCP's stopped and Azure's stopped/
-// deallocated, which settle to these values) bill $0; and non-compute resources
+// terminated, which also covers GCP's stopped and Azure's stopped/
+// deallocated, since those settle to these values) bill $0; and non-compute resources
 // are always billable regardless of any state string.
 func TestComputeInstanceBillable(t *testing.T) {
 	cases := []struct {

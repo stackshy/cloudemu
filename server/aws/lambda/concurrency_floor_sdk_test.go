@@ -38,7 +38,7 @@ func TestSDKPutFunctionConcurrencyUnreservedFloor(t *testing.T) {
 	}
 
 	// 100 (floor-a) + 800 (floor-b) leaves exactly 100 unreserved out of the
-	// 1000-execution account limit — right at the boundary, must succeed.
+	// 1000-execution account limit. That is right at the boundary and must succeed.
 	if _, err := client.PutFunctionConcurrency(ctx, &awslambda.PutFunctionConcurrencyInput{
 		FunctionName:                 aws.String("floor-b"),
 		ReservedConcurrentExecutions: aws.Int32(800),
@@ -46,7 +46,7 @@ func TestSDKPutFunctionConcurrencyUnreservedFloor(t *testing.T) {
 		t.Fatalf("PutFunctionConcurrency(floor-b, 800): %v", err)
 	}
 
-	// One more execution (801) would leave only 99 unreserved — rejected.
+	// One more execution (801) would leave only 99 unreserved, so it is rejected.
 	_, err := client.PutFunctionConcurrency(ctx, &awslambda.PutFunctionConcurrencyInput{
 		FunctionName:                 aws.String("floor-b"),
 		ReservedConcurrentExecutions: aws.Int32(801),

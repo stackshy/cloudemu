@@ -97,7 +97,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // typed exception.
 func writeErr(w http.ResponseWriter, err error) {
 	// Message strips the internal "<Code>: " prefix Error() prepends, so the wire
-	// message carries only the human text — real AWS never leaks a taxonomy name,
+	// message carries only the human text. Real AWS never leaks a taxonomy name,
 	// and the deliberately-verbatim DeleteRule wording must arrive intact.
 	msg := cerrors.Message(err)
 

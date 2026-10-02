@@ -12,7 +12,7 @@ import (
 // the start of the list.
 var ErrInvalidOffsetToken = errors.New("invalid pagination token")
 
-// EncodeOffset turns a list offset into an opaque base64 pagination token — the
+// EncodeOffset turns a list offset into an opaque base64 pagination token: the
 // codec shared by the AWS list handlers whose Marker/NextToken is an offset into
 // a deterministically sorted result set.
 func EncodeOffset(offset int) string {

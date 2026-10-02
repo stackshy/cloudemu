@@ -40,7 +40,7 @@ func TestSecurityRuleSubResourceIsResourceGroupScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Two NSGs share the name "nsg-shared" across rgA and rgB — a legal Azure
+	// Two NSGs share the name "nsg-shared" across rgA and rgB: a legal Azure
 	// pattern (the same Terraform module applied to two resource groups).
 	for _, rg := range []string{"rgA", "rgB"} {
 		p, cerr := nsgs.BeginCreateOrUpdate(ctx, rg, "nsg-shared", armnetwork.SecurityGroup{
@@ -80,7 +80,7 @@ func TestSecurityRuleSubResourceIsResourceGroupScoped(t *testing.T) {
 		t.Fatalf("Get only-in-b under rgA: status %d, want 404", code)
 	}
 
-	// The whole-NSG GET under rgA must show no custom rules — rgB's rule never
+	// The whole-NSG GET under rgA must show no custom rules: rgB's rule never
 	// touched rgA's NSG.
 	gotA, err := nsgs.Get(ctx, "rgA", "nsg-shared", nil)
 	if err != nil {
@@ -176,7 +176,7 @@ func TestVNetPeeringSubResourceIsResourceGroupScoped(t *testing.T) {
 		t.Fatalf("Get shared-peer under rgA: status %d, want 404", code)
 	}
 
-	// The list under rgA/vnet-shared must be empty — rgB's peering never touched it.
+	// The list under rgA/vnet-shared must be empty: rgB's peering never touched it.
 	var rgANames []string
 
 	pagerA := peerings.NewListPager("rgA", "vnet-shared", nil)

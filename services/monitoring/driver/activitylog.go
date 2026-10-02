@@ -2,7 +2,7 @@ package driver
 
 import "time"
 
-// ActivityLogEvent is one Azure Activity Log entry — a management-plane
+// ActivityLogEvent is one Azure Activity Log entry: a management-plane
 // operation recorded automatically as ARM traffic flows through the wire
 // server. It mirrors the fields the Activity Log API surfaces per event.
 type ActivityLogEvent struct {

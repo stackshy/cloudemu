@@ -18,7 +18,7 @@ import (
 )
 
 // newSMServiceRaw is like newSMService but also returns the server's base URL
-// so a test can bypass the SDK and issue a raw HTTP request — needed to
+// so a test can bypass the SDK and issue a raw HTTP request, needed to
 // reproduce a truly empty request body, which google-api-go-client never
 // sends (it always marshals a zero-value request struct as "{}").
 func newSMServiceRaw(t *testing.T) (*sm.Service, string) {
@@ -170,7 +170,7 @@ func TestSDKVersionLifecycle(t *testing.T) {
 }
 
 // TestSDKDestroyedVersionLifecycleIs400 proves an illegal state transition on a
-// version — destroy/disable/enable applied to an already-DESTROYED version —
+// version, destroy/disable/enable applied to an already-DESTROYED version,
 // surfaces as HTTP 400 FAILED_PRECONDITION (real GCP), not the 409 that the
 // shared gcprest FailedPrecondition mapping would otherwise produce.
 func TestSDKDestroyedVersionLifecycleIs400(t *testing.T) {
@@ -214,7 +214,7 @@ func TestSDKDestroyedVersionLifecycleIs400(t *testing.T) {
 }
 
 // assertNoCodePrefix fails if msg contains one of cloudemu's internal
-// canonical error-code names followed by a colon — the shape err.Error()
+// canonical error-code names followed by a colon, the shape err.Error()
 // produces for a *cerrors.Error, as opposed to cerrors.Message(err). Real
 // Secret Manager never prefixes its error messages with an internal
 // error-taxonomy name.
@@ -296,7 +296,7 @@ func TestSDKVersionLifecycleEtagPrecondition(t *testing.T) {
 
 // TestSDKVersionLifecycleEmptyBody proves the enable/disable/destroy verbs
 // succeed on a truly zero-byte request body (http.NoBody), not just the "{}"
-// google-api-go-client always marshals for a zero-value request struct — etag
+// google-api-go-client always marshals for a zero-value request struct. Etag
 // is optional, and a raw HTTP client that never writes a body must still
 // reach the driver rather than 400 on an empty-body JSON decode.
 func TestSDKVersionLifecycleEmptyBody(t *testing.T) {

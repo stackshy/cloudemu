@@ -179,6 +179,32 @@ type HealthCheckConfig struct {
 	IntervalSeconds  int
 	FailureThreshold int
 	Tags             map[string]string
+
+	// The fields below are AWS Route 53 only. Other providers ignore them.
+	// On update, a nil pointer or slice and an empty string leave the stored
+	// value unchanged.
+
+	// SearchString is the text an HTTP_STR_MATCH or HTTPS_STR_MATCH check
+	// looks for in the response body.
+	SearchString string
+	// Inverted reports the check as healthy when it fails, and the reverse.
+	Inverted *bool
+	// HealthThreshold is how many child checks must be healthy for a
+	// CALCULATED check to be healthy.
+	HealthThreshold *int
+	// ChildHealthChecks are the IDs of the checks a CALCULATED check watches.
+	ChildHealthChecks []string
+	// AlarmIdentifier names the CloudWatch alarm a CLOUDWATCH_METRIC check watches.
+	AlarmIdentifier *HealthCheckAlarm
+	// InsufficientDataHealthStatus is the status a CLOUDWATCH_METRIC check
+	// reports while its alarm has too little data.
+	InsufficientDataHealthStatus string
+}
+
+// HealthCheckAlarm identifies a CloudWatch alarm by region and name.
+type HealthCheckAlarm struct {
+	Region string
+	Name   string
 }
 
 // HealthCheckInfo describes a health check.
@@ -192,6 +218,14 @@ type HealthCheckInfo struct {
 	FailureThreshold int
 	Status           string // "HEALTHY", "UNHEALTHY"
 	Tags             map[string]string
+
+	// AWS Route 53 only fields. See HealthCheckConfig.
+	SearchString                 string
+	Inverted                     bool
+	HealthThreshold              int
+	ChildHealthChecks            []string
+	AlarmIdentifier              *HealthCheckAlarm
+	InsufficientDataHealthStatus string
 }
 
 // DNS is the interface that DNS provider implementations must satisfy.

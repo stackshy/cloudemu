@@ -8,7 +8,7 @@ AWS's `cloudfront` service · portable interface `driver.CloudFront` · [AWS ind
 | Operation | Description |
 | --- | --- |
 | `CreateDistribution` | Distributions. |
-| `CreateInvalidation` | Invalidations (synchronous — every invalidation is Completed immediately). |
+| `CreateInvalidation` | Invalidations (synchronous: every invalidation is Completed immediately). |
 | `DeleteDistribution` |  |
 | `GetDistribution` |  |
 | `GetInvalidation` |  |

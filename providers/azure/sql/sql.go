@@ -15,7 +15,7 @@
 //     snapshots). Cluster-snapshot methods return
 //     InvalidArgument.
 //
-// Lifecycle: Azure SQL databases are "always on" — there is no native
+// Lifecycle: Azure SQL databases are "always on": there is no native
 // start/stop API. The mock still tracks state transitions so portable-API
 // users can drive Start/Stop and observe deterministic behavior; the
 // transitions don't affect the ARM-visible state.
@@ -86,6 +86,10 @@ type Mock struct {
 	databases *memstore.Store[rdsdriver.Database]
 	// transparent-data-encryption records, key = "server/database"
 	tde *memstore.Store[rdsdriver.TransparentDataEncryption]
+	// retention policies, key = "server/database"; connPolicies key = server
+	str          *memstore.Store[rdsdriver.ShortTermRetentionPolicy]
+	ltr          *memstore.Store[rdsdriver.LongTermRetentionPolicy]
+	connPolicies *memstore.Store[string]
 
 	// instSettle overlays a transient Creating / Updating window over a database
 	// instance's stored available state on the portable relationaldb path
@@ -114,6 +118,9 @@ func New(opts *config.Options) *Mock {
 		aadAdmins:        memstore.New[rdsdriver.AADAdmin](),
 		databases:        memstore.New[rdsdriver.Database](),
 		tde:              memstore.New[rdsdriver.TransparentDataEncryption](),
+		str:              memstore.New[rdsdriver.ShortTermRetentionPolicy](),
+		ltr:              memstore.New[rdsdriver.LongTermRetentionPolicy](),
+		connPolicies:     memstore.New[string](),
 		managedInstances: memstore.New[rdsdriver.ManagedInstance](),
 		managedDatabases: memstore.New[rdsdriver.ManagedDatabase](),
 		instSettle:       settle.NewSet(),
@@ -186,11 +193,11 @@ func copyTags(src map[string]string) map[string]string {
 }
 
 // cloneInstance / cloneCluster / cloneSnapshot deep-copy the slice/map fields so
-// a returned value never aliases the memstore — a caller mutating its result
+// a returned value never aliases the memstore: a caller mutating its result
 // (or a concurrent reader) can't corrupt the store or trigger a concurrent-map
 // read/write panic. Callers own the returned copy.
 //
-//nolint:gocritic // value copy is intentional — the result must not alias the store.
+//nolint:gocritic // value copy is intentional: the result must not alias the store.
 func cloneInstance(inst rdsdriver.Instance) rdsdriver.Instance {
 	inst.Tags = copyTags(inst.Tags)
 	inst.VPCSecurityGroups = cloneStrings(inst.VPCSecurityGroups)
@@ -199,7 +206,7 @@ func cloneInstance(inst rdsdriver.Instance) rdsdriver.Instance {
 	return inst
 }
 
-//nolint:gocritic // value copy is intentional — the result must not alias the store.
+//nolint:gocritic // value copy is intentional: the result must not alias the store.
 func cloneCluster(c rdsdriver.Cluster) rdsdriver.Cluster {
 	c.Tags = copyTags(c.Tags)
 	c.VPCSecurityGroups = cloneStrings(c.VPCSecurityGroups)
@@ -208,7 +215,7 @@ func cloneCluster(c rdsdriver.Cluster) rdsdriver.Cluster {
 	return c
 }
 
-//nolint:gocritic // value copy is intentional — the result must not alias the store.
+//nolint:gocritic // value copy is intentional: the result must not alias the store.
 func cloneSnapshot(s rdsdriver.Snapshot) rdsdriver.Snapshot {
 	s.Tags = copyTags(s.Tags)
 
@@ -619,14 +626,38 @@ func (m *Mock) DeleteCluster(_ context.Context, id string) error {
 		return cerrors.Newf(cerrors.NotFound, "Azure SQL server %q not found", id)
 	}
 
+	m.deleteClusterLocked(id, &cluster)
+
+	return nil
+}
+
+// PurgeResourceGroup deletes every logical server recorded under the resource
+// group, cascading to its databases, firewall and vnet rules, elastic pools,
+// failover groups, AAD admin, TDE and retention policies and connection
+// policy. It backs the ARM resource-group delete cascade. An unscoped server is
+// never selected. Managed instances record no scope and are not covered.
+func (m *Mock) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, id := range m.clusters.Keys() {
+		if cluster, ok := m.clusters.Get(id); ok && cluster.Scope.InResourceGroup(subscription, resourceGroup) {
+			m.deleteClusterLocked(id, &cluster)
+		}
+	}
+
+	return nil
+}
+
+// deleteClusterLocked removes a server and everything under it. The caller
+// holds the write lock.
+func (m *Mock) deleteClusterLocked(id string, cluster *rdsdriver.Cluster) {
 	for _, member := range cluster.Members {
 		m.instances.Delete(instanceKey(id, member))
 	}
 
 	m.clusters.Delete(id)
 	m.deleteChildren(id)
-
-	return nil
 }
 
 // deleteByPrefix removes every entry of store whose key starts with prefix.
@@ -651,12 +682,15 @@ func (m *Mock) deleteChildren(server string) {
 
 	deleteByPrefix(m.databases, prefix)
 	deleteByPrefix(m.tde, prefix)
+	deleteByPrefix(m.str, prefix)
+	deleteByPrefix(m.ltr, prefix)
 	deleteByPrefix(m.firewallRules, prefix)
 	deleteByPrefix(m.vnetRules, prefix)
 	deleteByPrefix(m.elasticPools, prefix)
 	deleteByPrefix(m.failoverGroups, prefix)
 
 	m.aadAdmins.Delete(server)
+	m.connPolicies.Delete(server)
 }
 
 // StartCluster / StopCluster are no-ops on Azure SQL servers. They aren't
@@ -834,7 +868,7 @@ func (*Mock) CreateClusterSnapshot(
 		"Azure SQL does not support server-level snapshots; backups are per-database")
 }
 
-// DescribeClusterSnapshots returns an empty list — Azure SQL has none.
+// DescribeClusterSnapshots returns an empty list: Azure SQL has none.
 func (*Mock) DescribeClusterSnapshots(
 	_ context.Context, _ []string, _ string,
 ) ([]rdsdriver.ClusterSnapshot, error) {

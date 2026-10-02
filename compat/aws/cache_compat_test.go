@@ -22,7 +22,7 @@ import (
 // DeleteCacheCluster maps to "DeleteCache".
 //
 // The Redis data-plane ops (Get/Set/Incr/Expire/Keys/... ) are not part of the
-// AWS ElastiCache query protocol, so the wire handler does not route them —
+// AWS ElastiCache query protocol, so the wire handler does not route them;
 // they are reported as gaps, not asserted here.
 func TestAWSCacheCompat(t *testing.T) {
 	provider := cloudemu.NewAWS()

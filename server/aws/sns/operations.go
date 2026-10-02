@@ -433,8 +433,8 @@ func (h *Handler) getTopicAttributes(w http.ResponseWriter, r *http.Request) {
 
 // optionalTopicAttributes returns the GetTopicAttributes entries SNS emits only
 // when set: DisplayName, DeliveryPolicy, KmsMasterKeyId, SignatureVersion,
-// TracingConfig, ArchivePolicy, the delivery-status feedback family, and — for
-// a FIFO topic — the FifoTopic / ContentBasedDeduplication flags.
+// TracingConfig, ArchivePolicy, the delivery-status feedback family, and (for
+// a FIFO topic) the FifoTopic / ContentBasedDeduplication flags.
 func optionalTopicAttributes(info *notifdriver.TopicInfo) []attributeEntry {
 	var entries []attributeEntry
 
@@ -677,7 +677,7 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request) {
 // pendingConfirmationListArn is the literal SNS shows as SubscriptionArn in
 // ListSubscriptions/ListSubscriptionsByTopic for a still-unconfirmed
 // subscription. Distinct from Subscribe's own "pending confirmation" return
-// value (lowercase, with a space) — real SNS uses this different literal here.
+// value (lowercase, with a space); real SNS uses this different literal here.
 const pendingConfirmationListArn = "PendingConfirmation"
 
 // subscriptionMembers converts driver subscriptions into SNS XML members. The

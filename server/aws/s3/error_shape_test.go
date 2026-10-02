@@ -28,7 +28,7 @@ func assertS3NoLeakedPrefix(t *testing.T, err error) {
 }
 
 // TestSDKS3ErrorMessagesHaveNoInternalPrefix pins that S3 wire error messages
-// carry only the human sentence — not the internal cerrors code prefix — across
+// carry only the human sentence, not the internal cerrors code prefix, across
 // NoSuchKey (missing object) and BucketNotEmpty (delete non-empty bucket).
 func TestSDKS3ErrorMessagesHaveNoInternalPrefix(t *testing.T) {
 	client := newSDKClient(t)

@@ -214,12 +214,17 @@ func (h *Handler) listImportJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]importJobSummaryJSON, 0, len(jobs))
-	for i := range jobs {
-		out = append(out, toImportJobSummaryJSON(&jobs[i]))
+	page, next, ok := paginate(w, r, jobs)
+	if !ok {
+		return
 	}
 
-	writeJSON(w, listImportJobsResponse{ModelImportJobSummaries: out})
+	out := make([]importJobSummaryJSON, 0, len(page))
+	for i := range page {
+		out = append(out, toImportJobSummaryJSON(&page[i]))
+	}
+
+	writeJSON(w, listImportJobsResponse{ModelImportJobSummaries: out, NextToken: next})
 }
 
 // --- copy job dispatch + operations ---
@@ -290,12 +295,17 @@ func (h *Handler) listCopyJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]copyJobJSON, 0, len(jobs))
-	for i := range jobs {
-		out = append(out, toCopyJobJSON(&jobs[i]))
+	page, next, ok := paginate(w, r, jobs)
+	if !ok {
+		return
 	}
 
-	writeJSON(w, listCopyJobsResponse{ModelCopyJobSummaries: out})
+	out := make([]copyJobJSON, 0, len(page))
+	for i := range page {
+		out = append(out, toCopyJobJSON(&page[i]))
+	}
+
+	writeJSON(w, listCopyJobsResponse{ModelCopyJobSummaries: out, NextToken: next})
 }
 
 // --- evaluation job dispatch + operations ---
@@ -399,12 +409,17 @@ func (h *Handler) listEvalJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]evalJobSummaryJSON, 0, len(jobs))
-	for i := range jobs {
-		out = append(out, toEvalJobSummaryJSON(&jobs[i]))
+	page, next, ok := paginate(w, r, jobs)
+	if !ok {
+		return
 	}
 
-	writeJSON(w, listEvalJobsResponse{JobSummaries: out})
+	out := make([]evalJobSummaryJSON, 0, len(page))
+	for i := range page {
+		out = append(out, toEvalJobSummaryJSON(&page[i]))
+	}
+
+	writeJSON(w, listEvalJobsResponse{JobSummaries: out, NextToken: next})
 }
 
 // --- converters ---

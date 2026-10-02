@@ -70,11 +70,21 @@ func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64,
 			Namespace:  "logging.googleapis.com",
 			MetricName: metricName,
 			Value:      value,
-			Unit:       "None",
+			Unit:       metricUnit(metricName),
 			Dimensions: dims,
 			Timestamp:  m.opts.Clock.Now(),
 		},
 	})
+}
+
+// metricUnit is the Cloud Monitoring unit of a logging metric. byte_count is
+// in bytes ("By"). The request count is unit "1".
+func metricUnit(name string) string {
+	if name == "byte_count" {
+		return "By"
+	}
+
+	return "1"
 }
 
 // New creates a new Cloud Logging mock with the given configuration options.
@@ -585,7 +595,7 @@ func (m *Mock) DescribeSubscriptionFilters(_ context.Context, logGroup string) (
 	return results, nil
 }
 
-// UpdateLogGroup replaces the mutable fields of an existing log group —
+// UpdateLogGroup replaces the mutable fields of an existing log group, using
 // ARM CreateOrUpdate-on-existing semantics (retention and tags come from
 // the request; identity and CreatedAt are preserved). The read-modify-write
 // runs under the store's lock (via Update) rather than mutating the stored

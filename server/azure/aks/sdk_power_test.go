@@ -114,8 +114,8 @@ func TestSDKAKSClusterStartStopMissingCluster(t *testing.T) {
 }
 
 // TestSDKAKSDeleteLastSystemPoolRejected asserts deleting the sole System-mode
-// agent pool on a cluster fails — AKS requires at least one System pool at
-// all times — while a second System pool makes either deletable.
+// agent pool on a cluster fails: AKS requires at least one System pool at
+// all times. A second System pool makes either deletable.
 func TestSDKAKSDeleteLastSystemPoolRejected(t *testing.T) {
 	clusters, pools, _ := newSDKClients(t)
 	ctx := context.Background()

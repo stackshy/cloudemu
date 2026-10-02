@@ -29,7 +29,7 @@ func (m *Mock) CreateRule(_ context.Context, in *driver.CreateRuleInput) (*drive
 		return nil, err
 	}
 
-	id := idgen.GenerateID("rule-")
+	id := idgen.GenerateLongID("rule-")
 	rule := &driver.Rule{
 		ID:            id,
 		ARN:           m.arn("service/" + l.ServiceID + "/listener/" + l.ID + "/rule/" + id),

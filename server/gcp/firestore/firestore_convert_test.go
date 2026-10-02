@@ -6,7 +6,7 @@ import (
 )
 
 // TestValueRoundTripScalars proves each scalar Firestore value type survives a
-// Go<->wire round-trip with its type intact — the fidelity findings from the
+// Go<->wire round-trip with its type intact, the fidelity findings from the
 // GCP audit (timestamp, bytes, reference, and integer-valued double).
 func TestValueRoundTripScalars(t *testing.T) {
 	// An integer-valued double must stay a doubleValue, not collapse to

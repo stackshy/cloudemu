@@ -14,7 +14,7 @@ import (
 // Elastic IP query-protocol handlers.
 //
 // The driver already implemented Allocate/Release/Describe/Associate/
-// Disassociate — only the wire layer was missing, so these actions returned
+// Disassociate; only the wire layer was missing, so these actions returned
 // "unknown action" despite the behavior existing underneath. A NAT gateway
 // cannot be created without first allocating an EIP, which makes this the
 // first hard stop in every VPC-with-private-subnets plan.
@@ -56,7 +56,7 @@ type describeAddressesResponseXML struct {
 
 // addressAttributeXML mirrors real EC2's per-address entry in
 // DescribeAddressesAttributeResponse. CloudEmu does not model reverse-DNS
-// (PTR record) state, so PtrRecord is always omitted — matching a real
+// (PTR record) state, so PtrRecord is always omitted, matching a real
 // address that has never had one set.
 type addressAttributeXML struct {
 	AllocationID string `xml:"allocationId"`
@@ -72,7 +72,7 @@ type describeAddressesAttributeResponseXML struct {
 	NextToken string                `xml:"nextToken,omitempty"`
 }
 
-// domainVPC is the only domain modern accounts allocate in — EC2-Classic was
+// domainVPC is the only domain modern accounts allocate in; EC2-Classic was
 // retired in 2022. Reporting it unconditionally matches what real AWS returns
 // and keeps callers from branching on a value that can no longer vary.
 const domainVPC = "vpc"
@@ -99,7 +99,7 @@ func (h *Handler) allocateAddress(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) releaseAddress(w http.ResponseWriter, r *http.Request) {
 	// Addresses are stored by allocation id, so a PublicIp value resolves
 	// against them by lookup rather than being passed through as if it were
-	// one — passing it through always missed, while the comment claimed both
+	// one. Passing it through always missed, while the comment claimed both
 	// forms worked.
 	id := r.Form.Get("AllocationId")
 	if id == "" {
@@ -109,7 +109,7 @@ func (h *Handler) releaseAddress(w http.ResponseWriter, r *http.Request) {
 	if err := h.vpc.ReleaseAddress(r.Context(), id); err != nil {
 		// An Elastic IP still associated (e.g. held by a NAT gateway) can't be
 		// released; real EC2 answers InvalidIPAddress.InUse. An unknown allocation
-		// id is InvalidAllocationID.NotFound — not the VPC code the generic mapper
+		// id is InvalidAllocationID.NotFound, not the VPC code the generic mapper
 		// would emit.
 		writeErrWithNotFound(w, err, "InvalidAllocationID.NotFound", "InvalidIPAddress.InUse")
 
@@ -174,7 +174,7 @@ func (h *Handler) describeAddresses(w http.ResponseWriter, r *http.Request) {
 // describeAddressesAttribute answers Attribute=domain-name (the only
 // attribute real EC2 currently supports) for a set of allocations, reporting
 // each address's reverse-DNS (PTR record) configuration. CloudEmu does not
-// model PTR records, so every address is reported with none set — the same
+// model PTR records, so every address is reported with none set, the same
 // shape a real, never-configured address has. Terraform's aws_eip resource
 // calls this on every read, so leaving the action unhandled ("unknown
 // action") breaks that resource outright.
@@ -263,7 +263,7 @@ type disassociateAddressResponseXML struct {
 //
 // AWS accepts the EIP by AllocationId and, for callers that never held one, by
 // PublicIp; the allocation ID is resolved from the public IP so both spell the
-// same association. InstanceId and NetworkInterfaceId are mutually exclusive —
+// same association. InstanceId and NetworkInterfaceId are mutually exclusive:
 // supplying both is InvalidParameterCombination. An unknown InstanceId answers
 // InvalidInstanceID.NotFound; the networking driver validates an unknown
 // NetworkInterfaceId as InvalidNetworkInterfaceID.NotFound.
@@ -285,7 +285,7 @@ func (h *Handler) associateAddress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The networking driver does not model instances, so an unknown instance is
-	// caught here against the compute driver — matching AttachNetworkInterface.
+	// caught here against the compute driver, matching AttachNetworkInterface.
 	if instanceID != "" && h.compute != nil {
 		insts, err := h.compute.DescribeInstances(r.Context(), []string{instanceID}, nil)
 		if err != nil || len(insts) == 0 {
@@ -348,7 +348,7 @@ func parseOptionalBool(raw string) *bool {
 }
 
 // disassociateAddress releases an association, addressed either by
-// AssociationId or — as AWS also allows — by the PublicIp holding it.
+// AssociationId or, as AWS also allows, by the PublicIp holding it.
 func (h *Handler) disassociateAddress(w http.ResponseWriter, r *http.Request) {
 	assocID := r.Form.Get("AssociationId")
 

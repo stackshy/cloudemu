@@ -1,4 +1,4 @@
-// dynamodb_scan_select_key_idempotency_test.go — real-user-journey tests
+// dynamodb_scan_select_key_idempotency_test.go: real-user-journey tests
 // driving the genuine aws-sdk-go-v2 DynamoDB client against the emulator's
 // HTTP server for four correctness fixes: parallel-scan segmentation, the
 // Select projection mode, numeric-key identity normalization, and
@@ -38,9 +38,9 @@ func createNumberKeyTable(t *testing.T, client *dynamodb.Client, table, pk strin
 }
 
 // TestSuiteDDBParallelScanDisjoint (B1) proves a parallel scan partitions the
-// table: the union of all TotalSegments segments covers every item exactly once
-// — no duplicate, no skip — where the old whole-table-per-segment behavior would
-// have returned every item in every segment.
+// table: the union of all TotalSegments segments covers every item once, with no
+// duplicate and no skip. The old whole-table-per-segment behavior returned every
+// item in every segment.
 func TestSuiteDDBParallelScanDisjoint(t *testing.T) {
 	t.Parallel()
 
@@ -107,7 +107,7 @@ func TestSuiteDDBParallelScanValidation(t *testing.T) {
 }
 
 // TestSuiteDDBSelectCountEmptyItems (B2) proves Select=COUNT returns the counts
-// only, with an empty Items array, on both Scan and Query — where the old
+// only, with an empty Items array, on both Scan and Query. The old
 // behavior returned the full items.
 func TestSuiteDDBSelectCountEmptyItems(t *testing.T) {
 	t.Parallel()
@@ -175,7 +175,7 @@ func TestSuiteDDBSelectProjectionConflict(t *testing.T) {
 
 // TestSuiteDDBNumericKeyIdentity (B3) proves a Number key compares numerically:
 // putting "100" then "100.0" writes ONE item (the second overwrites the first),
-// and GetItem "100" resolves that canonical item — where the old raw-string key
+// and GetItem "100" resolves that canonical item. The old raw-string key
 // stored two distinct items.
 func TestSuiteDDBNumericKeyIdentity(t *testing.T) {
 	t.Parallel()
@@ -215,8 +215,8 @@ func TestSuiteDDBNumericKeyIdentity(t *testing.T) {
 
 // TestSuiteDDBTransactIdempotencyToken (B4) proves TransactWriteItems is
 // idempotent under a reused ClientRequestToken: an ADD counter transaction
-// replayed three times with the same token increments the counter ONCE — where
-// the old behavior re-applied every replay (counter = 3).
+// replayed three times with the same token increments the counter ONCE. The
+// old behavior re-applied every replay (counter = 3).
 func TestSuiteDDBTransactIdempotencyToken(t *testing.T) {
 	t.Parallel()
 

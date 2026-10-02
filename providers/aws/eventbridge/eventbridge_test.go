@@ -562,7 +562,7 @@ func TestPutEvents(t *testing.T) {
 
 	t.Run("byte-identical events in one call get unique ids", func(t *testing.T) {
 		// Under the deterministic FakeClock the timestamp is identical, so the
-		// batch index must keep the ids distinct — real EventBridge never
+		// batch index must keep the ids distinct. Real EventBridge never
 		// repeats an EventId, and consumers use it as an idempotency key.
 		result, err := m.PutEvents(ctx, []driver.Event{
 			{Source: "dup.app", DetailType: "Same", Detail: `{"k":"v"}`},
@@ -571,6 +571,8 @@ func TestPutEvents(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result.EventIDs, 2)
 		assert.NotEqual(t, result.EventIDs[0], result.EventIDs[1], "identical events must get distinct EventIds")
+		// AWS event ids are UUIDs.
+		assert.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`, result.EventIDs[0])
 	})
 }
 

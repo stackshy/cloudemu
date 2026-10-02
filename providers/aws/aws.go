@@ -84,8 +84,9 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
-// eksClusters is the slice of the EKS mock that discovery reads — an interface
-// so the vanished-cluster (NotFound) skip can be tested with a fake.
+// eksClusters is the slice of the EKS mock that discovery reads. It's typed as
+// an interface so the vanished-cluster (NotFound) skip can be tested with a
+// fake.
 type eksClusters interface {
 	ListClusters(ctx context.Context) ([]string, error)
 	DescribeCluster(ctx context.Context, name string) (*eksdriver.Cluster, error)
@@ -95,7 +96,7 @@ type eksClusters interface {
 // eksDiscovery adapts the EKS mock to the resourcediscovery KubernetesClusters
 // capability, so EKS clusters and their node groups surface in Resource
 // Explorer. Kept in the provider package (not services/) to avoid inverting
-// the layering — the discovery engine stays free of provider imports.
+// the layering. The discovery engine stays free of provider imports.
 type eksDiscovery struct{ m eksClusters }
 
 func (a eksDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery.DiscoveredCluster, error) {
@@ -109,7 +110,7 @@ func (a eksDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery
 	for _, name := range names {
 		// Discovery is a shared, polled surface, so a DeleteCluster can race
 		// between ListClusters and these per-cluster reads. A vanished cluster
-		// (NotFound) is correct to omit — skip it rather than fail the whole
+		// (NotFound) is correct to omit. Skip it rather than fail the whole
 		// walk, which engine.List would propagate into every provider's
 		// inventory. Any other error is real and propagates.
 		c, err := a.m.DescribeCluster(ctx, name)
@@ -246,7 +247,7 @@ type Provider struct {
 	engineClosers []io.Closer
 }
 
-// GlobalServices is the bundle of AWS services whose state is global — a single
+// GlobalServices is the bundle of AWS services whose state is global: a single
 // shared instance across every region rather than one per region. Real AWS
 // isolates regional services (EC2, DynamoDB, SQS, …) per region but serves these
 // from one global data plane: IAM users/roles, Route 53 hosted zones, CloudFront
@@ -255,8 +256,8 @@ type Provider struct {
 //
 // The multi-region region mux builds a fresh regional Provider per region but
 // injects one shared GlobalServices into all of them (see NewRegional), so a
-// cross-service wire from a regional service to a global one — e.g.
-// EC2.SetInstanceProfileResolver(IAM) — resolves to the shared instance.
+// cross-service wire from a regional service to a global one (e.g.
+// EC2.SetInstanceProfileResolver(IAM)) resolves to the shared instance.
 //
 // S3 itself is REGIONAL (each region owns its bucket data plane so notifications
 // and metrics wire to that region's SQS/SNS/Lambda/CloudWatch); only its NAME
@@ -418,12 +419,17 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	p.ECR.SetMonitoring(p.CloudWatch)
 	p.EventBridge.SetMonitoring(p.CloudWatch)
 	p.RDS.SetMonitoring(p.CloudWatch)
+	p.Kinesis.SetMonitoring(p.CloudWatch)
+	p.SFN.SetMonitoring(p.CloudWatch)
+	p.APIGateway.SetMonitoring(p.CloudWatch)
+	p.Athena.SetMonitoring(p.CloudWatch)
+	p.Athena.SetCatalog(p.Glue)
 	p.RDS.SetSubnetResolver(p.VPC)
 	p.ElastiCache.SetSubnetResolver(p.VPC)
 	p.EC2.SetSubnetResolver(p.VPC)
 	// RunInstances materializes the instance's primary (eth0) ENI in the VPC, and
-	// TerminateInstances releases it — so a running instance's interface blocks
-	// DeleteSubnet / DeleteSecurityGroup the way real EC2 does.
+	// TerminateInstances releases it. That's why a running instance's interface
+	// blocks DeleteSubnet / DeleteSecurityGroup the way real EC2 does.
 	p.EC2.SetNetworking(p.VPC)
 	// A load balancer's VpcId is derived from its subnets, matching ELBv2.
 	p.ELB.SetSubnetResolver(p.VPC)
@@ -441,6 +447,8 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	p.SecretsManager.SetKMSCrypto(kmsCrypto)
 	p.SSM.SetKMSCrypto(kmsCrypto)
 	p.SSM.SetInstanceResolver(p.EC2)
+	// Run Command writes invocation output to the command's OutputS3BucketName.
+	p.SSM.SetOutputStore(p.S3)
 	// ECS-registered container instances surface as managed EC2 instances, so
 	// #159 (ECS) composes with #300 (EC2 managed-resource visibility).
 	p.ECS.SetManagedInstanceLauncher(p.EC2)
@@ -456,6 +464,8 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	// A Redshift cluster subnet group derives its VpcId and per-subnet AZs from
 	// the member subnets, matching RDS/ElastiCache DB subnet groups.
 	p.Redshift.SetSubnetResolver(p.VPC)
+	// A Redshift event subscription checks that its SNS topic exists.
+	p.Redshift.SetTopicLookup(p.SNS)
 	p.EKS.SetMonitoring(p.CloudWatch)
 	// An EKS cluster's resourcesVpcConfig.vpcId is derived from its subnets,
 	// matching real EKS (which auto-creates the cluster SG and infers the VPC).
@@ -475,13 +485,14 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	// is bounded by the shared InvokeExternal recursion guard.
 	p.Lambda.SetAsyncDestinationTargets(p.SQS, p.SNS)
 	// EventBridge -> targets: matched rules deliver events to their first-class
-	// target types — SQS queues, Lambda functions (ASYNC), SNS topics, and Step
+	// target types: SQS queues, Lambda functions (ASYNC), SNS topics, and Step
 	// Functions state machines (ASYNC). Lambda reuses the shared InvokeExternal
 	// choke point so its recursion guard bounds re-entrant event loops.
 	p.EventBridge.SetSQSDeliverer(p.SQS)
 	p.EventBridge.SetLambdaInvoker(p.Lambda)
 	p.EventBridge.SetSNSPublisher(p.SNS)
 	p.EventBridge.SetStepFunctionsStarter(p.SFN)
+	wireLifecycleEvents(p)
 	// Step Functions -> Lambda: a Task state (arn:aws:states:::lambda:invoke or a
 	// bare Lambda function ARN) invokes the function synchronously through the
 	// recursion-guarded InvokeSync seam, so a Task->Lambda->StartExecution->Task
@@ -532,6 +543,26 @@ func wirePostBuildServices(o *config.Options, p *Provider) {
 	// live mocks rather than a store of its own.
 	p.CloudFormation = cloudformation.New(o)
 	p.CloudFormation.SetRegistry(cloudformationRegistry(p))
+	p.CloudFormation.SetTemplateFetcher(cloudformationTemplateFetcher(p))
+	p.CloudFormation.SetParameterReader(cloudformationParameterReader(p))
+}
+
+// wireLifecycleEvents points each service's native lifecycle events at the
+// default EventBridge bus, the way real AWS services publish them to the
+// account's default bus automatically (EC2 instance state changes, ECS task
+// state changes, Step Functions execution status changes, ...). A rule on the
+// default bus matching the real event pattern then fires in cloudemu too.
+//
+// EKS is deliberately absent: real EKS publishes no native cluster/nodegroup
+// status events to EventBridge (only CloudTrail API-call events).
+func wireLifecycleEvents(p *Provider) {
+	p.EC2.SetEventPublisher(p.EventBridge)
+	p.ECS.SetEventPublisher(p.EventBridge)
+	p.SFN.SetEventPublisher(p.EventBridge)
+	p.ECR.SetEventPublisher(p.EventBridge)
+	p.SSM.SetEventPublisher(p.EventBridge)
+	p.Glue.SetEventPublisher(p.EventBridge)
+	p.CloudWatch.SetEventPublisher(p.EventBridge)
 }
 
 // awsDrivers assembles the resource-discovery driver set from the provider's
@@ -567,9 +598,16 @@ func awsDrivers(p *Provider) *resourcediscovery.Drivers {
 	}
 }
 
+// Tickables returns the regional services that do time-driven work. The serve
+// background ticker calls each one on its interval. New time-driven services
+// register here.
+func (p *Provider) Tickables() []config.Tickable {
+	return []config.Tickable{p.CloudWatch, p.SSM}
+}
+
 // Close tears down any real engines wired into the provider via
 // config.With<X>Engine, stopping the Docker containers or subprocesses they
-// own. It is a no-op when no engine is wired — the in-memory default — and is
+// own. It is a no-op when no engine is wired (the in-memory default) and is
 // safe to call more than once, since engine Close is idempotent.
 func (p *Provider) Close() error {
 	var errs []error
@@ -587,7 +625,7 @@ func (p *Provider) Close() error {
 // preserving snapshotting, keyed by a stable lowercased field-name service key
 // (e.g. "s3", "dynamodb", "ec2"). persist iterates this map, so the persisted
 // surface automatically tracks whichever services implement
-// snapshot.Snapshottable — no hand-kept registry to drift.
+// snapshot.Snapshottable. No hand-kept registry to drift.
 func (p *Provider) SnapshotServices() map[string]snapshot.Snapshottable {
 	return snapshot.Discover(p)
 }
@@ -595,7 +633,7 @@ func (p *Provider) SnapshotServices() map[string]snapshot.Snapshottable {
 // globalSnapshotKeys are the lowercased field names of the services whose state
 // is global (shared across regions). persist captures these once under the "aws"
 // key; everything else is captured per region under "aws@<region>". S3 is NOT
-// here — it is regional (only its name namespace is global, and that is rebuilt
+// here. It is regional (only its name namespace is global, and that is rebuilt
 // from restored buckets, not snapshotted).
 //
 //nolint:gochecknoglobals // an immutable classification set, the multi-region counterpart of the field map.

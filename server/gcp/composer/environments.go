@@ -8,6 +8,7 @@ import (
 
 	composer "google.golang.org/api/composer/v1"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	cdriver "github.com/stackshy/cloudemu/v2/services/composer/driver"
 )
@@ -37,9 +38,17 @@ type rawEnvelope struct {
 // composer.Environment (for the modeled fields) and as a rawEnvelope (for the
 // verbatim config passthrough and the name).
 func decodeEnvironment(w http.ResponseWriter, r *http.Request) (composer.Environment, rawEnvelope, bool) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
+	in, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
 	if err != nil {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "reading request body: "+err.Error())
+		return composer.Environment{}, rawEnvelope{}, false
+	}
+
+	// The gapic REST client sends enums as numbers; the typed decode and the
+	// config passthrough both need the value names.
+	body, err := gcpenum.Normalize(in, environmentEnums)
+	if err != nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
 		return composer.Environment{}, rawEnvelope{}, false
 	}
 
@@ -60,7 +69,7 @@ func decodeEnvironment(w http.ResponseWriter, r *http.Request) (composer.Environ
 	return typed, raw, true
 }
 
-// createEnvironment handles POST .../environments — Create. The environmentId is
+// createEnvironment handles POST .../environments: Create. The environmentId is
 // the trailing segment of the body's environment.name (Composer has no id query
 // param); the operation completes inline, so a done=true Operation carrying the
 // new environment is returned.
@@ -94,7 +103,7 @@ func (h *Handler) createEnvironment(w http.ResponseWriter, r *http.Request, rt r
 	h.writeEnvOperation(w, op, env)
 }
 
-// getEnvironment handles GET .../environments/{e} — Get.
+// getEnvironment handles GET .../environments/{e}: Get.
 func (h *Handler) getEnvironment(w http.ResponseWriter, r *http.Request, rt route) {
 	env, err := h.db.GetEnvironment(r.Context(), rt.project, rt.location, rt.name)
 	if err != nil {
@@ -105,7 +114,7 @@ func (h *Handler) getEnvironment(w http.ResponseWriter, r *http.Request, rt rout
 	writeEnvironment(w, env)
 }
 
-// listEnvironments handles GET .../environments — List, scoped to the request's
+// listEnvironments handles GET .../environments: List, scoped to the request's
 // project+location and ordered by resource name.
 func (h *Handler) listEnvironments(w http.ResponseWriter, r *http.Request, rt route) {
 	envs, err := h.db.ListEnvironments(r.Context(), rt.project, rt.location)
@@ -129,7 +138,7 @@ func (h *Handler) listEnvironments(w http.ResponseWriter, r *http.Request, rt ro
 	gcprest.WriteJSON(w, http.StatusOK, map[string]any{"environments": items})
 }
 
-// patchEnvironment handles PATCH .../environments/{e}?updateMask=... — Update.
+// patchEnvironment handles PATCH .../environments/{e}?updateMask=...: Update.
 // Only the masked fields mutate; a field outside the mask is left untouched.
 func (h *Handler) patchEnvironment(w http.ResponseWriter, r *http.Request, rt route) {
 	typed, raw, ok := decodeEnvironment(w, r)
@@ -149,7 +158,7 @@ func (h *Handler) patchEnvironment(w http.ResponseWriter, r *http.Request, rt ro
 	h.writeEnvOperation(w, op, env)
 }
 
-// deleteEnvironment handles DELETE .../environments/{e} — Delete. The operation
+// deleteEnvironment handles DELETE .../environments/{e}: Delete. The operation
 // completes inline, so a done=true Operation with no response is returned.
 func (h *Handler) deleteEnvironment(w http.ResponseWriter, r *http.Request, rt route) {
 	op, err := h.db.DeleteEnvironment(r.Context(), rt.project, rt.location, rt.name)
@@ -158,7 +167,7 @@ func (h *Handler) deleteEnvironment(w http.ResponseWriter, r *http.Request, rt r
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(op.Name, nil))
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(op.Name, emptyResponse))
 }
 
 // writeEnvironment renders a driver environment as composer/v1 wire JSON.
@@ -197,10 +206,14 @@ func (h *Handler) doneOperation(name string, resp json.RawMessage) operationJSON
 }
 
 // operationResponse re-fetches the environment an operation acted on so a
-// standalone poll can replay it. A delete operation (or an environment since
-// removed) yields nil.
+// standalone poll can replay it. A delete operation yields
+// google.protobuf.Empty; an environment since removed yields nil.
 func (h *Handler) operationResponse(r *http.Request, op *cdriver.Operation) json.RawMessage {
-	if op.Type == "delete" || op.TargetName == "" {
+	if op.Type == "delete" {
+		return emptyResponse
+	}
+
+	if op.TargetName == "" {
 		return nil
 	}
 

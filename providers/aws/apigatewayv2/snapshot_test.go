@@ -58,3 +58,50 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 		t.Fatalf("restored GetStage: %v, %+v", err, gotSt)
 	}
 }
+
+func TestSnapshotRestoreKeepsDeploymentsAndTags(t *testing.T) {
+	src := newMock(t)
+
+	api, err := src.CreateAPI(ctx(), &driver.CreateAPIInput{
+		Name: "q", ProtocolType: driver.ProtocolHTTP, Target: "https://example.com",
+	})
+	if err != nil {
+		t.Fatalf("CreateAPI: %v", err)
+	}
+
+	stageARN := "arn:aws:apigateway:us-east-1::/apis/" + api.APIID + "/stages/$default"
+	if err := src.TagResource(ctx(), stageARN, map[string]string{"k": "v"}); err != nil {
+		t.Fatalf("TagResource: %v", err)
+	}
+
+	st, _ := src.GetStage(ctx(), api.APIID, "$default")
+
+	data, err := src.Snapshot(ctx(), false)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	dst := newMock(t)
+	if err := dst.Restore(ctx(), data); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	d, err := dst.GetDeployment(ctx(), api.APIID, st.DeploymentID)
+	if err != nil || !d.AutoDeployed {
+		t.Fatalf("restored deployment: %v, %+v", err, d)
+	}
+
+	if err := dst.DeleteDeployment(ctx(), api.APIID, st.DeploymentID); err == nil {
+		t.Fatalf("restored active deployment was deletable")
+	}
+
+	tags, err := dst.GetTags(ctx(), stageARN)
+	if err != nil || tags["k"] != "v" {
+		t.Fatalf("restored stage tags: %v, %v", err, tags)
+	}
+
+	gotSt, _ := dst.GetStage(ctx(), api.APIID, "$default")
+	if !gotSt.APIGatewayManaged {
+		t.Fatalf("restored stage lost apiGatewayManaged: %+v", gotSt)
+	}
+}

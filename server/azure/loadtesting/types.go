@@ -76,7 +76,7 @@ type propertiesResponse struct {
 	Encryption        *encryptionWire `json:"encryption,omitempty"`
 }
 
-// listResponse is the ARM list envelope. nextLink is omitted — the emulator
+// listResponse is the ARM list envelope. nextLink is omitted: the emulator
 // returns a single page.
 type listResponse struct {
 	Value []loadTestResponse `json:"value"`

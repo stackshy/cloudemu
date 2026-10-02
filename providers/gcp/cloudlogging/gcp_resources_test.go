@@ -43,7 +43,7 @@ func TestCreateSinkWriterIdentity(t *testing.T) {
 
 // TestUpdateSinkPartialMask guards that a masked update touches only the fields
 // whose Set* flag is set, leaving every other field (including the writer
-// identity) unchanged — the semantics of a Cloud Logging updateMask patch.
+// identity) unchanged, matching the semantics of a Cloud Logging updateMask patch.
 func TestUpdateSinkPartialMask(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

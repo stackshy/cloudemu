@@ -66,7 +66,7 @@ func New(opts *config.Options) *Mock {
 	}
 }
 
-// now returns the current time (via the injectable clock) in RFC 3339 — the
+// now returns the current time (via the injectable clock) in RFC 3339, the
 // wire format the VPC Lattice REST-JSON deserializers parse for timestamps.
 func (m *Mock) now() string {
 	return m.opts.Clock.Now().UTC().Format(time.RFC3339)
@@ -103,7 +103,7 @@ func idFromIdentifier(identifier string) string {
 }
 
 // sortedValues returns a store's values sorted by key, each deep-copied via
-// clone — the shared List implementation for every resource group.
+// clone, the shared List implementation for every resource group.
 func sortedValues[T any](all map[string]*T, clone func(*T) T) []T {
 	ids := make([]string, 0, len(all))
 	for id := range all {

@@ -22,7 +22,7 @@ const (
 	// StrategyOnShutdown keeps the historical behavior: save only on graceful
 	// shutdown.
 	StrategyOnShutdown = "on-shutdown"
-	// StrategyManual never saves automatically — only the admin snapshot
+	// StrategyManual never saves automatically; only the admin snapshot
 	// endpoint does. It does NOT save on shutdown either.
 	StrategyManual = "manual"
 
@@ -57,7 +57,7 @@ type flusher struct {
 	interval time.Duration
 	debounce time.Duration
 	maxWait  time.Duration
-	// includeAssets governs whether object bodies are written on EVERY save —
+	// includeAssets governs whether object bodies are written on EVERY save:
 	// periodic, on-request, and the final shutdown save alike. It is
 	// !PersistMetadataOnly, so the default persists bodies on every save (matching
 	// LocalStack and the "crash-safe" expectation) and --persist-metadata-only is
@@ -118,7 +118,7 @@ func (f *flusher) markDirty() {
 }
 
 // Start launches the background loop for strategies that save while running.
-// on-shutdown and manual have no loop — they act (or don't) only at Stop.
+// on-shutdown and manual have no loop; they act (or don't) only at Stop.
 func (f *flusher) Start() {
 	if f == nil {
 		return

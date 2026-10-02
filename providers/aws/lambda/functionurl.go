@@ -22,8 +22,8 @@ const (
 
 // authTypeAWSIAM is the other AuthType a Function URL config accepts besides
 // defaultAuthType ("NONE"). The wire layer accepts any credentials regardless
-// of AuthType — SigV4/bearer tokens are parsed but never verified, matching
-// the rest of cloudemu — so AWS_IAM is stored and reported faithfully but adds
+// of AuthType. SigV4/bearer tokens are parsed but never verified, matching
+// the rest of cloudemu, so AWS_IAM is stored and reported faithfully but adds
 // no additional enforcement on invoke.
 const authTypeAWSIAM = "AWS_IAM"
 
@@ -34,7 +34,7 @@ const authTypeAWSIAM = "AWS_IAM"
 const invokeModeResponseStream = "RESPONSE_STREAM"
 
 // CreateFunctionURLConfig provisions a Function URL for a function, scoped to
-// $LATEST or an alias qualifier (a numbered version is rejected — see
+// $LATEST or an alias qualifier (a numbered version is rejected: see
 // isVersionQualifier). Only one URL config may exist per (function, qualifier).
 //
 //nolint:gocritic // hugeParam: matches the functionURLManager interface signature.

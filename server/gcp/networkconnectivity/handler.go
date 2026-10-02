@@ -6,17 +6,17 @@
 //
 // Coverage (hub + spoke control plane only):
 //
-//	POST   /v1/…/global/hubs?hubId=              — CreateHub (LRO)
-//	GET    /v1/…/global/hubs                      — ListHubs
-//	GET    /v1/…/global/hubs/{id}                 — GetHub
-//	PATCH  /v1/…/global/hubs/{id}?updateMask=     — PatchHub (LRO)
-//	DELETE /v1/…/global/hubs/{id}                 — DeleteHub (LRO)
-//	POST   /v1/…/{loc}/spokes?spokeId=            — CreateSpoke (LRO)
-//	GET    /v1/…/{loc}/spokes                      — ListSpokes
-//	GET    /v1/…/{loc}/spokes/{id}                 — GetSpoke
-//	PATCH  /v1/…/{loc}/spokes/{id}?updateMask=     — PatchSpoke (LRO)
-//	DELETE /v1/…/{loc}/spokes/{id}                 — DeleteSpoke (LRO)
-//	GET    /v1/…/operations/{op}                   — Operations.Get (shared poller)
+//	POST   /v1/…/global/hubs?hubId=              : CreateHub (LRO)
+//	GET    /v1/…/global/hubs                      : ListHubs
+//	GET    /v1/…/global/hubs/{id}                 : GetHub
+//	PATCH  /v1/…/global/hubs/{id}?updateMask=     : PatchHub (LRO)
+//	DELETE /v1/…/global/hubs/{id}                 : DeleteHub (LRO)
+//	POST   /v1/…/{loc}/spokes?spokeId=            : CreateSpoke (LRO)
+//	GET    /v1/…/{loc}/spokes                      : ListSpokes
+//	GET    /v1/…/{loc}/spokes/{id}                 : GetSpoke
+//	PATCH  /v1/…/{loc}/spokes/{id}?updateMask=     : PatchSpoke (LRO)
+//	DELETE /v1/…/{loc}/spokes/{id}                 : DeleteSpoke (LRO)
+//	GET    /v1/…/operations/{op}                   : Operations.Get (shared poller)
 //
 // Hubs are global (location "global"); spokes are regional. Both share the same
 // /v1/projects/{p}/locations/{l}/{collection} path shape, so a single route
@@ -25,7 +25,7 @@
 // Terraform LRO wait terminates on the first poll instead of hanging.
 //
 // Location-scoped operations live under /v1/projects/{p}/locations/{l}/
-// operations — the SAME space the shared GCP LRO poller owns. Matches returns
+// operations, the same space the shared GCP LRO poller owns. Matches returns
 // false for operation paths when a shared registry is wired, letting that poller
 // win; a standalone package server (no registry) serves its own polls. The
 // hubs/spokes resource-type guard keeps this handler disjoint from every other

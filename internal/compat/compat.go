@@ -6,7 +6,7 @@
 // (internal/compatgen) joins those results against docs/coverage/coverage.json
 // to render the published compatibility matrix.
 //
-// Results are persisted only when EnvOut names a directory — that is, when the
+// Results are persisted only when EnvOut names a directory, i.e. when the
 // generator drives the run. A plain `go test ./compat/...` leaves EnvOut unset,
 // so the suite simply asserts (and still fails on any incompatibility).
 package compat
@@ -63,7 +63,7 @@ type Session struct {
 }
 
 // Op runs one real SDK call and records whether it succeeded for the given
-// portable (service, operation) — the same identity used in coverage.json.
+// portable (service, operation), the same identity used in coverage.json.
 // A failure records a red cell and fails the test, so the suite doubles as a
 // regression net.
 func (s *Session) Op(service, operation string, fn func() error) {

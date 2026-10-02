@@ -194,8 +194,8 @@ func (m *Mock) updateInstanceLocked(name string, cfg btdriver.UpdateInstanceConf
 
 // applyInstanceUpdate mutates inst per cfg. With no field mask it uses presence
 // heuristics (a non-empty value replaces, an empty one is kept), preserving the
-// pre-mask semantics. With a mask it writes only the masked fields — even to an
-// empty value, which clears them — and preserves every unmasked field.
+// pre-mask semantics. With a mask it writes only the masked fields, even to an
+// empty value (which clears them), and preserves every unmasked field.
 func applyInstanceUpdate(inst *btdriver.Instance, cfg btdriver.UpdateInstanceConfig) {
 	if cfg.UpdateMask == nil {
 		inst.DisplayName = orKeep(cfg.DisplayName, inst.DisplayName)
@@ -311,7 +311,7 @@ func (m *Mock) GetOperation(_ context.Context, name string) (*btdriver.Operation
 
 	op, ok := m.operations.Get(name)
 	if !ok {
-		// Unknown operations are reported as done — the mock completes
+		// Unknown operations are reported as done: the mock completes
 		// synchronously, so any op id the SDK polls has already finished.
 		return &btdriver.Operation{Name: name, Done: true}, nil
 	}

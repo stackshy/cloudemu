@@ -26,7 +26,7 @@ type vmRequest struct {
 }
 
 // plan is the ARM VirtualMachine.plan block (armcompute.Plan): the marketplace
-// image's purchase plan — its offer name, publisher, product, and optional
+// image's purchase plan: its offer name, publisher, product, and optional
 // promotion code.
 type plan struct {
 	Name          string `json:"name,omitempty"`
@@ -146,7 +146,7 @@ type osProfile struct {
 	ComputerName  string `json:"computerName,omitempty"`
 	AdminUsername string `json:"adminUsername,omitempty"`
 	// CustomData is the base64-encoded cloud-init/boot script Azure runs on
-	// first boot — the customData field of the ARM osProfile. It maps to the
+	// first boot: the customData field of the ARM osProfile. It maps to the
 	// driver's InstanceConfig.UserData (base64-decoded) so a real compute engine
 	// runs it as the boot script.
 	CustomData string `json:"customData,omitempty"`

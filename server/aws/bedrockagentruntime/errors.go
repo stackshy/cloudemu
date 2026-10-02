@@ -29,21 +29,21 @@ func writeError(w http.ResponseWriter, status int, errType, msg string) {
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "ResourceNotFoundException", err.Error())
+		writeError(w, http.StatusNotFound, "ResourceNotFoundException", cerrors.Message(err))
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "ConflictException", err.Error())
+		writeError(w, http.StatusConflict, "ConflictException", cerrors.Message(err))
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		writeError(w, http.StatusBadRequest, "ValidationException", cerrors.Message(err))
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusBadRequest, "ValidationException", err.Error())
+		writeError(w, http.StatusBadRequest, "ValidationException", cerrors.Message(err))
 	case cerrors.IsThrottled(err):
-		writeError(w, http.StatusTooManyRequests, "ThrottlingException", err.Error())
+		writeError(w, http.StatusTooManyRequests, "ThrottlingException", cerrors.Message(err))
 	case cerrors.IsPermissionDenied(err):
-		writeError(w, http.StatusForbidden, "AccessDeniedException", err.Error())
+		writeError(w, http.StatusForbidden, "AccessDeniedException", cerrors.Message(err))
 	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
-		writeError(w, http.StatusBadRequest, "ServiceQuotaExceededException", err.Error())
+		writeError(w, http.StatusBadRequest, "ServiceQuotaExceededException", cerrors.Message(err))
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalServerException", err.Error())
+		writeError(w, http.StatusInternalServerError, "InternalServerException", cerrors.Message(err))
 	}
 }
 

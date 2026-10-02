@@ -15,7 +15,7 @@ import (
 // storageQueueDestinationJSON builds the raw ARM EventSubscription properties
 // for a StorageQueue destination (armeventgrid
 // StorageQueueEventSubscriptionDestinationProperties: resourceId is the
-// storage account, queueName is the queue under it — distinct fields, unlike
+// storage account, queueName is the queue under it, distinct fields, unlike
 // ServiceBusQueue/Topic's single resourceId).
 func storageQueueDestinationJSON(storageAccountResourceID, queueName, subjectBeginsWith string) string {
 	props := map[string]any{

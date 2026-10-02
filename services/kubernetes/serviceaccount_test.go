@@ -66,7 +66,7 @@ func TestServiceAccount_LifecycleAndPatch(t *testing.T) {
 
 	resp.Body.Close()
 
-	// List in namespace — should include "default" and "deployer".
+	// List in namespace: should include "default" and "deployer".
 	resp = do(t, http.MethodGet, base+"/api/v1/namespaces/default/serviceaccounts", nil)
 	var list corev1.ServiceAccountList
 	mustDecode(t, resp.Body, &list)
@@ -153,7 +153,7 @@ func TestServiceAccount_ErrorPaths(t *testing.T) {
 
 	resp.Body.Close()
 
-	// Duplicate — "default" already exists in "default" namespace.
+	// Duplicate: "default" already exists in "default" namespace.
 	resp = do(t, http.MethodPost, base+"/api/v1/namespaces/default/serviceaccounts",
 		mustJSON(t, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "default"}}))
 	if resp.StatusCode != http.StatusConflict {

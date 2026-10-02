@@ -14,7 +14,7 @@ import (
 
 // TestSDKGetDeleteMarkerVersion verifies that a version-addressed GET/HEAD of a
 // delete marker returns 405 MethodNotAllowed with x-amz-delete-marker: true,
-// not 404 — a delete marker has no retrievable content.
+// not 404, because a delete marker has no retrievable content.
 func TestSDKGetDeleteMarkerVersion(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()

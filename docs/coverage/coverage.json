@@ -183,6 +183,9 @@
         "name": "ListMaintenanceConfigs"
       },
       {
+        "name": "PurgeResourceGroup"
+      },
+      {
         "name": "RotateClusterCertificates"
       },
       {
@@ -270,6 +273,13 @@
         "name": "CreateDeployment"
       },
       {
+        "name": "CreateDocumentationPart"
+      },
+      {
+        "name": "CreateDocumentationVersion",
+        "doc": "CreateDocumentationVersion snapshots the API's current documentation"
+      },
+      {
         "name": "CreateResource"
       },
       {
@@ -279,8 +289,19 @@
         "name": "CreateStage"
       },
       {
+        "name": "DeleteClientCertificate",
+        "doc": "DeleteClientCertificate removes a certificate. It fails while a stage"
+      },
+      {
         "name": "DeleteDeployment",
         "doc": "DeleteDeployment removes a deployment. It fails with a FailedPrecondition"
+      },
+      {
+        "name": "DeleteDocumentationPart"
+      },
+      {
+        "name": "DeleteDocumentationVersion",
+        "doc": "DeleteDocumentationVersion removes a version. It fails while a stage"
       },
       {
         "name": "DeleteIntegration"
@@ -299,10 +320,35 @@
         "name": "DeleteStage"
       },
       {
+        "name": "GenerateClientCertificate",
+        "doc": "GenerateClientCertificate creates a self-signed client certificate valid"
+      },
+      {
+        "name": "GetAccount"
+      },
+      {
+        "name": "GetClientCertificate"
+      },
+      {
+        "name": "GetClientCertificates"
+      },
+      {
         "name": "GetDeployment"
       },
       {
         "name": "GetDeployments"
+      },
+      {
+        "name": "GetDocumentationPart"
+      },
+      {
+        "name": "GetDocumentationParts"
+      },
+      {
+        "name": "GetDocumentationVersion"
+      },
+      {
+        "name": "GetDocumentationVersions"
       },
       {
         "name": "GetIntegration"
@@ -329,8 +375,14 @@
         "name": "GetStages"
       },
       {
+        "name": "GetTags"
+      },
+      {
+        "name": "ImportDocumentationParts"
+      },
+      {
         "name": "InvokeRoute",
-        "doc": "InvokeRoute resolves req.HTTPMethod+req.Path against the deployed stage's"
+        "doc": "InvokeRoute routes req through the tree its stage's deployment captured."
       },
       {
         "name": "PutIntegration"
@@ -339,8 +391,31 @@
         "name": "PutMethod"
       },
       {
+        "name": "TagResource",
+        "doc": "TagResource, UntagResource and GetTags manage tags on a REST API or client"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateAccount",
+        "doc": "UpdateAccount applies a patchOperations document (/cloudwatchRoleArn"
+      },
+      {
+        "name": "UpdateClientCertificate",
+        "doc": "UpdateClientCertificate applies a patchOperations document (only"
+      },
+      {
         "name": "UpdateDeployment",
         "doc": "UpdateDeployment applies a patchOperations document to a deployment"
+      },
+      {
+        "name": "UpdateDocumentationPart",
+        "doc": "UpdateDocumentationPart applies a patchOperations document (only"
+      },
+      {
+        "name": "UpdateDocumentationVersion",
+        "doc": "UpdateDocumentationVersion applies a patchOperations document (only"
       },
       {
         "name": "UpdateIntegration",
@@ -433,6 +508,9 @@
         "name": "CreateAPI"
       },
       {
+        "name": "CreateDeployment"
+      },
+      {
         "name": "CreateIntegration"
       },
       {
@@ -443,6 +521,9 @@
       },
       {
         "name": "DeleteAPI"
+      },
+      {
+        "name": "DeleteDeployment"
       },
       {
         "name": "DeleteIntegration"
@@ -458,6 +539,12 @@
       },
       {
         "name": "GetAPIs"
+      },
+      {
+        "name": "GetDeployment"
+      },
+      {
+        "name": "GetDeployments"
       },
       {
         "name": "GetIntegration"
@@ -478,7 +565,19 @@
         "name": "GetStages"
       },
       {
+        "name": "GetTags"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
         "name": "UpdateAPI"
+      },
+      {
+        "name": "UpdateDeployment"
       },
       {
         "name": "UpdateIntegration"
@@ -492,6 +591,105 @@
     ],
     "providers": {
       "aws": "APIGatewayV2"
+    }
+  },
+  {
+    "service": "apimanagement",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CheckNameAvailability"
+      },
+      {
+        "name": "CreateOrUpdateService"
+      },
+      {
+        "name": "DelegationValidationKey"
+      },
+      {
+        "name": "DeleteAPI"
+      },
+      {
+        "name": "DeletePolicy"
+      },
+      {
+        "name": "DeleteProduct"
+      },
+      {
+        "name": "DeleteService"
+      },
+      {
+        "name": "DeleteServiceIfMatch"
+      },
+      {
+        "name": "DiscoverServices"
+      },
+      {
+        "name": "Endpoints"
+      },
+      {
+        "name": "GetAPI"
+      },
+      {
+        "name": "GetDeletedService"
+      },
+      {
+        "name": "GetPolicy"
+      },
+      {
+        "name": "GetPortalSetting"
+      },
+      {
+        "name": "GetProduct"
+      },
+      {
+        "name": "GetService"
+      },
+      {
+        "name": "GetTenantAccess"
+      },
+      {
+        "name": "ListAPIs"
+      },
+      {
+        "name": "ListDeletedServices"
+      },
+      {
+        "name": "ListProducts"
+      },
+      {
+        "name": "ListServicesByResourceGroup"
+      },
+      {
+        "name": "ListServicesBySubscription"
+      },
+      {
+        "name": "PurgeDeletedService"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "PutPolicy"
+      },
+      {
+        "name": "PutPortalSetting"
+      },
+      {
+        "name": "RegionalGatewayURL"
+      },
+      {
+        "name": "UpdateService"
+      },
+      {
+        "name": "UpdateTenantAccess"
+      }
+    ],
+    "providers": {
+      "azure": "APIManagement"
     }
   },
   {
@@ -866,12 +1064,20 @@
     "interface": "Athena",
     "operations": [
       {
+        "name": "CreateDataCatalog",
+        "doc": "CreateDataCatalog registers a LAMBDA, GLUE, HIVE or FEDERATED catalog"
+      },
+      {
         "name": "CreateNamedQuery",
         "doc": "CreateNamedQuery saves a query and returns its generated id. The"
       },
       {
         "name": "CreateWorkGroup",
         "doc": "CreateWorkGroup creates a workgroup, materializing the effective engine"
+      },
+      {
+        "name": "DeleteDataCatalog",
+        "doc": "DeleteDataCatalog removes a catalog and returns it. AwsDataCatalog cannot"
       },
       {
         "name": "DeleteNamedQuery"
@@ -881,7 +1087,8 @@
         "doc": "DeleteWorkGroup removes a workgroup. recursive deletes its named queries"
       },
       {
-        "name": "GetDataCatalog"
+        "name": "GetDataCatalog",
+        "doc": "GetDataCatalog returns a data catalog, or an InvalidRequestException"
       },
       {
         "name": "GetDatabase",
@@ -898,11 +1105,16 @@
         "doc": "GetQueryResults returns the result rows for a SUCCEEDED execution. DDL and"
       },
       {
+        "name": "GetTableMetadata",
+        "doc": "GetTableMetadata returns a table's metadata, or an error tagged"
+      },
+      {
         "name": "GetWorkGroup",
         "doc": "GetWorkGroup returns a deep copy of a workgroup, or an error tagged"
       },
       {
-        "name": "ListDataCatalogs"
+        "name": "ListDataCatalogs",
+        "doc": "ListDataCatalogs lists every catalog, AwsDataCatalog included, by name."
       },
       {
         "name": "ListDatabases"
@@ -914,6 +1126,10 @@
       {
         "name": "ListQueryExecutions",
         "doc": "ListQueryExecutions returns execution ids in the given workgroup"
+      },
+      {
+        "name": "ListTableMetadata",
+        "doc": "ListTableMetadata lists the tables of a database. expression is a regex"
       },
       {
         "name": "ListTagsForResource"
@@ -935,6 +1151,10 @@
       },
       {
         "name": "UntagResource"
+      },
+      {
+        "name": "UpdateDataCatalog",
+        "doc": "UpdateDataCatalog changes a catalog's type, description or parameters."
       },
       {
         "name": "UpdateWorkGroup",
@@ -2052,6 +2272,39 @@
     }
   },
   {
+    "service": "backupdr",
+    "interface": "BackupDR",
+    "operations": [
+      {
+        "name": "CreateBackupVault",
+        "doc": "CreateBackupVault creates a vault; the retention duration is required."
+      },
+      {
+        "name": "DeleteBackupVault",
+        "doc": "DeleteBackupVault deletes a vault, honoring force, allowMissing and etag."
+      },
+      {
+        "name": "GetBackupVault",
+        "doc": "GetBackupVault returns one vault by identity."
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "ListBackupVaults",
+        "doc": "ListBackupVaults lists a project's vaults in a location (\"-\" for every location)."
+      },
+      {
+        "name": "UpdateBackupVault",
+        "doc": "UpdateBackupVault applies a field-masked update and rotates the etag."
+      }
+    ],
+    "providers": {
+      "gcp": "BackupDR"
+    }
+  },
+  {
     "service": "bastion",
     "interface": "BastionHosts",
     "operations": [
@@ -2463,6 +2716,9 @@
         "name": "ListPrompts"
       },
       {
+        "name": "ListTagsForResource"
+      },
+      {
         "name": "PrepareAgent"
       },
       {
@@ -2470,6 +2726,12 @@
       },
       {
         "name": "StartIngestionJob"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
       },
       {
         "name": "UpdateAgent"
@@ -3104,10 +3366,25 @@
     "interface": "provider-native",
     "operations": [
       {
+        "name": "ContinueUpdateRollback"
+      },
+      {
+        "name": "CreateChangeSet"
+      },
+      {
         "name": "CreateStack"
       },
       {
+        "name": "DeleteChangeSet"
+      },
+      {
         "name": "DeleteStack"
+      },
+      {
+        "name": "DescribeAccountLimits"
+      },
+      {
+        "name": "DescribeChangeSet"
       },
       {
         "name": "DescribeStackEvents"
@@ -3119,7 +3396,25 @@
         "name": "DescribeStacks"
       },
       {
+        "name": "EstimateTemplateCost"
+      },
+      {
+        "name": "ExecuteChangeSet"
+      },
+      {
         "name": "GetTemplate"
+      },
+      {
+        "name": "GetTemplateSummary"
+      },
+      {
+        "name": "ListChangeSets"
+      },
+      {
+        "name": "ListExports"
+      },
+      {
+        "name": "ListImports"
       },
       {
         "name": "ListStackResources"
@@ -3129,6 +3424,12 @@
       },
       {
         "name": "UpdateStack"
+      },
+      {
+        "name": "UpdateTerminationProtection"
+      },
+      {
+        "name": "ValidateTemplate"
       }
     ],
     "providers": {
@@ -3145,7 +3446,7 @@
       },
       {
         "name": "CreateInvalidation",
-        "doc": "Invalidations (synchronous — every invalidation is Completed immediately)."
+        "doc": "Invalidations (synchronous: every invalidation is Completed immediately)."
       },
       {
         "name": "DeleteDistribution"
@@ -3214,7 +3515,7 @@
     "operations": [
       {
         "name": "CreateJob",
-        "doc": "CreateJob stores a job spec. It does not run anything — RunJob does."
+        "doc": "CreateJob stores a job spec. It does not run anything; RunJob does."
       },
       {
         "name": "CreateService",
@@ -3690,6 +3991,40 @@
     "interface": "Cognito",
     "operations": [
       {
+        "name": "AddCustomAttributes",
+        "doc": "AddCustomAttributes appends custom attributes to a pool's schema. Names get"
+      },
+      {
+        "name": "AdminCreateUser",
+        "doc": "AdminCreateUser creates a user in FORCE_CHANGE_PASSWORD with a generated"
+      },
+      {
+        "name": "AdminDeleteUser"
+      },
+      {
+        "name": "AdminDeleteUserAttributes"
+      },
+      {
+        "name": "AdminDisableUser"
+      },
+      {
+        "name": "AdminEnableUser"
+      },
+      {
+        "name": "AdminGetUser"
+      },
+      {
+        "name": "AdminResetUserPassword",
+        "doc": "AdminResetUserPassword moves the user to RESET_REQUIRED."
+      },
+      {
+        "name": "AdminSetUserPassword",
+        "doc": "AdminSetUserPassword sets a password checked against the pool policy. A"
+      },
+      {
+        "name": "AdminUpdateUserAttributes"
+      },
+      {
         "name": "CreateUserPool",
         "doc": "CreateUserPool creates a user pool, generating its id and ARN, seeding the"
       },
@@ -3702,7 +4037,7 @@
       },
       {
         "name": "DeleteUserPool",
-        "doc": "DeleteUserPool removes a user pool and its clients, domains, and tags."
+        "doc": "DeleteUserPool removes a user pool with its users, clients and tags. Like"
       },
       {
         "name": "DeleteUserPoolClient"
@@ -3735,6 +4070,10 @@
       {
         "name": "ListUserPools",
         "doc": "ListUserPools returns pool descriptions in a deterministic order."
+      },
+      {
+        "name": "ListUsers",
+        "doc": "ListUsers returns users sorted by username, filtered by an optional"
       },
       {
         "name": "SetUserPoolMfaConfig",
@@ -3992,6 +4331,15 @@
         ]
       },
       {
+        "name": "AzureResourceGroupPurger",
+        "doc": "AzureResourceGroupPurger is an optional Azure-only capability that tears down",
+        "operations": [
+          {
+            "name": "PurgeComputeResourceGroup"
+          }
+        ]
+      },
+      {
         "name": "AzureSSHKeyUpdater",
         "doc": "AzureSSHKeyUpdater is an optional Azure-only capability for the sshPublicKeys",
         "operations": [
@@ -4024,6 +4372,15 @@
           {
             "name": "UpdateInstance",
             "doc": "UpdateInstance overwrites the mutable configuration of an existing"
+          }
+        ]
+      },
+      {
+        "name": "AzureVMDeleter",
+        "doc": "AzureVMDeleter is an optional Azure-only capability that removes VMs",
+        "operations": [
+          {
+            "name": "DeleteInstances"
           }
         ]
       },
@@ -4553,6 +4910,12 @@
         "name": "DeleteApp"
       },
       {
+        "name": "DeleteDaprComponent"
+      },
+      {
+        "name": "DeleteEnvStorage"
+      },
+      {
         "name": "DeleteEnvironment"
       },
       {
@@ -4563,6 +4926,12 @@
       },
       {
         "name": "GetApp"
+      },
+      {
+        "name": "GetDaprComponent"
+      },
+      {
+        "name": "GetEnvStorage"
       },
       {
         "name": "GetEnvironment"
@@ -4577,6 +4946,12 @@
         "name": "ListAppsBySubscription"
       },
       {
+        "name": "ListDaprComponents"
+      },
+      {
+        "name": "ListEnvStorages"
+      },
+      {
         "name": "ListEnvironmentsByResourceGroup"
       },
       {
@@ -4587,6 +4962,12 @@
       },
       {
         "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "PutDaprComponent"
+      },
+      {
+        "name": "PutEnvStorage"
       },
       {
         "name": "RestartRevision"
@@ -5941,6 +6322,9 @@
     "interface": "ECS",
     "operations": [
       {
+        "name": "CreateCapacityProvider"
+      },
+      {
         "name": "CreateCluster"
       },
       {
@@ -5953,6 +6337,9 @@
         "name": "DeleteAttributes"
       },
       {
+        "name": "DeleteCapacityProvider"
+      },
+      {
         "name": "DeleteCluster"
       },
       {
@@ -5963,6 +6350,9 @@
       },
       {
         "name": "DeregisterTaskDefinition"
+      },
+      {
+        "name": "DescribeCapacityProviders"
       },
       {
         "name": "DescribeClusters"
@@ -6038,6 +6428,9 @@
       },
       {
         "name": "UntagResource"
+      },
+      {
+        "name": "UpdateCapacityProvider"
       },
       {
         "name": "UpdateCluster"
@@ -6225,6 +6618,12 @@
     "interface": "provider-native",
     "operations": [
       {
+        "name": "AssociateAccessPolicy"
+      },
+      {
+        "name": "CreateAccessEntry"
+      },
+      {
         "name": "CreateAddon"
       },
       {
@@ -6235,6 +6634,9 @@
       },
       {
         "name": "CreateNodegroup"
+      },
+      {
+        "name": "DeleteAccessEntry"
       },
       {
         "name": "DeleteAddon"
@@ -6249,7 +6651,16 @@
         "name": "DeleteNodegroup"
       },
       {
+        "name": "DescribeAccessEntry"
+      },
+      {
         "name": "DescribeAddon"
+      },
+      {
+        "name": "DescribeAddonConfiguration"
+      },
+      {
+        "name": "DescribeAddonVersions"
       },
       {
         "name": "DescribeCluster"
@@ -6264,13 +6675,25 @@
         "name": "DescribeUpdate"
       },
       {
+        "name": "DisassociateAccessPolicy"
+      },
+      {
         "name": "EKSException"
       },
       {
         "name": "Error"
       },
       {
+        "name": "ListAccessEntries"
+      },
+      {
+        "name": "ListAccessPolicies"
+      },
+      {
         "name": "ListAddons"
+      },
+      {
+        "name": "ListAssociatedAccessPolicies"
       },
       {
         "name": "ListClusters"
@@ -6295,6 +6718,9 @@
       },
       {
         "name": "Unwrap"
+      },
+      {
+        "name": "UpdateAccessEntry"
       },
       {
         "name": "UpdateAddon"
@@ -6381,6 +6807,9 @@
         "name": "DescribeStep"
       },
       {
+        "name": "GetAutoTerminationPolicy"
+      },
+      {
         "name": "ListBootstrapActions"
       },
       {
@@ -6400,6 +6829,12 @@
       },
       {
         "name": "ModifyInstanceGroups"
+      },
+      {
+        "name": "PutAutoTerminationPolicy"
+      },
+      {
+        "name": "RemoveAutoTerminationPolicy"
       },
       {
         "name": "RemoveTags"
@@ -8411,6 +8846,18 @@
         ]
       },
       {
+        "name": "PermissionEvaluator",
+        "doc": "PermissionEvaluator is an optional capability: an IAM implementation that",
+        "operations": [
+          {
+            "name": "EvaluatePermission"
+          },
+          {
+            "name": "EvaluateServiceWide"
+          }
+        ]
+      },
+      {
         "name": "PolicyInspector",
         "doc": "PolicyInspector is an optional capability: an IAM implementation that can",
         "operations": [
@@ -9496,6 +9943,32 @@
         ]
       },
       {
+        "name": "GCPBackendBucketStore",
+        "doc": "GCPBackendBucketStore is an OPTIONAL, type-asserted capability implemented",
+        "operations": [
+          {
+            "name": "DeleteGCPBackendBucket",
+            "doc": "DeleteGCPBackendBucket removes the named backend bucket, returning"
+          },
+          {
+            "name": "GetGCPBackendBucket",
+            "doc": "GetGCPBackendBucket returns the named backend bucket, or NotFound."
+          },
+          {
+            "name": "InsertGCPBackendBucket",
+            "doc": "InsertGCPBackendBucket stores res, returning AlreadyExists when a backend"
+          },
+          {
+            "name": "ListGCPBackendBuckets",
+            "doc": "ListGCPBackendBuckets returns every backend bucket."
+          },
+          {
+            "name": "UpdateGCPBackendBucket",
+            "doc": "UpdateGCPBackendBucket applies mutate to the named backend bucket under"
+          }
+        ]
+      },
+      {
         "name": "GCPBackendServicePatcher",
         "doc": "GCPBackendServicePatcher is an OPTIONAL, type-asserted capability implemented",
         "operations": [
@@ -9528,6 +10001,53 @@
           {
             "name": "UpdateGCPResource",
             "doc": "UpdateGCPResource applies mutate to the stored resource in place under the"
+          }
+        ]
+      },
+      {
+        "name": "GCPForwardingRulePatcher",
+        "doc": "GCPForwardingRulePatcher is an OPTIONAL, type-asserted capability implemented",
+        "operations": [
+          {
+            "name": "PatchGCPForwardingRule"
+          }
+        ]
+      },
+      {
+        "name": "GCPServiceAttachmentStore",
+        "doc": "GCPServiceAttachmentStore is an OPTIONAL, type-asserted capability",
+        "operations": [
+          {
+            "name": "ConnectGCPServiceAttachment",
+            "doc": "ConnectGCPServiceAttachment records a consumer endpoint on the attachment"
+          },
+          {
+            "name": "DeleteGCPServiceAttachment",
+            "doc": "DeleteGCPServiceAttachment removes the attachment, or returns NotFound."
+          },
+          {
+            "name": "DisconnectGCPServiceAttachment",
+            "doc": "DisconnectGCPServiceAttachment removes a consumer endpoint (by"
+          },
+          {
+            "name": "GCPPSCConnectionStatus",
+            "doc": "GCPPSCConnectionStatus returns the current status of a consumer"
+          },
+          {
+            "name": "GetGCPServiceAttachment",
+            "doc": "GetGCPServiceAttachment returns the attachment, or NotFound."
+          },
+          {
+            "name": "InsertGCPServiceAttachment",
+            "doc": "InsertGCPServiceAttachment validates and stores a new attachment,"
+          },
+          {
+            "name": "ListGCPServiceAttachments",
+            "doc": "ListGCPServiceAttachments returns every attachment in a region."
+          },
+          {
+            "name": "UpdateGCPServiceAttachment",
+            "doc": "UpdateGCPServiceAttachment applies mutate under the store lock, keeps the"
           }
         ]
       },
@@ -9886,6 +10406,57 @@
     }
   },
   {
+    "service": "logic",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "Disable"
+      },
+      {
+        "name": "DiscoverWorkflows"
+      },
+      {
+        "name": "Enable"
+      },
+      {
+        "name": "Endpoints"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "ListCallbackURL"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "Update"
+      },
+      {
+        "name": "Version"
+      }
+    ],
+    "providers": {
+      "azure": "Logic"
+    }
+  },
+  {
     "service": "lro",
     "interface": "provider-native",
     "operations": [
@@ -9995,7 +10566,13 @@
         "name": "CreateOrUpdate"
       },
       {
+        "name": "CreateOrUpdateFIC"
+      },
+      {
         "name": "Delete"
+      },
+      {
+        "name": "DeleteFIC"
       },
       {
         "name": "DiscoverIdentities"
@@ -10004,10 +10581,16 @@
         "name": "Get"
       },
       {
+        "name": "GetFIC"
+      },
+      {
         "name": "ListByResourceGroup"
       },
       {
         "name": "ListBySubscription"
+      },
+      {
+        "name": "ListFICs"
       },
       {
         "name": "PurgeResourceGroup"
@@ -10015,6 +10598,52 @@
     ],
     "providers": {
       "azure": "ManagedIdentity"
+    }
+  },
+  {
+    "service": "managedkafka",
+    "interface": "ManagedKafka",
+    "operations": [
+      {
+        "name": "CreateCluster"
+      },
+      {
+        "name": "CreateTopic"
+      },
+      {
+        "name": "DeleteCluster",
+        "doc": "DeleteCluster removes the cluster and every topic under it."
+      },
+      {
+        "name": "DeleteTopic"
+      },
+      {
+        "name": "GetCluster"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation returns an operation this driver created; unknown is NOT_FOUND."
+      },
+      {
+        "name": "GetTopic"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListTopics"
+      },
+      {
+        "name": "UpdateCluster",
+        "doc": "UpdateCluster applies the fields of c named by mask (field-mask paths"
+      },
+      {
+        "name": "UpdateTopic",
+        "doc": "UpdateTopic applies the fields of t named by mask (\"*\" means every mutable"
+      }
+    ],
+    "providers": {
+      "gcp": "ManagedKafka"
     }
   },
   {
@@ -11217,6 +11846,36 @@
         ]
       },
       {
+        "name": "GCPAddressStore",
+        "doc": "GCPAddressStore is the GCP-only reserved-address surface.",
+        "operations": [
+          {
+            "name": "AllocateGCPAddressIP",
+            "doc": "AllocateGCPAddressIP hands out the next IP of the provider's synthetic"
+          },
+          {
+            "name": "DeleteGCPAddress",
+            "doc": "DeleteGCPAddress removes the address, or returns NotFound."
+          },
+          {
+            "name": "GetGCPAddress",
+            "doc": "GetGCPAddress returns the address, or NotFound."
+          },
+          {
+            "name": "InsertGCPAddress",
+            "doc": "InsertGCPAddress stores a new address, returning AlreadyExists when the"
+          },
+          {
+            "name": "ListGCPAddresses",
+            "doc": "ListGCPAddresses returns every address of a project in scope, or in every"
+          },
+          {
+            "name": "SetGCPAddressLabels",
+            "doc": "SetGCPAddressLabels replaces the address's whole label set (an empty set"
+          }
+        ]
+      },
+      {
         "name": "IPAM",
         "doc": "IPAM is an OPTIONAL AWS capability (type-asserted on the vpc driver).",
         "operations": [
@@ -11610,6 +12269,20 @@
         ]
       },
       {
+        "name": "ServicePrefixLists",
+        "doc": "ServicePrefixLists is an OPTIONAL AWS capability (type-asserted). The lists",
+        "operations": [
+          {
+            "name": "DescribeAWSManagedPrefixLists",
+            "doc": "DescribeAWSManagedPrefixLists returns the same lists in the managed prefix"
+          },
+          {
+            "name": "DescribePrefixLists",
+            "doc": "DescribePrefixLists returns the service lists for region, narrowed to ids"
+          }
+        ]
+      },
+      {
         "name": "SubnetAttributes",
         "doc": "SubnetAttributes is an OPTIONAL capability, discovered by type assertion.",
         "operations": [
@@ -11780,6 +12453,15 @@
           },
           {
             "name": "ModifyVPCEndpointServicePermissions"
+          }
+        ]
+      },
+      {
+        "name": "VPCEndpointSetModifier",
+        "doc": "VPCEndpointSetModifier is an OPTIONAL AWS capability (type-asserted). It",
+        "operations": [
+          {
+            "name": "ModifyVPCEndpointSets"
           }
         ]
       },
@@ -12279,14 +12961,98 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "Documents",
+        "doc": "Documents is an OPTIONAL capability, discovered by type assertion. It covers",
+        "operations": [
+          {
+            "name": "CreateDocument"
+          },
+          {
+            "name": "DeleteDocument",
+            "doc": "DeleteDocument removes every version, or only the selected one when ref"
+          },
+          {
+            "name": "DescribeDocument"
+          },
+          {
+            "name": "DescribeDocumentPermission"
+          },
+          {
+            "name": "GetDocument"
+          },
+          {
+            "name": "ListDocumentTags"
+          },
+          {
+            "name": "ListDocumentVersions"
+          },
+          {
+            "name": "ListDocuments",
+            "doc": "ListDocuments returns the default version of every matching document,"
+          },
+          {
+            "name": "ModifyDocumentPermission"
+          },
+          {
+            "name": "TagDocument"
+          },
+          {
+            "name": "UntagDocument"
+          },
+          {
+            "name": "UpdateDocument"
+          },
+          {
+            "name": "UpdateDocumentDefaultVersion"
+          }
+        ]
+      },
+      {
+        "name": "ManagedNodes",
+        "doc": "ManagedNodes is an OPTIONAL capability, discovered by type assertion. Every",
+        "operations": [
+          {
+            "name": "DescribeInstanceInformation"
+          }
+        ]
+      },
+      {
         "name": "RunCommand",
         "doc": "RunCommand is an OPTIONAL capability, discovered by type assertion.",
         "operations": [
           {
-            "name": "GetCommandInvocation"
+            "name": "CancelCommand",
+            "doc": "CancelCommand cancels the command on the given instances, or on all of"
+          },
+          {
+            "name": "GetCommandInvocation",
+            "doc": "GetCommandInvocation reports one instance's run. pluginName selects a"
+          },
+          {
+            "name": "ListCommandInvocations",
+            "doc": "ListCommandInvocations returns the matching invocations, newest command"
+          },
+          {
+            "name": "ListCommands",
+            "doc": "ListCommands returns the matching commands, newest first."
           },
           {
             "name": "SendCommand"
+          }
+        ]
+      },
+      {
+        "name": "ServiceSettings",
+        "doc": "ServiceSettings is an OPTIONAL capability, discovered by type assertion. It",
+        "operations": [
+          {
+            "name": "GetServiceSetting"
+          },
+          {
+            "name": "ResetServiceSetting"
+          },
+          {
+            "name": "UpdateServiceSetting"
           }
         ]
       }
@@ -13039,6 +13805,24 @@
         ]
       },
       {
+        "name": "DatabaseRetentionPolicies",
+        "doc": "DatabaseRetentionPolicies is an OPTIONAL Azure SQL capability, discovered by",
+        "operations": [
+          {
+            "name": "GetLongTermRetention"
+          },
+          {
+            "name": "GetShortTermRetention"
+          },
+          {
+            "name": "SetLongTermRetention"
+          },
+          {
+            "name": "SetShortTermRetention"
+          }
+        ]
+      },
+      {
         "name": "DatabaseUpdater",
         "doc": "DatabaseUpdater is an OPTIONAL capability for updating a logical database's",
         "operations": [
@@ -13339,6 +14123,18 @@
         ]
       },
       {
+        "name": "ServerConnectionPolicies",
+        "doc": "ServerConnectionPolicies is an OPTIONAL Azure SQL capability: a server's",
+        "operations": [
+          {
+            "name": "GetConnectionPolicy"
+          },
+          {
+            "name": "SetConnectionPolicy"
+          }
+        ]
+      },
+      {
         "name": "SslCerts",
         "doc": "SslCerts is an OPTIONAL capability for managing client SSL certificates,",
         "operations": [
@@ -13358,7 +14154,7 @@
       },
       {
         "name": "SubnetGroups",
-        "doc": "SubnetGroups is an OPTIONAL capability. Subnet groups are an AWS concept —",
+        "doc": "SubnetGroups is an OPTIONAL capability. Subnet groups are an AWS concept;",
         "operations": [
           {
             "name": "CreateDBSubnetGroup"
@@ -15113,7 +15909,7 @@
       },
       {
         "name": "KeyVaultVaults",
-        "doc": "KeyVaultVaults is the Azure Key Vault control-plane (ARM) surface —",
+        "doc": "KeyVaultVaults is the Azure Key Vault control-plane (ARM) surface",
         "operations": [
           {
             "name": "CreateOrUpdateVault",
@@ -15130,6 +15926,14 @@
           {
             "name": "ListVaults",
             "doc": "ListVaults returns the vaults visible under the given scope filter (a zero"
+          },
+          {
+            "name": "UpdateVault",
+            "doc": "UpdateVault atomically applies mutate to a copy of the stored vault"
+          },
+          {
+            "name": "UpdateVaultAccessPolicies",
+            "doc": "UpdateVaultAccessPolicies atomically adds, replaces or removes access"
           }
         ]
       }
@@ -16279,6 +17083,24 @@
         ]
       },
       {
+        "name": "AccountServiceSettings",
+        "doc": "AccountServiceSettings is an OPTIONAL Azure-specific capability, discovered",
+        "operations": [
+          {
+            "name": "AccountSetting",
+            "doc": "AccountSetting returns the stored document, and false when none is set."
+          },
+          {
+            "name": "DeleteAccountSetting",
+            "doc": "DeleteAccountSetting removes the document and reports whether it existed."
+          },
+          {
+            "name": "SetAccountSetting",
+            "doc": "SetAccountSetting replaces the account's kind document and stamps its"
+          }
+        ]
+      },
+      {
         "name": "AzureBlobExtensions",
         "doc": "AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,",
         "operations": [
@@ -16440,6 +17262,44 @@
           {
             "name": "UndeleteBlob",
             "doc": "UndeleteBlob restores a soft-deleted blob to active (PUT ?comp=undelete)."
+          }
+        ]
+      },
+      {
+        "name": "AzureStorageAccounts",
+        "doc": "AzureStorageAccounts is an OPTIONAL Azure-only capability, discovered by type",
+        "operations": [
+          {
+            "name": "ContainerEncryptionScope"
+          },
+          {
+            "name": "CreateStorageAccount",
+            "doc": "CreateStorageAccount registers the account. It reports created=false and"
+          },
+          {
+            "name": "DeleteStorageAccount",
+            "doc": "DeleteStorageAccount removes the account and all of its data: containers"
+          },
+          {
+            "name": "ForceDeleteContainer",
+            "doc": "ForceDeleteContainer deletes a container together with its blobs, the"
+          },
+          {
+            "name": "GetStorageAccount"
+          },
+          {
+            "name": "ListAccountContainers",
+            "doc": "ListAccountContainers lists the containers of one account by bare name."
+          },
+          {
+            "name": "ListStorageAccounts"
+          },
+          {
+            "name": "PurgeResourceGroup",
+            "doc": "PurgeResourceGroup deletes every account recorded under sub/rg."
+          },
+          {
+            "name": "SetContainerEncryptionScope"
           }
         ]
       },

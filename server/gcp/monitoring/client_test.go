@@ -35,7 +35,7 @@ func newClient(t *testing.T, ts *httptest.Server) *monitoring.Service {
 }
 
 // TestTimeSeriesListAutoMetrics guards the BLOCKER: GCE auto-metrics emitted on
-// RunInstances must be readable via timeSeries.list (was 501 — the only wire
+// RunInstances must be readable via timeSeries.list (was 501: the only wire
 // read path for every metric).
 func TestTimeSeriesListAutoMetrics(t *testing.T) {
 	cloudP := cloudemu.NewGCP()
@@ -433,7 +433,7 @@ func newMonServer(t *testing.T) (*monitoring.Service, *httptest.Server) {
 // TestAlertPolicyEnabledDefaultsToTrue guards the enabled-default divergence: a
 // create that omits enabled must read back as enabled:true (Cloud Monitoring
 // treats an unset value on write as enabled and always returns the field). The
-// bug was `enabled` being a bool with omitempty — an omitted/false value was
+// bug was `enabled` being a bool with omitempty. An omitted/false value was
 // dropped, so an omitting create read back as disabled.
 func TestAlertPolicyEnabledDefaultsToTrue(t *testing.T) {
 	svc, _ := newMonServer(t)

@@ -27,15 +27,22 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 		Name:           req.Name,
 		Value:          req.Value,
 		Type:           req.Type,
-		Description:    req.Description,
+		Description:    derefString(req.Description),
+		DescriptionSet: req.Description != nil,
 		Overwrite:      req.Overwrite,
 		Tier:           req.Tier,
 		DataType:       req.DataType,
 		KeyID:          req.KeyID,
 		AllowedPattern: req.AllowedPattern,
 		Tags:           tags,
+		Policies:       req.Policies,
 	})
 	if err != nil {
+		if code, ok := policyErrorCode(err); ok {
+			wire.WriteJSONError(w, http.StatusBadRequest, code, cerrors.Message(err))
+			return
+		}
+
 		// Changing a parameter's type on an Overwrite update is rejected by
 		// real Parameter Store with HierarchyTypeMismatchException, not the
 		// generic ValidationException.
@@ -58,6 +65,12 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// A name deeper than 15 levels has its own code in real Parameter Store.
+		if errors.Is(err, ssmdriver.ErrHierarchyLevelLimit) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "HierarchyLevelLimitExceededException", cerrors.Message(err))
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}
@@ -73,7 +86,7 @@ func (h *Handler) getParameter(w http.ResponseWriter, r *http.Request) {
 
 	p, err := h.store.GetParameter(r.Context(), req.Name, req.WithDecryption)
 	if err != nil {
-		// The parameter existed but the requested version/label didn't — AWS
+		// The parameter existed but the requested version/label didn't. AWS
 		// returns the distinct ParameterVersionNotFound, not ParameterNotFound.
 		if errors.Is(err, ssmdriver.ErrVersionNotFound) {
 			wire.WriteJSONError(w, http.StatusBadRequest, "ParameterVersionNotFound", cerrors.Message(err))
@@ -242,6 +255,7 @@ func (h *Handler) describeParameters(w http.ResponseWriter, r *http.Request) {
 			LastModifiedDate: epochSeconds(md.LastModified),
 			LastModifiedUser: md.LastModifiedUser,
 			Name:             md.Name,
+			Policies:         toPolicyJSON(md.Policies),
 			Tier:             md.Tier,
 			Type:             md.Type,
 			Version:          md.Version,
@@ -287,6 +301,7 @@ func (h *Handler) getParameterHistory(w http.ResponseWriter, r *http.Request) {
 			LastModifiedDate: epochSeconds(p.LastModified),
 			LastModifiedUser: p.LastModifiedUser,
 			Name:             p.Name,
+			Policies:         toPolicyJSON(p.Policies),
 			Tier:             p.Tier,
 			Type:             p.Type,
 			Value:            p.Value,
@@ -305,6 +320,12 @@ func (h *Handler) labelParameterVersion(w http.ResponseWriter, r *http.Request) 
 
 	applied, invalid, err := h.store.LabelParameterVersion(r.Context(), req.Name, req.ParameterVersion, req.Labels)
 	if err != nil {
+		// The parameter exists but the version doesn't.
+		if errors.Is(err, ssmdriver.ErrVersionNotFound) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "ParameterVersionNotFound", cerrors.Message(err))
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}

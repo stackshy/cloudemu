@@ -8,7 +8,7 @@ import (
 )
 
 // commonFlagNames returns the set of flag names a bare serveflags.RegisterCommon
-// produces — the shared source of truth both serve entrypoints build from.
+// produces: the shared source of truth both serve entrypoints build from.
 func commonFlagNames(t *testing.T) map[string]string {
 	t.Helper()
 
@@ -24,7 +24,7 @@ func commonFlagNames(t *testing.T) map[string]string {
 // TestServeRegistersEveryCommonFlag proves the lean serve FlagSet is built from
 // serveflags.RegisterCommon: every shared common flag (name + default) is present.
 // Together with contrib's mirror of this test, neither main can carry a divergent
-// copy of a common flag — the drift the shared package removes.
+// copy of a common flag: the drift the shared package removes.
 func TestServeRegistersEveryCommonFlag(t *testing.T) {
 	t.Setenv("CLOUDEMU_PERSIST_STRATEGY", "")
 	t.Setenv("CLOUDEMU_PERSIST_INTERVAL", "")

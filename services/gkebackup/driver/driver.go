@@ -1,5 +1,5 @@
 // Package driver defines the portable interface for the Google Backup for GKE
-// control plane (gkebackup.googleapis.com/v1). It is control-plane only — the
+// control plane (gkebackup.googleapis.com/v1). It is control-plane only. The
 // two location-scoped resource collections a Terraform google provider or a
 // real google.golang.org/api/gkebackup client CRUDs are modeled:
 //

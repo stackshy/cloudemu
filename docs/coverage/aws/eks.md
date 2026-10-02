@@ -3,26 +3,36 @@
 
 provider-native `eks` wire service (AWS-only) · no portable driver · [AWS index](./README.md)
 
-## Operations (29)
+## Operations (40)
 
 | Operation | Description |
 | --- | --- |
+| `AssociateAccessPolicy` |  |
+| `CreateAccessEntry` |  |
 | `CreateAddon` |  |
 | `CreateCluster` |  |
 | `CreateFargateProfile` |  |
 | `CreateNodegroup` |  |
+| `DeleteAccessEntry` |  |
 | `DeleteAddon` |  |
 | `DeleteCluster` |  |
 | `DeleteFargateProfile` |  |
 | `DeleteNodegroup` |  |
+| `DescribeAccessEntry` |  |
 | `DescribeAddon` |  |
+| `DescribeAddonConfiguration` |  |
+| `DescribeAddonVersions` |  |
 | `DescribeCluster` |  |
 | `DescribeFargateProfile` |  |
 | `DescribeNodegroup` |  |
 | `DescribeUpdate` |  |
+| `DisassociateAccessPolicy` |  |
 | `EKSException` |  |
 | `Error` |  |
+| `ListAccessEntries` |  |
+| `ListAccessPolicies` |  |
 | `ListAddons` |  |
+| `ListAssociatedAccessPolicies` |  |
 | `ListClusters` |  |
 | `ListFargateProfiles` |  |
 | `ListNodegroups` |  |
@@ -31,6 +41,7 @@ provider-native `eks` wire service (AWS-only) · no portable driver · [AWS inde
 | `TagResource` |  |
 | `UntagResource` |  |
 | `Unwrap` |  |
+| `UpdateAccessEntry` |  |
 | `UpdateAddon` |  |
 | `UpdateClusterConfig` |  |
 | `UpdateClusterVersion` |  |

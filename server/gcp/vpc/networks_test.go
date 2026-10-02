@@ -26,7 +26,7 @@ func newGCPNetServer(t *testing.T) *httptest.Server {
 
 	cloudP := cloudemu.NewGCP()
 	// Register Compute too so the shared operations-polling endpoint is wired
-	// up — networks return Operation envelopes the SDK polls there.
+	// up. Networks return Operation envelopes the SDK polls there.
 	srv := gcpserver.New(gcpserver.Drivers{Networking: cloudP.VPC, Compute: cloudP.GCE})
 
 	ts := httptest.NewServer(srv)

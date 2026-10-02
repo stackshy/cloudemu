@@ -24,7 +24,7 @@ func aclEntry(entries []ec2types.NetworkAclEntry, ruleNumber int32, egress bool)
 // ACL is deny-by-default: it contains only the two unmodifiable catch-all '*'
 // entries (rule 32767, deny, 0.0.0.0/0) for ingress and egress, and no allow
 // rule. A user relying on a fresh custom NACL to block traffic must not get an
-// allow-all subnet — the security posture must match real EC2.
+// allow-all subnet. The security posture must match real EC2.
 func TestCreateNetworkAclDeniesByDefault(t *testing.T) {
 	ctx := context.Background()
 	c := newRoutingEdgeEC2(t)

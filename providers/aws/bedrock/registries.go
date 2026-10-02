@@ -13,13 +13,21 @@ import (
 // --- Inference profiles ---
 
 // CreateInferenceProfile creates an application inference profile. It is ready
-// immediately: recorded ACTIVE with type APPLICATION.
+// immediately: recorded ACTIVE with type APPLICATION. copyFrom must be a
+// foundation-model ARN or a system inference profile ARN. A profile copied from
+// a system profile tracks every model the system profile routes to.
 func (m *Mock) CreateInferenceProfile(_ context.Context, cfg driver.InferenceProfileConfig) (*driver.InferenceProfile, error) {
 	switch {
 	case cfg.Name == "":
 		return nil, errors.New(errors.InvalidArgument, "inferenceProfileName is required")
 	case cfg.ModelSourceCopyFrom == "":
 		return nil, errors.New(errors.InvalidArgument, "modelSource.copyFrom is required")
+	}
+
+	models := m.copySourceModels(cfg.ModelSourceCopyFrom)
+	if models == nil {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"modelSource.copyFrom %q is not a foundation model ARN or a system inference profile ARN", cfg.ModelSourceCopyFrom)
 	}
 
 	for _, existing := range m.inferenceProfiles.SortedValues() {
@@ -29,14 +37,14 @@ func (m *Mock) CreateInferenceProfile(_ context.Context, cfg driver.InferencePro
 	}
 
 	now := m.now()
-	id := idgen.GenerateID("")
+	id := idgen.BedrockInferenceProfileID()
 	arn := idgen.AWSARN("bedrock", m.opts.Region, m.opts.AccountID, "application-inference-profile/"+id)
 
 	profile := &driver.InferenceProfile{
 		ARN:         arn,
 		ID:          id,
 		Name:        cfg.Name,
-		Models:      []string{cfg.ModelSourceCopyFrom},
+		Models:      models,
 		Status:      driver.InferenceProfileStatusActive,
 		Type:        driver.InferenceProfileTypeApplication,
 		Description: cfg.Description,
@@ -46,59 +54,114 @@ func (m *Mock) CreateInferenceProfile(_ context.Context, cfg driver.InferencePro
 	m.inferenceProfiles.Set(id, profile)
 	m.setTags(arn, m.tagsFromMap(cfg.Tags))
 
-	result := *profile
+	result := cloneInferenceProfile(profile)
 
 	return &result, nil
 }
 
-// GetInferenceProfile returns an inference profile by ID or ARN.
-func (m *Mock) GetInferenceProfile(_ context.Context, identifier string) (*driver.InferenceProfile, error) {
-	if p, ok := m.inferenceProfiles.Get(identifier); ok {
-		result := cloneInferenceProfile(p)
+// copySourceModels returns the model ARNs an application profile copied from
+// arn tracks, or nil when arn is not a valid copy source.
+func (m *Mock) copySourceModels(arn string) []string {
+	for i := range m.foundation {
+		if m.foundation[i].ModelARN == arn {
+			return []string{arn}
+		}
+	}
 
-		return &result, nil
+	for i := range m.sysProfiles {
+		if m.sysProfiles[i].ARN == arn {
+			return append([]string(nil), m.sysProfiles[i].Models...)
+		}
+	}
+
+	return nil
+}
+
+// GetInferenceProfile returns a system or application inference profile by ID
+// or ARN.
+func (m *Mock) GetInferenceProfile(_ context.Context, identifier string) (*driver.InferenceProfile, error) {
+	p := m.findSystemProfile(identifier)
+	if p == nil {
+		p = m.findAppProfile(identifier)
+	}
+
+	if p == nil {
+		return nil, errors.Newf(errors.NotFound, "inference profile %q not found", identifier)
+	}
+
+	result := cloneInferenceProfile(p)
+
+	return &result, nil
+}
+
+// findSystemProfile returns the SYSTEM_DEFINED profile with this ID or ARN.
+func (m *Mock) findSystemProfile(id string) *driver.InferenceProfile {
+	for i := range m.sysProfiles {
+		if m.sysProfiles[i].ID == id || m.sysProfiles[i].ARN == id {
+			return &m.sysProfiles[i]
+		}
+	}
+
+	return nil
+}
+
+// findAppProfile returns the application profile with this ID or ARN.
+func (m *Mock) findAppProfile(id string) *driver.InferenceProfile {
+	if p, ok := m.inferenceProfiles.Get(id); ok {
+		return p
 	}
 
 	for _, p := range m.inferenceProfiles.All() {
-		if p.ARN == identifier {
-			result := cloneInferenceProfile(p)
-
-			return &result, nil
+		if p.ARN == id {
+			return p
 		}
 	}
 
-	return nil, errors.Newf(errors.NotFound, "inference profile %q not found", identifier)
+	return nil
 }
 
-// ListInferenceProfiles lists all inference profiles.
-func (m *Mock) ListInferenceProfiles(_ context.Context) ([]driver.InferenceProfile, error) {
-	all := m.inferenceProfiles.SortedValues()
-	out := make([]driver.InferenceProfile, 0, len(all))
+// ListInferenceProfiles lists inference profiles of one type. An empty type
+// lists SYSTEM_DEFINED profiles only, which is what AWS does.
+func (m *Mock) ListInferenceProfiles(_ context.Context, typeEquals string) ([]driver.InferenceProfile, error) {
+	switch typeEquals {
+	case "", driver.InferenceProfileTypeSystemDefined:
+		out := make([]driver.InferenceProfile, 0, len(m.sysProfiles))
+		for i := range m.sysProfiles {
+			out = append(out, cloneInferenceProfile(&m.sysProfiles[i]))
+		}
 
-	for _, p := range all {
-		out = append(out, cloneInferenceProfile(p))
+		return out, nil
+	case driver.InferenceProfileTypeApplication:
+		all := m.inferenceProfiles.SortedValues()
+		out := make([]driver.InferenceProfile, 0, len(all))
+
+		for _, p := range all {
+			out = append(out, cloneInferenceProfile(p))
+		}
+
+		return out, nil
+	default:
+		return nil, errors.Newf(errors.InvalidArgument,
+			"1 validation error detected: Value '%s' at 'typeEquals' failed to satisfy constraint: "+
+				"Member must satisfy enum value set: [SYSTEM_DEFINED, APPLICATION]", typeEquals)
 	}
-
-	return out, nil
 }
 
-// DeleteInferenceProfile deletes an inference profile by ID or ARN.
+// DeleteInferenceProfile deletes an application inference profile by ID or
+// ARN. System profiles are owned by Bedrock and cannot be deleted.
 func (m *Mock) DeleteInferenceProfile(_ context.Context, identifier string) error {
-	if m.inferenceProfiles.Has(identifier) {
-		m.inferenceProfiles.Delete(identifier)
-
-		return nil
+	if m.findSystemProfile(identifier) != nil {
+		return errors.Newf(errors.InvalidArgument, "inference profile %q is system defined and cannot be deleted", identifier)
 	}
 
-	for id, p := range m.inferenceProfiles.All() {
-		if p.ARN == identifier {
-			m.inferenceProfiles.Delete(id)
-
-			return nil
-		}
+	p := m.findAppProfile(identifier)
+	if p == nil {
+		return errors.Newf(errors.NotFound, "inference profile %q not found", identifier)
 	}
 
-	return errors.Newf(errors.NotFound, "inference profile %q not found", identifier)
+	m.inferenceProfiles.Delete(p.ID)
+
+	return nil
 }
 
 // --- Prompt routers ---

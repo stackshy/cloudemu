@@ -43,13 +43,13 @@ func signTemp(t *testing.T, r *http.Request, akid, secret, token string, signing
 // TestVerifyTempCredential exercises the STS temporary-credential branch of the
 // gate directly: a signature made with the STS-issued secret verifies, a forged
 // secret is rejected, an unknown key is rejected, and an expired session is
-// rejected — all deterministically on a FakeClock.
+// rejected, all deterministically on a FakeClock.
 func TestVerifyTempCredential(t *testing.T) {
 	now := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 	clock := config.NewFakeClock(now)
 	store := stssrv.NewSessionStore(clock)
 
-	issued, err := store.Mint(time.Hour) // Expiration = now + 1h
+	issued, err := store.Mint(time.Hour, stssrv.SessionOwner{}) // Expiration = now + 1h
 	if err != nil {
 		t.Fatalf("Mint: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestVerifyTempCredential(t *testing.T) {
 		r := newReq()
 		signTemp(t, r, issued.AccessKeyID, issued.SecretAccessKey, issued.SessionToken, now)
 
-		p, aerr := verifyTempCredential(r, nil, issued.AccessKeyID, tempTestAccount, store, clock)
+		p, _, aerr := verifyTempCredential(r, nil, issued.AccessKeyID, tempTestAccount, store, clock)
 		if aerr != nil {
 			t.Fatalf("valid temp credential rejected: %v", aerr)
 		}
@@ -81,7 +81,7 @@ func TestVerifyTempCredential(t *testing.T) {
 		r := newReq()
 		signTemp(t, r, issued.AccessKeyID, "forged-secret-000000000000000000000000", issued.SessionToken, now)
 
-		_, aerr := verifyTempCredential(r, nil, issued.AccessKeyID, tempTestAccount, store, clock)
+		_, _, aerr := verifyTempCredential(r, nil, issued.AccessKeyID, tempTestAccount, store, clock)
 		if aerr == nil || aerr.Code != "SignatureDoesNotMatch" {
 			t.Fatalf("want SignatureDoesNotMatch, got %v", aerr)
 		}
@@ -91,7 +91,7 @@ func TestVerifyTempCredential(t *testing.T) {
 		r := newReq()
 		signTemp(t, r, "ASIAUNKNOWN0000000000", issued.SecretAccessKey, issued.SessionToken, now)
 
-		_, aerr := verifyTempCredential(r, nil, "ASIAUNKNOWN0000000000", tempTestAccount, store, clock)
+		_, _, aerr := verifyTempCredential(r, nil, "ASIAUNKNOWN0000000000", tempTestAccount, store, clock)
 		if aerr == nil || aerr.Code != "InvalidClientTokenId" {
 			t.Fatalf("want InvalidClientTokenId, got %v", aerr)
 		}
@@ -101,7 +101,7 @@ func TestVerifyTempCredential(t *testing.T) {
 		r := newReq()
 		signTemp(t, r, issued.AccessKeyID, issued.SecretAccessKey, issued.SessionToken, now)
 
-		_, aerr := verifyTempCredential(r, nil, issued.AccessKeyID, tempTestAccount, nil, clock)
+		_, _, aerr := verifyTempCredential(r, nil, issued.AccessKeyID, tempTestAccount, nil, clock)
 		if aerr == nil || aerr.Code != "InvalidClientTokenId" {
 			t.Fatalf("want InvalidClientTokenId (fail closed), got %v", aerr)
 		}
@@ -110,7 +110,7 @@ func TestVerifyTempCredential(t *testing.T) {
 	t.Run("expired-session", func(t *testing.T) {
 		shortClock := config.NewFakeClock(now)
 		shortStore := stssrv.NewSessionStore(shortClock)
-		short, err := shortStore.Mint(15 * time.Minute) // Expiration = now + 15m
+		short, err := shortStore.Mint(15*time.Minute, stssrv.SessionOwner{}) // Expiration = now + 15m
 		if err != nil {
 			t.Fatalf("Mint: %v", err)
 		}
@@ -119,7 +119,7 @@ func TestVerifyTempCredential(t *testing.T) {
 		signTemp(t, r, short.AccessKeyID, short.SecretAccessKey, short.SessionToken, now)
 
 		shortClock.Advance(time.Hour) // now past expiration
-		_, aerr := verifyTempCredential(r, nil, short.AccessKeyID, tempTestAccount, shortStore, shortClock)
+		_, _, aerr := verifyTempCredential(r, nil, short.AccessKeyID, tempTestAccount, shortStore, shortClock)
 		if aerr == nil || aerr.Code != "ExpiredToken" {
 			t.Fatalf("want ExpiredToken, got %v", aerr)
 		}
@@ -128,7 +128,7 @@ func TestVerifyTempCredential(t *testing.T) {
 
 // TestAuthGateVerifiesAssumedRoleCredential is the real-user end-to-end flow: a
 // registered AKIA key assumes a role over the SDK, then the returned ASIA
-// credential is used to make an authenticated request against the same server —
+// credential is used to make an authenticated request against the same server,
 // proving STS and the gate share the session store. A tampered secret is
 // rejected. Uses the real clock so the SDK's own signing time is fresh.
 func TestAuthGateVerifiesAssumedRoleCredential(t *testing.T) {
@@ -225,8 +225,8 @@ func TestAuthGateVerifiesAssumedRoleCredential(t *testing.T) {
 	}
 }
 
-// TestSTSCredentialsGatedByEnforceAuth proves the session store — and thus the
-// unique/verifiable credentials — appear only under EnforceAuth. With it off,
+// TestSTSCredentialsGatedByEnforceAuth proves the session store, and thus the
+// unique/verifiable credentials, appear only under EnforceAuth. With it off,
 // AssumeRole returns the fixed synthetic credential the emulator always has, so
 // the default behavior is unchanged.
 func TestSTSCredentialsGatedByEnforceAuth(t *testing.T) {

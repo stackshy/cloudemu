@@ -11,8 +11,8 @@ import (
 // engine when one is configured, using the cluster's initial user/password, and
 // returns the reachable host a client connects to (empty when no engine is
 // wired). AlloyDB is Postgres-wire, so the engine family is taken from the
-// cluster's databaseVersion (e.g. "POSTGRES_15") — the internal engine string
-// "alloydb-postgresql" is not in the Postgres family — mirroring how Cloud SQL
+// cluster's databaseVersion (e.g. "POSTGRES_15"); the internal engine string
+// "alloydb-postgresql" is not in the Postgres family. This mirrors how Cloud SQL
 // passes its databaseVersion. Each instance gets its own database: the engine
 // dedup key is the unique "{cluster}/{instance}", while the database is named by
 // the bare instance ID so a client connects with a clean dbname. The caller

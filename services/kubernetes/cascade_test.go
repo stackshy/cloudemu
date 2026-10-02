@@ -70,7 +70,7 @@ func TestCascadeDelete_DropsAllNamespacedResources(t *testing.T) {
 		resp.Body.Close()
 	}
 
-	// Sanity — namespaced lists are non-empty before delete. The "dep"
+	// Sanity: namespaced lists are non-empty before delete. The "dep"
 	// Deployment (1 replica) now materializes its own Running Pod, so the pod
 	// count is the manually-created "p" plus the Deployment's pod = 2.
 	mustHaveItems(t, base, "/api/v1/namespaces/doomed/configmaps", 1)
@@ -109,7 +109,7 @@ func TestCascadeDelete_DropsAllNamespacedResources(t *testing.T) {
 		resp.Body.Close()
 	}
 
-	// Cross-namespace check — resources in *other* namespaces stay alive.
+	// Cross-namespace check: resources in *other* namespaces stay alive.
 	resp = do(t, http.MethodGet, base+"/api/v1/namespaces/default/serviceaccounts/default", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("default ns SA disturbed by cascade: got %d", resp.StatusCode)

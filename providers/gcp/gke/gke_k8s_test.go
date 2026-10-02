@@ -81,7 +81,7 @@ func TestEndpoint_APIWithoutBaseURLReturnsControlPlaneIP(t *testing.T) {
 	m := newTestMock()
 
 	api := kubernetes.NewAPIServer()
-	// Intentionally no SetBaseURL — Endpoint should fall back to the IP.
+	// Intentionally no SetBaseURL: Endpoint should fall back to the IP.
 	m.SetK8sAPI(api)
 
 	if _, _, err := m.CreateCluster(context.Background(), &CreateClusterInput{
@@ -103,7 +103,7 @@ func TestEndpoint_UnknownClusterFallsBackToControlPlaneIP(t *testing.T) {
 	api.SetBaseURL("http://127.0.0.1:8080")
 	m.SetK8sAPI(api)
 
-	// Cluster never created — Endpoint should return a synthesized IP rather
+	// Cluster never created: Endpoint should return a synthesized IP rather
 	// than a half-built /k8s/ URL.
 	got := m.Endpoint("us-central1", "ghost")
 	assertControlPlaneIP(t, got)

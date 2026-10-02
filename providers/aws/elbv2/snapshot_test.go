@@ -8,8 +8,8 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
 
-// seedELB populates a mock across all of its serialized state — load balancers,
-// target groups, listeners, rules, per-target health, and both attribute maps —
+// seedELB populates a mock across all of its serialized state: load balancers,
+// target groups, listeners, rules, per-target health, and both attribute maps,
 // so a round-trip has to carry every one of them. It returns ids a caller
 // asserts on after a restore.
 func seedELB(t *testing.T, m *Mock) (lbARN, tgARN string) {
@@ -92,8 +92,8 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 }
 
 // TestSnapshotRestoreRoundTripListenerAttrsAndTags proves listener attribute
-// overrides and listener/rule tags — both added after the original snapshot
-// shape was fixed — survive a snapshot/restore round-trip too, not just the
+// overrides and listener/rule tags (both added after the original snapshot
+// shape was fixed) survive a snapshot/restore round-trip too, not just the
 // four fields covered by seedELB above.
 func TestSnapshotRestoreRoundTripListenerAttrsAndTags(t *testing.T) {
 	ctx := context.Background()

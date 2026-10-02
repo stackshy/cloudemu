@@ -1,4 +1,4 @@
-// dynamodb_stream_esm_sdk_test.go — real aws-sdk-go-v2 end-to-end test for the
+// dynamodb_stream_esm_sdk_test.go: real aws-sdk-go-v2 end-to-end test for the
 // DynamoDB Streams -> Lambda event-source-mapping delivery path. Creating a
 // mapping from a stream-enabled table to a function, then writing an item, must
 // synchronously invoke the mapped function with a DynamoDB Streams event batch

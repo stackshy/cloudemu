@@ -84,7 +84,7 @@ func TestParsePathRejectsNonARM(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c, func(t *testing.T) {
 			if _, ok := azurearm.ParsePath(c); ok && c != "/subscriptions" {
-				// /subscriptions alone has only 1 part — should fail.
+				// /subscriptions alone has only 1 part, should fail.
 				// Other malformed paths (truncated providers segment) should fail.
 				t.Errorf("expected ok=false for %q", c)
 			}

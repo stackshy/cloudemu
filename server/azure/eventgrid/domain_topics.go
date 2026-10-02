@@ -14,7 +14,7 @@ const (
 
 // domainTopicJSON is the ARM DomainTopic resource shape
 // (armeventgrid.DomainTopic): id/name/type plus a provisioningState-only
-// properties object — a domain topic carries no other configurable state.
+// properties object: a domain topic carries no other configurable state.
 type domainTopicJSON struct {
 	ID         string                 `json:"id,omitempty"`
 	Name       string                 `json:"name"`
@@ -45,6 +45,10 @@ func domainTopicJSONFor(rp *azurearm.ResourcePath) domainTopicJSON {
 
 // serveDomainTopics routes .../domains/{domain}/topics[/{topicName}].
 func (h *Handler) serveDomainTopics(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, rp, childMaxDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)
@@ -68,7 +72,7 @@ func (h *Handler) serveDomainTopics(w http.ResponseWriter, r *http.Request, rp *
 	}
 }
 
-// createOrUpdateDomainTopic requires the parent domain to already exist —
+// createOrUpdateDomainTopic requires the parent domain to already exist:
 // real Event Grid answers ParentResourceNotFound (404) for a domain topic
 // created under an absent domain.
 func (h *Handler) createOrUpdateDomainTopic(w http.ResponseWriter, rp *azurearm.ResourcePath) {

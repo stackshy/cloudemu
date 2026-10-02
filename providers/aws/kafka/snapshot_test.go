@@ -8,7 +8,7 @@ import (
 )
 
 // TestSnapshotRoundTripKafka proves a snapshot/restore round-trip preserves a
-// cluster and — critically — rebuilds the operations index so a
+// cluster and rebuilds the operations index so a
 // DescribeClusterOperation still resolves to the restored cluster's operation.
 func TestSnapshotRoundTripKafka(t *testing.T) {
 	ctx := context.Background()

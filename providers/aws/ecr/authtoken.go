@@ -14,7 +14,7 @@ import (
 const authTokenTTL = 12 * time.Hour
 
 // GetAuthorizationToken returns a base64 "AWS:<password>" credential, the
-// registry proxy endpoint, and an expiry — everything `docker login` and
+// registry proxy endpoint, and an expiry, everything `docker login` and
 // image push/pull need. The emulator does not validate the token on later
 // requests; it exists so auth flows succeed.
 func (m *Mock) GetAuthorizationToken(ctx context.Context) (token, proxyEndpoint string, expiresAt time.Time, err error) {

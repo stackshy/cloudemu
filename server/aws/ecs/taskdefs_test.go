@@ -131,7 +131,7 @@ func TestSDKDeregisterTaskDefinitionRequiresRevision(t *testing.T) {
 		t.Fatalf("DeregisterTaskDefinition error = %T (%v), want *ClientException", err, err)
 	}
 
-	// The named revision must remain ACTIVE — nothing was deregistered.
+	// The named revision must remain ACTIVE because nothing was deregistered.
 	desc, err := client.DescribeTaskDefinition(ctx, &awsecs.DescribeTaskDefinitionInput{
 		TaskDefinition: aws.String("web:1"),
 	})

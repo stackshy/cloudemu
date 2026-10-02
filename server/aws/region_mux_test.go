@@ -29,9 +29,9 @@ const (
 	regionEast = "us-east-1"
 )
 
-// newMuxServer builds a multi-region mux exactly as the assembly layer does — a
+// newMuxServer builds a multi-region mux as the assembly layer does: a
 // default-region base provider owning the shared global services, and a factory
-// that builds a fresh regional provider sharing them on first touch — and fronts
+// that builds a fresh regional provider sharing them on first touch, and fronts
 // it with an httptest server.
 func newMuxServer(t *testing.T) *httptest.Server {
 	t.Helper()

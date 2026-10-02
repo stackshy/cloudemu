@@ -74,6 +74,14 @@ AzureDiskUpdater is an optional Azure-only capability for an in-place managed
 | --- | --- |
 | `UpdateVolume` | UpdateVolume mutates the existing volume id in place from cfg (size, sku/ |
 
+### AzureResourceGroupPurger
+
+AzureResourceGroupPurger is an optional Azure-only capability that tears down
+
+| Operation | Description |
+| --- | --- |
+| `PurgeComputeResourceGroup` |  |
+
 ### AzureSSHKeyUpdater
 
 AzureSSHKeyUpdater is an optional Azure-only capability for the sshPublicKeys
@@ -93,6 +101,14 @@ AzureVMController is an optional Azure-only capability supporting the ARM
 | `PatchInstance` | PatchInstance applies a merge-patch (ARM PATCH Update / BeginUpdate) to an |
 | `PowerOff` | PowerOff stops the guest OS while keeping the VM allocated |
 | `UpdateInstance` | UpdateInstance overwrites the mutable configuration of an existing |
+
+### AzureVMDeleter
+
+AzureVMDeleter is an optional Azure-only capability that removes VMs
+
+| Operation | Description |
+| --- | --- |
+| `DeleteInstances` |  |
 
 ### ConsoleReader
 

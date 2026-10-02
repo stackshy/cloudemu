@@ -1,6 +1,6 @@
 package s3
 
-// e2e_suite_storage_test.go — suite cell STORAGE/aws/portable.
+// e2e_suite_storage_test.go: suite cell STORAGE/aws/portable.
 //
 // Real-user-journey  tests exercising the portable driver.Bucket API of the
 // AWS S3 mock directly (no HTTP layer). Covers full object lifecycle, typed
@@ -599,7 +599,7 @@ func TestVersioningFlag(t *testing.T) {
 		t.Fatal("versioning = false after enable")
 	}
 
-	// Mock limitation: no version history — overwriting under versioning still
+	// Mock limitation: no version history: overwriting under versioning still
 	// replaces the object in place.
 	e2eRequireNoErr(t, m.PutObject(ctx, bucket, "k", []byte("v1"), "text/plain", nil), "Put v1")
 	e2eRequireNoErr(t, m.PutObject(ctx, bucket, "k", []byte("v2"), "text/plain", nil), "Put v2")
@@ -723,7 +723,7 @@ func TestLifecycleEvaluation(t *testing.T) {
 		t.Fatalf("expired = %v, want [tmp/old.log] only", expired)
 	}
 
-	// Evaluation reports only — objects still exist.
+	// Evaluation reports only: objects still exist.
 	if _, err = m.GetObject(ctx, bucket, "tmp/old.log"); err != nil {
 		t.Fatalf("expired object was deleted by evaluation: %v", err)
 	}

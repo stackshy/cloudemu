@@ -468,7 +468,7 @@ func toDiskResponse(vol *computedriver.VolumeInfo, rp gcprest.ResourcePath, host
 // diskUsersByName maps each disk name to the self-links of the instances it is
 // attached to, derived from the driver volume store's attachment state
 // (VolumeInfo.AttachedTo). Since insert and attachDisk both flip the driver
-// volume to in-use, this is the single source of truth for a disk's users[] —
+// volume to in-use, this is the single source of truth for a disk's users[],
 // consistent with the instance-side disks[] and the in-use delete guard.
 func (h *Handler) diskUsersByName(ctx context.Context, host, project string) map[string][]string {
 	vols, err := h.compute.DescribeVolumes(ctx, nil)
@@ -549,7 +549,7 @@ func conflictIfExists(w http.ResponseWriter, findErr error, msg string) bool {
 }
 
 // lastSegment returns the trailing path segment of a self-link or full URL.
-// Disk types arrive as ".../diskTypes/pd-ssd" — the driver wants just "pd-ssd".
+// Disk types arrive as ".../diskTypes/pd-ssd". The driver wants just "pd-ssd".
 func lastSegment(s string) string {
 	if i := strings.LastIndex(s, "/"); i >= 0 {
 		return s[i+1:]

@@ -1,5 +1,5 @@
 // Package appconfiguration provides an in-memory mock of Azure App Configuration
-// (Microsoft.AppConfiguration/configurationStores) — the ARM control plane only.
+// (Microsoft.AppConfiguration/configurationStores), the ARM control plane only.
 // It manages the configuration-store resource lifecycle
 // (create/update/get/delete/list) and the listKeys / regenerateKey actions; the
 // configuration data plane (the *.azconfig.io key-value store served from a
@@ -11,11 +11,11 @@
 //   - endpoint: "https://<name>.azconfig.io", deterministic from the name.
 //   - provisioningState: "Succeeded" once provisioning completes.
 //   - the four access keys (Primary, Secondary, Primary Read Only, Secondary
-//     Read Only) — each an id, secret value and connection string.
+//     Read Only), each an id, secret value and connection string.
 //   - identity.principalId / identity.tenantId for a system-assigned identity.
 //
 // Every computed field is derived deterministically from the resource identity,
-// so the same resource always reports the same values — across gets, patches,
+// so the same resource always reports the same values, across gets, patches,
 // listKeys and a snapshot/restore.
 package appconfiguration
 

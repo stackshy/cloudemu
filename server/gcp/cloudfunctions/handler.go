@@ -5,18 +5,19 @@
 //
 // MVP coverage:
 //
-//	POST   /v1/projects/{p}/locations/{l}/functions             — Create (LRO)
-//	GET    /v1/projects/{p}/locations/{l}/functions/{name}      — Get
-//	GET    /v1/projects/{p}/locations/{l}/functions             — List
-//	DELETE /v1/projects/{p}/locations/{l}/functions/{name}      — Delete (LRO)
-//	POST   /v1/projects/{p}/locations/{l}/functions/{name}:call — Synchronous invoke
-//	GET    /v1/operations/{op}                                  — Poll an LRO
+//	POST   /v1/projects/{p}/locations/{l}/functions             : Create (LRO)
+//	GET    /v1/projects/{p}/locations/{l}/functions/{name}      : Get
+//	GET    /v1/projects/{p}/locations/{l}/functions             : List
+//	DELETE /v1/projects/{p}/locations/{l}/functions/{name}      : Delete (LRO)
+//	POST   /v1/projects/{p}/locations/{l}/functions/{name}:call : Synchronous invoke
+//	GET    /v1/operations/{op}                                  : Poll an LRO
 //
 // All mutating endpoints return Operation envelopes with done=true so SDK
 // pollers terminate on the first response.
 package cloudfunctions
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -31,6 +32,7 @@ import (
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
@@ -113,7 +115,7 @@ type Handler struct {
 	// way to grant roles/cloudfunctions.invoker to allUsers for a public function).
 	policies map[string]*iamPolicy
 	// gen1Meta holds the GCP-specific gen1 (v1) output-only metadata that has no
-	// portable Serverless-driver equivalent — serviceAccountEmail, ingressSettings,
+	// portable Serverless-driver equivalent: serviceAccountEmail, ingressSettings,
 	// dockerRegistry, buildId and the monotonically increasing versionId. Keyed by
 	// the function's canonical resource name; populated on create and bumped on
 	// update so a real client's Get reflects the deploy generation.
@@ -285,7 +287,7 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, p func
 	}
 }
 
-// generateUploadURL answers functions:generateUploadUrl — the first step of a
+// generateUploadURL answers functions:generateUploadUrl, the first step of a
 // source-upload deploy. Real Cloud Functions returns a signed GCS URL the
 // client PUTs the source zip to; the emulator mints a token, stages a pending
 // slot, and returns a URL that points BACK at this same server's
@@ -353,7 +355,7 @@ func (h *Handler) uploadSource(w http.ResponseWriter, r *http.Request) {
 // cfg.Code and marks the deployment as using the http framework, then removes
 // the one-time staging entry. It returns an error when the URL carries no token
 // this server minted, or the token resolves to no staged bytes (unknown, already
-// consumed, or PUT skipped) — so create can reject it rather than silently
+// consumed, or PUT skipped). This lets create reject it rather than silently
 // producing a function that never runs the intended code.
 func (h *Handler) consumeUpload(uploadURL string, cfg *sdrv.FunctionConfig) error {
 	token := uploadToken(uploadURL)
@@ -397,7 +399,7 @@ func (h *Handler) loadSource(w http.ResponseWriter, r *http.Request, body *cloud
 
 // consumeArchive fetches the gs://bucket/object source zip named by archiveURL
 // from the in-process GCS backend into cfg.Code and marks the deployment as
-// using the http framework — the same contract a staged upload uses. A malformed
+// using the http framework, the same contract a staged upload uses. A malformed
 // URL, an unwired GCS backend, or a missing/empty object is a hard error rather
 // than a silently stubbed function.
 func (h *Handler) consumeArchive(ctx context.Context, archiveURL string, cfg *sdrv.FunctionConfig) error {
@@ -481,7 +483,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, p functionPath)
 	// Real Cloud Functions accepts the function name in either the body or as a
 	// "?functionId=" query parameter. SDKs use the body.
 	var body cloudFunction
-	if !decodeJSON(w, r, &body) {
+	if !decodeJSON(w, r, &body, gen1FunctionEnums) {
 		return
 	}
 
@@ -509,7 +511,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, p functionPath)
 
 	// A source deploy carries the code out-of-band. gen1 functions run under the
 	// functions-framework request/response contract with a bare entrypoint, which
-	// real Cloud Functions requires — reject a code deploy that omits it.
+	// real Cloud Functions requires. Reject a code deploy that omits it.
 	if body.SourceUploadURL != "" || body.SourceArchiveURL != "" {
 		if body.EntryPoint == "" {
 			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "entryPoint is required")
@@ -577,7 +579,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, p functionPath) {
 	}
 
 	// gen2 functions share the driver store (so the invoke path resolves them)
-	// but are managed only through the v2 API — drop them from a v1 list.
+	// but are managed only through the v2 API. Drop them from a v1 list.
 	infos = h.excludeGen2(p, infos)
 
 	// Sort by name so pagination over the base64 offset token is stable across
@@ -605,7 +607,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, p functionPath)
 	}
 
 	var body cloudFunction
-	if !decodeJSON(w, r, &body) {
+	if !decodeJSON(w, r, &body, gen1FunctionEnums) {
 		return
 	}
 
@@ -667,8 +669,9 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, p functionPath)
 	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, operation{
-		Name: "operations/delete-" + p.name,
-		Done: true,
+		Name:     "operations/delete-" + p.name,
+		Done:     true,
+		Response: emptyResponse(),
 	})
 }
 
@@ -686,7 +689,7 @@ func (h *Handler) serveCall(w http.ResponseWriter, r *http.Request, p functionPa
 	}
 
 	var req callRequest
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSON(w, r, &req, nil) {
 		return
 	}
 
@@ -864,7 +867,7 @@ func resourceAsResponse(cf cloudFunction, kind string) map[string]any {
 	}
 
 	out := map[string]any{
-		"@type": "type.googleapis.com/google.cloud.functions.v1." + kind,
+		anyTypeKey: "type.googleapis.com/google.cloud.functions.v1." + kind,
 	}
 
 	var fields map[string]any
@@ -877,10 +880,25 @@ func resourceAsResponse(cf cloudFunction, kind string) map[string]any {
 	return out
 }
 
-func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+// decodeJSON decodes the request body into v. Numeric enums at the paths in
+// enums, as the gapic REST clients send them, are rewritten to their value
+// names first; a nil table decodes the body as it is.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any, enums gcpenum.Fields) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid JSON: "+err.Error())
+		return false
+	}
+
+	body, err := gcpenum.Normalize(raw, enums)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return false
+	}
+
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(v); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid JSON: "+err.Error())
 		return false
 	}

@@ -28,7 +28,7 @@ func createVNetForSubnet(t *testing.T, vnets *armnetwork.VirtualNetworksClient, 
 // TestSDKStandaloneSubnetAddressPrefixes drives the exact shape the azurerm
 // provider sends for azurerm_subnet: the plural addressPrefixes form, with the
 // singular addressPrefix left unset. Before the fix the handler read only
-// addressPrefix, so validateSubnetCIDR saw an empty CIDR and rejected the PUT —
+// addressPrefix, so validateSubnetCIDR saw an empty CIDR and rejected the PUT:
 // azurerm_subnet apply failed outright. The create must succeed and the GET must
 // round-trip addressPrefixes.
 func TestSDKStandaloneSubnetAddressPrefixes(t *testing.T) {
@@ -131,7 +131,7 @@ func TestSDKInlineSubnetAddressPrefixes(t *testing.T) {
 
 // TestSDKSubnetListScopedToVNet confirms SubnetsClient.List returns only the
 // queried virtual network's subnets. Before the fix the handler returned every
-// subnet in the subscription, re-scoped under the requested vnet — a paging
+// subnet in the subscription, re-scoped under the requested vnet: a paging
 // client would see phantom subnets from unrelated vnets.
 func TestSDKSubnetListScopedToVNet(t *testing.T) {
 	ts := newVNetServer(t)

@@ -189,7 +189,7 @@ func TestS3StorageEngineVersionedRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("v2"), cur.Data)
 
-	// A top-level delete only adds a delete marker — prior version bytes stay.
+	// A top-level delete only adds a delete marker: prior version bytes stay.
 	require.NoError(t, m.DeleteObject(ctx, "b1", "k"))
 	_, err = m.GetObject(ctx, "b1", "k")
 	require.Error(t, err, "current read after delete marker is a 404")

@@ -28,7 +28,7 @@ func (f fakeEKS) ListNodegroups(_ context.Context, name string) ([]string, error
 
 // A DeleteCluster racing between ListClusters and the per-cluster reads makes
 // DescribeCluster/ListNodegroups return NotFound. That cluster must be omitted,
-// not turned into an error — engine.List would otherwise propagate it and drop
+// not turned into an error; engine.List would otherwise propagate it and drop
 // every provider's inventory, not just this cluster.
 func TestEKSDiscoverySkipsVanishedCluster(t *testing.T) {
 	ctx := context.Background()
@@ -78,7 +78,7 @@ func TestEKSDiscoverySkipsVanishedCluster(t *testing.T) {
 	}
 }
 
-// Any error that is not NotFound is a real fault and must propagate — a scan
+// Any error that is not NotFound is a real fault and must propagate. A scan
 // that half-read the inventory must not be reported as complete.
 func TestEKSDiscoveryPropagatesRealErrors(t *testing.T) {
 	f := fakeEKS{

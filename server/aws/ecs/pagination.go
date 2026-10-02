@@ -29,7 +29,7 @@ func paginateARNs(
 // is normalized to a non-nil (possibly empty) slice: real ECS always returns an
 // array for a List op, never null, and internal/pagination.Paginate returns a
 // nil Items slice for an empty result, which encoding/json would otherwise
-// render as "null" instead of "[]" — breaking any caller (e.g. boto3) that
+// render as "null" instead of "[]" and break any caller (e.g. boto3) that
 // iterates the field unconditionally.
 func listResponse(arnKey string, arns []string, nextToken string) map[string]any {
 	if arns == nil {

@@ -154,7 +154,7 @@ func TestSDKSecretManagerVersionsAndAccess(t *testing.T) {
 	}
 
 	// GCP secrets.create makes an empty container (no seeded version), so two
-	// AddVersion calls yield exactly two versions — matching real Secret Manager.
+	// AddVersion calls yield exactly two versions, matching real Secret Manager.
 	if len(versions.Versions) != 2 {
 		t.Fatalf("got %d versions, want 2", len(versions.Versions))
 	}

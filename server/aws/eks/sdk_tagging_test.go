@@ -10,7 +10,7 @@ import (
 )
 
 // TestSDKEKSTagResourceAllARNTypes verifies the tagging API works against every
-// EKS resource ARN — cluster, nodegroup, Fargate profile, and add-on — not just
+// EKS resource ARN (cluster, nodegroup, Fargate profile, and add-on), not just
 // clusters. Terraform tag updates on aws_eks_node_group / aws_eks_fargate_profile
 // / aws_eks_addon call TagResource against the child resource ARN.
 func TestSDKEKSTagResourceAllARNTypes(t *testing.T) {

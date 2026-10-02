@@ -8,7 +8,7 @@ import (
 )
 
 // TestSnapshotRoundTripACM proves a snapshot/restore round-trip preserves each
-// certificate under its original ARN — including the issued PEM material — and
+// certificate under its original ARN, including the issued PEM material, and
 // the account-level configuration.
 func TestSnapshotRoundTripACM(t *testing.T) {
 	ctx := context.Background()

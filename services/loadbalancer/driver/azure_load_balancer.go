@@ -116,7 +116,7 @@ type AzureLoadBalancer struct {
 // backendAddressPools and inboundNatRules also have real standalone ARM
 // operation groups (BeginCreateOrUpdate / BeginDelete addressing one named
 // child), so the Upsert/Delete methods below let the wire handler mutate a
-// single child in place without touching its siblings — the whole-LB
+// single child in place without touching its siblings: the whole-LB
 // CreateOrUpdate above would wipe every other child, and DeleteAzureLoadBalancer
 // would remove the entire parent. probes, loadBalancingRules,
 // frontendIPConfigurations, inboundNatPools and outboundRules have no

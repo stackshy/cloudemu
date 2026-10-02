@@ -1,5 +1,5 @@
 // Package aks provides an in-memory mock of Microsoft.ContainerService
-// (Azure Kubernetes Service) — control-plane only.
+// (Azure Kubernetes Service), control-plane only.
 //
 // Scope: ManagedClusters + AgentPools + MaintenanceConfigurations CRUD and
 // credential listing, plus a live Kubernetes data plane. When a shared
@@ -74,7 +74,7 @@ type ManagedCluster struct {
 	NodeResourceGroup string
 	ProvisioningState string
 	PowerState        string
-	// Tier is the cluster SKU tier (Free / Standard / Premium) — the uptime-SLA
+	// Tier is the cluster SKU tier (Free / Standard / Premium), the uptime-SLA
 	// cost input a discoverer reads from `sku.tier`.
 	Tier           string
 	Tags           map[string]string
@@ -150,7 +150,7 @@ type AgentPool struct {
 	Mode              string
 	OrchestratorVer   string
 	ProvisioningState string
-	// ScaleSetPriority is Regular or Spot — the Spot marker a discoverer reads
+	// ScaleSetPriority is Regular or Spot, the Spot marker a discoverer reads
 	// for Spot node-pool pricing.
 	ScaleSetPriority string
 	NodeLabels       map[string]string
@@ -454,7 +454,7 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, input ClusterInput) (*Ma
 	resolveClusterFields(&cluster, input, existing)
 	cluster.UpdatedAt = now
 
-	// Reconcile inline pools by NAME — never wipe. A PUT that omits
+	// Reconcile inline pools by NAME: never wipe. A PUT that omits
 	// agentPoolProfiles leaves every existing pool (including standalone-API
 	// pools) untouched; a PUT that includes them upserts those pools.
 	cluster.AgentPoolNames = m.reconcileInlinePools(input, cluster.KubernetesVersion, now)
@@ -464,10 +464,15 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, input ClusterInput) (*Ma
 	// return a working URL. CreateOrUpdate may be called more than once for
 	// the same cluster name; only register on the first sighting.
 	if m.k8sAPI != nil {
-		if _, ok := m.k8sUIDs[key]; !ok {
-			uid, _ := m.k8sAPI.RegisterCluster()
+		uid, ok := m.k8sUIDs[key]
+		if !ok {
+			uid, _ = m.k8sAPI.RegisterCluster()
 			m.k8sUIDs[key] = uid
 		}
+
+		// A PUT that changes kubernetesVersion is an AKS upgrade, so /version
+		// follows it.
+		m.k8sAPI.SetClusterVersion(uid, kubernetes.DistributionAKS, cluster.KubernetesVersion)
 	}
 
 	m.clusters.Set(key, cluster)
@@ -482,7 +487,7 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, input ClusterInput) (*Ma
 
 // resolveClusterFields merges the submitted input onto cluster. On a create,
 // unset fields resolve to the AKS defaults; on an update, a field the request
-// omits is preserved from the stored value — so a tags-only or version-only PUT
+// omits is preserved from the stored value, so a tags-only or version-only PUT
 // never resets networkProfile, identity, dnsPrefix, or the node pools.
 //
 //nolint:gocritic // input is a value-type mirror of the public CreateOrUpdate body.
@@ -611,7 +616,7 @@ func applyNetworkProfile(cluster *ManagedCluster, np *NetworkProfile) {
 }
 
 // reconcileInlinePools upserts the pools carried in the cluster PUT body by
-// NAME and never wipes pools absent from the body — those may be standalone
+// NAME and never wipes pools absent from the body: those may be standalone
 // agentPools-API pools (azurerm_kubernetes_cluster_node_pool), which real AKS
 // leaves intact across a cluster PUT. A PUT that omits agentPoolProfiles leaves
 // every existing pool untouched. Caller must hold m.mu (write). clusterVersion
@@ -825,6 +830,38 @@ func (m *Mock) DeleteCluster(_ context.Context, rg, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	return m.deleteClusterLocked(rg, name)
+}
+
+// PurgeResourceGroup deletes every managed cluster in the resource group, with
+// its agent pools, maintenance configurations and Kubernetes data-plane state.
+// It backs the ARM resource-group delete cascade, so it bypasses the
+// last-system-pool guard the same way a cluster delete does. Clusters record
+// only their resource group (the emulator is single-estate), matched
+// case-insensitively.
+func (m *Mock) PurgeResourceGroup(_ context.Context, _, resourceGroup string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	//nolint:gocritic // map values are large structs; the copy is read-only here.
+	for _, c := range m.clusters.All() {
+		if strings.EqualFold(c.ResourceGroup, resourceGroup) {
+			_ = m.deleteClusterLocked(c.ResourceGroup, c.Name)
+		}
+	}
+
+	return nil
+}
+
+// Compile-time check for the resource-group purge the ARM wire handler reaches
+// by type assertion.
+var _ interface {
+	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+} = (*Mock)(nil)
+
+// deleteClusterLocked removes a managed cluster and all its sub-resources. The
+// caller holds m.mu.
+func (m *Mock) deleteClusterLocked(rg, name string) error {
 	key := clusterKey(rg, name)
 	if !m.clusters.Has(key) {
 		return cerrors.Newf(cerrors.NotFound, "managed cluster %q not found in resource group %q", name, rg)
@@ -943,7 +980,7 @@ func (m *Mock) StartCluster(_ context.Context, rg, name string) (*ManagedCluster
 
 // StopCluster stops a managed cluster (Microsoft.ContainerService/.../stop),
 // deallocating the control plane and every agent pool's VMs while preserving
-// cluster and workload state — real AKS does not bill a stopped cluster.
+// cluster and workload state: real AKS does not bill a stopped cluster.
 // Idempotent: stopping an already-stopped cluster succeeds and leaves it
 // unchanged.
 func (m *Mock) StopCluster(_ context.Context, rg, name string) (*ManagedCluster, error) {
@@ -1226,7 +1263,7 @@ func (m *Mock) ListMaintenanceConfigs(_ context.Context, rg, cluster string) ([]
 // Kubeconfig returns a kubeconfig blob for the named managed cluster.
 //
 // When a shared kubernetes.APIServer is wired (the normal path) and the
-// cluster has a registered UID, the kubeconfig points at <base>/k8s/<uid> —
+// cluster has a registered UID, the kubeconfig points at <base>/k8s/<uid>,
 // the real in-memory K8s API server registered to this cluster on Create.
 // When the APIServer isn't wired (Wave 1 fallback), the kubeconfig points
 // at the *-DATAPLANE-NOT-IMPLEMENTED sentinel host instead, so callers in

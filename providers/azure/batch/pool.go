@@ -63,7 +63,7 @@ func poolKey(sub, rg, account, name string) string {
 }
 
 // CreateOrUpdatePool creates a new pool or updates an existing one under its
-// parent account. The parent account must exist — otherwise it returns a
+// parent account. The parent account must exist: otherwise it returns a
 // NotFound error (the wire layer maps it to ParentResourceNotFound). On create
 // the pool settles to Steady with current == target node counts. It returns the
 // stored pool and whether it was newly created.

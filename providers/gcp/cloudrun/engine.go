@@ -251,7 +251,7 @@ func markSucceeded(exec *driver.Execution, cstats []driver.ContainerStatus) {
 	exec.LogURI = logURI(exec)
 }
 
-// markSynthetic records a clean success without any container statuses — the
+// markSynthetic records a clean success without any container statuses: the
 // no-engine path, where the execution is a stub.
 func markSynthetic(exec *driver.Execution) {
 	markSucceeded(exec, nil)

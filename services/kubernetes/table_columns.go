@@ -67,7 +67,7 @@ func ageCol() metav1.TableColumnDefinition {
 }
 
 // fallbackProjector is the generic NAME/AGE table used for any kind without a
-// declared projection (CRDs, rarely-listed built-ins) — so `kubectl get <x>`
+// declared projection (CRDs, rarely-listed built-ins), so `kubectl get <x>`
 // prints something sane instead of 500ing.
 func fallbackProjector() *tableProjector {
 	return &tableProjector{
@@ -415,7 +415,7 @@ func eventObjectRef(u *unstructured.Unstructured) string {
 }
 
 // eventSourceString is the Event's SOURCE column: the reporting component and,
-// when present, the host — matching kubectl's formatEventSource.
+// when present, the host, matching kubectl's formatEventSource.
 func eventSourceString(u *unstructured.Unstructured) string {
 	comp := ustr(u, "source", "component")
 	host := ustr(u, "source", "host")

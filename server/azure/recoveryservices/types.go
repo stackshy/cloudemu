@@ -46,7 +46,7 @@ type vaultResponse struct {
 	Properties json.RawMessage   `json:"properties"`
 }
 
-// vaultListResponse is the ARM vault list envelope. nextLink is omitted — the
+// vaultListResponse is the ARM vault list envelope. nextLink is omitted: the
 // emulator returns a single page.
 type vaultListResponse struct {
 	Value []vaultResponse `json:"value"`

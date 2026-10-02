@@ -9,8 +9,8 @@ import (
 )
 
 // serveSubResource serves a request addressing one nested collection of the
-// gateway. Application Gateway has NO standalone child ARM operation groups —
-// every child is created and mutated only through the whole-gateway PUT — so a
+// gateway. Application Gateway has NO standalone child ARM operation groups:
+// every child is created and mutated only through the whole-gateway PUT. So a
 // sub-resource path is served read-only: GET reflects the inline children (with
 // their stamped ids), and any mutation (PUT/DELETE) is 405. An unknown or
 // deferred (unmodeled) collection segment is 404, since only the modeled
@@ -36,7 +36,7 @@ func (h *Handler) serveSubResource(w http.ResponseWriter, r *http.Request, rp *a
 	h.getSubResource(w, r, rp)
 }
 
-// listSubResource handles GET .../applicationGateways/{name}/{collection} — every
+// listSubResource handles GET .../applicationGateways/{name}/{collection}: every
 // modeled child of that collection on the gateway.
 func (h *Handler) listSubResource(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	gw, err := h.gw.GetAzureApplicationGateway(r.Context(), rp.ResourceGroup, rp.ResourceName)
@@ -51,8 +51,8 @@ func (h *Handler) listSubResource(w http.ResponseWriter, r *http.Request, rp *az
 	azurearm.WriteJSON(w, http.StatusOK, subResourceListResult{Value: children})
 }
 
-// getSubResource handles GET .../applicationGateways/{name}/{collection}/{child}
-// — the one addressed child.
+// getSubResource handles GET .../applicationGateways/{name}/{collection}/{child}:
+// the one addressed child.
 func (h *Handler) getSubResource(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	gw, err := h.gw.GetAzureApplicationGateway(r.Context(), rp.ResourceGroup, rp.ResourceName)
 	if err != nil {

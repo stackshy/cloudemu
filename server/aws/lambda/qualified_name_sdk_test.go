@@ -333,8 +333,8 @@ func TestSDKDeleteFunctionMissingVersion(t *testing.T) {
 }
 
 // TestSDKDeleteFunctionVersionWithAliasErrors verifies a version an alias still
-// references cannot be version-deleted (real Lambda: "You can't delete a version
-// that an alias references." — ResourceConflictException) and the version
+// references cannot be version-deleted (real Lambda answers ResourceConflictException,
+// "You can't delete a version that an alias references.") and the version
 // survives.
 func TestSDKDeleteFunctionVersionWithAliasErrors(t *testing.T) {
 	client, _ := newSDKClient(t)

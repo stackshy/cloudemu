@@ -169,7 +169,7 @@ func TestWriteCErrMapping(t *testing.T) {
 // google.rpc.Code NAME as the reason arg. WriteError must surface that NAME in
 // the top-level status field verbatim (not drop it via omitempty). Before the
 // isCanonicalCode passthrough, only "INVALID_ARGUMENT" had an alias case and
-// "FAILED_PRECONDITION" fell through to "" — silently dropping the status of a
+// "FAILED_PRECONDITION" fell through to "", silently dropping the status of a
 // previously-correct response.
 func TestWriteErrorCanonicalReasonPassthrough(t *testing.T) {
 	canonical := []string{

@@ -32,7 +32,7 @@ type ScaleSet struct {
 	// CapacityZero must be set true when Capacity==0 is an explicit
 	// scale-in-to-zero request rather than an omitted field. Without it,
 	// CreateScaleSet cannot tell "capacity not specified" (default to 1)
-	// apart from "capacity explicitly 0" (honor it) — real Azure
+	// apart from "capacity explicitly 0" (honor it): real Azure
 	// tooling sends the latter via a nullable capacity field.
 	CapacityZero bool
 	Priority     string // Spot / Regular
@@ -88,7 +88,7 @@ func (m *Mock) CreateScaleSet(_ context.Context, s ScaleSet) (*ScaleSet, error) 
 
 // applyScaleSetDefaults fills the fields real Azure defaults on create, in
 // place. A zero capacity is defaulted to 1 only when it wasn't explicitly
-// requested; an explicit "capacity":0 (scale-in-to-zero) is honored — a VMSS at
+// requested; an explicit "capacity":0 (scale-in-to-zero) is honored: a VMSS at
 // capacity 0 is a valid, running-with-no-instances state.
 func (m *Mock) applyScaleSetDefaults(s *ScaleSet) {
 	if s.ID == "" {
@@ -171,7 +171,7 @@ func sortScaleSetVMs(vms []ScaleSetVM) {
 	})
 }
 
-// nextOrdinal returns the smallest ordinal not already in use — one past the
+// nextOrdinal returns the smallest ordinal not already in use, one past the
 // highest numeric instanceId, or 0 when there are none.
 func nextOrdinal(vms []ScaleSetVM) int {
 	next := 0
@@ -314,8 +314,8 @@ func (m *Mock) PowerScaleSetVM(_ context.Context, vmssName, instanceID, action s
 	return nil
 }
 
-// PowerScaleSet applies a power action to every instance of a scale set — or to
-// the subset named by instanceIDs when non-empty — mirroring the whole-VMSS ARM
+// PowerScaleSet applies a power action to every instance of a scale set, or to
+// the subset named by instanceIDs when non-empty, mirroring the whole-VMSS ARM
 // power actions (Start / PowerOff / Deallocate / Restart / Reimage). It updates
 // each affected instance's power state so a subsequent instanceView reflects it.
 // Returns NotFound when the scale set (or a named instance) does not exist and

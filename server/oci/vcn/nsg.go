@@ -205,6 +205,11 @@ func (h *Handler) addSecurityRules(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 
+	if err := validateRequestRules(req.SecurityRules); err != nil {
+		ocirest.WriteDriverError(w, r, err)
+		return
+	}
+
 	added := make([]securityRule, 0, len(req.SecurityRules))
 
 	for i := range req.SecurityRules {
@@ -248,6 +253,18 @@ func (h *Handler) updateSecurityRules(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 
+	// Check every rule before any is removed, so a bad update keeps the
+	// original rules.
+	if err := validateRequestRules(req.SecurityRules); err != nil {
+		ocirest.WriteDriverError(w, r, err)
+		return
+	}
+
+	if err := h.checkRuleIDs(r.Context(), id, req.SecurityRules); err != nil {
+		ocirest.WriteDriverError(w, r, err)
+		return
+	}
+
 	updated := make([]securityRule, 0, len(req.SecurityRules))
 
 	for i := range req.SecurityRules {
@@ -270,6 +287,51 @@ func (h *Handler) updateSecurityRules(w http.ResponseWriter, r *http.Request, id
 	}
 
 	ocirest.WriteJSON(w, r, http.StatusOK, securityRulesResponse{SecurityRules: updated})
+}
+
+// validateRequestRules checks the ports of every rule in a request.
+func validateRequestRules(rules []securityRule) error {
+	for i := range rules {
+		driverRule := toDriverRule(&rules[i], rules[i].Direction == directionEgress)
+		if err := netdriver.ValidateSecurityRule(&driverRule); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// checkRuleIDs reports NotFound for the first rule whose id is not on the NSG.
+func (h *Handler) checkRuleIDs(ctx context.Context, id string, rules []securityRule) error {
+	info, err := h.findNSG(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	for i := range rules {
+		if !hasRuleID(info, rules[i].ID) {
+			return cerrors.Newf(cerrors.NotFound, "security rule %q not found", rules[i].ID)
+		}
+	}
+
+	return nil
+}
+
+// hasRuleID reports whether the NSG holds a rule with the given derived id.
+func hasRuleID(info *netdriver.SecurityGroupInfo, wantID string) bool {
+	for i := range info.IngressRules {
+		if ruleID(directionIngress, &info.IngressRules[i]) == wantID {
+			return true
+		}
+	}
+
+	for i := range info.EgressRules {
+		if ruleID(directionEgress, &info.EgressRules[i]) == wantID {
+			return true
+		}
+	}
+
+	return false
 }
 
 // addRule adds a rule on the side its direction names.

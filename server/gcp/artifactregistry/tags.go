@@ -118,8 +118,8 @@ func (h *Handler) createTag(w http.ResponseWriter, r *http.Request, rt *route) {
 // patchTag implements packages.tags.patch. The mock's package/version model
 // is one version per package, so a tag under package {pkg} only ever
 // resolves to version {pkg}; a patch can therefore only confirm that version
-// (a differing one 404s as not found), but the immutableTags gate — checked
-// atomically inside the provider's PatchTag — is still fully meaningful and
+// (a differing one 404s as not found), but the immutableTags gate (checked
+// atomically inside the provider's PatchTag) is still meaningful and
 // is what real clients probe.
 func (h *Handler) patchTag(w http.ResponseWriter, r *http.Request, rt *route) {
 	img, ok := h.findImage(w, r, rt)

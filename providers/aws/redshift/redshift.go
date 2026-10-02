@@ -2,7 +2,7 @@
 // relationaldb/driver.RelationalDB so the same backend serves both the
 // portable API (relationaldb.DB) and the SDK-compat HTTP layer.
 //
-// Redshift's primary unit is the cluster — there is no separate "instance"
+// Redshift's primary unit is the cluster. There is no separate "instance"
 // resource. Instance-level operations therefore return InvalidArgument with a
 // hint to use the cluster ops; cluster lifecycle (Create/Modify/Delete/Reboot)
 // and cluster snapshot/restore are first-class. The mock emits CloudWatch-shaped
@@ -50,12 +50,17 @@ const (
 	// family default), and clients rely on it: terraform's aws_redshift_cluster
 	// reads ClusterParameterGroups[0] unconditionally and panics on an empty list.
 	defaultParameterGroupName = "default.redshift-1.0"
-	snapshotBackupSizeMB      = 100.0
-	cpuUtilizationRunning     = 25.0
-	databaseConnectionsRun    = 5.0
-	readIOPSRunning           = 10.0
-	writeIOPSRunning          = 5.0
-	networkReceiveThroughput  = 1024.0
+	// defaultMaintenanceTrack is the maintenance track a cluster runs on when
+	// CreateCluster omits MaintenanceTrackName; terraform's
+	// maintenance_track_name defaults to the same value, so an unset one never
+	// drifts.
+	defaultMaintenanceTrack  = "current"
+	snapshotBackupSizeMB     = 100.0
+	cpuUtilizationRunning    = 25.0
+	databaseConnectionsRun   = 5.0
+	readIOPSRunning          = 10.0
+	writeIOPSRunning         = 5.0
+	networkReceiveThroughput = 1024.0
 )
 
 // errInstanceOpsUnsupported is the canonical error returned for instance-level
@@ -76,6 +81,8 @@ type ParameterGroup struct {
 	// created group is seeded with the family's engine-default values; a
 	// ModifyClusterParameterGroup override flips a parameter's Source to "user".
 	Parameters map[string]rdbdriver.Parameter
+	// Tags is filled from the ARN-keyed tag store on read and never stored.
+	Tags map[string]string `json:"-"`
 }
 
 type SubnetGroup struct {
@@ -88,6 +95,8 @@ type SubnetGroup struct {
 	// Subnets carries each member subnet with its availability zone, resolved at
 	// create time, so DescribeClusterSubnetGroups can emit the full Subnets list.
 	Subnets []Subnet
+	// Tags is filled from the ARN-keyed tag store on read and never stored.
+	Tags map[string]string `json:"-"`
 }
 
 // Subnet is a member subnet of a cluster subnet group with its availability
@@ -105,6 +114,7 @@ type Mock struct {
 	clusterSnapshots *memstore.Store[rdbdriver.ClusterSnapshot]
 	parameterGroups  *memstore.Store[ParameterGroup]
 	subnetGroups     *memstore.Store[SubnetGroup]
+	eventSubs        *memstore.Store[EventSubscription]
 	tagsByARN        map[string]map[string]string // ResourceName (ARN) -> tags
 
 	// clusterSettle overlays a transient creating/modifying window (keyed by
@@ -117,6 +127,7 @@ type Mock struct {
 	opts           *config.Options
 	monitoring     mondriver.Monitoring
 	subnetResolver SubnetResolver
+	topics         TopicLookup
 }
 
 // New creates a new AWS Redshift mock.
@@ -126,6 +137,7 @@ func New(opts *config.Options) *Mock {
 		clusterSnapshots: memstore.New[rdbdriver.ClusterSnapshot](),
 		parameterGroups:  memstore.New[ParameterGroup](),
 		subnetGroups:     memstore.New[SubnetGroup](),
+		eventSubs:        memstore.New[EventSubscription](),
 		clusterSettle:    settle.NewSet(),
 		opts:             opts,
 	}
@@ -139,10 +151,19 @@ func (m *Mock) settleClusterState(id, final string) string {
 }
 
 // CreateClusterParameterGroup registers a redshift cluster parameter group.
-func (m *Mock) CreateClusterParameterGroup(_ context.Context, name, family, description string) (*ParameterGroup, error) {
+func (m *Mock) CreateClusterParameterGroup(
+	_ context.Context, name, family, description string, tags map[string]string,
+) (*ParameterGroup, error) {
 	if name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "parameter group name is required")
 	}
+
+	if err := validateTags(nil, tags); err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if m.parameterGroups.Has(name) {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "parameter group %q already exists", name)
@@ -155,6 +176,8 @@ func (m *Mock) CreateClusterParameterGroup(_ context.Context, name, family, desc
 		Parameters:  defaultRedshiftParameters(),
 	}
 	m.parameterGroups.Set(name, pg)
+	m.setTagsLocked(m.parameterGroupARN(name), tags)
+	pg.Tags = m.tagsLocked(m.parameterGroupARN(name))
 
 	return &pg, nil
 }
@@ -231,7 +254,7 @@ func (m *Mock) DescribeClusterParameters(_ context.Context, name string) ([]rdbd
 	return out, nil
 }
 
-// ResetClusterParameterGroup restores parameters to their engine defaults —
+// ResetClusterParameterGroup restores parameters to their engine defaults,
 // the named ones, or all of them when resetAll is set.
 func (m *Mock) ResetClusterParameterGroup(
 	_ context.Context, name string, paramNames []string, resetAll bool,
@@ -275,19 +298,16 @@ func (m *Mock) ResetClusterParameterGroup(
 // DescribeClusterParameterGroups returns the named parameter groups, or all of
 // them when names is empty. An unknown name is a NotFound error, matching AWS.
 func (m *Mock) DescribeClusterParameterGroups(_ context.Context, names []string) ([]ParameterGroup, error) {
-	if len(names) == 0 {
-		return m.parameterGroups.SortedValues(), nil
+	out, err := getNamed(m.parameterGroups, names, "parameter group")
+	if err != nil {
+		return nil, err
 	}
 
-	out := make([]ParameterGroup, 0, len(names))
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	for _, name := range names {
-		pg, ok := m.parameterGroups.Get(name)
-		if !ok {
-			return nil, cerrors.Newf(cerrors.NotFound, "parameter group %q not found", name)
-		}
-
-		out = append(out, pg)
+	for i := range out {
+		out[i].Tags = m.tagsLocked(m.parameterGroupARN(out[i].Name))
 	}
 
 	return out, nil
@@ -312,6 +332,8 @@ func (m *Mock) DeleteClusterParameterGroup(_ context.Context, name string) error
 		return cerrors.Newf(cerrors.NotFound, "parameter group %q not found", name)
 	}
 
+	delete(m.tagsByARN, m.parameterGroupARN(name))
+
 	return nil
 }
 
@@ -329,16 +351,26 @@ func (m *Mock) clusterParameterGroupInUseBy(name string) (string, bool) {
 }
 
 // CreateClusterSubnetGroup registers a redshift cluster subnet group.
-func (m *Mock) CreateClusterSubnetGroup(ctx context.Context, name, description string, subnetIDs []string) (*SubnetGroup, error) {
+func (m *Mock) CreateClusterSubnetGroup(
+	ctx context.Context, name, description string, subnetIDs []string, tags map[string]string,
+) (*SubnetGroup, error) {
 	if name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "subnet group name is required")
 	}
 
+	if err := validateTags(nil, tags); err != nil {
+		return nil, err
+	}
+
+	// Resolve subnets before taking the lock: it calls into the VPC mock.
+	vpcID, subnets := m.resolveSubnets(ctx, subnetIDs)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.subnetGroups.Has(name) {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "subnet group %q already exists", name)
 	}
-
-	vpcID, subnets := m.resolveSubnets(ctx, subnetIDs)
 
 	sg := SubnetGroup{
 		Name:        name,
@@ -348,6 +380,8 @@ func (m *Mock) CreateClusterSubnetGroup(ctx context.Context, name, description s
 		Subnets:     subnets,
 	}
 	m.subnetGroups.Set(name, sg)
+	m.setTagsLocked(m.subnetGroupARN(name), tags)
+	sg.Tags = m.tagsLocked(m.subnetGroupARN(name))
 
 	return &sg, nil
 }
@@ -355,19 +389,16 @@ func (m *Mock) CreateClusterSubnetGroup(ctx context.Context, name, description s
 // DescribeClusterSubnetGroups returns the named subnet groups, or all of them
 // when names is empty. An unknown name is a NotFound error, matching AWS.
 func (m *Mock) DescribeClusterSubnetGroups(_ context.Context, names []string) ([]SubnetGroup, error) {
-	if len(names) == 0 {
-		return m.subnetGroups.SortedValues(), nil
+	out, err := getNamed(m.subnetGroups, names, "subnet group")
+	if err != nil {
+		return nil, err
 	}
 
-	out := make([]SubnetGroup, 0, len(names))
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	for _, name := range names {
-		sg, ok := m.subnetGroups.Get(name)
-		if !ok {
-			return nil, cerrors.Newf(cerrors.NotFound, "subnet group %q not found", name)
-		}
-
-		out = append(out, sg)
+	for i := range out {
+		out[i].Tags = m.tagsLocked(m.subnetGroupARN(out[i].Name))
 	}
 
 	return out, nil
@@ -391,6 +422,8 @@ func (m *Mock) DeleteClusterSubnetGroup(_ context.Context, name string) error {
 	if !m.subnetGroups.Delete(name) {
 		return cerrors.Newf(cerrors.NotFound, "subnet group %q not found", name)
 	}
+
+	delete(m.tagsByARN, m.subnetGroupARN(name))
 
 	return nil
 }
@@ -495,7 +528,7 @@ func (*Mock) StopInstance(_ context.Context, _ string) error {
 	return errInstanceOpsUnsupported
 }
 
-// RebootInstance delegates to RebootCluster — Redshift only has clusters, so a
+// RebootInstance delegates to RebootCluster. Redshift only has clusters, so a
 // "reboot instance" call against a Redshift cluster ID is interpreted as a
 // cluster reboot.
 func (m *Mock) RebootInstance(ctx context.Context, id string) error {
@@ -511,6 +544,10 @@ func (m *Mock) RebootInstance(ctx context.Context, id string) error {
 func (m *Mock) CreateCluster(ctx context.Context, cfg rdbdriver.ClusterConfig) (*rdbdriver.Cluster, error) {
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "ClusterIdentifier is required")
+	}
+
+	if err := validateTags(nil, cfg.Tags); err != nil {
+		return nil, err
 	}
 
 	cluster, err := m.reserveCluster(cfg)
@@ -542,6 +579,7 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg rdbdriver.ClusterConfig) (
 
 	out := cluster
 	out.State = m.settleClusterState(cfg.ID, out.State)
+	out.Tags = m.tags(out.ARN)
 
 	return &out, nil
 }
@@ -596,6 +634,16 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		maintenanceWindow = defaultMaintenanceWindow
 	}
 
+	maintenanceTrack := cfg.MaintenanceTrackName
+	if maintenanceTrack == "" {
+		maintenanceTrack = defaultMaintenanceTrack
+	}
+
+	allowVersionUpgrade := true
+	if cfg.AllowVersionUpgrade != nil {
+		allowVersionUpgrade = *cfg.AllowVersionUpgrade
+	}
+
 	cluster := rdbdriver.Cluster{
 		ID:                               cfg.ID,
 		ARN:                              clusterARN(m.opts.Region, m.opts.AccountID, cfg.ID),
@@ -607,6 +655,7 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		Port:                             port,
 		State:                            rdbdriver.StateAvailable,
 		VPCSecurityGroups:                append([]string(nil), cfg.VPCSecurityGroups...),
+		ClusterSecurityGroups:            append([]string(nil), cfg.ClusterSecurityGroups...),
 		SubnetGroupName:                  cfg.SubnetGroupName,
 		DBClusterParameterGroupName:      parameterGroup,
 		NodeType:                         cfg.NodeType,
@@ -617,11 +666,14 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		AvailabilityZone:                 cfg.AvailabilityZone,
 		AutomatedSnapshotRetentionPeriod: cfg.AutomatedSnapshotRetentionPeriod,
 		PreferredMaintenanceWindow:       maintenanceWindow,
+		AllowVersionUpgrade:              allowVersionUpgrade,
+		MaintenanceTrackName:             maintenanceTrack,
+		ElasticIP:                        cfg.ElasticIP,
 		CreatedAt:                        m.opts.Clock.Now().UTC(),
-		Tags:                             copyTags(cfg.Tags),
 	}
 
 	m.clusters.Set(cfg.ID, cluster)
+	m.setTagsLocked(cluster.ARN, cfg.Tags)
 
 	return cluster, nil
 }
@@ -646,6 +698,10 @@ func (m *Mock) finalizeCluster(id, endpoint string, port int) {
 func (m *Mock) rollbackCluster(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if cluster, ok := m.clusters.Get(id); ok {
+		delete(m.tagsByARN, cluster.ARN)
+	}
 
 	m.clusters.Delete(id)
 }
@@ -699,6 +755,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdbdriver.Cl
 		//nolint:gocritic // map values are large structs but we need a flat slice for the API.
 		for _, v := range all {
 			v.State = m.settleClusterState(v.ID, v.State)
+			v.Tags = m.tagsLocked(v.ARN)
 			out = append(out, v)
 		}
 
@@ -714,16 +771,25 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdbdriver.Cl
 		}
 
 		cluster.State = m.settleClusterState(id, cluster.State)
+		cluster.Tags = m.tagsLocked(cluster.ARN)
 		out = append(out, cluster)
 	}
 
 	return out, nil
 }
 
-// ModifyCluster applies changes.
+// ModifyCluster applies only the fields present in input, preserving every
+// attribute the request omitted (a field-level merge matching real Redshift
+// ModifyCluster semantics).
+//
+//nolint:gocritic // hugeParam: signature fixed by driver.RelationalDB (by-value input, shared across RDS/Aurora/Azure/GCP).
 func (m *Mock) ModifyCluster(
-	_ context.Context, id string, input rdbdriver.ModifyInstanceInput,
+	ctx context.Context, id string, input rdbdriver.ModifyInstanceInput,
 ) (*rdbdriver.Cluster, error) {
+	if err := validateTags(nil, input.Tags); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -732,11 +798,45 @@ func (m *Mock) ModifyCluster(
 		return nil, cerrors.Newf(cerrors.NotFound, "Redshift cluster %q not found", id)
 	}
 
+	// Rotate the master password on the backing engine (if one is wired) before
+	// persisting anything else, so a failed rotation leaves the cluster row
+	// untouched.
+	if input.MasterUserPassword != "" {
+		inst := rdbdriver.Instance{ID: cluster.ID, Engine: cluster.Engine, DBName: cluster.DatabaseName, MasterUsername: cluster.MasterUsername}
+		if err := dbengine.RotatePassword(ctx, m.opts.DatabaseEngine, &inst, input.MasterUserPassword); err != nil {
+			return nil, err
+		}
+	}
+
+	applyClusterModify(&cluster, &input)
+
+	m.clusters.Set(id, cluster)
+
+	if input.Tags != nil {
+		m.replaceTagsLocked(cluster.ARN, input.Tags)
+	}
+
+	// Under AsyncSettle a modified cluster briefly reports modifying before
+	// settling back to available (ModifyCluster → modifying → available); a no-op
+	// when settle is off.
+	m.clusterSettle.Begin(id, rdbdriver.StateModifying, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultWarehouseResize))
+
+	out := cluster
+	out.State = m.settleClusterState(id, out.State)
+	out.Tags = m.tagsLocked(out.ARN)
+
+	return &out, nil
+}
+
+// applyClusterModify applies only the non-empty/non-nil fields of input onto
+// cluster; every omitted field keeps its prior stored value.
+func applyClusterModify(cluster *rdbdriver.Cluster, input *rdbdriver.ModifyInstanceInput) {
 	if input.EngineVersion != "" {
 		cluster.EngineVersion = input.EngineVersion
 	}
 
-	applyResize(&cluster, &input)
+	applyResize(cluster, input)
 
 	if input.PreferredMaintenanceWindow != "" {
 		cluster.PreferredMaintenanceWindow = input.PreferredMaintenanceWindow
@@ -748,22 +848,44 @@ func (m *Mock) ModifyCluster(
 		cluster.AutomatedSnapshotRetentionPeriod = *input.AutomatedSnapshotRetentionPeriod
 	}
 
-	if input.Tags != nil {
-		cluster.Tags = copyTags(input.Tags)
+	if input.DBClusterParameterGroupName != "" {
+		cluster.DBClusterParameterGroupName = input.DBClusterParameterGroupName
 	}
 
-	m.clusters.Set(id, cluster)
+	if input.VPCSecurityGroups != nil {
+		cluster.VPCSecurityGroups = append([]string(nil), input.VPCSecurityGroups...)
+	}
 
-	// Under AsyncSettle a modified cluster briefly reports modifying before
-	// settling back to available (ModifyCluster → modifying → available); a no-op
-	// when settle is off.
-	m.clusterSettle.Begin(id, rdbdriver.StateModifying, m.opts.Clock.Now(),
-		m.opts.SettleDuration(settle.DefaultWarehouseResize))
+	if input.ClusterSecurityGroups != nil {
+		cluster.ClusterSecurityGroups = append([]string(nil), input.ClusterSecurityGroups...)
+	}
 
-	out := cluster
-	out.State = m.settleClusterState(id, out.State)
+	applyClusterModifyFlags(cluster, input)
+}
 
-	return &out, nil
+// applyClusterModifyFlags merges the boolean/string attributes ModifyCluster
+// exposes beyond resize/retention/security-groups: AllowVersionUpgrade,
+// PubliclyAccessible, Encrypted, MaintenanceTrackName, ElasticIP.
+func applyClusterModifyFlags(cluster *rdbdriver.Cluster, input *rdbdriver.ModifyInstanceInput) {
+	if input.AllowVersionUpgrade != nil {
+		cluster.AllowVersionUpgrade = *input.AllowVersionUpgrade
+	}
+
+	if input.PubliclyAccessible != nil {
+		cluster.PubliclyAccessible = *input.PubliclyAccessible
+	}
+
+	if input.Encrypted != nil {
+		cluster.Encrypted = *input.Encrypted
+	}
+
+	if input.MaintenanceTrackName != "" {
+		cluster.MaintenanceTrackName = input.MaintenanceTrackName
+	}
+
+	if input.ElasticIP != "" {
+		cluster.ElasticIP = input.ElasticIP
+	}
 }
 
 // applyResize applies a Redshift ModifyCluster resize (NodeType / NumberOfNodes
@@ -797,10 +919,13 @@ func (m *Mock) DeleteCluster(ctx context.Context, id string) error {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 
-		if !m.clusters.Delete(id) {
+		cluster, ok := m.clusters.Get(id)
+		if !ok {
 			return cerrors.Newf(cerrors.NotFound, "Redshift cluster %q not found", id)
 		}
 
+		m.clusters.Delete(id)
+		delete(m.tagsByARN, cluster.ARN)
 		m.clusterSettle.Clear(id)
 
 		return nil
@@ -824,6 +949,7 @@ func (m *Mock) DeleteCluster(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.clusters.Delete(id)
+	delete(m.tagsByARN, cluster.ARN)
 	m.clusterSettle.Clear(id)
 
 	return nil
@@ -831,15 +957,15 @@ func (m *Mock) DeleteCluster(ctx context.Context, id string) error {
 
 // StartCluster moves a paused cluster to available.
 func (m *Mock) StartCluster(_ context.Context, id string) error {
-	return m.transitionCluster(id, rdbdriver.StateStopped, rdbdriver.StateAvailable, "start")
+	return m.transitionCluster(id, rdbdriver.StateStopped, rdbdriver.StateAvailable, "start", transitionIdempotent)
 }
 
 // StopCluster moves an available cluster to paused (mapped to "stopped" in the driver).
 func (m *Mock) StopCluster(_ context.Context, id string) error {
-	return m.transitionCluster(id, rdbdriver.StateAvailable, rdbdriver.StateStopped, "stop")
+	return m.transitionCluster(id, rdbdriver.StateAvailable, rdbdriver.StateStopped, "stop", transitionIdempotent)
 }
 
-// RebootCluster cycles a cluster — emits running-value metrics and leaves it available.
+// RebootCluster cycles a cluster: emits running-value metrics and leaves it available.
 func (m *Mock) RebootCluster(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -873,7 +999,7 @@ const clusterStatePaused = "paused"
 // of the AWS-only optional clusterPauser surface, discovered by the wire
 // handler via type assertion.
 func (m *Mock) PauseCluster(_ context.Context, id string) (*rdbdriver.Cluster, error) {
-	if err := m.transitionCluster(id, rdbdriver.StateAvailable, clusterStatePaused, "pause"); err != nil {
+	if err := m.transitionCluster(id, rdbdriver.StateAvailable, clusterStatePaused, "pause", transitionStrict); err != nil {
 		return nil, err
 	}
 
@@ -882,7 +1008,7 @@ func (m *Mock) PauseCluster(_ context.Context, id string) (*rdbdriver.Cluster, e
 
 // ResumeCluster resumes a paused cluster (paused → available).
 func (m *Mock) ResumeCluster(_ context.Context, id string) (*rdbdriver.Cluster, error) {
-	if err := m.transitionCluster(id, clusterStatePaused, rdbdriver.StateAvailable, "resume"); err != nil {
+	if err := m.transitionCluster(id, clusterStatePaused, rdbdriver.StateAvailable, "resume", transitionStrict); err != nil {
 		return nil, err
 	}
 
@@ -900,11 +1026,26 @@ func (m *Mock) snapshotCluster(id string) (*rdbdriver.Cluster, error) {
 	}
 
 	out := cluster
+	out.Tags = m.tagsLocked(out.ARN)
 
 	return &out, nil
 }
 
-func (m *Mock) transitionCluster(id, from, to, verb string) error {
+// transitionMode selects how transitionCluster treats a cluster that is
+// already at the target state.
+type transitionMode int
+
+const (
+	// transitionIdempotent treats "already at target" as success (portable
+	// StartCluster/StopCluster semantics).
+	transitionIdempotent transitionMode = iota
+	// transitionStrict requires the cluster to be in the source state, as AWS
+	// does for PauseCluster (requires available) and ResumeCluster (requires
+	// paused): resuming an available cluster is an InvalidClusterState fault.
+	transitionStrict
+)
+
+func (m *Mock) transitionCluster(id, from, to, verb string, mode transitionMode) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -913,13 +1054,20 @@ func (m *Mock) transitionCluster(id, from, to, verb string) error {
 		return cerrors.Newf(cerrors.NotFound, "Redshift cluster %q not found", id)
 	}
 
-	if cluster.State == to {
-		return nil // idempotent
+	current := cluster.State
+	if mode == transitionStrict {
+		// Pause/Resume check the observed state, so a cluster still creating or
+		// modifying (AsyncSettle) is rejected like real Redshift does.
+		current = m.settleClusterState(id, cluster.State)
 	}
 
-	if cluster.State != from {
+	if current == to && mode == transitionIdempotent {
+		return nil
+	}
+
+	if current != from {
 		return cerrors.Newf(cerrors.FailedPrecondition,
-			"Redshift cluster %q is in state %q; %s requires %q", id, cluster.State, verb, from)
+			"Redshift cluster %q is in state %q; %s requires %q", id, current, verb, from)
 	}
 
 	cluster.State = to
@@ -931,7 +1079,7 @@ func (m *Mock) transitionCluster(id, from, to, verb string) error {
 	return nil
 }
 
-// CreateSnapshot is unsupported — Redshift only has cluster snapshots.
+// CreateSnapshot is unsupported: Redshift only has cluster snapshots.
 func (*Mock) CreateSnapshot(_ context.Context, _ rdbdriver.SnapshotConfig) (*rdbdriver.Snapshot, error) {
 	return nil, errInstanceOpsUnsupported
 }
@@ -961,6 +1109,18 @@ func (m *Mock) CreateClusterSnapshot(
 		return nil, cerrors.New(cerrors.InvalidArgument, "SnapshotIdentifier is required")
 	}
 
+	if err := validateTags(nil, cfg.Tags); err != nil {
+		return nil, err
+	}
+
+	retention := manualRetentionIndefinite
+	if cfg.ManualSnapshotRetentionPeriod != nil {
+		retention = *cfg.ManualSnapshotRetentionPeriod
+		if err := validateManualRetention(retention); err != nil {
+			return nil, err
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -974,26 +1134,27 @@ func (m *Mock) CreateClusterSnapshot(
 	}
 
 	snap := rdbdriver.ClusterSnapshot{
-		ID:                         cfg.ID,
-		ARN:                        clusterSnapshotARN(m.opts.Region, m.opts.AccountID, cfg.ID),
-		ClusterID:                  cfg.ClusterID,
-		Engine:                     cluster.Engine,
-		EngineVersion:              cluster.EngineVersion,
-		State:                      rdbdriver.SnapshotAvailable,
-		NodeType:                   cluster.NodeType,
-		NumberOfNodes:              cluster.NumberOfNodes,
-		Encrypted:                  cluster.Encrypted,
-		KmsKeyID:                   cluster.KmsKeyID,
-		TotalBackupSizeInMegaBytes: snapshotBackupSizeMB,
-		MasterUsername:             cluster.MasterUsername,
-		DatabaseName:               cluster.DatabaseName,
-		CreatedAt:                  m.opts.Clock.Now().UTC(),
-		Tags:                       copyTags(cfg.Tags),
+		ID:                            cfg.ID,
+		ARN:                           clusterSnapshotARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		ClusterID:                     cfg.ClusterID,
+		Engine:                        cluster.Engine,
+		EngineVersion:                 cluster.EngineVersion,
+		State:                         rdbdriver.SnapshotAvailable,
+		NodeType:                      cluster.NodeType,
+		NumberOfNodes:                 cluster.NumberOfNodes,
+		Encrypted:                     cluster.Encrypted,
+		KmsKeyID:                      cluster.KmsKeyID,
+		TotalBackupSizeInMegaBytes:    snapshotBackupSizeMB,
+		MasterUsername:                cluster.MasterUsername,
+		DatabaseName:                  cluster.DatabaseName,
+		CreatedAt:                     m.opts.Clock.Now().UTC(),
+		ManualSnapshotRetentionPeriod: retention,
 	}
 
 	m.clusterSnapshots.Set(cfg.ID, snap)
+	m.setTagsLocked(snap.ARN, cfg.Tags)
 
-	out := snap
+	out := m.readSnapshotLocked(snap)
 
 	return &out, nil
 }
@@ -1022,7 +1183,7 @@ func (m *Mock) DescribeClusterSnapshots(
 			}
 		}
 
-		out = append(out, snap)
+		out = append(out, m.readSnapshotLocked(snap))
 	}
 
 	return out, nil
@@ -1033,9 +1194,13 @@ func (m *Mock) DeleteClusterSnapshot(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if !m.clusterSnapshots.Delete(id) {
+	snap, ok := m.clusterSnapshots.Get(id)
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "Redshift cluster snapshot %q not found", id)
 	}
+
+	m.clusterSnapshots.Delete(id)
+	delete(m.tagsByARN, snap.ARN)
 
 	return nil
 }
@@ -1046,6 +1211,10 @@ func (m *Mock) RestoreClusterFromSnapshot(
 ) (*rdbdriver.Cluster, error) {
 	if input.NewClusterID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "ClusterIdentifier is required")
+	}
+
+	if err := validateTags(nil, input.Tags); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
@@ -1090,10 +1259,10 @@ func (m *Mock) RestoreClusterFromSnapshot(
 		AutomatedSnapshotRetentionPeriod: defaultSnapshotRetentionDays,
 		PreferredMaintenanceWindow:       defaultMaintenanceWindow,
 		CreatedAt:                        now,
-		Tags:                             copyTags(input.Tags),
 	}
 
 	m.clusters.Set(input.NewClusterID, cluster)
+	m.setTagsLocked(cluster.ARN, input.Tags)
 
 	m.emitClusterMetrics(input.NewClusterID, cpuUtilizationRunning, databaseConnectionsRun,
 		readIOPSRunning, writeIOPSRunning, networkReceiveThroughput)
@@ -1105,6 +1274,7 @@ func (m *Mock) RestoreClusterFromSnapshot(
 
 	out := cluster
 	out.State = m.settleClusterState(input.NewClusterID, out.State)
+	out.Tags = m.tagsLocked(out.ARN)
 
 	return &out, nil
 }
@@ -1142,6 +1312,27 @@ func restoredKMSKeyID(encrypted bool, snapKmsKeyID, overrideKmsKeyID string) str
 	}
 
 	return snapKmsKeyID
+}
+
+// getNamed returns the named records, or all of them sorted by name when names
+// is empty. An unknown name is a NotFound error, matching AWS.
+func getNamed[T any](store *memstore.Store[T], names []string, kind string) ([]T, error) {
+	if len(names) == 0 {
+		return store.SortedValues(), nil
+	}
+
+	out := make([]T, 0, len(names))
+
+	for _, name := range names {
+		v, ok := store.Get(name)
+		if !ok {
+			return nil, cerrors.Newf(cerrors.NotFound, "%s %q not found", kind, name)
+		}
+
+		out = append(out, v)
+	}
+
+	return out, nil
 }
 
 func stringSet(values []string) map[string]struct{} {

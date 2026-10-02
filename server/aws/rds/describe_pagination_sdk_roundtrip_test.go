@@ -21,7 +21,7 @@ const (
 
 // pageWalk drives a Marker/MaxRecords describe closure to exhaustion, returning
 // the identifiers seen and the number of pages fetched. It fails if any
-// identifier repeats across pages — the invariant offset pagination must hold.
+// identifier repeats across pages, the invariant offset pagination must hold.
 func pageWalk(t *testing.T,
 	describe func(marker *string) (ids []string, next *string, err error),
 ) (seen map[string]bool, pages int) {

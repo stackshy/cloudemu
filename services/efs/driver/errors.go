@@ -9,6 +9,9 @@ const (
 	KindAccessPoint = "AccessPoint"
 	KindPolicy      = "Policy"
 	KindReplication = "Replication"
+	// KindAvailabilityZone marks a mount target placed outside a One Zone
+	// file system's zone.
+	KindAvailabilityZone = "AvailabilityZone"
 )
 
 // ResourceError tags a canonical cloudemu error with the EFS resource kind it

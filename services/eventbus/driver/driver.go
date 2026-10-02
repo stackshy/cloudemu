@@ -49,7 +49,7 @@ type PermissionCondition struct {
 
 // PermissionInput carries the parameters of an EventBridge PutPermission call.
 // It is either the legacy Action/Principal/StatementID trio (optionally with a
-// Condition) or a full Policy JSON document — the two forms are mutually
+// Condition) or a full Policy JSON document; the two forms are mutually
 // exclusive. Resource-based policies are an AWS-EventBridge concept, so this is
 // consumed through an AWS-specific optional interface, not the portable driver.
 type PermissionInput struct {
@@ -142,7 +142,7 @@ type Event struct {
 	DataVersion string
 	// Topic overrides the delivered event's "topic" field (Azure Event Grid's
 	// fully-qualified topic resource id). A system-topic producer (e.g. Blob
-	// Storage) sets it to the source resource id — the storage account's ARM id —
+	// Storage) sets it to the source resource id (the storage account's ARM id),
 	// which is the topic real Azure stamps on the event, distinct from the Event
 	// Grid topic resource the subscription hangs off. Empty for AWS and GCP and
 	// for a custom-topic publish, where delivery falls back to the bus's own ARN.

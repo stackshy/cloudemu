@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 )
 
@@ -16,19 +17,20 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // keys). k8sUIDs preserves each cluster's registered Kubernetes UID so a restore
 // keeps the cluster→UID mapping stable. The mutex and the wired deps (opts,
 // monitoring, subnetResolver) are not serialized; the shared *kubernetes.APIServer
-// data plane is external shared state and is intentionally not re-registered here
-// — the stored records and the UID mapping are what a restore reinstates.
+// data plane is external shared state and is intentionally not re-registered here.
+// The stored records and the UID mapping are what a restore reinstates.
 type eksSnapshot struct {
 	Clusters        json.RawMessage   `json:"clusters,omitempty"`
 	Nodegroups      json.RawMessage   `json:"nodegroups,omitempty"`
 	FargateProfiles json.RawMessage   `json:"fargateProfiles,omitempty"`
 	Addons          json.RawMessage   `json:"addons,omitempty"`
 	Updates         json.RawMessage   `json:"updates,omitempty"`
+	AccessEntries   json.RawMessage   `json:"accessEntries,omitempty"`
 	K8sUIDs         map[string]string `json:"k8sUids,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// EKS holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. EKS holds no bulk
+// object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap eksSnapshot
 	if err := m.snapshotStores(&snap); err != nil {
@@ -59,6 +61,7 @@ func (m *Mock) snapshotStores(snap *eksSnapshot) error {
 		{&snap.FargateProfiles, m.fargateProfiles.Snapshot},
 		{&snap.Addons, m.addons.Snapshot},
 		{&snap.Updates, m.updates.Snapshot},
+		{&snap.AccessEntries, m.accessEntries.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -85,11 +88,19 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		return err
 	}
 
+	m.mu.Lock()
+
 	if snap.K8sUIDs != nil {
-		m.mu.Lock()
 		m.k8sUIDs = snap.K8sUIDs
-		m.mu.Unlock()
 	}
+
+	// Settle windows are not persisted, so a restored cluster or nodegroup
+	// reports the version it was moving to and its updates read Successful.
+	m.updateSettle = settle.NewSet()
+	m.clusterOldVersions = make(map[string]oldVersion)
+	m.nodegroupOldVersions = make(map[string]oldVersion)
+
+	m.mu.Unlock()
 
 	return nil
 }
@@ -104,6 +115,7 @@ func (m *Mock) restoreStores(snap *eksSnapshot) error {
 		{snap.FargateProfiles, m.fargateProfiles.LoadSnapshot},
 		{snap.Addons, m.addons.LoadSnapshot},
 		{snap.Updates, m.updates.LoadSnapshot},
+		{snap.AccessEntries, m.accessEntries.LoadSnapshot},
 	}
 
 	for _, l := range loads {

@@ -15,7 +15,7 @@ import (
 // data disk by sending the modified (shorter) storageProfile.dataDisks array.
 // A PATCH that supplies a dataDisks array must detach every disk whose LUN is
 // absent from it (a supplied empty array detaches all), clearing each disk's
-// managedBy/diskState — matching real Azure — while a PATCH that omits the
+// managedBy/diskState, matching real Azure, while a PATCH that omits the
 // array entirely stays a merge-patch and leaves attachments untouched.
 func TestSDKVMPATCHDataDiskDetachByOmission(t *testing.T) {
 	vmClient, diskClient := newDataDiskTestServer(t)
@@ -50,7 +50,7 @@ func TestSDKVMPATCHDataDiskDetachByOmission(t *testing.T) {
 
 	// PATCH with a dataDisks list that supplies ONLY lun 1 (omitting lun 0):
 	// real Azure's full-replace-on-PATCH detaches lun 0's disk. This was the
-	// bug — the PATCH path treated the shorter array as a no-op.
+	// bug: the PATCH path treated the shorter array as a no-op.
 	patchDataDisks(ctx, t, vmClient, "vm-det", []*armcompute.DataDisk{
 		{Lun: to.Ptr[int32](1), CreateOption: to.Ptr(armcompute.DiskCreateOptionTypesAttach),
 			ManagedDisk: &armcompute.ManagedDiskParameters{ID: diskB.ID}},
@@ -82,7 +82,7 @@ func TestSDKVMPATCHDataDiskDetachByOmission(t *testing.T) {
 
 // TestSDKVMDeleteClearsDiskManagedBy is the regression test for the VM-delete
 // disk-lifecycle fix: deleting a VM with an attached data disk (default
-// deleteOption=Detach — the disk survives) must clear the disk's managedBy and
+// deleteOption=Detach, the disk survives) must clear the disk's managedBy and
 // return it to Unattached, rather than leaving it dangling at the now-deleted
 // VM. A cleared disk is re-attachable to another VM.
 func TestSDKVMDeleteClearsDiskManagedBy(t *testing.T) {

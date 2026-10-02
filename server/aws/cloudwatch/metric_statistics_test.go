@@ -155,7 +155,7 @@ func TestSDKPutMetricDataValuesCounts(t *testing.T) {
 	}
 
 	dp := out.Datapoints[0]
-	assertStat(t, "Sum", dp.Sum, 9)         // 1*4 + 2*1 + 3*1
+	assertStat(t, "Sum", dp.Sum, 9) // 1*4 + 2*1 + 3*1
 	assertStat(t, "SampleCount", dp.SampleCount, 6)
 	assertStat(t, "Average", dp.Average, 1.5) // 9 / 6
 	assertStat(t, "Maximum", dp.Maximum, 3)

@@ -20,7 +20,7 @@ import (
 // TestAsyncSettleWireACM pins that a real SDK client sees a DNS-validated
 // certificate as PENDING_VALIDATION (with its CNAME record) until the settle
 // window elapses, then ISSUED, and that ListCertificates filtered by
-// PENDING_VALIDATION follows the transition — all over the wire.
+// PENDING_VALIDATION follows the transition, all over the wire.
 func TestAsyncSettleWireACM(t *testing.T) {
 	fc := cloudconfig.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	cloud := cloudemu.NewAWS(cloudconfig.WithClock(fc), cloudconfig.WithAsyncSettle())

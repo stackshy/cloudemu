@@ -2,7 +2,7 @@
 // CodeArtifact control plane: domains, repositories (with upstream references
 // and external connections), and resource tagging.
 //
-// The mock is control-plane only — it does NOT run a package data plane (no
+// The mock is control-plane only. It does NOT run a package data plane (no
 // package publish, version resolution or asset storage). A domain and a
 // repository are created synchronously in the Active state with stable computed
 // fields (the domain arn/owner/createdTime, the repository

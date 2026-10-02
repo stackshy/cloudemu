@@ -14,11 +14,11 @@ import (
 )
 
 // monitoringAuth is a SigV4 Authorization header whose credential scope names
-// the "monitoring" service — exactly what the AWS CLI sends for CloudWatch.
+// the "monitoring" service, which is what the AWS CLI sends for CloudWatch.
 const monitoringAuth = "AWS4-HMAC-SHA256 Credential=test/20260804/us-east-1/monitoring/aws4_request, SignedHeaders=host, Signature=x"
 
 // TestQueryProtocol verifies the CloudWatch handler serves the classic query
-// protocol (form-encoded POST + XML) that the AWS CLI uses — regression guard
+// protocol (form-encoded POST + XML) that the AWS CLI uses. Regression guard
 // for issue #319 (CloudWatch was previously stolen by the EC2 handler).
 func TestQueryProtocol(t *testing.T) {
 	h := cwserver.New(cwprovider.New(config.NewOptions()))

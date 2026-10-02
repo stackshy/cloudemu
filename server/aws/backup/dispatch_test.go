@@ -35,7 +35,7 @@ func TestMatches(t *testing.T) {
 		{http.MethodPost, "/untag/arn:aws:backup:us-east-1:123456789012:backup-plan:PLAN123", true},
 		// A non-Backup ARN on the shared /tags path falls through to another handler.
 		{http.MethodGet, "/tags/arn:aws:sns:us-east-1:123456789012:topic", false},
-		// A bare /backup path (no /plans) is not claimed — it belongs to S3.
+		// A bare /backup path (no /plans) is not claimed; it belongs to S3.
 		{http.MethodGet, "/backup", false},
 		{http.MethodGet, "/backup/template/json/toPlan", false},
 		// Unrelated S3-style paths are not claimed.

@@ -238,7 +238,7 @@ func TestInvokeReturnsHandlerPayload(t *testing.T) {
 // TestInvokeNoHandlerEchoesStub is a regression guard for issue #319: with no
 // Go handler registered, invoke used to return a FunctionError ("no handler
 // registered"). The emulator can't run an uploaded zip, so it now returns a
-// successful stub that echoes the request payload — invoke is testable.
+// successful stub that echoes the request payload, so invoke is testable.
 func TestInvokeNoHandlerEchoesStub(t *testing.T) {
 	srv, _ := newServer(t)
 
@@ -346,7 +346,7 @@ func TestInvokeOnMissingFunctionReturns404(t *testing.T) {
 func TestEnvironmentRoundTrip(t *testing.T) {
 	srv, _ := newServer(t)
 
-	body := `{"FunctionName":"envfn","Runtime":"go1.x","Handler":"main","Environment":{"Variables":{"K":"V"}}}`
+	body := `{"FunctionName":"envfn","Runtime":"go1.x","Handler":"main","Environment":{"Variables":{"KEY":"V"}}}`
 	if r := postJSON(t, srv.URL+"/2015-03-31/functions", body); r.StatusCode != http.StatusCreated {
 		t.Fatalf("create: %d", r.StatusCode)
 	}
@@ -367,7 +367,7 @@ func TestEnvironmentRoundTrip(t *testing.T) {
 	}
 
 	if got.Configuration.Environment == nil ||
-		got.Configuration.Environment.Variables["K"] != "V" {
+		got.Configuration.Environment.Variables["KEY"] != "V" {
 		t.Fatalf("environment not preserved: %+v", got.Configuration.Environment)
 	}
 }

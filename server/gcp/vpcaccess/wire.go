@@ -16,7 +16,7 @@ const maxBodyBytes = 8 << 20
 // They are stripped from an incoming request body so a caller cannot pin them,
 // and re-injected from the stored connector on every read. state,
 // connectedProjects, and the API-defaulted numeric fields are deliberately
-// absent — they are seeded once at create (see seedConnector) and thereafter
+// absent. They are seeded once at create (see seedConnector) and thereafter
 // round-trip as stable stored passthrough values. The real Connector resource
 // carries no timestamps, so only `name` is injected/stripped.
 //
@@ -76,7 +76,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request) (fields map[string]json.
 // Connector resource carries no createTime/updateTime, so none are injected.
 func toResourceJSON(r *vpcdriver.Resource) (json.RawMessage, error) {
 	// r.Fields is populated from the request body. Guard the raw field count
-	// against a cap that leaves headroom for the injected computed fields — there
+	// against a cap that leaves headroom for the injected computed fields. There
 	// is no runtime arithmetic on the request-derived value, so nothing for an
 	// overflow check to flag, and the guard bounds the allocation. The map still
 	// grows to hold every entry; this only sizes the initial hint.

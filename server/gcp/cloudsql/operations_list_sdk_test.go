@@ -12,7 +12,7 @@ import (
 
 // Finding: writeErr rendered the wire error.message from err.Error(), which
 // for a cloudemu *errors.Error prepends the internal code-name taxonomy (e.g.
-// "NotFound: Cloud SQL instance ... not found") — real Cloud SQL never leaks
+// "NotFound: Cloud SQL instance ... not found"). Real Cloud SQL never leaks
 // that prefix into the message a client sees.
 func TestSDKCloudSQLErrorMessageHasNoCodePrefix(t *testing.T) {
 	svc, project := newSDKClient(t)
@@ -47,7 +47,7 @@ func isGoogleAPIError(err error, out **googleapi.Error) bool {
 
 // Finding: buildOp keyed every recorded Operation on a caller-supplied name
 // that was often a fixed action tag (e.g. "insert-db", "clone", "patch-{id}")
-// shared across every call of that kind — a second patch of the SAME
+// shared across every call of that kind. A second patch of the same
 // instance, or even an unrelated instance's database insert, silently
 // overwrote the first Operation's record at the same map key. Real Cloud SQL
 // hands back a distinct operation name per call.
@@ -75,7 +75,7 @@ func TestSDKCloudSQLOperationNamesAreUnique(t *testing.T) {
 		t.Fatalf("two patches on the same instance got the same operation name %q", op1.Name)
 	}
 
-	// The first operation's record must still be independently retrievable —
+	// The first operation's record must still be independently retrievable,
 	// not clobbered by the second patch sharing its map key.
 	if _, err := svc.Operations.Get(project, op1.Name).Context(ctx).Do(); err != nil {
 		t.Fatalf("Operations.Get(op1.Name): %v", err)
@@ -87,7 +87,7 @@ func TestSDKCloudSQLOperationNamesAreUnique(t *testing.T) {
 }
 
 // Finding: GET /v1/projects/{p}/operations (operations.list, with no
-// operation name) always 400'd with "operation name required" — real Cloud
+// operation name) always 400'd with "operation name required". Real Cloud
 // SQL supports listing the project's operations, optionally scoped to one
 // instance via ?instance=.
 func TestSDKCloudSQLOperationsList(t *testing.T) {
@@ -130,7 +130,7 @@ func TestSDKCloudSQLOperationsList(t *testing.T) {
 
 // Finding: BackupRuns.list iterated the provider's raw memstore map (random
 // Go iteration order) instead of a sorted view, so the reported order of
-// backup runs was nondeterministic across calls — every other Cloud SQL list
+// backup runs was nondeterministic across calls. Every other Cloud SQL list
 // verb in this package returns a stable order.
 func TestSDKCloudSQLBackupRunsListOrderIsDeterministic(t *testing.T) {
 	svc, project := newSDKClient(t)

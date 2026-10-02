@@ -19,6 +19,8 @@ const (
 	// for Microsoft.ContainerService/managedClusters/{name}/{start,stop}.
 	clusterActionStart = "start"
 	clusterActionStop  = "stop"
+	// childMaxDepth is the deepest child route: managedClusters/{c}/{child}/{name}.
+	childMaxDepth = 3
 )
 
 // armManagedCluster mirrors the JSON shape Azure ARM expects for
@@ -111,7 +113,7 @@ type armAgentPoolProfile struct {
 // default_node_pool commonly submits. Embedded in both the inline profile and
 // the standalone-pool shapes so both wire paths model them identically. Every
 // field is omitempty so a value absent on the request is absent on the
-// response — which keeps any unmodeled sibling sub-key round-tripping through
+// response, which keeps any unmodeled sibling sub-key round-tripping through
 // the property overlay.
 type armAgentPoolAdvanced struct {
 	AvailabilityZones  []string `json:"availabilityZones,omitempty"`
@@ -207,7 +209,7 @@ type armAgentPoolProperties struct {
 }
 
 // armMaintenanceConfig is the wire shape for the maintenanceConfigurations
-// sub-resource. The properties bag is opaque — the SDK serializes its rich
+// sub-resource. The properties bag is opaque: the SDK serializes its rich
 // MaintenanceConfigurationProperties into JSON and we round-trip it.
 type armMaintenanceConfig struct {
 	ID         string         `json:"id,omitempty"`
@@ -291,7 +293,7 @@ func toUserAssignedIdentities(in map[string]aks.UserAssignedIdentity) map[string
 }
 
 // toNetworkProfile renders the stored network profile onto the ARM shape. The
-// values are whatever CreateOrUpdateCluster stored — the caller's submitted
+// values are whatever CreateOrUpdateCluster stored: the caller's submitted
 // values, or the AKS defaults when the caller omitted networkProfile. Every
 // field is omitempty, so a sub-key the caller never set is not emitted (and a
 // sub-key the emulator does not model still round-trips via the overlay).

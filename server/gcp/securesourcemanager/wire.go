@@ -17,7 +17,7 @@ const maxBodyBytes = 8 << 20
 // on every read. They are stripped from an incoming request body so a caller
 // cannot pin them, and re-injected from the stored resource on every read. The
 // instance's state + hostConfig and the repository's uid + uris are deliberately
-// absent — they are minted once at create (see seedInstance/seedRepository) and
+// absent. They are minted once at create (see seedInstance/seedRepository) and
 // thereafter round-trip as stable stored passthrough values, matching the
 // certificatemanager dnsResourceRecord model.
 //

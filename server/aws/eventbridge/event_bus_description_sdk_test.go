@@ -9,7 +9,7 @@ import (
 )
 
 // TestSDKEventBridgeEventBusDescriptionRoundTrips verifies that a bus's
-// Description survives past the CreateEventBus response — it must also be
+// Description survives past the CreateEventBus response. It must also be
 // returned by DescribeEventBus and ListEventBuses, not just echoed back on
 // creation.
 func TestSDKEventBridgeEventBusDescriptionRoundTrips(t *testing.T) {

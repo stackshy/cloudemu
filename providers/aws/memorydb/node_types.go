@@ -7,7 +7,7 @@ package memorydb
 //
 // Modeling scaling as within-family is a deliberate simplification: real MemoryDB
 // also permits some cross-family moves, but the family ladder captures the
-// behavior a client depends on — the current type is never offered back, larger
+// behavior a client depends on: the current type is never offered back, larger
 // types appear only under scale-up, smaller only under scale-down, and the ends of
 // each ladder (the smallest / largest node) correctly offer nothing in one
 // direction.

@@ -79,7 +79,7 @@ func fieldKey(project, database, collGroup, fieldPath string) string {
 }
 
 // serveFieldCollection handles the fields collection: GET (list). Fields have no
-// create verb — they come into existence via patch.
+// create verb. They come into existence via patch.
 func (h *AdminHandler) serveFieldCollection(w http.ResponseWriter, r *http.Request, p *adminPath) {
 	if r.Method != http.MethodGet {
 		gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
@@ -139,8 +139,8 @@ func (h *AdminHandler) listFields(w http.ResponseWriter, p *adminPath) {
 }
 
 // patchField implements FirestoreAdmin.UpdateField (an LRO). The database must
-// exist. Fields named in updateMask (indexConfig / ttlConfig) — or, absent a
-// mask, every one present in the body — are applied. Clearing indexConfig
+// exist. Fields named in updateMask (indexConfig / ttlConfig), or, absent a
+// mask, every one present in the body, are applied. Clearing indexConfig
 // reverts the field to the ancestor config; the operation resolves done:true
 // with the updated Field.
 func (h *AdminHandler) patchField(w http.ResponseWriter, r *http.Request, p *adminPath) {

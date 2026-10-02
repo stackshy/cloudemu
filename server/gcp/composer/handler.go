@@ -5,12 +5,12 @@
 //
 // Coverage (environment control plane only):
 //
-//	POST   /v1/projects/{p}/locations/{l}/environments        — CreateEnvironment (LRO)
-//	GET    /v1/projects/{p}/locations/{l}/environments        — ListEnvironments
-//	GET    /v1/projects/{p}/locations/{l}/environments/{e}    — GetEnvironment
-//	PATCH  /v1/projects/{p}/locations/{l}/environments/{e}    — UpdateEnvironment (LRO, updateMask query param)
-//	DELETE /v1/projects/{p}/locations/{l}/environments/{e}    — DeleteEnvironment (LRO)
-//	GET    /v1/projects/{p}/locations/{l}/operations/{op}     — Operations.Get (shared poller)
+//	POST   /v1/projects/{p}/locations/{l}/environments        : CreateEnvironment (LRO)
+//	GET    /v1/projects/{p}/locations/{l}/environments        : ListEnvironments
+//	GET    /v1/projects/{p}/locations/{l}/environments/{e}    : GetEnvironment
+//	PATCH  /v1/projects/{p}/locations/{l}/environments/{e}    : UpdateEnvironment (LRO, updateMask query param)
+//	DELETE /v1/projects/{p}/locations/{l}/environments/{e}    : DeleteEnvironment (LRO)
+//	GET    /v1/projects/{p}/locations/{l}/operations/{op}     : Operations.Get (shared poller)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting environment embedded in `response`, and a created environment is
@@ -18,7 +18,7 @@
 // Terraform LRO wait terminates on the first poll instead of hanging.
 //
 // Location-scoped operations: Composer's operations live under
-// /v1/projects/{p}/locations/{l}/operations — the SAME space the shared GCP LRO
+// /v1/projects/{p}/locations/{l}/operations, the same space the shared GCP LRO
 // poller owns. Matches returns false for operation paths when a shared registry
 // is wired, letting that poller win; a standalone package server (no registry)
 // serves its own polls. The environments resource-type guard keeps this handler

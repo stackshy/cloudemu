@@ -135,7 +135,7 @@ func TestDeleteRecordAtomicIfMatch(t *testing.T) {
 // TestUpsertRecordAtomicConcurrencyCreateOnly is the concurrency regression for
 // the ETag CAS: N goroutines race UpsertRecordAtomic with If-None-Match:"*" at
 // the same record-set key starting from an empty store. Exactly one may
-// succeed — the whole point of the create-only precondition — and every loser
+// succeed (the whole point of the create-only precondition) and every loser
 // must see FailedPrecondition, never a silent double-create or a lost update.
 // Run with -race -count=20 to catch the TOCTOU class of bug a separate
 // check-then-write (rather than one lock covering both) would allow.

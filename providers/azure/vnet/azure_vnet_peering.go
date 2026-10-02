@@ -18,7 +18,7 @@ func (m *Mock) UpsertAzureVNetPeering(_ context.Context, vnetID string, peering 
 		return driver.AzureVNetPeering{}, cerrors.Newf(cerrors.NotFound, "virtual network %q not found", vnetID)
 	}
 
-	// Ensure the key exists so the Update below always finds it — a VNet's
+	// Ensure the key exists so the Update below always finds it: a VNet's
 	// first peering has nothing to read-modify-write yet.
 	m.azureVNetPeerings.SetIfAbsent(vnetID, nil)
 
@@ -55,7 +55,7 @@ func (m *Mock) GetAzureVNetPeering(_ context.Context, vnetID, peeringName string
 }
 
 // ListAzureVNetPeerings returns every peering stored for a VNet, ordered by
-// name — map iteration order is random and real ARM returns a deterministic
+// name: map iteration order is random and real ARM returns a deterministic
 // list ordering.
 func (m *Mock) ListAzureVNetPeerings(_ context.Context, vnetID string) []driver.AzureVNetPeering {
 	peerings, ok := m.azureVNetPeerings.Get(vnetID)

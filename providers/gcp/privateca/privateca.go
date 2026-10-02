@@ -266,7 +266,7 @@ func (m *Mock) PatchCaPool(_ context.Context, cfg *pcadriver.Config, mask []stri
 // DeleteCaPool removes a CA pool. Real CA Service refuses to delete a pool that
 // still holds a live certificate authority, so an in-use pool returns
 // FailedPrecondition rather than stranding its CAs. Soft-deleted (DELETED) CAs
-// and issued certificates do not block deletion — a Terraform destroy soft-deletes
+// and issued certificates do not block deletion: a Terraform destroy soft-deletes
 // each CA before removing the pool, and certificates are immutable.
 func (m *Mock) DeleteCaPool(_ context.Context, project, location, id string) (*pcadriver.Operation, error) {
 	m.mu.Lock()

@@ -1,18 +1,18 @@
 // Deep-audit round-2 regression (R1): the resource-group cascade delete was
 // incomplete. Deleting an RG tore down vnets, NSGs, VMs and storage accounts but
-// orphaned the other Microsoft.Network children — public IPs, network
-// interfaces, NAT gateways and load balancers — leaving them alive and globally
+// orphaned the other Microsoft.Network children (public IPs, network
+// interfaces, NAT gateways and load balancers), leaving them alive and globally
 // addressable (ghosts that block name reuse and show in subscription-wide
 // lists).
 //
 // Real Azure deletes every resource contained in a group when the group is
-// deleted — network children and the attached data disk alike. deleteOption
+// deleted: network children and the attached data disk alike. deleteOption
 // (Detach vs Delete) governs VM-scoped deletion, not resource-group deletion,
 // so a disk in the deleted group does not survive; the VM-scoped detach release
 // is covered by the virtualmachines datadisk lifecycle tests. This test creates
 // a group holding a public IP, a NIC, a NAT gateway, a load balancer and a
 // VM-with-data-disk, deletes the group, and asserts every contained resource is
-// gone (404) — and that an identically-shaped resource in a DIFFERENT group is
+// gone (404), and that an identically-shaped resource in a DIFFERENT group is
 // untouched.
 
 package resourcegroups_test
@@ -114,7 +114,7 @@ func TestResourceGroupDeleteCascadesNetworkChildrenAndDisks(t *testing.T) {
 	createSDKLoadBalancer(ctx, t, c.lb, rg, "lb-full")
 
 	// A VM with an attached data disk, whose NIC is the one created above (so the
-	// cascade must tear the VM down before the NIC — and delete the disk with it).
+	// cascade must tear the VM down before the NIC, and delete the disk with it).
 	diskID := createSDKEmptyDisk(ctx, t, c.disk, rg, "disk-full")
 	createSDKVMWithNICAndDisk(ctx, t, c.vm, rg, "vm-full", nicID, diskID)
 
@@ -139,7 +139,7 @@ func TestResourceGroupDeleteCascadesNetworkChildrenAndDisks(t *testing.T) {
 
 	// The data disk is deleted WITH the group. Prove the real store deletion via a
 	// subscription-wide disk list (it carries no resourceGroups segment, so it
-	// bypasses the RG-existence gate) — an RG-scoped GET alone would only prove the
+	// bypasses the RG-existence gate); an RG-scoped GET alone would only prove the
 	// gate blocks the path, not that the disk was actually removed from the store.
 	// deleteOption is VM-scoped (covered by the virtualmachines datadisk lifecycle
 	// tests), not RG-scoped, so real Azure deletes the disk on resource-group delete.
@@ -317,7 +317,7 @@ func assertGone(t *testing.T, kind string, get func() error) {
 // assertDiskAbsentSubscriptionWide fails if a disk of the given name still
 // appears in the subscription-wide Disks list. That list carries no
 // resourceGroups segment, so it bypasses the RG-existence gate and proves the
-// disk was truly removed from the store — not merely made unreachable by the
+// disk was truly removed from the store, not merely made unreachable by the
 // gate once its resource group was deleted.
 func assertDiskAbsentSubscriptionWide(ctx context.Context, t *testing.T, c *armcompute.DisksClient, name string) {
 	t.Helper()

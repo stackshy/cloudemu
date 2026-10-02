@@ -241,7 +241,7 @@ func TestSDKAzureSQLFailoverGroups(t *testing.T) {
 		t.Fatalf("expected Primary role after force failover, got %v", forceResp.Properties)
 	}
 
-	// PATCH (BeginUpdate) merges — changing the grace period keeps the partner.
+	// PATCH (BeginUpdate) merges: changing the grace period keeps the partner.
 	patchPoller, err := fg.BeginUpdate(ctx, "rg-1", "srv1", "fg1", armsql.FailoverGroupUpdate{
 		Properties: &armsql.FailoverGroupUpdateProperties{
 			ReadWriteEndpoint: &armsql.FailoverGroupReadWriteEndpoint{
@@ -464,7 +464,7 @@ func TestSDKAzureSQLElasticPoolPatchMerge(t *testing.T) {
 		t.Fatalf("pool create: %v", err)
 	}
 
-	// PATCH only maxSizeBytes — SKU must survive the merge.
+	// PATCH only maxSizeBytes: SKU must survive the merge.
 	up, err := ep.BeginUpdate(ctx, "rg-1", "srv1", "pool1", armsql.ElasticPoolUpdate{
 		Properties: &armsql.ElasticPoolUpdateProperties{MaxSizeBytes: to.Ptr(int64(214748364800))},
 	}, nil)
@@ -511,7 +511,7 @@ func TestSDKAzureSQLManagedInstancePatchMerge(t *testing.T) {
 		t.Fatalf("MI create poll: %v", err)
 	}
 
-	// PATCH only vCores — administratorLogin must survive the merge.
+	// PATCH only vCores: administratorLogin must survive the merge.
 	up, err := mic.BeginUpdate(ctx, "rg-1", "mi1", armsql.ManagedInstanceUpdate{
 		Properties: &armsql.ManagedInstanceProperties{VCores: to.Ptr(int32(8))},
 	}, nil)

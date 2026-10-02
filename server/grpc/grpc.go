@@ -1,15 +1,15 @@
 // Package grpc is the standalone emulator's gRPC transport foundation.
 //
 // It wraps a *grpc.Server preconfigured with only the two transport-level
-// services every gRPC endpoint should expose — the standard health service
-// (grpc.health.v1.Health) and server reflection — plus a listener lifecycle
+// services every gRPC endpoint should expose (the standard health service,
+// grpc.health.v1.Health, and server reflection), plus a listener lifecycle
 // (Serve/Shutdown) shaped like the *http.Server one serverkit already drives,
 // so a gRPC endpoint can sit beside the REST endpoints on its own TCP port
 // without duplicating the bind/serve/shutdown loop.
 //
 // It registers NO application (cloud service) servers. Those are layered on top
 // by callers via Register, once a service's proto stubs and driver adapter
-// exist — this package is the transport only.
+// exist. This package is the transport only.
 package grpc
 
 import (
@@ -62,7 +62,7 @@ func (s *Server) SetServingStatus(service string, status healthpb.HealthCheckRes
 }
 
 // Serve runs the gRPC server on ln until Shutdown (or Stop). A clean stop is
-// reported as nil — mirroring how the HTTP path treats http.ErrServerClosed — so
+// reported as nil, mirroring how the HTTP path treats http.ErrServerClosed, so
 // serverkit's serve loop never surfaces an ordinary shutdown as a fatal error.
 func (s *Server) Serve(ln net.Listener) error {
 	if err := s.srv.Serve(ln); err != nil && !errors.Is(err, grpc.ErrServerStopped) {

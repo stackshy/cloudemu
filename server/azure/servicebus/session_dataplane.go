@@ -10,8 +10,8 @@ import (
 )
 
 // Session data-plane surface. Azure Service Bus sessions have no real REST data
-// plane — the official SDKs drive sessions over AMQP, which cloudemu does not
-// speak — so this /{entity}/sessions/… route family is a cloudemu-proprietary
+// plane: the official SDKs drive sessions over AMQP, which cloudemu does not
+// speak. So this /{entity}/sessions/… route family is a cloudemu-proprietary
 // REST extension. No real SDK exercises it; it lets a REST client drive the
 // session model (accept-next-session, session-scoped receive, session lock,
 // session state) that the faithful send-side SessionId enforcement pairs with.
@@ -28,8 +28,8 @@ type sessionTarget struct {
 	entity    string
 	sub       string // subscription name; "" for a queue
 	sessionID string // "" on /sessions/head means accept-next-session
-	head      bool   // .../sessions[/{sid}]/head — receive
-	state     bool   // .../sessions/{sid}/state — get/set session state
+	head      bool   // .../sessions[/{sid}]/head: receive
+	state     bool   // .../sessions/{sid}/state: get/set session state
 }
 
 // isSessionPlanePath reports whether p is a session data-plane URL (contains a

@@ -23,7 +23,7 @@ type gkeSnapshot struct {
 	K8sUIDs    map[string]string `json:"k8sUids,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // GKE holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap gkeSnapshot

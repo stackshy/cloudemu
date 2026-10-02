@@ -197,8 +197,8 @@ func TestPutRecordRejectsOversizeData(t *testing.T) {
 	})
 
 	apiErr, ok := err.(*driver.APIError)
-	if !ok || apiErr.Exception != driver.ExValidation {
-		t.Fatalf("oversize record should be ValidationException, got %v", err)
+	if !ok || apiErr.Exception != driver.ExInvalidArgument {
+		t.Fatalf("oversize record should be InvalidArgumentException, got %v", err)
 	}
 }
 
@@ -218,8 +218,8 @@ func TestPutRecordsRejectsTooManyRecords(t *testing.T) {
 	_, _, err := m.PutRecords(ctx, "s", "", entries)
 
 	apiErr, ok := err.(*driver.APIError)
-	if !ok || apiErr.Exception != driver.ExValidation {
-		t.Fatalf("501-record batch should be ValidationException, got %v", err)
+	if !ok || apiErr.Exception != driver.ExInvalidArgument {
+		t.Fatalf("501-record batch should be InvalidArgumentException, got %v", err)
 	}
 }
 
@@ -362,8 +362,8 @@ func TestExpiredIteratorForMissingShard(t *testing.T) {
 }
 
 // TestConsumerARNCarriesCreationTimestamp verifies the enhanced-fan-out consumer
-// ARN ends with the creation timestamp (Unix seconds) as real Kinesis does — the
-// documented Consumer.ConsumerARN pattern requires a trailing ":[0-9]+" — and
+// ARN ends with the creation timestamp (Unix seconds) as real Kinesis does, the
+// documented Consumer.ConsumerARN pattern requires a trailing ":[0-9]+", and
 // that recreating a consumer with the same name at a later time yields a distinct
 // ARN.
 func TestConsumerARNCarriesCreationTimestamp(t *testing.T) {
@@ -414,7 +414,7 @@ func TestConsumerARNCarriesCreationTimestamp(t *testing.T) {
 }
 
 // TestConsumerARNUniqueSameSecond drives register/deregister/re-register cycles
-// for one consumer name under the REAL wall-clock — the realistic case a fake
+// for one consumer name under the REAL wall-clock, the realistic case a fake
 // clock advanced a full minute never exercises. Because cloudemu registers
 // instantly, many cycles land in the same wall-clock second; every ARN must still
 // be distinct (and each a valid AWS consumer ARN), so IAM/terraform/e2e loops that

@@ -5,9 +5,9 @@
 // This is a control-plane-only surface: the emulator never ingests or serves
 // video (there is no GetMedia/PutMedia data plane). A stream and a signaling
 // channel are created directly in the ACTIVE state so an IaC waiter that blocks
-// on status does not hang. The computed fields clients and IaC tools read back —
-// the StreamARN (which embeds the creation Unix timestamp), the Version token,
-// the Status and the CreationTime — are minted once at create and stored, so
+// on status does not hang. The computed fields clients and IaC tools read back
+// (the StreamARN, which embeds the creation Unix timestamp, the Version token,
+// the Status and the CreationTime) are minted once at create and stored, so
 // repeated DescribeStream/ListStreams reads never drift; an UpdateStream (or
 // UpdateDataRetention) rotates the Version token to a fresh value, matching real
 // Kinesis Video, while every other computed field stays stable.

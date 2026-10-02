@@ -26,8 +26,8 @@ import (
 // docs/coverage/coverage.json.
 //
 // The portable dns driver also models health checks (CreateHealthCheck, ...),
-// but the Azure DNS wire handler routes only zones and record sets — Azure has
-// no health-check resource under Microsoft.Network/dnsZones — so those ops are
+// but the Azure DNS wire handler routes only zones and record sets. Azure has
+// no health-check resource under Microsoft.Network/dnsZones, so those ops are
 // coverage gaps and are not asserted here.
 func TestAzureDNSCompat(t *testing.T) {
 	provider := cloudemu.NewAzure()

@@ -1,4 +1,4 @@
-// dynamodb_backup_test.go — real-user-journey tests for DynamoDB on-demand
+// dynamodb_backup_test.go holds real-user-journey tests for DynamoDB on-demand
 // backups and PITR restore, driving the genuine aws-sdk-go-v2 DynamoDB client
 // against the emulator's HTTP server (httptest). Assertions are made on
 // SDK-decoded responses and SDK-visible typed errors.

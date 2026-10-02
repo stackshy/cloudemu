@@ -1,11 +1,11 @@
 package kubernetes
 
-// networkpolicy.go implements a QUERY API for NetworkPolicy — NOT live-traffic
+// networkpolicy.go implements a QUERY API for NetworkPolicy, NOT live-traffic
 // enforcement. The emulator has no packet path: Pods never actually send
 // bytes to each other, so there is nothing for a NetworkPolicy to intercept
 // in real time. EvaluateNetworkPolicy instead answers "would a real cluster's
 // CNI allow this connection?" against whatever NetworkPolicy objects are
-// currently stored, for tests (and future topology.Engine wiring — see
+// currently stored, for tests (and future topology.Engine wiring, see
 // topology.CanConnect for the analogous VPC/security-group query) that want
 // to assert on network segmentation without a live cluster.
 //
@@ -174,7 +174,7 @@ func portMatches(ports []networkingv1.NetworkPolicyPort, port int32, proto strin
 
 // portValueMatches reports whether a single NetworkPolicyPort covers port.
 // An unset Port matches every port for the (already-checked) protocol; a set
-// Port matches exactly, or — with EndPort set — matches the inclusive range.
+// Port matches exactly, or, with EndPort set, matches the inclusive range.
 func portValueMatches(p networkingv1.NetworkPolicyPort, port int32) bool {
 	if p.Port == nil {
 		return true
@@ -190,7 +190,7 @@ func portValueMatches(p networkingv1.NetworkPolicyPort, port int32) bool {
 
 // selectorMatches reports whether lbls satisfies sel (matchLabels and
 // matchExpressions both honored via metav1.LabelSelectorAsSelector). A nil
-// selector is treated as "no restriction" — callers only pass nil for
+// selector is treated as "no restriction": callers only pass nil for
 // NetworkPolicyPeer fields where nilness is meaningful on its own (see
 // peerMatchesSrc), never for the required, non-pointer spec.podSelector.
 func selectorMatches(sel *metav1.LabelSelector, lbls map[string]string) bool {

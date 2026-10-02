@@ -271,7 +271,7 @@ func TestTagResourceByARN_EC2Image(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "v1", got[0].Tags["release"])
 
-	// Additive merge, then key removal — same contract as instance/volume/snapshot.
+	// Additive merge, then key removal: same contract as instance/volume/snapshot.
 	require.NoError(t, f.engine.TagResourceByARN(ctx, arn, map[string]string{"release": "v2"}))
 	got, err = f.ec2.DescribeImages(ctx, []string{img.ID})
 	require.NoError(t, err)

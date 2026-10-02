@@ -18,12 +18,19 @@ const (
 	bucketHashLen = 20
 	tenantHashLen = 20
 	agentHashLen  = 12
+
+	// minComputedFields is the extra map capacity reserved for the fields
+	// computedOutputs injects (name, state, createTime, updateTime,
+	// serviceEndpoint, apiEndpoint, gcsBucket, tenantProjectId,
+	// p4ServiceAccount, serviceAccount) plus the conditionally injected
+	// default version.
+	minComputedFields = 11
 )
 
 // computedOutputs returns the output-only fields CloudEmu derives for an
 // instance. Every value is a pure function of the instance's immutable identity
 // (project, location, id) or its stored lifecycle state/timestamps, so it is
-// byte-stable across GETs — the Terraform drift point. No clock or randomness is
+// byte-stable across GETs, the Terraform drift point. No clock or randomness is
 // consulted on read.
 func computedOutputs(r *dfdriver.Resource) map[string]any {
 	endpoint := serviceEndpoint(r.Project, r.Location, r.ID)

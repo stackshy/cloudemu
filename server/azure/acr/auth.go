@@ -17,9 +17,9 @@ import (
 // real request body on the first call on a fresh Client: it clones the request
 // with its body stripped, sends that as the "challenge probe", and only resends
 // the original (with its body restored) if the probe comes back 401. Since the
-// mock does not verify credentials, it only needs to complete the round trip —
-// any bearer token is accepted — but it must actually perform it, or a
-// body-bearing call (PATCH) silently loses its body: the probe would otherwise
+// mock does not verify credentials, any bearer token is accepted. It still has
+// to complete the round trip, though, or a body-bearing call (PATCH) silently
+// loses its body: the probe would otherwise
 // get the real 200 response and the SDK would never resend with the body.
 //
 // GET/DELETE requests have no body, so this round trip was invisible before
@@ -30,7 +30,7 @@ const (
 	oauthTokenPath    = "/oauth2/token" //nolint:gosec // not a credential: a URL path, flagged only because it contains "token"
 
 	// fakeAccessToken is the opaque bearer token minted by /oauth2/token. The
-	// mock never inspects it — any bearer token is accepted — it only needs to
+	// mock never inspects it: any bearer token is accepted. It only needs to
 	// exist so the SDK's auth policy considers the challenge satisfied.
 	fakeAccessToken = "cloudemu-fake-acr-access-token" //nolint:gosec // not a credential: a fixed opaque mock token, never validated
 

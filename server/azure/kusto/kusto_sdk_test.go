@@ -184,7 +184,7 @@ func TestSDKKustoClusterComputedDefaults(t *testing.T) {
 
 // TestSDKKustoClusterExplicitPropertiesPreserved verifies that explicit,
 // non-default property values supplied on create are preserved verbatim on the
-// create response AND a subsequent GET — never overwritten by the computed
+// create response AND a subsequent GET, never overwritten by the computed
 // defaults. This guards the pointer + omitempty "unset vs explicit false"
 // distinction across all seven property fields, including enableDoubleEncryption.
 func TestSDKKustoClusterExplicitPropertiesPreserved(t *testing.T) {

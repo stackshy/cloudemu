@@ -399,7 +399,7 @@ func TestSDKCopyObjectSelfCopy(t *testing.T) {
 
 // TestSDKCopyObjectRecomputesMultipartSourceETag verifies real S3 semantics:
 // CopyObject's destination is always a fresh single-PUT object, so its ETag is
-// the plain 32-hex-char MD5 of the copied bytes — even when the source was
+// the plain 32-hex-char MD5 of the copied bytes, even when the source was
 // uploaded via multipart and therefore carries a "...-N" ETag. Without the
 // fix, cloudemu propagated the source's multipart ETag onto the destination,
 // which is observable to any tool comparing ETags after a copy.

@@ -217,7 +217,7 @@ func toSubnetGroupXML(sg *rdsdriver.SubnetGroup) dbSubnetGroupXML {
 // writeUnsupported reports a capability this driver does not implement.
 //
 // The code is InvalidAction because that is what the service answers for an
-// operation it does not serve — and because a caller matching on the code sees
+// operation it does not serve, and because a caller matching on the code sees
 // this, not the message. Routing it through the generic error mapping would
 // have produced InvalidParameterValue while the message claimed otherwise.
 func writeUnsupported(w http.ResponseWriter, what string) {

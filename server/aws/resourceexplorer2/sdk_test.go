@@ -80,7 +80,7 @@ func TestSDKResourceExplorer2(t *testing.T) {
 		require.NoError(t, err)
 
 		// Real Resource Explorer reports ResourceType as "s3:bucket",
-		// "dynamodb:table" — not CloudEmu's internal "storage:bucket" /
+		// "dynamodb:table", not CloudEmu's internal "storage:bucket" /
 		// "database:table" category.
 		assert.True(t, rexHasResourceType(out.Resources, "s3:bucket"),
 			"S3 bucket must surface as s3:bucket")
@@ -99,7 +99,7 @@ func TestSDKResourceExplorer2(t *testing.T) {
 			QueryString: aws.String("tag.env:prod"),
 		})
 		require.NoError(t, err)
-		// prod-bucket, events table, vpc — 3 prod resources
+		// prod-bucket, events table, vpc: 3 prod resources
 		assert.Len(t, out.Resources, 3)
 	})
 

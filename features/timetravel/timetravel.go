@@ -14,7 +14,7 @@
 // The registry is provider-agnostic: it drives the same capture/restore surface
 // persist already uses, wired in as two funcs, and never touches individual
 // provider mocks. Stored snapshots are independent byte copies, so forks are
-// isolated by construction — mutating one branch cannot reach another. It is
+// isolated by construction: mutating one branch cannot reach another. It is
 // deterministic and fully in-memory; snapshot timestamps come from a
 // config.Clock so tests observe fixed times.
 package timetravel

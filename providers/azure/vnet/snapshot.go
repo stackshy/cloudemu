@@ -12,8 +12,8 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // vnetSnapshot is the full serialized state of the Azure VNet mock. Every
 // memstore store is dumped keyed by its resource id (or ARM addressing key for
-// NICs) so cross-references — a subnet's VPCID, a VM's NIC/subnet refs held in
-// the VirtualMachines mock — still resolve after a restore. Every stored value
+// NICs) so cross-references (a subnet's VPCID, a VM's NIC/subnet refs held in
+// the VirtualMachines mock) still resolve after a restore. Every stored value
 // type is fully exported, so all stores round-trip through the generic memstore
 // helper. The mutexes and the wired *config.Options are intentionally not
 // serialized.
@@ -46,7 +46,7 @@ type vnetSnapshot struct {
 	AzurePrivateLinkServices json.RawMessage `json:"azurePrivateLinkServices,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // VNet holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap vnetSnapshot
@@ -102,7 +102,7 @@ func (m *Mock) snapshotStores(snap *vnetSnapshot) error {
 }
 
 // Restore rebuilds the mock's state under the original identities: every
-// resource id (and the id-string cross-references a VM holds — NIC ids, subnet
+// resource id (and the id-string cross-references a VM holds, NIC ids, subnet
 // ids) is preserved, so a restored VM's networking refs still resolve.
 func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	var snap vnetSnapshot

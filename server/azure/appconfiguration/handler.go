@@ -6,7 +6,7 @@
 // Every operation is synchronous (sync-200/201): CreateOrUpdate, Delete and the
 // listKeys / regenerateKey actions complete in-line, so there is no
 // long-running-operation plumbing to wire. The configuration data plane (the
-// *.azconfig.io key-value store) is out of scope — only the store resource is
+// *.azconfig.io key-value store) is out of scope: only the store resource is
 // emulated.
 package appconfiguration
 
@@ -75,7 +75,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A collection URL (no resource name) is a list — by resource group when the
+	// A collection URL (no resource name) is a list: by resource group when the
 	// path carried one, otherwise by subscription.
 	if rp.ResourceName == "" {
 		h.list(w, r, &rp)

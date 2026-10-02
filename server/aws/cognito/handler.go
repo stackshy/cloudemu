@@ -2,8 +2,8 @@
 // protocol as a server.Handler. Point the real
 // aws-sdk-go-v2/service/cognitoidentityprovider client (or the `aws cognito-idp`
 // CLI, or the Terraform AWS provider) at a Server registered with this handler
-// and the user-pool, app-client, and hosted-UI-domain control-plane operations
-// run against an in-memory Cognito driver.
+// and the user-pool, app-client, hosted-UI-domain and admin user-management
+// operations run against an in-memory Cognito driver.
 //
 // Cognito uses the AWS JSON 1.1 wire shape (POST + JSON body dispatched on the
 // X-Amz-Target header, prefix "AWSCognitoIdentityProviderService.").
@@ -50,6 +50,18 @@ func New(d cognitodriver.Cognito) *Handler {
 		"TagResource":            h.tagResource,
 		"UntagResource":          h.untagResource,
 		"ListTagsForResource":    h.listTagsForResource,
+
+		"AddCustomAttributes":       h.addCustomAttributes,
+		"AdminCreateUser":           h.adminCreateUser,
+		"AdminGetUser":              h.adminGetUser,
+		"ListUsers":                 h.listUsers,
+		"AdminDeleteUser":           h.adminDeleteUser,
+		"AdminUpdateUserAttributes": h.adminUpdateUserAttributes,
+		"AdminDeleteUserAttributes": h.adminDeleteUserAttributes,
+		"AdminSetUserPassword":      h.adminSetUserPassword,
+		"AdminEnableUser":           h.adminEnableUser,
+		"AdminDisableUser":          h.adminDisableUser,
+		"AdminResetUserPassword":    h.adminResetUserPassword,
 	}
 
 	return h

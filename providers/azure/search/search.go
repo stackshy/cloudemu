@@ -1,5 +1,5 @@
 // Package search provides an in-memory mock of Azure AI Search
-// (Microsoft.Search/searchServices) — the ARM control plane (service lifecycle,
+// (Microsoft.Search/searchServices), the ARM control plane (service lifecycle,
 // admin/query keys, private links) and the search data plane (indexes,
 // documents, indexers, data sources, skillsets, synonym maps, aliases).
 package search
@@ -203,12 +203,63 @@ func (m *Mock) GetService(_ context.Context, resourceGroup, name string) (*drive
 	return cloneService(s), nil
 }
 
+// DeleteService removes a search service with its admin and query keys, shared
+// private links, private endpoint connections and every data-plane object
+// (indexes, documents, indexers, data sources, skillsets, synonym maps and
+// aliases), so a same-name recreate starts empty.
 func (m *Mock) DeleteService(_ context.Context, resourceGroup, name string) error {
-	if !m.services.Delete(key(resourceGroup, name)) {
+	if !m.services.Has(key(resourceGroup, name)) {
 		return errors.Newf(errors.NotFound, "search service %q not found", name)
 	}
 
+	m.dropService(resourceGroup, name)
+
 	return nil
+}
+
+// PurgeResourceGroup deletes every search service in the resource group, with
+// everything under it. It backs the ARM resource-group delete cascade. Services
+// record only their resource group (single estate).
+func (m *Mock) PurgeResourceGroup(_ context.Context, _, resourceGroup string) error {
+	for _, s := range m.services.All() {
+		if s.ResourceGroup != "" && strings.EqualFold(s.ResourceGroup, resourceGroup) {
+			m.dropService(s.ResourceGroup, s.Name)
+		}
+	}
+
+	return nil
+}
+
+// dropService removes a service record and every control-plane child (keyed
+// "{rg}/{name}/...") and data-plane object (keyed "{name}/...") under it.
+func (m *Mock) dropService(resourceGroup, name string) {
+	m.services.Delete(key(resourceGroup, name))
+	m.adminKeys.Delete(key(resourceGroup, name))
+
+	control := key(resourceGroup, name) + "/"
+	deleteUnder(m.queryKeys, control)
+	deleteUnder(m.sharedLinks, control)
+	deleteUnder(m.privateConns, control)
+
+	data := name + "/"
+	deleteUnder(m.indexes, data)
+	deleteUnder(m.documents, data)
+	deleteUnder(m.indexers, data)
+	deleteUnder(m.indexerRuns, data)
+	deleteUnder(m.dataSources, data)
+	deleteUnder(m.skillsets, data)
+	deleteUnder(m.synonymMaps, data)
+	deleteUnder(m.aliases, data)
+}
+
+// deleteUnder removes every entry of store whose key starts with prefix. Each
+// prefix ends in "/", so a service named "a" never reaches "ab"'s entries.
+func deleteUnder[V any](store *memstore.Store[V], prefix string) {
+	for _, k := range store.Keys() {
+		if strings.HasPrefix(k, prefix) {
+			store.Delete(k)
+		}
+	}
 }
 
 func (m *Mock) UpdateService(

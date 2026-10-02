@@ -113,8 +113,8 @@ const defaultExpirationPolicyJSON = `{"ttl":"` + defaultExpirationTTL + `"}`
 // applySubscriptionDefaults fills in the server-assigned fields real Pub/Sub
 // returns for a subscription created with only its required fields, so a create
 // that omits them round-trips the same values on Get/List (the top Terraform
-// drift source). An explicitly-provided expirationPolicy — including an empty
-// one ({} = never expire) — is left untouched.
+// drift source). An explicitly-provided expirationPolicy, including an empty
+// one ({} = never expire), is left untouched.
 func applySubscriptionDefaults(s *subscription) {
 	if s.MessageRetentionDuration == "" {
 		s.MessageRetentionDuration = defaultMessageRetentionDuration

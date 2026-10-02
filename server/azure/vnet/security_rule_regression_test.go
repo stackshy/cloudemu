@@ -9,7 +9,7 @@ import (
 )
 
 // Finding (BLOCKER): individual SecurityRule sub-resource CRUD
-// (SecurityRulesClient / azurerm_network_security_rule) was not routed —
+// (SecurityRulesClient / azurerm_network_security_rule) was not routed:
 // routeNSG never inspected rp.SubResource, so a standalone rule op hit the
 // whole-NSG handler. This verifies a standalone rule PUT mutates only the
 // addressed rule and preserves siblings, and standalone Get/List/Delete work.
@@ -68,7 +68,7 @@ func TestSDKSecurityRuleSubResourceCRUD(t *testing.T) {
 		t.Fatalf("created rule name = %v, want standalone-rule", created.Name)
 	}
 
-	// The whole-NSG GET must show both rules — the standalone PUT must not
+	// The whole-NSG GET must show both rules: the standalone PUT must not
 	// have clobbered the seed rule.
 	got, err := nsgs.Get(ctx, "rg-1", "nsg-subres", nil)
 	if err != nil {
@@ -130,9 +130,9 @@ func TestSDKSecurityRuleSubResourceCRUD(t *testing.T) {
 	}
 }
 
-// Finding (#1173 class): the plural SecurityRule properties —
-// sourceAddressPrefixes / destinationAddressPrefixes / sourcePortRanges /
-// destinationPortRanges (all string[]) — were not modeled. They survived on
+// Finding (#1173 class): the plural SecurityRule properties
+// (sourceAddressPrefixes / destinationAddressPrefixes / sourcePortRanges /
+// destinationPortRanges, all string[]) were not modeled. They survived on
 // the inline-rule path only by the generic property-echo overlay, keyed by
 // the rule's own id, so a rule created via the standalone SecurityRulesClient
 // (azurerm_network_security_rule) lost every plural field on the whole-NSG
@@ -254,7 +254,7 @@ func equalStrs(a, b []string) bool {
 	return true
 }
 
-// Finding: no priority validation on security rules — an out-of-range
+// Finding: no priority validation on security rules: an out-of-range
 // priority and a duplicate priority within the same direction were both
 // silently accepted.
 func TestSDKSecurityRulePriorityValidation(t *testing.T) {
@@ -386,7 +386,7 @@ func TestSDKSecurityRuleReservedNameCollisionRejected(t *testing.T) {
 	}
 }
 
-// Finding: NSG association to Subnets and NICs was unimplemented — the
+// Finding: NSG association to Subnets and NICs was unimplemented: the
 // networkSecurityGroup reference was dropped on write and never echoed, and
 // the NSG's own GET never listed the associated subnet/NIC back-references.
 func TestSDKNSGSubnetAndNICAssociation(t *testing.T) {
@@ -469,7 +469,7 @@ func TestSDKNSGSubnetAndNICAssociation(t *testing.T) {
 	}
 }
 
-// Finding: no effective-security-rules endpoint —
+// Finding: no effective-security-rules endpoint:
 // InterfacesClient.BeginListEffectiveNetworkSecurityGroups was absent.
 func TestSDKEffectiveNetworkSecurityGroups(t *testing.T) {
 	ts := newVNetServer(t)

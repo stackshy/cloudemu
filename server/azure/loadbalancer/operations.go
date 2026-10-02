@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
@@ -20,7 +21,7 @@ func (h *Handler) azureLB() (lbdriver.AzureLoadBalancers, bool) {
 
 // createOrUpdateLoadBalancer handles PUT .../loadBalancers/{name}. The whole
 // nested load balancer arrives in one body and fully REPLACES the stored state,
-// so any frontend / pool / rule / probe omitted from the body is removed —
+// so any frontend / pool / rule / probe omitted from the body is removed,
 // matching ARM's CreateOrUpdate semantics (no stale-child accumulation).
 //
 // LoadBalancers.CreateOrUpdate is an LRO in the SDK; returning 200 with the
@@ -75,9 +76,9 @@ func (h *Handler) getLoadBalancer(w http.ResponseWriter, r *http.Request, rp *az
 	azurearm.WriteJSON(w, http.StatusOK, toLBJSON(rp, stored, h.poolMembers(r.Context(), rp.Subscription)))
 }
 
-// updateLoadBalancerTags handles PATCH .../loadBalancers/{name} —
+// updateLoadBalancerTags handles PATCH .../loadBalancers/{name}:
 // LoadBalancers.UpdateTags. Real armnetwork UpdateTags REPLACES the tag
-// collection wholesale (it does not merge — an omitted existing key is
+// collection wholesale (it does not merge; an omitted existing key is
 // dropped), matching every other Microsoft.Network UpdateTags handler in this
 // server (see server/azure/vnet/network_updatetags.go); every child of the
 // load balancer is left untouched. A request body with the tags field
@@ -137,6 +138,11 @@ func (h *Handler) deleteLoadBalancer(w http.ResponseWriter, r *http.Request, rp 
 
 	w.WriteHeader(http.StatusOK)
 }
+
+// PurgePhase orders this purger in the resource-group cascade: load balancers
+// reference public IPs and subnets, so they go before the virtual network
+// purge.
+func (*Handler) PurgePhase() int { return resourcegroups.PhaseNetworkConsumers }
 
 // PurgeResourceGroup deletes every load balancer stored under the given resource
 // group, backing the resource-group cascade delete: an RG is a pure container,

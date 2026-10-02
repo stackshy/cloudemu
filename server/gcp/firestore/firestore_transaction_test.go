@@ -135,7 +135,7 @@ func TestFirestoreConcurrentTransactionsNoLostUpdates(t *testing.T) {
 // TestFirestoreTransactionAbortsOnConflictingWrite deterministically exercises
 // the conflict-detection path added to :commit: a transaction that reads a
 // document, then loses a race to an out-of-band write before it commits, must
-// be aborted (HTTP 409, status ABORTED) with its own write never applied —
+// be aborted (HTTP 409, status ABORTED) with its own write never applied,
 // rather than blindly overwriting the conflicting write with a value computed
 // from the stale read. Drives the wire protocol directly (beginTransaction /
 // batchGet / commit) so the conflict is deterministic instead of depending on

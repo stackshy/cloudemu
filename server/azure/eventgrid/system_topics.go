@@ -158,7 +158,7 @@ func (h *Handler) createOrUpdateSystemTopic(w http.ResponseWriter, r *http.Reque
 	h.mu.Unlock()
 
 	// Provision the isolated delivery bus keyed by the source now, so the source
-	// producer's PutEvents has a bus to match even before any subscription — and
+	// producer's PutEvents has a bus to match even before any subscription, and
 	// so a subscription created next registers its rule against it.
 	h.ensureSystemTopicBus(source)
 

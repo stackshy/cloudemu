@@ -55,7 +55,7 @@ type actionGroupData struct {
 // WebhookDeliverer delivers an alert notification to a webhook receiver's URI.
 // New() defaults it to a real-HTTP implementation (httpWebhookDeliverer), so a
 // breach that targets an action group with webhook receivers performs the real
-// POST in production — mirroring how eventgrid.New wires a real httpClient and
+// POST in production, mirroring how eventgrid.New wires a real httpClient and
 // POSTs to WebHook destinations. SetWebhookDeliverer is a test seam that swaps
 // in a fake so a test can assert delivery without a live receiver.
 type WebhookDeliverer interface {
@@ -64,7 +64,7 @@ type WebhookDeliverer interface {
 
 // httpWebhookDeliverer is the production WebhookDeliverer: a best-effort real
 // HTTP POST of the alert payload to a webhook receiver's URI. It mirrors
-// eventgrid.Mock's postWebhook — a bounded http.Client, and errors are surfaced
+// eventgrid.Mock's postWebhook, a bounded http.Client, and errors are surfaced
 // to the caller (deliverWebhook), which swallows them so a breach / PutMetricData
 // never fails because a receiver is unreachable.
 type httpWebhookDeliverer struct {

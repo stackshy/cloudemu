@@ -60,8 +60,8 @@ func TestFlusherScheduledSavesOnlyWhenDirty(t *testing.T) {
 	}
 }
 
-// TestFlusherManualNeverSaves locks the manual contract: no periodic loop, and —
-// unlike every other strategy — no final save on Stop (graceful shutdown).
+// TestFlusherManualNeverSaves locks the manual contract: no periodic loop, and,
+// unlike every other strategy, no final save on Stop (graceful shutdown).
 func TestFlusherManualNeverSaves(t *testing.T) {
 	var saves atomic.Int64
 

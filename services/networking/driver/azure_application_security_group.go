@@ -5,8 +5,8 @@ import "context"
 // Microsoft.Network/applicationSecurityGroups is a tag-like grouping of network
 // interfaces: it carries no properties of its own beyond identity, location and
 // tags, and is referenced by id from NIC ipConfigurations and NSG security
-// rules. The cross-cloud Networking model has no equivalent, so — like
-// AzureNetworkMetadata — the Azure provider stores it through this OPTIONAL,
+// rules. The cross-cloud Networking model has no equivalent, so, like
+// AzureNetworkMetadata, the Azure provider stores it through this OPTIONAL,
 // type-asserted capability. AWS and GCP do not implement it.
 
 // AzureApplicationSecurityGroup is one Microsoft.Network/applicationSecurityGroups

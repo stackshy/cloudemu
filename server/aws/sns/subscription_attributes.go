@@ -88,7 +88,7 @@ func subscriptionAttributeEntries(sub *notifdriver.SubscriptionInfo) []attribute
 	)
 
 	// A subscription with a filter policy but no explicit FilterPolicyScope reports
-	// the documented default "MessageAttributes" — real SNS always surfaces the
+	// the documented default "MessageAttributes". Real SNS always surfaces the
 	// scope alongside a policy, so an SDK reader never has to infer it.
 	if _, hasPolicy := sub.Attributes["FilterPolicy"]; hasPolicy {
 		if _, hasScope := sub.Attributes["FilterPolicyScope"]; !hasScope {

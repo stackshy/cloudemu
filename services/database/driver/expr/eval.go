@@ -12,7 +12,7 @@ import (
 // returns whether it matches. Comparisons are type-aware: numbers compare
 // numerically, strings lexically, binary bytewise; values of different
 // types are never equal and never ordered (any comparison yields false), and
-// any operand that resolves to a missing path makes its condition false —
+// any operand that resolves to a missing path makes its condition false,
 // matching real DynamoDB semantics.
 func Eval(node Node, item map[string]any) (bool, error) {
 	switch n := node.(type) {

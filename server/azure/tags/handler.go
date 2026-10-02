@@ -3,8 +3,8 @@
 // TagsClient manages through CreateOrUpdateAtScope / GetAtScope / UpdateAtScope
 // / DeleteAtScope.
 //
-// The tag set is addressed by an opaque {scope} prefix — a subscription
-// (subscriptions/{sub}) or any resource id — followed by the fixed suffix
+// The tag set is addressed by an opaque {scope} prefix: a subscription
+// (subscriptions/{sub}) or any resource id, followed by the fixed suffix
 // /providers/Microsoft.Resources/tags/default. The handler owns its own
 // in-memory store keyed by that scope; there is no driver, because tags-at-scope
 // is a universal ARM overlay rather than a per-service resource.
@@ -146,7 +146,7 @@ func applyPatch(current map[string]string, op string, in map[string]string) map[
 	case strings.EqualFold(op, opDelete):
 		out := cloneTags(current)
 		// Delete removes each named tag regardless of the supplied value, exactly
-		// as ARM does — the value in the request body is ignored.
+		// as ARM does: the value in the request body is ignored.
 		for k := range in {
 			delete(out, k)
 		}

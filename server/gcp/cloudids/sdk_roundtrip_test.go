@@ -37,7 +37,7 @@ func newSDKClient(t *testing.T) (*ids.Service, string) {
 // google.golang.org/api/ids client: create (LRO), poll, get, list, patch, delete.
 // It asserts the emulator fills the computed output-only attributes (state,
 // endpointForwardingRule, endpointIp, createTime/updateTime) and reports them
-// stably — the exact behavior a Terraform plan needs to converge (those fields
+// stably, the exact behavior a Terraform plan needs to converge (those fields
 // are computed and would diff forever otherwise).
 func TestSDKEndpointLifecycle(t *testing.T) {
 	svc, project := newSDKClient(t)

@@ -292,7 +292,7 @@ func TestSDKUpdateMaskAbsentKeepsHeuristic(t *testing.T) {
 	mkInstance(t, svc, "ih", map[string]string{"k": "v"})
 	inst := "projects/" + project + "/instances/ih"
 
-	// No updateMask: legacy presence heuristic — a non-empty displayName is
+	// No updateMask: legacy presence heuristic. A non-empty displayName is
 	// applied while empty type/labels are kept.
 	if _, err := svc.Projects.Instances.PartialUpdateInstance(inst, &bt.Instance{DisplayName: "H2"}).Do(); err != nil {
 		t.Fatalf("partial update (no mask): %v", err)

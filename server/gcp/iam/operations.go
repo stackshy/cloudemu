@@ -77,7 +77,7 @@ func (h *Handler) getServiceAccount(w http.ResponseWriter, r *http.Request, proj
 
 // listServiceAccounts returns SAs at the given project. A literal "-" in the
 // project segment is the GCP-wide wildcard meaning "every project the caller
-// can see" — we treat it as match-all because there's no concept of caller
+// can see". We treat it as match-all because there's no concept of caller
 // identity in the emulator.
 func (h *Handler) listServiceAccounts(w http.ResponseWriter, r *http.Request, project string) {
 	users, err := h.iam.ListUsers(r.Context())
@@ -110,7 +110,7 @@ func (h *Handler) listServiceAccounts(w http.ResponseWriter, r *http.Request, pr
 	h.mu.RUnlock()
 
 	// ListUsers returns map order (random), so sort by the stable resource name
-	// before applying the offset page token — otherwise page boundaries shift
+	// before applying the offset page token. Otherwise page boundaries shift
 	// between requests and callers see duplicated or skipped accounts.
 	sort.Slice(matched, func(i, j int) bool { return matched[i].Name < matched[j].Name })
 
@@ -150,8 +150,8 @@ func (h *Handler) deleteServiceAccount(w http.ResponseWriter, r *http.Request, e
 }
 
 // updateServiceAccount handles PATCH .../serviceAccounts/{email}. The GCP
-// SDK wraps the payload as {"serviceAccount": {...}, "updateMask": "..."} —
-// decoding into a bare serviceAccount silently loses every field, so we
+// SDK wraps the payload as {"serviceAccount": {...}, "updateMask": "..."}.
+// Decoding into a bare serviceAccount silently loses every field, so we
 // must decode the wrapper. updateMask itself is ignored; the emulator
 // always full-replaces.
 //
@@ -160,7 +160,7 @@ func (h *Handler) deleteServiceAccount(w http.ResponseWriter, r *http.Request, e
 // project for the re-create so the SA doesn't move to a synthetic "-"
 // project bucket that would later disappear from listServiceAccounts.
 //
-// The Delete+Create dance is non-atomic — a concurrent reader between the
+// The Delete+Create dance is non-atomic. A concurrent reader between the
 // two driver calls observes NotFound. The driver lacks an Update entry
 // point so this is the simplest workaround.
 func (h *Handler) updateServiceAccount(w http.ResponseWriter, r *http.Request, project, email string) {
@@ -274,7 +274,7 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request, project stri
 
 		// If the stored doc is malformed (e.g. a portable test stashed a
 		// non-JSON value via the shared driver), emit the role with just
-		// its name rather than silently dropping it from the list — the
+		// its name rather than silently dropping it from the list. The
 		// underlying entry exists and the caller should see something.
 		props, _ := decodeRoleProps(dr.AssumeRolePolicyDoc)
 		matched = append(matched, toRoleJSON(project, dr.Name, &props))
@@ -356,9 +356,9 @@ func (h *Handler) undeleteRole(w http.ResponseWriter, r *http.Request, project, 
 
 // updateRole handles PATCH .../roles/{roleId}. Unlike SA Patch the role
 // payload is the bare resource body, with updateMask passed as a ?updateMask=
-// query parameter — we ignore the mask (emulator always full-replaces).
+// query parameter. We ignore the mask (emulator always full-replaces).
 //
-// The Delete+Create dance is non-atomic — a concurrent reader between the
+// The Delete+Create dance is non-atomic. A concurrent reader between the
 // two driver calls observes NotFound. The driver lacks an Update entry
 // point so this is the simplest workaround.
 func (h *Handler) updateRole(w http.ResponseWriter, r *http.Request, project, roleID string) {
@@ -402,7 +402,7 @@ func (h *Handler) updateRole(w http.ResponseWriter, r *http.Request, project, ro
 
 func (h *Handler) createKey(w http.ResponseWriter, r *http.Request, project, email string) {
 	// SDK sometimes sends an empty body, sometimes a body with key algorithm
-	// hints we don't honor — accept either.
+	// hints we don't honor. Accept either.
 	_ = drainBody(r)
 
 	k, err := h.iam.CreateAccessKey(r.Context(), iamdriver.AccessKeyConfig{
@@ -428,7 +428,7 @@ func (h *Handler) getKey(w http.ResponseWriter, r *http.Request, project, email,
 
 	for i := range keys {
 		if keys[i].AccessKeyID == keyID {
-			// Empty private-key body on GET — GCP only returns the private
+			// Empty private-key body on GET: GCP only returns the private
 			// material once at create time.
 			writeJSON(w, toKeyJSON(project, email, keyID, "", keys[i].CreatedAt, h.isKeyDisabled(keyID)))
 			return
@@ -599,10 +599,10 @@ func toKeyJSON(project, email, keyID, private, createdAt string, disabled bool) 
 
 // buildKeyFileData returns the base64-encoded service-account credentials file
 // (JSON) that real GCP hands back exactly once, at key-create time. The private
-// key material is a synthetic placeholder — cloudemu never mints real RSA keys —
+// key material is a synthetic placeholder (cloudemu never mints real RSA keys),
 // but the envelope is the standard google-credentials shape clients parse.
 func buildKeyFileData(project, email, keyID, secret string) string {
-	// Synthetic PEM body — cloudemu never mints real RSA keys.
+	// Synthetic PEM body: cloudemu never mints real RSA keys.
 	pemBody := base64.StdEncoding.EncodeToString([]byte("cloudemu:" + secret))
 	pem := "-----BEGIN PRIVATE KEY-----\n" + pemBody + "\n-----END PRIVATE KEY-----\n"
 

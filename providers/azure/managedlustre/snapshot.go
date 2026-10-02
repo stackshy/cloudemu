@@ -11,7 +11,7 @@ import (
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // Snapshot captures every amlFilesystem keyed by its (lowercased) resource id.
-// includeAssets is unused — amlFilesystems hold no bulk object bodies.
+// includeAssets is unused: amlFilesystems hold no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

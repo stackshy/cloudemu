@@ -9,7 +9,7 @@
 // per-project Policy singleton (getPolicy/updatePolicy) and the Attestor CRUD
 // surface (create/get/list/update/delete) plus the attestor
 // getIamPolicy/setIamPolicy/testIamPermissions IAM methods. All operations are
-// SYNCHRONOUS — Binary Authorization has no long-running operations. Deep config
+// SYNCHRONOUS: Binary Authorization has no long-running operations. Deep config
 // blocks (admissionWhitelistPatterns, defaultAdmissionRule, clusterAdmissionRules
 // and an attestor's publicKeys) are stored as opaque JSON so they round-trip
 // verbatim without the control plane modeling every nested grammar; integer
@@ -95,7 +95,7 @@ type Policy struct {
 }
 
 // PolicyConfig is the input to UpdatePolicy (a full replace). It mirrors the
-// mutable subset of Policy — Name and UpdateTime are managed by the backend.
+// mutable subset of Policy; Name and UpdateTime are managed by the backend.
 type PolicyConfig struct {
 	Description                string
 	GlobalPolicyEvaluationMode string

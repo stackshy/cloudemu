@@ -121,7 +121,7 @@ func TestUpsert_BodyIsCapped(t *testing.T) {
 	h.ServeHTTP(rec, req)
 
 	// The decode is deliberately tolerant of an unreadable body, so the
-	// request still completes — what matters is that the stored body is the
+	// request still completes. What matters is that the stored body is the
 	// empty fallback rather than the multi-megabyte payload.
 	h.mu.RLock()
 	stored := h.connections["projects/p/global/networks/a"]

@@ -3,7 +3,7 @@
 // SFTP/FTPS/FTP/AS2 endpoints), the users hosted on a SERVICE_MANAGED server,
 // the SSH public keys imported for those users, and resource tagging.
 //
-// This is a control-plane emulator only — there is no real SFTP/FTPS data
+// This is a control-plane emulator only. There is no real SFTP/FTPS data
 // plane, so no files are transferred. A created server settles to State ONLINE
 // synchronously (the Terraform aws_transfer_server resource treats state as
 // Computed and does not wait), and StartServer/StopServer flip the state

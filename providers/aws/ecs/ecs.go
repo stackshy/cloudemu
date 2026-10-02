@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/settle"
@@ -32,7 +33,7 @@ const (
 	// still being attached. taskStatusDeprovisioning is its stop-side mirror:
 	// the ENI is being detached. taskStatusStopping is the EC2/EXTERNAL stop
 	// transient (statusPending already covers the EC2/EXTERNAL launch
-	// transient). All three are overlaid read-time states — see taskSettle.
+	// transient). All three are overlaid read-time states. See taskSettle.
 	taskStatusProvisioning   = "PROVISIONING"
 	taskStatusDeprovisioning = "DEPROVISIONING"
 	taskStatusStopping       = "STOPPING"
@@ -40,24 +41,25 @@ const (
 
 // Mock is an in-memory mock implementation of Amazon ECS.
 type Mock struct {
-	clusters   *memstore.Store[*driver.Cluster]
-	taskDefs   *memstore.Store[*driver.TaskDefinition] // keyed by "family:revision"
-	tasks      *memstore.Store[*driver.Task]           // keyed by task ARN
-	services   *memstore.Store[*driver.Service]        // keyed by "cluster/name"
-	instances  *memstore.Store[*driver.ContainerInstance]
-	tags       *memstore.Store[[]driver.Tag]           // keyed by resource ARN
-	settings   *memstore.Store[*driver.AccountSetting] // keyed by setting name
-	attributes *memstore.Store[*driver.Attribute]      // keyed by targetId + "\x00" + name
-	opts       *config.Options
-	regMu      sync.Mutex // serializes task-definition revision allocation
-	placeMu    sync.Mutex // serializes container-instance capacity reserve/release
-	clusterMu  sync.Mutex // serializes CreateCluster name-reuse compare-and-set
+	clusters          *memstore.Store[*driver.Cluster]
+	taskDefs          *memstore.Store[*driver.TaskDefinition] // keyed by "family:revision"
+	tasks             *memstore.Store[*driver.Task]           // keyed by task ARN
+	services          *memstore.Store[*driver.Service]        // keyed by "cluster/name"
+	instances         *memstore.Store[*driver.ContainerInstance]
+	tags              *memstore.Store[[]driver.Tag]             // keyed by resource ARN
+	settings          *memstore.Store[*driver.AccountSetting]   // keyed by setting name
+	attributes        *memstore.Store[*driver.Attribute]        // keyed by targetId + "\x00" + name
+	capacityProviders *memstore.Store[*driver.CapacityProvider] // keyed by name; excludes the predefined FARGATE/FARGATE_SPOT
+	opts              *config.Options
+	regMu             sync.Mutex // serializes task-definition revision allocation
+	placeMu           sync.Mutex // serializes container-instance capacity reserve/release
+	clusterMu         sync.Mutex // serializes CreateCluster name-reuse compare-and-set
 
 	// reconcileLock serializes reconcileServiceAfterStop per service (see
 	// service_reconcile_lock.go), closing the concurrent-StopTask over-launch
-	// race. It is always the outermost lock acquired in that path — taken
+	// race. It is always the outermost lock acquired in that path, taken
 	// before placeMu (via launchServiceReplacements -> launchTask -> reserve)
-	// and before m.services's own per-call lock (via Update) — so it can never
+	// and before m.services's own per-call lock (via Update), so it can never
 	// deadlock against them.
 	reconcileLock *serviceReconcileLock
 
@@ -80,6 +82,8 @@ type Mock struct {
 
 	registrar TargetRegistrar // optional: ELBv2 target group the service scheduler registers RUNNING tasks with
 
+	events awsevents.Emitter // optional: EventBridge default bus for task state change / service action events
+
 	// portCounter draws successive dynamic host ports for bridge-mode container
 	// port mappings that leave hostPort unset.
 	portCounter atomic.Uint32
@@ -97,7 +101,7 @@ type ManagedInstanceLauncher interface {
 
 // SetManagedInstanceLauncher wires the EC2-backed launcher used when a container
 // instance is registered without an explicit EC2 instance id. Safe to leave
-// unset — registration then just synthesizes an id.
+// unset. Registration then synthesizes an id.
 func (m *Mock) SetManagedInstanceLauncher(l ManagedInstanceLauncher) {
 	m.launcher = l
 }
@@ -105,24 +109,25 @@ func (m *Mock) SetManagedInstanceLauncher(l ManagedInstanceLauncher) {
 // New creates a new ECS mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		clusters:      memstore.New[*driver.Cluster](),
-		taskDefs:      memstore.New[*driver.TaskDefinition](),
-		tasks:         memstore.New[*driver.Task](),
-		services:      memstore.New[*driver.Service](),
-		instances:     memstore.New[*driver.ContainerInstance](),
-		tags:          memstore.New[[]driver.Tag](),
-		settings:      memstore.New[*driver.AccountSetting](),
-		attributes:    memstore.New[*driver.Attribute](),
-		engineHandles: memstore.New[string](),
-		taskSettle:    settle.NewSet(),
-		reconcileLock: newServiceReconcileLock(),
-		opts:          opts,
+		clusters:          memstore.New[*driver.Cluster](),
+		taskDefs:          memstore.New[*driver.TaskDefinition](),
+		tasks:             memstore.New[*driver.Task](),
+		services:          memstore.New[*driver.Service](),
+		instances:         memstore.New[*driver.ContainerInstance](),
+		tags:              memstore.New[[]driver.Tag](),
+		settings:          memstore.New[*driver.AccountSetting](),
+		attributes:        memstore.New[*driver.Attribute](),
+		capacityProviders: memstore.New[*driver.CapacityProvider](),
+		engineHandles:     memstore.New[string](),
+		taskSettle:        settle.NewSet(),
+		reconcileLock:     newServiceReconcileLock(),
+		opts:              opts,
 	}
 }
 
 // SetLogSink wires the CloudWatch Logs target that engine-backed tasks push
 // their captured container logs into when a container's LogConfiguration uses
-// the awslogs driver. Safe to leave unset — log surfacing is then skipped.
+// the awslogs driver. Safe to leave unset. Log surfacing is then skipped.
 func (m *Mock) SetLogSink(l logdriver.Logging) {
 	m.logs = l
 }

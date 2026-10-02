@@ -44,7 +44,7 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	})
 
 	// Seed the full site-to-site VPN surface so the round-trip proves each of the
-	// three gateway stores is included in the snapshot dump/restore lists — the
+	// three gateway stores is included in the snapshot dump/restore lists: the
 	// test would pass even with a store dropped if nothing referenced it.
 	src.PutAzureVirtualNetworkGateway(ctx, driver.AzureVirtualNetworkGateway{
 		Name: "vng1", ResourceGroup: "rg1", Location: "eastus",
@@ -68,7 +68,7 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 
 	// Seed the Private Link surface so the round-trip proves the private endpoint
 	// and private link service stores are included in the snapshot dump/restore
-	// lists — the test would pass even with a store dropped if nothing referenced it.
+	// lists: the test would pass even with a store dropped if nothing referenced it.
 	plsID := "/subscriptions/sub-1/resourceGroups/rg1/providers/Microsoft.Network/privateLinkServices/pls1"
 
 	src.PutAzurePrivateEndpoint(ctx, driver.AzurePrivateEndpoint{

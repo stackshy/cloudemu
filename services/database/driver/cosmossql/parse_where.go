@@ -63,7 +63,7 @@ func (p *parser) parseNot() (expr.Node, error) {
 // predicate over an absent field yields undefined (the row is excluded), not
 // true. The shared evaluator is two-valued, so for a NOT over a single-field
 // predicate we require that field to exist. NOT over a composite predicate
-// (AND/OR of several fields) keeps the two-valued behavior — a documented
+// (AND/OR of several fields) keeps the two-valued behavior, a documented
 // limitation. NOT IS_DEFINED is left unguarded so it still matches absent
 // fields.
 func guardedNot(child expr.Node) expr.Node {

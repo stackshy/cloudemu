@@ -7,21 +7,21 @@
 //
 // URL shapes follow what the SDKs emit:
 //
-//	GET    /foundation-models                          — ListFoundationModels
-//	GET    /foundation-models/{modelId}                — GetFoundationModel
-//	POST   /model-customization-jobs                   — CreateModelCustomizationJob
-//	GET    /model-customization-jobs                   — ListModelCustomizationJobs
-//	GET    /model-customization-jobs/{jobIdentifier}   — GetModelCustomizationJob
-//	GET    /custom-models                              — ListCustomModels
-//	GET    /custom-models/{modelIdentifier}            — GetCustomModel
-//	DELETE /custom-models/{modelIdentifier}            — DeleteCustomModel
-//	POST   /model/{modelId}/invoke                     — InvokeModel
-//	POST   /model/{modelId}/converse                   — Converse
-//	POST   /model/{modelId}/count-tokens               — CountTokens
-//	POST   /guardrail/{id}/version/{version}/apply     — ApplyGuardrail
-//	POST   /tagResource                                — TagResource
-//	POST   /untagResource                              — UntagResource
-//	POST   /listTagsForResource                        — ListTagsForResource
+//	GET    /foundation-models                            ListFoundationModels
+//	GET    /foundation-models/{modelId}                  GetFoundationModel
+//	POST   /model-customization-jobs                     CreateModelCustomizationJob
+//	GET    /model-customization-jobs                     ListModelCustomizationJobs
+//	GET    /model-customization-jobs/{jobIdentifier}     GetModelCustomizationJob
+//	GET    /custom-models                                ListCustomModels
+//	GET    /custom-models/{modelIdentifier}              GetCustomModel
+//	DELETE /custom-models/{modelIdentifier}              DeleteCustomModel
+//	POST   /model/{modelId}/invoke                       InvokeModel
+//	POST   /model/{modelId}/converse                     Converse
+//	POST   /model/{modelId}/count-tokens                 CountTokens
+//	POST   /guardrail/{id}/version/{version}/apply       ApplyGuardrail
+//	POST   /tagResource                                  TagResource
+//	POST   /untagResource                                UntagResource
+//	POST   /listTagsForResource                          ListTagsForResource
 //
 // The Matches predicate is rooted at these prefixes so it does not shadow the
 // catch-all S3 handler that may be registered alongside.

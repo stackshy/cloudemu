@@ -19,8 +19,8 @@ import (
 
 const (
 	// defaultMySQLPort is the standard MySQL port. Azure MySQL Flexible Server and
-	// GCP Cloud SQL never surface a port in their SDK responses — clients always
-	// connect on 3306 — so the engine must publish it there for a real client to
+	// GCP Cloud SQL never surface a port in their SDK responses; clients always
+	// connect on 3306, so the engine must publish it there for a real client to
 	// connect using only the SDK response. (AWS RDS surfaces the port explicitly.)
 	// Only one container can bind 3306 on a host; pass an explicit port to co-host
 	// more than one MySQL engine.
@@ -29,13 +29,13 @@ const (
 	// behavior does not drift under the caller.
 	mysqlImage = "mysql:8.0"
 	// rootUser / rootPassword are the container's internal bootstrap superuser.
-	// A provisioned tenant may not reuse the root name — Provision rejects it
+	// A provisioned tenant may not reuse the root name; Provision rejects it
 	// (real RDS/Azure reserve it too) rather than silently reporting success with
 	// credentials that can't authenticate. rootPassword is local state for a
 	// throwaway container, never a secret store, and is never logged.
 	rootUser = "root"
 	// rootPassword is a throwaway container password, never a real secret.
-	//nolint:gosec // G101: not a credential — the local container's disposable root password
+	//nolint:gosec // G101: not a credential, the local container's disposable root password
 	rootPassword = "cloudemu-root"
 
 	defaultDBName   = "cloudemu"
@@ -61,7 +61,7 @@ var (
 )
 
 // tenant records the database and login user provisioned for one instance so
-// Deprovision — which carries no engine detail — can drop exactly what was made.
+// Deprovision, which carries no engine detail, can drop exactly what was made.
 type tenant struct {
 	dbName string
 	user   string
@@ -279,7 +279,7 @@ func ensureDatabase(ctx context.Context, db *sql.DB, name string) error {
 }
 
 // ensureUser creates the login user (or, on reuse, resets its password) and grants
-// it the database. CREATE then ALTER upserts the password — the same
+// it the database. CREATE then ALTER upserts the password, the same
 // last-writer-wins rationale as the Postgres ensureRole: a re-provisioned or
 // same-username instance's credentials (which the API told the caller to use) must
 // authenticate, so the user adopts the most-recently-provisioned password.
@@ -292,7 +292,7 @@ func ensureUser(ctx context.Context, db *sql.DB, user, password, dbName string) 
 	}
 
 	// Allowlist-validate the username (it becomes a quoted 'user'@'%' literal) and
-	// route the database name through quoteIdent — the same quoting chokepoint the
+	// route the database name through quoteIdent, the same quoting chokepoint the
 	// CodeQL model pack declares as the SQL-identifier sanitizer.
 	if !sqlNamePattern.MatchString(user) {
 		return fmt.Errorf("%q: %w", user, errBadIdent)
@@ -311,7 +311,7 @@ func ensureUser(ctx context.Context, db *sql.DB, user, password, dbName string) 
 	// CREATE-IF-NOT-EXISTS + GRANT would let its privileges ACCUMULATE across every
 	// instance's database (cross-tenant access) and keep a stale password.
 	// Recreating scopes the account to exactly this instance's database with this
-	// instance's password — last writer wins for a shared username, distinct
+	// instance's password: last writer wins for a shared username, distinct
 	// usernames stay independent (documented in the README).
 	if _, err = db.ExecContext(ctx, "DROP USER IF EXISTS "+quotedUser); err != nil {
 		return err
@@ -333,7 +333,7 @@ func quoteUser(user string) string {
 }
 
 // sqlNamePattern is the allowlist for database/user names used in DDL. Names
-// (from the SDK's DBName/MasterUsername) that don't match are rejected outright —
+// (from the SDK's DBName/MasterUsername) that don't match are rejected outright:
 // DDL identifiers can't be parameterized, so a strict allowlist (not just
 // escaping) is the safe barrier against SQL injection.
 var sqlNamePattern = regexp.MustCompile(`^[A-Za-z0-9_$-]{1,64}$`)

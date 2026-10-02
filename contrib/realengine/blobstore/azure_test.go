@@ -23,7 +23,7 @@ import (
 // TestAzureBlobStoreE2E runs the real-user flow against Azure Blob Storage
 // backed by a real filesystem engine (no Docker, no cloud account): create a
 // container, upload a block blob, download it, stat it, copy it, download the
-// copy, delete the original, and confirm a 404 — all with the real azblob SDK.
+// copy, delete the original, and confirm a 404, all with the real azblob SDK.
 // Finally it reads the object straight off disk under the engine root, proving
 // the bytes flowed through the engine rather than living only in memory.
 func TestAzureBlobStoreE2E(t *testing.T) {
@@ -57,7 +57,7 @@ func TestAzureBlobStoreE2E(t *testing.T) {
 
 	body := []byte("hello from the real filesystem engine")
 
-	// 1. Create the container — like `az storage container create`.
+	// 1. Create the container, like `az storage container create`.
 	if _, err := client.CreateContainer(ctx, container, nil); err != nil {
 		t.Fatalf("CreateContainer: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestAzureBlobStoreE2E(t *testing.T) {
 		t.Errorf("download mismatch: got=%q want=%q", got, body)
 	}
 
-	// 4. Stat it — size and content type come from the in-memory metadata.
+	// 4. Stat it: size and content type come from the in-memory metadata.
 	bbClient := client.ServiceClient().NewContainerClient(container).NewBlockBlobClient(key)
 
 	props, err := bbClient.GetProperties(ctx, nil)

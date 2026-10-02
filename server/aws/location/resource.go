@@ -42,8 +42,8 @@ func serveList[T any](
 }
 
 // resource carries the routing shape and driver glue for one Location resource
-// type. All five resource types share the same URL shape — a create/list
-// collection and verb-keyed item operations — so the routing lives here once and
+// type. All five resource types share the same URL shape (a create/list
+// collection and verb-keyed item operations), so the routing lives here once and
 // each resource file supplies only the typed handler closures.
 type resource struct {
 	coll     string // collection segment, e.g. "maps"

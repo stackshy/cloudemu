@@ -79,7 +79,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request) (fields map[string]json.
 // verbatim body fields with the computed output-only fields.
 func toResourceJSON(r *wdriver.Resource) (json.RawMessage, error) {
 	// r.Fields is populated from the request body. Guard the raw field count
-	// against a cap that leaves headroom for the injected computed fields — there
+	// against a cap that leaves headroom for the injected computed fields. There
 	// is no runtime arithmetic on the request-derived value, so nothing for an
 	// overflow check to flag, and the guard bounds the allocation. The map still
 	// grows to hold every entry; this only sizes the initial hint.

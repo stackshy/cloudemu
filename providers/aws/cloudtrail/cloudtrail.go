@@ -5,7 +5,7 @@
 //
 // Read-only analytics surfaces (LookupEvents, ListInsightsData,
 // ListInsightsMetricData, GetQueryResults, ListPublicKeys) have no real event
-// stream behind them, so they return synthesized/empty results — the local-dev
+// stream behind them, so they return synthesized/empty results, the local-dev
 // analog of an account with no recorded activity. Queries are accepted, stored,
 // and immediately marked FINISHED with an empty result set.
 package cloudtrail

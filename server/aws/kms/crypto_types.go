@@ -1,7 +1,7 @@
 package kms
 
 // Cryptographic request/response wire shapes. Blob fields are []byte, which
-// encoding/json base64-encodes on the wire — exactly the AWS JSON blob shape.
+// encoding/json base64-encodes on the wire, which is the AWS JSON blob shape.
 
 type encryptRequest struct {
 	KeyID               string            `json:"KeyId"`

@@ -167,6 +167,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeTransitGateways,
 		h.routeVPN,
 		h.routeDHCPOptions,
+		h.routeServicePrefixLists,
 		h.routePrefixLists,
 		h.routeEgressOnlyIGW,
 		h.routeEndpointServices,
@@ -675,7 +676,7 @@ func writeErrWithNotFound(w http.ResponseWriter, err error, notFoundCode, precon
 			preconditionCode, msg)
 	case cerrors.GetCode(err) == cerrors.Unimplemented:
 		// An unsupported optional op is a client-facing 400 InvalidAction, not a
-		// 500 — matching how the launch-template ops answer an absent capability.
+		// 500, matching how the launch-template ops answer an absent capability.
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", msg)
 	default:

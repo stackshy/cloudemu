@@ -9,8 +9,8 @@ import (
 )
 
 // TestSDKAKSCostFieldsRoundTrip asserts that the cost-sensitive inputs a
-// discoverer reads — the cluster SKU tier and the agent-pool scale-set priority
-// — survive a real armcontainerservice create/GET round-trip instead of being
+// discoverer reads (the cluster SKU tier and the agent-pool scale-set priority)
+// survive a real armcontainerservice create/GET round-trip instead of being
 // dropped and reset to the Free / Regular defaults.
 func TestSDKAKSCostFieldsRoundTrip(t *testing.T) {
 	clusters, pools, _ := newSDKClients(t)

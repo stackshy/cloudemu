@@ -4,30 +4,30 @@
 // pointed at this server CRUD key rings, crypto keys, and crypto-key versions
 // end-to-end.
 //
-// Coverage (v1 REST — control plane):
+// Coverage (v1 REST, control plane):
 //
-//	POST   /v1/projects/{p}/locations/{l}/keyRings?keyRingId={id}                       — Create key ring
-//	GET    /v1/projects/{p}/locations/{l}/keyRings/{r}                                  — Get key ring
-//	GET    /v1/projects/{p}/locations/{l}/keyRings                                      — List key rings
-//	POST   .../keyRings/{r}/cryptoKeys?cryptoKeyId={id}&skipInitialVersionCreation=     — Create crypto key
-//	GET    .../keyRings/{r}/cryptoKeys/{k}                                              — Get crypto key
-//	GET    .../keyRings/{r}/cryptoKeys                                                  — List crypto keys
-//	PATCH  .../keyRings/{r}/cryptoKeys/{k}?updateMask=                                  — Patch crypto key
-//	POST   .../cryptoKeys/{k}:updatePrimaryVersion                                      — Update primary version
-//	POST   .../cryptoKeys/{k}/cryptoKeyVersions                                         — Create version
-//	GET    .../cryptoKeyVersions/{v}                                                    — Get version
-//	GET    .../cryptoKeys/{k}/cryptoKeyVersions                                         — List versions
-//	PATCH  .../cryptoKeyVersions/{v}?updateMask=                                        — Patch version (state)
-//	POST   .../cryptoKeyVersions/{v}:destroy                                            — Schedule destruction
-//	POST   .../cryptoKeyVersions/{v}:restore                                            — Restore scheduled version
+//	POST   /v1/projects/{p}/locations/{l}/keyRings?keyRingId={id}                       : Create key ring
+//	GET    /v1/projects/{p}/locations/{l}/keyRings/{r}                                  : Get key ring
+//	GET    /v1/projects/{p}/locations/{l}/keyRings                                      : List key rings
+//	POST   .../keyRings/{r}/cryptoKeys?cryptoKeyId={id}&skipInitialVersionCreation=     : Create crypto key
+//	GET    .../keyRings/{r}/cryptoKeys/{k}                                              : Get crypto key
+//	GET    .../keyRings/{r}/cryptoKeys                                                  : List crypto keys
+//	PATCH  .../keyRings/{r}/cryptoKeys/{k}?updateMask=                                  : Patch crypto key
+//	POST   .../cryptoKeys/{k}:updatePrimaryVersion                                      : Update primary version
+//	POST   .../cryptoKeys/{k}/cryptoKeyVersions                                         : Create version
+//	GET    .../cryptoKeyVersions/{v}                                                    : Get version
+//	GET    .../cryptoKeys/{k}/cryptoKeyVersions                                         : List versions
+//	PATCH  .../cryptoKeyVersions/{v}?updateMask=                                        : Patch version (state)
+//	POST   .../cryptoKeyVersions/{v}:destroy                                            : Schedule destruction
+//	POST   .../cryptoKeyVersions/{v}:restore                                            : Restore scheduled version
 //	{GET,POST} .../{keyRings/{r}|.../cryptoKeys/{k}}:{get,set}IamPolicy/:testIamPermissions
 //
 // keyRings.create, cryptoKeys.create and cryptoKeyVersions.create are
-// synchronous — they return the resource directly, not a long-running
+// synchronous: they return the resource directly, not a long-running
 // operation. On cryptoKeys.create without skipInitialVersionCreation the
 // handler auto-creates version 1 in state ENABLED (and sets it primary for
 // ENCRYPT_DECRYPT keys), matching real Cloud KMS. Version destruction is a
-// state transition to DESTROY_SCHEDULED — the version, key and ring persist.
+// state transition to DESTROY_SCHEDULED. The version, key and ring persist.
 //
 // The data plane (Encrypt/Decrypt/Sign/Verify/MAC/GenerateRandomBytes), import
 // jobs, EKM/external keys and Autokey are out of scope for this control-plane
@@ -177,7 +177,7 @@ func fillRoute(rt *route, rest []string) bool {
 // keyRings resource-type guard is disjoint from every other /v1/projects/
 // handler (memorystore's instances, GKE's clusters, cloudfunctions' functions,
 // eventarc's triggers, scheduler's jobs, vertexai, artifactregistry's
-// repositories), so registration order among them is unconstrained — but it
+// repositories), so registration order among them is unconstrained, but it
 // must precede Firestore's permissive /v1/projects/ prefix.
 func (*Handler) Matches(r *http.Request) bool {
 	rt, ok := parseRoute(r.URL.Path)

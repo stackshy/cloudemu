@@ -70,7 +70,7 @@ func TestApplyInitDirDuplicateWarnsNotFails(t *testing.T) {
 
 	// A fixture whose FIRST resource (bucket "dup") already exists, followed by a
 	// NEW resource (table "fresh"). The collision must not truncate the rest of
-	// the fixture — "fresh" must still be created.
+	// the fixture: "fresh" must still be created.
 	fixture := `{"buckets":[{"name":"dup"}],"tables":[{"name":"fresh","partitionKey":"id"}]}`
 	if err := os.WriteFile(filepath.Join(dir, "b.json"), []byte(fixture), 0o600); err != nil {
 		t.Fatal(err)

@@ -34,7 +34,7 @@ func statusOf(t *testing.T, err error) int {
 }
 
 // TestVNetGetIsResourceGroupScoped proves a virtual network created in one
-// resource group is not readable — and not deletable — under another, and that
+// resource group is not readable, and not deletable, under another, and that
 // a same-named vnet in a second group is a distinct resource with its own id.
 func TestVNetGetIsResourceGroupScoped(t *testing.T) {
 	cloudP := cloudemu.NewAzure()

@@ -11,7 +11,7 @@ type Page[T any] struct {
 
 // Paginate slices one page out of items using an offset-based token.
 //
-// CONTRACT: offset tokens are only meaningful over a STABLE ordering — the
+// CONTRACT: offset tokens are only meaningful over a STABLE ordering. The
 // caller must present items in the same order on every call (Go map
 // iteration is not stable). Callers that cannot guarantee ordering should
 // use PaginateSorted, which enforces it.

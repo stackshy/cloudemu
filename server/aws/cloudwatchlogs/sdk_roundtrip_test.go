@@ -680,7 +680,7 @@ func TestSDKLogsErrors(t *testing.T) {
 // batch constraints: events in a single request must be in chronological
 // order, and the oldest and newest event in a request cannot span more than
 // 24 hours. Either violation is a hard InvalidParameterException that rejects
-// the whole batch — nothing from it is ingested.
+// the whole batch; nothing from it is ingested.
 func TestSDKPutLogEventsBatchValidation(t *testing.T) {
 	client := newLogsClient(t)
 	ctx := context.Background()

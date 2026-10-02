@@ -66,7 +66,7 @@ func TestSourceArchiveURLRunsRealCode(t *testing.T) {
 	}
 
 	// The GCS object bytes must reach the engine (real code), under the http
-	// framework contract gen1 uses — not a silent echo stub.
+	// framework contract gen1 uses, not a silent echo stub.
 	if got := string(eng.deployed["arcfn"]); got != string(archive) {
 		t.Fatalf("archive bytes did not reach the engine: got %q", got)
 	}

@@ -1,0 +1,5 @@
+- Only the child resources a service's create, refresh and destroy touch are modelled: the sample Echo API and the Starter/Unlimited products (list, get, delete), the service-level policy, the developer portal sign-in/sign-up/delegation settings and tenant access. Creating APIs, operations, products, subscriptions, backends, named values or loggers returns 404 `InvalidResourceType`.
+- The gateway data plane (proxying traffic), the developer portal, backup/restore and network-configuration updates are not emulated.
+- Policies are stored inline only (`xml`, `rawxml`); the `-link` formats, which make Azure fetch the document, are rejected.
+- Terraform `azurerm_api_management`: the provider's create/refresh/destroy request sequence is replayed in tests through the official SDK clients; an empty plan after apply has not been checked with a real terraform binary.
+- A purged name is immediately reusable from any subscription; Azure reserves it to the original subscription's tenant for several days.

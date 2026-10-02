@@ -31,6 +31,18 @@ GCP's `loadbalancer` service · portable interface `driver.LoadBalancer` · [GCP
 
 Discovered by type assertion; only some providers implement these.
 
+### GCPBackendBucketStore
+
+GCPBackendBucketStore is an OPTIONAL, type-asserted capability implemented
+
+| Operation | Description |
+| --- | --- |
+| `DeleteGCPBackendBucket` | DeleteGCPBackendBucket removes the named backend bucket, returning |
+| `GetGCPBackendBucket` | GetGCPBackendBucket returns the named backend bucket, or NotFound. |
+| `InsertGCPBackendBucket` | InsertGCPBackendBucket stores res, returning AlreadyExists when a backend |
+| `ListGCPBackendBuckets` | ListGCPBackendBuckets returns every backend bucket. |
+| `UpdateGCPBackendBucket` | UpdateGCPBackendBucket applies mutate to the named backend bucket under |
+
 ### GCPBackendServicePatcher
 
 GCPBackendServicePatcher is an OPTIONAL, type-asserted capability implemented
@@ -50,6 +62,29 @@ GCPComputeResourceStore is an OPTIONAL, type-asserted capability implemented
 | `ListGCPResources` | ListGCPResources returns every resource in a (collection, scope) bucket. |
 | `PutGCPResource` | PutGCPResource stores res, returning AlreadyExists when a resource with |
 | `UpdateGCPResource` | UpdateGCPResource applies mutate to the stored resource in place under the |
+
+### GCPForwardingRulePatcher
+
+GCPForwardingRulePatcher is an OPTIONAL, type-asserted capability implemented
+
+| Operation | Description |
+| --- | --- |
+| `PatchGCPForwardingRule` |  |
+
+### GCPServiceAttachmentStore
+
+GCPServiceAttachmentStore is an OPTIONAL, type-asserted capability
+
+| Operation | Description |
+| --- | --- |
+| `ConnectGCPServiceAttachment` | ConnectGCPServiceAttachment records a consumer endpoint on the attachment |
+| `DeleteGCPServiceAttachment` | DeleteGCPServiceAttachment removes the attachment, or returns NotFound. |
+| `DisconnectGCPServiceAttachment` | DisconnectGCPServiceAttachment removes a consumer endpoint (by |
+| `GCPPSCConnectionStatus` | GCPPSCConnectionStatus returns the current status of a consumer |
+| `GetGCPServiceAttachment` | GetGCPServiceAttachment returns the attachment, or NotFound. |
+| `InsertGCPServiceAttachment` | InsertGCPServiceAttachment validates and stores a new attachment, |
+| `ListGCPServiceAttachments` | ListGCPServiceAttachments returns every attachment in a region. |
+| `UpdateGCPServiceAttachment` | UpdateGCPServiceAttachment applies mutate under the store lock, keeps the |
 
 ## Not in scope
 

@@ -117,8 +117,8 @@ type ipamResourceOverrideSnapshot struct {
 	Unmanaged bool   `json:"unmanaged,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// VPC holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. VPC holds no bulk
+// object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := vpcSnapshot{ENIs: m.snapshotENIs()}
 
@@ -243,7 +243,7 @@ func (m *Mock) snapshotScalarState(snap *vpcSnapshot) {
 }
 
 // Restore rebuilds the mock's state under the original identities: every
-// resource id (and the id-string cross-references EC2 instances hold — SubnetID,
+// resource id (and the id-string cross-references EC2 instances hold: SubnetID,
 // VPCID, SecurityGroups) is preserved, so a restored instance's networking refs
 // still resolve.
 func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
@@ -253,7 +253,7 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	}
 
 	// restoreStores merges the snapshot into each store's existing entries (see
-	// memstore.Store.LoadSnapshot), it does not replace them. New() already
+	// memstore.Store.LoadSnapshot) rather than replacing them. New() already
 	// seeded this fresh Mock with an account/region default VPC (and its default
 	// subnets/SG/ACL/route table/IGW) before Restore is ever called, so without
 	// clearing that seed first, restoring a snapshot that itself carries a

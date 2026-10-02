@@ -1,6 +1,6 @@
 // Package driver defines the portable interface for the Google Cloud Data
 // Catalog control plane (datacatalog.googleapis.com/v1). It is control-plane
-// only — the nested, mostly client-named resource collections a Terraform
+// only. The nested, mostly client-named resource collections a Terraform
 // google provider or a real google.golang.org/api/datacatalog/v1 client CRUDs
 // are modeled:
 //
@@ -16,7 +16,7 @@
 //
 // Every Data Catalog mutation is synchronous REST: Create/Get/List/Patch/Delete
 // return the resource (or empty) directly, with no google.longrunning.Operation
-// wrapper — unlike most GCP control planes. No operation registry is involved.
+// wrapper, unlike most GCP control planes. No operation registry is involved.
 //
 // The only computed, output-only fields are resource names (the full
 // deterministic path, minted once and stable across reads), each tag template

@@ -11,10 +11,10 @@ import (
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // redshiftSnapshot is the full serialized state of the AWS Redshift mock. Every
-// memstore store holds a fully-exported value type — rdbdriver.Cluster /
+// memstore store holds a fully-exported value type: rdbdriver.Cluster /
 // rdbdriver.ClusterSnapshot for the shared resources, and the redshift-package
 // ParameterGroup / SubnetGroup (all fields exported) for the redshift-specific
-// ones — so each round-trips through the generic memstore helper keyed by its
+// ones, so each round-trips through the generic memstore helper keyed by its
 // resource id/name. The mu-guarded tagsByARN map (ARN -> tag map) lives beside
 // the stores and is captured with them. The wired deps (opts, monitoring,
 // subnetResolver) and the real DatabaseEngine backing are intentionally not
@@ -25,12 +25,13 @@ type redshiftSnapshot struct {
 	ClusterSnapshots json.RawMessage `json:"clusterSnapshots,omitempty"`
 	ParameterGroups  json.RawMessage `json:"parameterGroups,omitempty"`
 	SubnetGroups     json.RawMessage `json:"subnetGroups,omitempty"`
+	EventSubs        json.RawMessage `json:"eventSubscriptions,omitempty"`
 
 	TagsByARN map[string]map[string]string `json:"tagsByArn,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// Redshift is control-plane only and holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Redshift is
+// control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap redshiftSnapshot
 	if err := m.snapshotStores(&snap); err != nil {
@@ -53,6 +54,7 @@ func (m *Mock) snapshotStores(snap *redshiftSnapshot) error {
 		{&snap.ClusterSnapshots, m.clusterSnapshots.Snapshot},
 		{&snap.ParameterGroups, m.parameterGroups.Snapshot},
 		{&snap.SubnetGroups, m.subnetGroups.Snapshot},
+		{&snap.EventSubs, m.eventSubs.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -84,9 +86,46 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	if snap.TagsByARN != nil {
 		m.tagsByARN = snap.TagsByARN
 	}
+
+	m.moveRowTagsLocked()
 	m.mu.Unlock()
 
 	return nil
+}
+
+// moveRowTagsLocked moves tags that older snapshots kept on cluster and
+// snapshot rows into the ARN-keyed store. Store entries win. The caller holds
+// m.mu.
+func (m *Mock) moveRowTagsLocked() {
+	clusters := m.clusters.All()
+	for id := range clusters {
+		c := clusters[id]
+		if len(c.Tags) == 0 {
+			continue
+		}
+
+		if _, ok := m.tagsByARN[c.ARN]; !ok {
+			m.setTagsLocked(c.ARN, c.Tags)
+		}
+
+		c.Tags = nil
+		m.clusters.Set(id, c)
+	}
+
+	snaps := m.clusterSnapshots.All()
+	for id := range snaps {
+		s := snaps[id]
+		if len(s.Tags) == 0 {
+			continue
+		}
+
+		if _, ok := m.tagsByARN[s.ARN]; !ok {
+			m.setTagsLocked(s.ARN, s.Tags)
+		}
+
+		s.Tags = nil
+		m.clusterSnapshots.Set(id, s)
+	}
 }
 
 func (m *Mock) restoreStores(snap *redshiftSnapshot) error {
@@ -98,6 +137,7 @@ func (m *Mock) restoreStores(snap *redshiftSnapshot) error {
 		{snap.ClusterSnapshots, m.clusterSnapshots.LoadSnapshot},
 		{snap.ParameterGroups, m.parameterGroups.LoadSnapshot},
 		{snap.SubnetGroups, m.subnetGroups.LoadSnapshot},
+		{snap.EventSubs, m.eventSubs.LoadSnapshot},
 	}
 
 	for _, l := range loads {

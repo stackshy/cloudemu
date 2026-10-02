@@ -20,7 +20,7 @@ const (
 
 // TestSDKAzureIAMGetBuiltInRoleByGUID confirms each seeded built-in resolves by
 // its fixed GUID at an arbitrary scope, with the expected roleName and the
-// BuiltInRole type — the contract IaC tools rely on when they reference
+// BuiltInRole type: the contract IaC tools rely on when they reference
 // Owner/Contributor/Reader without first defining a custom role.
 func TestSDKAzureIAMGetBuiltInRoleByGUID(t *testing.T) {
 	roleDefs, _ := newSDKClients(t)
@@ -116,7 +116,7 @@ func TestSDKAzureIAMCreateBuiltInRoleGUIDIsRejected(t *testing.T) {
 				guid, respErr.ErrorCode)
 		}
 
-		// The built-in must remain intact — the rejected PUT must not have
+		// The built-in must remain intact: the rejected PUT must not have
 		// overwritten its roleName or flipped its type to CustomRole.
 		got, gerr := roleDefs.Get(ctx, testScope, guid, nil)
 		if gerr != nil {

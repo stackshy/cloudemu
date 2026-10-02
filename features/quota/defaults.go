@@ -4,7 +4,7 @@ import "github.com/stackshy/cloudemu/v2/config"
 
 // awsDefaultQuotas is a representative set of well-known AWS service quotas with
 // their real service-code / quota-code identifiers and default values. It is not
-// exhaustive — real AWS exposes thousands of quotas — but covers the common
+// exhaustive (real AWS exposes thousands of quotas) but covers the common
 // services an application is likely to probe (EC2, VPC, Lambda, S3, DynamoDB,
 // IAM, KMS).
 //

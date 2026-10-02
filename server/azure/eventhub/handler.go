@@ -167,9 +167,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // serveChild dispatches the child-entity routes under a namespace.
 //
 // Only the namespace exposes an ARM PATCH (Namespaces - Update). Real Azure has
-// no Update/PATCH operation for the child entities — event hubs, consumer groups
-// and authorization rules are mutated exclusively through Create Or Update (PUT)
-// — so PATCH is intentionally not routed for them and falls through to the
+// no Update/PATCH operation for the child entities: event hubs, consumer groups
+// and authorization rules are mutated exclusively through Create Or Update (PUT).
+// So PATCH is intentionally not routed for them and falls through to the
 // method-not-allowed default, matching the real control plane.
 func (h *Handler) serveChild(w http.ResponseWriter, r *http.Request, ep ehPath) {
 	switch {

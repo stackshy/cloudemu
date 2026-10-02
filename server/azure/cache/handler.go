@@ -5,26 +5,27 @@
 // management.azure.com, driving the shared cache driver's cluster control
 // plane (CreateOrUpdate/Get/List/Delete).
 //
-// Matches claims ONLY the Microsoft.Cache ARM provider — a distinct provider
-// name from every other Azure handler (compute, network, DBforMySQL, …) — so
+// Matches claims ONLY the Microsoft.Cache ARM provider: a distinct provider
+// name from every other Azure handler (compute, network, DBforMySQL, …), so
 // registration order relative to them is unconstrained. It must register before
 // the permissive BlobStorage fallback.
 //
 // Coverage:
 //
-//	PUT    .../providers/Microsoft.Cache/redis/{name}   — Redis.BeginCreate (LRO, completes inline)
-//	PATCH  .../providers/Microsoft.Cache/redis/{name}   — Redis.Update
-//	GET    .../providers/Microsoft.Cache/redis/{name}   — Redis.Get
-//	DELETE .../providers/Microsoft.Cache/redis/{name}   — Redis.BeginDelete (LRO, completes inline)
-//	GET    .../providers/Microsoft.Cache/redis          — Redis.ListByResourceGroup
-//	GET    .../subscriptions/{sub}/providers/Microsoft.Cache/redis — Redis.ListBySubscription
+//	PUT    .../providers/Microsoft.Cache/redis/{name}   : Redis.BeginCreate (LRO, completes inline)
+//	PATCH  .../providers/Microsoft.Cache/redis/{name}   : Redis.Update
+//	GET    .../providers/Microsoft.Cache/redis/{name}   : Redis.Get
+//	DELETE .../providers/Microsoft.Cache/redis/{name}   : Redis.BeginDelete (LRO, completes inline)
+//	GET    .../providers/Microsoft.Cache/redis          : Redis.ListByResourceGroup
+//	GET    .../subscriptions/{sub}/providers/Microsoft.Cache/redis : Redis.ListBySubscription
 //
-// Only the cluster/instance control plane is mapped — the real Azure Cache SDK
+// Only the cluster/instance control plane is mapped: the real Azure Cache SDK
 // manages Redis caches, not the Redis data plane. The driver's data-plane
 // methods (Set/Get/Incr/…) have no cloud-SDK surface and are out of scope.
 package cache
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -44,6 +45,12 @@ type Handler struct {
 // New returns an Azure Cache handler backed by c.
 func New(c cachedriver.Cache) *Handler {
 	return &Handler{cache: c}
+}
+
+// PurgeResourceGroup deletes every Redis cache in the resource group, backing
+// the resource-group cascade.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	return azurearm.PurgeVia(ctx, h.cache, subscription, resourceGroup)
 }
 
 // Matches claims ARM URLs targeting Microsoft.Cache/redis. The provider name is

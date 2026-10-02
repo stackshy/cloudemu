@@ -14,7 +14,7 @@ import (
 )
 
 // newDataDiskTestServer wires a TLS server backed by a single Azure compute
-// mock, exposing both virtualMachines and disks — a real deployment where
+// mock, exposing both virtualMachines and disks, a real deployment where
 // the same VM handles attaches managed disks created through the disks API.
 func newDataDiskTestServer(t *testing.T) (*armcompute.VirtualMachinesClient, *armcompute.DisksClient) {
 	t.Helper()
@@ -44,8 +44,8 @@ func newDataDiskTestServer(t *testing.T) (*armcompute.VirtualMachinesClient, *ar
 // VM managed-disk attach fix: a real azure-sdk-for-go client creates a VM and
 // two managed disks, attaches them through both the declarative PUT
 // CreateOrUpdate path and the merge-patch PATCH Update path, and verifies the
-// attachment is real — reflected on GET (storageProfile.dataDisks) and on the
-// disk resource itself (managedBy) — then detaches one via PATCH toBeDetached.
+// attachment is real: reflected on GET (storageProfile.dataDisks) and on the
+// disk resource itself (managedBy), then detaches one via PATCH toBeDetached.
 func TestSDKVMDataDiskAttachDetach(t *testing.T) {
 	vmClient, diskClient := newDataDiskTestServer(t)
 	ctx := context.Background()
@@ -138,7 +138,7 @@ func TestSDKVMDataDiskAttachDetach(t *testing.T) {
 	// PATCH (BeginUpdate) adds disk-1 at lun 1 via the real read-modify-write
 	// pattern: the desired dataDisks list carries BOTH lun 0 (kept) and lun 1
 	// (new). A PATCH's supplied dataDisks array is a full replace, so keeping an
-	// existing attachment means re-listing it — the same way `az vm disk attach`
+	// existing attachment means re-listing it, the same way `az vm disk attach`
 	// GETs, appends, then updates.
 	updatePoller, err := vmClient.BeginUpdate(ctx, "rg-1", "vm-disks",
 		armcompute.VirtualMachineUpdate{
@@ -171,7 +171,7 @@ func TestSDKVMDataDiskAttachDetach(t *testing.T) {
 
 	assertDataDiskLUNs(t, got.Properties.StorageProfile, 0, 1)
 
-	// PATCH detaches lun 0 via toBeDetached while keeping lun 1 — real Azure's
+	// PATCH detaches lun 0 via toBeDetached while keeping lun 1: real Azure's
 	// graceful-detach shape (list all disks, mark the one to detach). lun 1 is
 	// re-listed so the full-replace PATCH keeps it attached.
 	detachPoller, err := vmClient.BeginUpdate(ctx, "rg-1", "vm-disks",
@@ -203,7 +203,7 @@ func TestSDKVMDataDiskAttachDetach(t *testing.T) {
 	}
 
 	// lun 0 detached; lun 1 (attached via PATCH, untouched by this PATCH)
-	// must survive — proving Update is merge-patch, not declarative.
+	// must survive, proving Update is merge-patch, not declarative.
 	assertDataDiskLUNs(t, got.Properties.StorageProfile, 1)
 
 	gotDisk1, err = diskClient.Get(ctx, "rg-1", "disk-0", nil)
@@ -284,7 +284,7 @@ func TestSDKVMDataDiskAttach_ReplaceAtSameLUN(t *testing.T) {
 		t.Fatalf("CreateOrUpdate attach disk-a poll: %v", err)
 	}
 
-	// Re-declaring lun 0 with disk B must detach disk A first — not leave
+	// Re-declaring lun 0 with disk B must detach disk A first, not leave
 	// both disks mapped to lun 0.
 	replacePoller, err := vmClient.BeginCreateOrUpdate(ctx, "rg-1", "vm-relun",
 		armcompute.VirtualMachine{

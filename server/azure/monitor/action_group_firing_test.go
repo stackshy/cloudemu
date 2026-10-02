@@ -48,7 +48,7 @@ const (
 // TestSDKAlarmBreachFiresActionGroup is the load-bearing regression for the
 // action-group firing finding: an OK->ALARM transition must resolve the alert's
 // AlarmActions ids against the registered action groups and deliver to each
-// receiver (recorded, and — for webhook receivers — POSTed for real). Both the
+// receiver (recorded, and, for webhook receivers, POSTed for real). Both the
 // action group and the alert are created through the real armmonitor SDK; the
 // breach is driven by pushing a datapoint at the fake clock's now.
 func TestSDKAlarmBreachFiresActionGroup(t *testing.T) {
@@ -155,14 +155,14 @@ func TestSDKDimensionScopedAlertIgnoresOtherResource(t *testing.T) {
 		t.Fatalf("metric alert CreateOrUpdate: %v", err)
 	}
 
-	// vm2 breaches, but the alert is scoped to vm1 — it must stay out of ALARM.
+	// vm2 breaches, but the alert is scoped to vm1; it must stay out of ALARM.
 	pushCPU(t, cloudP.Monitor, clock, vm2URI, 95)
 
 	if state := alarmState(t, cloudP.Monitor, "vm1-cpu"); state == "ALARM" {
 		t.Fatalf("alert fired on another resource's datapoint (state=%s)", state)
 	}
 
-	// vm1 breaches — now it must fire.
+	// vm1 breaches: now it must fire.
 	pushCPU(t, cloudP.Monitor, clock, vm1URI, 95)
 
 	if state := alarmState(t, cloudP.Monitor, "vm1-cpu"); state != "ALARM" {
@@ -315,7 +315,7 @@ func TestSDKAlarmBreachUnreachableWebhookBestEffort(t *testing.T) {
 
 	ensureRG(t, ts, "sub-1", "rg-1")
 
-	// Close the receiver immediately so its URL refuses connections — a fast,
+	// Close the receiver immediately so its URL refuses connections: a fast,
 	// deterministic stand-in for an unreachable webhook endpoint.
 	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	deadURL := dead.URL
@@ -324,7 +324,7 @@ func TestSDKAlarmBreachUnreachableWebhookBestEffort(t *testing.T) {
 	createWebhookAlert(t, ts, deadURL)
 
 	// pushCPU fatals if PutMetricData returns an error, so a surfaced delivery
-	// error would fail here — the breach must succeed regardless.
+	// error would fail here; the breach must succeed regardless.
 	pushCPU(t, cloudP.Monitor, clock, vm1URI, 95)
 
 	if state := alarmState(t, cloudP.Monitor, "cpu-hot"); state != "ALARM" {

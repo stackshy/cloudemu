@@ -92,8 +92,8 @@ func TestSDKClientRequestTokenIdempotent(t *testing.T) {
 // TestSDKCreateSecretClientRequestTokenIdempotent guards a real-user e2e
 // finding: a CreateSecret call retried with the same ClientRequestToken and
 // identical content (e.g. an SDK auto-retry after a lost response) must be a
-// no-op that returns the already-created secret, not ResourceExistsException —
-// the whole reason the client token exists is to make CreateSecret safe to
+// no-op that returns the already-created secret, not ResourceExistsException.
+// The whole reason the client token exists is to make CreateSecret safe to
 // retry. Retrying with the same token but different content must still fail,
 // since the already-created version can't be modified in place.
 func TestSDKCreateSecretClientRequestTokenIdempotent(t *testing.T) {
@@ -172,7 +172,7 @@ func TestSDKVersionIdIsUUID(t *testing.T) {
 }
 
 // TestSDKPutSecretValueVersionStages guards F2: a Put with VersionStages
-// [AWSPENDING] attaches exactly that label and does NOT become AWSCURRENT — the
+// [AWSPENDING] attaches only that label and does NOT become AWSCURRENT. The
 // default GetSecretValue still returns the prior value; a Put without stages
 // promotes to AWSCURRENT and demotes the prior current to AWSPREVIOUS.
 func TestSDKPutSecretValueVersionStages(t *testing.T) {
@@ -238,7 +238,7 @@ func TestSDKPutSecretValueVersionStages(t *testing.T) {
 
 // TestSDKUpdateSecretVersionStagePromote guards F4: UpdateSecretVersionStage
 // moving AWSCURRENT to a pending version promotes it (default get returns the
-// new value) and auto-demotes the old current to AWSPREVIOUS — the rotation
+// new value) and auto-demotes the old current to AWSPREVIOUS, the rotation
 // finishSecret step.
 func TestSDKUpdateSecretVersionStagePromote(t *testing.T) {
 	client := newSecretsClient(t)
@@ -295,7 +295,7 @@ func TestSDKUpdateSecretVersionStagePromote(t *testing.T) {
 
 // TestSDKRotationFinishRemovesPending drives a full rotation cycle and guards
 // that finishSecret (UpdateSecretVersionStage moving AWSCURRENT onto the pending
-// version) auto-removes AWSPENDING from the newly-current version — so it shows
+// version) auto-removes AWSPENDING from the newly-current version, so it shows
 // exactly [AWSCURRENT], and AWSPENDING never accumulates across rotations.
 func TestSDKRotationFinishRemovesPending(t *testing.T) {
 	client := newSecretsClient(t)
@@ -440,7 +440,7 @@ func TestSDKSecretARNSuffixResolvesByName(t *testing.T) {
 // TestSDKRecreatedSecretGetsFreshARN guards a real-user e2e finding: real
 // Secrets Manager draws a new random ARN suffix on every CreateSecret, so a
 // secret force-deleted and recreated under the same name gets a different ARN
-// (the whole point of the suffix — an old ARN a caller cached, e.g. in an IAM
+// (the whole point of the suffix: an old ARN a caller cached, e.g. in an IAM
 // policy or Terraform state, must never resolve to the unrelated new secret).
 func TestSDKRecreatedSecretGetsFreshARN(t *testing.T) {
 	client := newSecretsClient(t)

@@ -28,7 +28,7 @@ func (alCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcore.
 }
 
 // TestActivityLogRecordsMutatingARMOp verifies a mutating ARM operation is
-// auto-recorded and surfaced by the Activity Log read API — the Azure analogue
+// auto-recorded and surfaced by the Activity Log read API: the Azure analogue
 // of AWS CloudTrail LookupEvents reflecting a mutating call.
 func TestActivityLogRecordsMutatingARMOp(t *testing.T) {
 	p := cloudemu.NewAzure()
@@ -73,7 +73,7 @@ func TestActivityLogRecordsMutatingARMOp(t *testing.T) {
 		t.Fatalf("create vnet: %v", err)
 	}
 
-	// Read the Activity Log via its management-events API (no auth needed — the
+	// Read the Activity Log via its management-events API (no auth needed: the
 	// default server accepts any credentials).
 	url := ts.URL + "/subscriptions/" + sub +
 		"/providers/Microsoft.Insights/eventtypes/management/values?api-version=2015-04-01"
@@ -115,7 +115,7 @@ func TestActivityLogRecordsMutatingARMOp(t *testing.T) {
 }
 
 // TestActivityLogEmptyWithoutMutation verifies the Activity Log stays empty when
-// no mutating operation has run — the default, no-noise path.
+// no mutating operation has run: the default, no-noise path.
 func TestActivityLogEmptyWithoutMutation(t *testing.T) {
 	p := cloudemu.NewAzure()
 	srv := azureserver.NewFromProvider(p)

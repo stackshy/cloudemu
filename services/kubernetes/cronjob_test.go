@@ -128,7 +128,7 @@ func TestTickCronJobs_NotDue(t *testing.T) {
 	putCronJob(t, state, "nightly", "0 0 * * *", "", 0)
 
 	// Midnight-only schedule; the clock sits at 00:00:30, so the next due slot is
-	// tomorrow — nothing should fire.
+	// tomorrow: nothing should fire.
 	state.TickCronJobs()
 
 	if got := countJobs(state); got != 0 {
@@ -172,7 +172,7 @@ func TestTickCronJobs_StartingDeadlineSkipsStaleRun(t *testing.T) {
 	state, clock := newCronFixture(t)
 	putCronJob(t, state, "ingest", "*/5 * * * *", "", 60) // 60s deadline
 
-	// Jump to 00:22:00 — the most recent slot (00:20:00) is 120s stale, past the
+	// Jump to 00:22:00: the most recent slot (00:20:00) is 120s stale, past the
 	// 60s deadline, so the missed run is skipped.
 	clock.Advance(21*time.Minute + 30*time.Second)
 	state.TickCronJobs()

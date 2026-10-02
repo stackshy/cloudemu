@@ -68,9 +68,9 @@ func New() *Containers {
 // methods use. All containers are started detached and concurrently, so a
 // multi-container workload never serializes on one container's lifetime. When
 // spec.RunToCompletion is set Run then blocks until the *first* container exits
-// (a non-zero exit is not an error — its real exit code and output remain
+// (a non-zero exit is not an error; its real exit code and output remain
 // observable via Status/Logs) and returns, leaving any still-running siblings up
-// for Status to observe and Stop to tear down — mirroring a real task that stops
+// for Status to observe and Stop to tear down, mirroring a real task that stops
 // the moment its essential container exits. Without RunToCompletion Run returns
 // as soon as the containers are started.
 func (c *Containers) Run(ctx context.Context, spec config.ContainerRunSpec) (string, error) {
@@ -119,8 +119,8 @@ func (c *Containers) Run(ctx context.Context, spec config.ContainerRunSpec) (str
 // waitForFirstExit blocks until the first container in refs exits (or ctx is
 // canceled). Each container is waited on in its own goroutine via `docker wait`;
 // once the first returns, the remaining waits are canceled and joined so no
-// goroutine outlives the call. The containers themselves are left running — they
-// are torn down later by Stop/Close — so Status can still observe a sibling that
+// goroutine outlives the call. The containers themselves are left running: they
+// are torn down later by Stop/Close, so Status can still observe a sibling that
 // had not exited when the first one did.
 func waitForFirstExit(ctx context.Context, refs []containerRef) {
 	waitCtx, cancel := context.WithCancel(ctx)
@@ -157,7 +157,7 @@ func waitForFirstExit(ctx context.Context, refs []containerRef) {
 
 // Status reports each container's docker lifecycle state (e.g. "running",
 // "exited") and exit code, matched to the spec container name. The raw docker
-// status is returned unchanged — the ECS wiring maps it onto the ECS lastStatus
+// status is returned unchanged; the ECS wiring maps it onto the ECS lastStatus
 // vocabulary.
 func (c *Containers) Status(ctx context.Context, handle string) ([]config.ContainerStatus, error) {
 	refs, err := c.refsFor(handle)

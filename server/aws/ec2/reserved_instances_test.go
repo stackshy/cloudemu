@@ -18,7 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/cost"
 )
 
-// newRIClient wires a standalone EC2 handler (no compute/VPC driver — the
+// newRIClient wires a standalone EC2 handler (no compute/VPC driver, since the
 // Reserved Instance surface is wire-only) with a FakeClock the test controls,
 // and returns a real aws-sdk-go-v2 EC2 client plus the handler and clock. The
 // handler is returned so tests can read its cost.Commitments feed directly, the
@@ -65,7 +65,7 @@ func TestReservedInstancesOfferingsAndPurchase(t *testing.T) {
 	}
 
 	// The seeded catalog must expose volume-tier pricing details and recurring
-	// charges — the fields a real client reads when comparing offerings.
+	// charges, the fields a real client reads when comparing offerings.
 	var offeringID string
 
 	for i := range offs.ReservedInstancesOfferings {
@@ -126,8 +126,8 @@ func TestReservedInstancesOfferingsAndPurchase(t *testing.T) {
 }
 
 // TestReservedInstancesLazyClockState pins the clock-derived lifecycle a future
-// purchase walks through — queued, then active once the clock reaches its start,
-// then retired once past its end — asserting both the wire DescribeReservedInstances
+// purchase walks through (queued, then active once the clock reaches its start,
+// then retired once past its end), asserting both the wire DescribeReservedInstances
 // state AND the cost.Commitments feed at each instant (the #944 clock-advance gap).
 func TestReservedInstancesLazyClockState(t *testing.T) {
 	ctx := context.Background()
@@ -174,7 +174,7 @@ func TestReservedInstancesLazyClockState(t *testing.T) {
 }
 
 // TestReservedInstancesCombineWithSavingsPlans proves the RI commitment source
-// unions cleanly with another source via cost.Combine — the seam the Cost
+// unions cleanly with another source via cost.Combine, the seam the Cost
 // Explorer consumer uses to price RI and Savings Plans commitments together.
 func TestReservedInstancesCombineWithSavingsPlans(t *testing.T) {
 	ctx := context.Background()

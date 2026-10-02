@@ -65,7 +65,7 @@ func validateSubMachines(st *State) error {
 
 // validateRetriers rejects out-of-range Retrier fields at create time:
 // IntervalSeconds must be > 0 (positive) and MaxAttempts must be >= 0
-// (non-negative), and BackoffRate must be >= 1.0 — matching the ASL spec, which
+// (non-negative), and BackoffRate must be >= 1.0, matching the ASL spec, which
 // allows a zero MaxAttempts (retry disabled) but requires a positive interval.
 func validateRetriers(st *State) error {
 	for i, r := range st.Retry {
@@ -181,7 +181,7 @@ func validateChoice(states map[string]*State, st *State) error {
 
 // validateRule checks a single choice rule: a top-level rule must carry Next to
 // an existing state, and must be either a leaf comparator or a logical (And/Or/
-// Not) combinator — never both, never neither.
+// Not) combinator: never both, never neither.
 func validateRule(states map[string]*State, stateName string, idx int, rule *ChoiceRule) error {
 	if rule.Next == "" {
 		return aslErrf("Choice state %q rule %d is missing 'Next'", stateName, idx)

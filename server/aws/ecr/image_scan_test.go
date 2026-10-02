@@ -12,7 +12,7 @@ import (
 
 // TestSDKDescribeImageScanFindingsMissingImage guards that, for an existing
 // repository but an imageId that resolves to no image, DescribeImageScanFindings
-// returns ImageNotFoundException — not RepositoryNotFoundException (the finding
+// returns ImageNotFoundException, not RepositoryNotFoundException (the finding
 // was that the generic NotFound→RepositoryNotFoundException mapping mislabeled a
 // missing image as a missing repository).
 func TestSDKDescribeImageScanFindingsMissingImage(t *testing.T) {
@@ -112,7 +112,7 @@ func TestSDKStartImageScanMissingImage(t *testing.T) {
 }
 
 // TestSDKImageScanRegistryID guards that StartImageScan and
-// DescribeImageScanFindings echo registryId on success — real ECR includes it
+// DescribeImageScanFindings echo registryId on success. Real ECR includes it
 // on both responses (it was previously omitted, which surfaces to SDK callers
 // as a null/empty RegistryId field).
 func TestSDKImageScanRegistryID(t *testing.T) {
@@ -160,8 +160,8 @@ func TestSDKImageScanRegistryID(t *testing.T) {
 
 // TestSDKDescribeImagesScanStatus guards that DescribeImages includes
 // imageScanStatus once an image has scan results (scanOnPush or an explicit
-// StartImageScan), and omits it — matching real ECR, which models it as
-// optional — for an image that has never been scanned.
+// StartImageScan), and omits it for an image that has never been scanned. Real
+// ECR models it as optional.
 func TestSDKDescribeImagesScanStatus(t *testing.T) {
 	client := newECRClient(t)
 	ctx := context.Background()
@@ -227,7 +227,7 @@ func TestSDKDescribeImagesScanStatus(t *testing.T) {
 
 // TestSDKDeleteRepositoryPolicyNoPolicy guards that DeleteRepositoryPolicy on an
 // existing repository that has no policy set returns
-// RepositoryPolicyNotFoundException — consistent with GetRepositoryPolicy, and
+// RepositoryPolicyNotFoundException, consistent with GetRepositoryPolicy, and
 // not RepositoryNotFoundException.
 func TestSDKDeleteRepositoryPolicyNoPolicy(t *testing.T) {
 	client := newECRClient(t)

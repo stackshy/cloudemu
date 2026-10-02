@@ -260,7 +260,19 @@ func buildEventHubProps(in *eventHubProperties, created, updated time.Time) even
 
 // partitionIDs returns the "0".."n-1" shard ids a real event hub reports.
 func partitionIDs(count int64) []string {
-	ids := make([]string, 0, count)
+	// count is the request-supplied partitionCount; the per-tier business-rule
+	// check in validateEventHubProps only bounds Basic/Standard. Clamp it so no
+	// tier can drive an unbounded loop, and give the slice no capacity hint so
+	// the request value never sizes an allocation directly.
+	if count < 0 {
+		count = 0
+	}
+
+	if count > maxAllocablePartitions {
+		count = maxAllocablePartitions
+	}
+
+	ids := make([]string, 0)
 	for i := int64(0); i < count; i++ {
 		ids = append(ids, strconv.FormatInt(i, 10))
 	}

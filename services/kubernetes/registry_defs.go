@@ -13,7 +13,7 @@ const (
 	apiGroupAdmissionRegistration = "admissionregistration.k8s.io"
 	apiGroupCoordination          = "coordination.k8s.io"
 
-	// Plural resource segments for the two webhook config kinds — referenced
+	// Plural resource segments for the two webhook config kinds, referenced
 	// by admission.go when it looks up the registry store to find configured
 	// webhooks.
 	pluralMutatingWebhooks   = "mutatingwebhookconfigurations"
@@ -22,7 +22,7 @@ const (
 
 // registeredResources lists every registry-backed kind. Adding a Kubernetes
 // resource is an entry here (plus, if it has runtime behavior, a reconcile
-// hook) — discovery is derived from this list, so a new kind and its API group
+// hook). Discovery is derived from this list, so a new kind and its API group
 // surface automatically.
 //
 // The typed core/v1, apps/v1 Deployment, and policy/v1 PDB handlers predate the
@@ -186,7 +186,7 @@ func coreRegistryDefs() []*resourceDef {
 }
 
 // admissionRegistryDefs registers the two webhook config kinds as plain
-// stored (no reconcile) kinds — this alone makes `kubectl apply -f
+// stored (no reconcile) kinds. This alone makes `kubectl apply -f
 // webhook.yaml` round-trip. Whether they are actually invoked on writes is
 // controlled separately by APIServer.SetAdmissionEnabled (see admission.go).
 func admissionRegistryDefs() []*resourceDef {

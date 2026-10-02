@@ -21,10 +21,10 @@ import (
 // TestAzurePostgresFlexE2E runs the real-user flow against Azure Database for
 // PostgreSQL Flexible Server: create the server with the real Azure SDK, read
 // its fully-qualified domain name, connect to it with a real Postgres client
-// using the administrator credentials, run SQL, then delete — all against
+// using the administrator credentials, run SQL, then delete, all against
 // CloudEmu backed by a real embedded Postgres (no Docker, no cloud account).
 func TestAzurePostgresFlexE2E(t *testing.T) {
-	// Default engine port (5432) — the port Azure PostgreSQL clients always use.
+	// Default engine port (5432): the port Azure PostgreSQL clients always use.
 	eng := postgres.New(0)
 	t.Cleanup(func() { _ = eng.Close() })
 
@@ -46,7 +46,7 @@ func TestAzurePostgresFlexE2E(t *testing.T) {
 		pass   = "Sup3rs3cret1"
 	)
 
-	// 1. Create the server — like `az postgres flexible-server create`.
+	// 1. Create the server, like `az postgres flexible-server create`.
 	createPoller, err := client.BeginCreate(ctx, rg, server, armpostgresqlflexibleservers.Server{
 		Location: to.Ptr("eastus"),
 		SKU:      &armpostgresqlflexibleservers.SKU{Name: to.Ptr("Standard_B1ms"), Tier: to.Ptr(armpostgresqlflexibleservers.SKUTierBurstable)},
@@ -77,7 +77,7 @@ func TestAzurePostgresFlexE2E(t *testing.T) {
 	host := *got.Properties.FullyQualifiedDomainName
 
 	// Connect exactly as a real Azure client would: the FQDN from the SDK on
-	// Azure PostgreSQL's fixed port 5432 — no out-of-band port knowledge. The
+	// Azure PostgreSQL's fixed port 5432, no out-of-band port knowledge. The
 	// provisioned database defaults to the server name when create carries no
 	// DBName.
 	dsn := fmt.Sprintf("host=%s port=5432 user=%s password=%s dbname=%s sslmode=disable", host, user, pass, server)
@@ -107,7 +107,7 @@ func TestAzurePostgresFlexE2E(t *testing.T) {
 
 	_ = db.Close()
 
-	// 4. Delete the server — the real database is torn down.
+	// 4. Delete the server, the real database is torn down.
 	delPoller, err := client.BeginDelete(ctx, rg, server, nil)
 	if err != nil {
 		t.Fatalf("BeginDelete: %v", err)

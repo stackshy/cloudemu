@@ -22,7 +22,7 @@ const hoursPerMonth = pricing.HoursPerMonth
 const coverageEpsilon = 1e-9
 
 // LineItem is one priced resource's spend within a single [UsageStart,UsageEnd)
-// time bucket — the emulator's analog of a Cost and Usage Report / FOCUS row.
+// time bucket: the emulator's analog of a Cost and Usage Report / FOCUS row.
 // It carries both the on-demand (unblended) cost and the commitment-amortized
 // cost so the FinOps wire surfaces (AWS Cost Explorer / CUR, Azure Cost
 // Management) can shape either view without re-pricing.
@@ -156,8 +156,8 @@ func bucketLines(priced []Line, commitments []Commitment, start, end time.Time) 
 // commitment (in id order) for the covered portion and emits a separate covered
 // LineItem per commitment that absorbed part of the cost, then one on-demand
 // LineItem for whatever budget could not reach. The covered/on-demand split is
-// pure attribution — every emitted line keeps UnblendedCostUSD == its portion
-// and AmortizedCostUSD == UnblendedCostUSD per the dollar-commitment model — and
+// pure attribution: every emitted line keeps UnblendedCostUSD == its portion
+// and AmortizedCostUSD == UnblendedCostUSD per the dollar-commitment model, and
 // the emitted portions sum to cost exactly. A cost fully absorbed by commitment
 // emits no on-demand line; a cost no commitment reaches emits a single on-demand
 // line. coverageEpsilon absorbs float rounding so a commitment sized to exactly

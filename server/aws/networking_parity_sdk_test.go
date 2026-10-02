@@ -384,7 +384,7 @@ func TestEC2IPAMParitySDK(t *testing.T) {
 // TestEC2IPAMFullSDK drives the real EC2 client across the full IPAM surface
 // beyond the core lifecycle: resource CIDRs + history, resource discovery +
 // discovered getters, BYOASN + BYOIP, prefix-list resolver + targets,
-// verification tokens, and policy + org-admin — proving the query wire.
+// verification tokens, and policy + org-admin, proving the query wire.
 func TestEC2IPAMFullSDK(t *testing.T) {
 	client := newEC2Client(t)
 	ctx := context.Background()
@@ -493,7 +493,7 @@ func TestEC2IPAMFullSDK(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, aws.ToBool(enabled.IpamPolicyEnabled))
 
-		// Modify allocation rules — the response must carry a non-nil
+		// Modify allocation rules: the response must carry a non-nil
 		// IpamPolicyDocument (not a dropped <return>true>), and Get must return
 		// the rule's sourceIpamPoolId + ipamPolicyId (not an empty document).
 		mod, err := client.ModifyIpamPolicyAllocationRules(ctx, &ec2.ModifyIpamPolicyAllocationRulesInput{
@@ -566,7 +566,7 @@ func TestIPAMMetricsSDK(t *testing.T) {
 	assert.True(t, names["VpcIPUsage"], "expected VpcIPUsage metric")
 
 	// Regression (#318 review): a real metric plus an empty-namespace
-	// "list all" call must return BOTH the real namespace and AWS/IPAM — the
+	// "list all" call must return BOTH the real namespace and AWS/IPAM: the
 	// IPAM shortcut must not drop every non-IPAM metric.
 	_, err = cw.PutMetricData(ctx, &cloudwatch.PutMetricDataInput{
 		Namespace:  aws.String("MyApp"),
@@ -798,7 +798,7 @@ func TestEC2StageBNetworkingParitySDK(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, ec2types.AnalysisStatusSucceeded, findings.AnalysisStatus)
 		// The findings member deserializes as the AccessScopeAnalysisFinding
-		// object shape (empty here — the mock reports no findings), proving the
+		// object shape (empty here since the mock reports no findings), proving the
 		// wire type is correct rather than a string list.
 		assert.Empty(t, findings.AnalysisFindings)
 

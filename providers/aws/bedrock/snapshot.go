@@ -15,9 +15,9 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // whose value type is fully exported round-trips through the generic memstore
 // helper keyed by its resource id; guardrails carry an exported form because
 // guardrailRecord has unexported fields and a mutex that json.Marshal cannot
-// see. The seeded foundation-model catalog is intentionally not serialized — a
-// fresh mock re-seeds an identical catalog in New() — and neither is the wired
-// *config.Options or the monitoring backend.
+// see. The seeded foundation-model catalog is intentionally not serialized,
+// since a fresh mock re-seeds an identical catalog in New(). Neither is the
+// wired *config.Options or the monitoring backend.
 type bedrockSnapshot struct {
 	Jobs                 json.RawMessage               `json:"jobs,omitempty"`
 	Models               json.RawMessage               `json:"models,omitempty"`
@@ -45,8 +45,8 @@ type guardrailSnapshot struct {
 	NextVer  int                 `json:"nextVer,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// Bedrock holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Bedrock holds no
+// bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := bedrockSnapshot{Guardrails: m.snapshotGuardrails()}
 

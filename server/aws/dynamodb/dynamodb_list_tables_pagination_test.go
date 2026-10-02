@@ -1,4 +1,4 @@
-// dynamodb_list_tables_pagination_test.go — real aws-sdk-go-v2 journeys
+// dynamodb_list_tables_pagination_test.go: real aws-sdk-go-v2 journeys
 // asserting ListTables pagination matches DynamoDB: Limit caps the page,
 // LastEvaluatedTableName is returned when more names remain, and the
 // ExclusiveStartTableName cursor walks a stable (sorted) order to completion.

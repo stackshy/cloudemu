@@ -9,7 +9,7 @@ import (
 )
 
 // retentionStore is the optional capability that persists a bucket's retention
-// policy (WORM) — set/lock/read — so Buckets.patch of retentionPolicy and the
+// policy (WORM: set/lock/read), so Buckets.patch of retentionPolicy and the
 // Buckets.lockRetentionPolicy endpoint round-trip and are enforced on
 // delete/overwrite. Nil makes retentionPolicy absent and unsettable.
 type retentionStore interface {

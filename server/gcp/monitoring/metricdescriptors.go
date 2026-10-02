@@ -36,7 +36,7 @@ func (h *Handler) serveMetricDescriptors(w http.ResponseWriter, r *http.Request,
 }
 
 // deleteDescriptor removes a custom metric descriptor created via
-// metricDescriptors.create. Only custom descriptors are deletable — a descriptor
+// metricDescriptors.create. Only custom descriptors are deletable. A descriptor
 // synthesized from live series (or one that never existed) is 404, matching real
 // GCP, which rejects deleting a built-in/absent descriptor.
 func (h *Handler) deleteDescriptor(w http.ResponseWriter, _, mtype string) {

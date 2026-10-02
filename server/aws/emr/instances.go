@@ -191,6 +191,10 @@ func (s *store) addInstanceGroups(
 		return nil, nil, cerrors.Newf(cerrors.FailedPrecondition, "Cluster '%s' is terminated.", clusterID)
 	}
 
+	if err := validateGroupCounts(groups, 0); err != nil {
+		return nil, nil, err
+	}
+
 	now := s.clock.Now().UTC()
 	ids := make([]string, 0, len(groups))
 
@@ -225,6 +229,10 @@ func (s *store) modifyInstanceGroups(configs []instanceGroupModifyInput) error {
 
 		if cfg.InstanceCount == nil {
 			continue
+		}
+
+		if *cfg.InstanceCount < 0 {
+			return validationErrorf("InstanceCount for instance group '%s' can't be negative.", g.id)
 		}
 
 		g.requested = *cfg.InstanceCount

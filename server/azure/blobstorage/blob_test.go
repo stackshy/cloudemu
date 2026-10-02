@@ -20,7 +20,7 @@ import (
 
 // TestSDKBlobRoundTrip drives Azure Blob storage operations with the real
 // azblob client against our handler. azblob requires either a SharedKey, SAS,
-// or anonymous access — we use anonymous so the test doesn't have to forge
+// or anonymous access; we use anonymous so the test doesn't have to forge
 // signatures.
 func TestSDKBlobRoundTrip(t *testing.T) {
 	cloudP := cloudemu.NewAzure()

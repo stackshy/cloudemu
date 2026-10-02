@@ -8,9 +8,9 @@ const loopbackIPv4 = "127.0.0.1"
 
 // advertiseHostFor resolves the host the Kubernetes data plane advertises to
 // clients: an explicit advertise host wins; otherwise the bind host, unless that
-// binds all interfaces (0.0.0.0 / :: / empty — e.g. Docker), in which case
+// binds all interfaces (0.0.0.0 / :: / empty, e.g. Docker), in which case
 // loopback. The bind host isn't always reachable: under Docker the container
-// binds 0.0.0.0, but 0.0.0.0 is not a connectable address — a kubeconfig
+// binds 0.0.0.0, but 0.0.0.0 is not a connectable address, and a kubeconfig
 // advertising https://0.0.0.0:4570 with a 0.0.0.0-only cert SAN can't be dialed
 // or TLS-verified from the host.
 func advertiseHostFor(advertiseHost, bindHost string) string {

@@ -56,7 +56,7 @@ const webhookDeliveryTimeout = 10 * time.Second
 
 // subscriptionDestination is the parsed form of an ARM
 // EventSubscriptionDestination (properties.destination on an event
-// subscription) — the polymorphic "endpointType" + nested "properties" union
+// subscription), the polymorphic "endpointType" + nested "properties" union
 // ARM emits. Azure-only, so it stays local to this provider package rather
 // than the shared eventbus driver.
 type subscriptionDestination struct {
@@ -97,8 +97,8 @@ func parseSubscriptionDestination(rawProperties string) subscriptionDestination 
 }
 
 // deliveryEvent is the Event Grid schema payload POSTed to a WebHook
-// destination. Real Event Grid defaults to unbatched delivery — one event per
-// request, carried as a single-element array — which this mirrors.
+// destination. Real Event Grid defaults to unbatched delivery (one event per
+// request, carried as a single-element array) which this mirrors.
 type deliveryEvent struct {
 	ID              string          `json:"id"`
 	Topic           string          `json:"topic"`
@@ -120,7 +120,7 @@ type deliveryEvent struct {
 // from the caller's context so a client that cancels its publish request
 // doesn't abort in-flight deliveries. The caller ctx's re-entrant delivery
 // depth is carried forward so a self-referential chain (a WebHook that points
-// back at this emulator, or a Function that re-publishes) stays bounded — the
+// back at this emulator, or a Function that re-publishes) stays bounded, the
 // cap is enforced in postWebhook / functions.InvokeExternal, mirroring
 // lambda.InvokeExternal. EventHub and HybridConnection destinations are parsed
 // and round-trip on the subscription resource but are not delivered to (no
@@ -166,7 +166,7 @@ func (m *Mock) deliverToTargets(ctx context.Context, matched []*ruleData, event 
 
 // dispatchDestination routes one rendered envelope to a single subscription
 // destination by its endpointType. A nil peer (the injector was never wired) or
-// an unresolvable resource id is skipped gracefully — never a panic — matching
+// an unresolvable resource id is skipped gracefully (never a panic) matching
 // how EventBridge's dispatchTarget silently ignores an unwired sink. Each
 // endpointType's dispatch is split into its own small method to keep this
 // switch's cyclomatic complexity low.
@@ -222,7 +222,7 @@ func (m *Mock) dispatchStorageQueue(ctx context.Context, dest subscriptionDestin
 	}
 }
 
-// resourceLeafName returns the trailing path segment of an ARM resource id — the
+// resourceLeafName returns the trailing path segment of an ARM resource id, the
 // Service Bus queue or topic name in a ServiceBusQueue/ServiceBusTopic
 // destination's resourceId (.../namespaces/<ns>/queues/<q> or .../topics/<t>).
 func resourceLeafName(resourceID string) string {
@@ -241,7 +241,7 @@ func resourceLeafName(resourceID string) string {
 // functionAppName returns the function-app (site) name from an AzureFunction
 // destination's resourceId (.../Microsoft.Web/sites/<app>/functions/<fn>). The
 // Functions mock is keyed by the app name (its Microsoft.Web/sites resource), so
-// the app segment — not the trailing <fn> — is what resolves the peer.
+// the app segment, not the trailing <fn>, is what resolves the peer.
 func functionAppName(resourceID string) string {
 	const marker = "/sites/"
 
@@ -268,8 +268,8 @@ func functionAppName(resourceID string) string {
 // subscription's endpointUrl is arbitrary ARM input and can point back at this
 // emulator's own publish endpoint; because delivery is synchronous, an
 // unbounded self-referential chain would tie up one blocked goroutine per
-// level. Once the depth reaches recursionguard.MaxDepth — mirroring
-// lambda.InvokeExternal — the delivery is dropped instead of recursing further.
+// level. Once the depth reaches recursionguard.MaxDepth, mirroring
+// lambda.InvokeExternal, the delivery is dropped instead of recursing further.
 func (m *Mock) postWebhook(ctx context.Context, url string, body []byte) {
 	depth := recursionguard.Depth(ctx)
 	if depth >= recursionguard.MaxDepth {

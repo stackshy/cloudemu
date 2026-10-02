@@ -3,7 +3,7 @@
 // Wave 1 covers the cloud-side EKS surface only: clusters, managed node
 // groups, Fargate profiles, and add-ons. The Kubernetes data plane
 // (Deployments, Pods, Services, …) is explicitly out of scope and will
-// be Wave 2 — when it lands, the cluster Endpoint and CertificateAuthority
+// be Wave 2; when it lands, the cluster Endpoint and CertificateAuthority
 // fields will point at a real in-process apiserver instead of the
 // placeholder values returned today.
 //
@@ -97,6 +97,14 @@ type AccessConfig struct {
 	BootstrapClusterCreatorAdminPermissions bool
 }
 
+// AccessConfigUpdate is the caller-supplied access-configuration change on
+// UpdateClusterConfig. Real EKS only allows changing the authentication mode
+// after creation (BootstrapClusterCreatorAdminPermissions is create-only), so
+// this intentionally carries just that one field.
+type AccessConfigUpdate struct {
+	AuthenticationMode string
+}
+
 // ClusterConfig configures a new EKS cluster.
 type ClusterConfig struct {
 	Name          string
@@ -107,6 +115,10 @@ type ClusterConfig struct {
 	NetworkConfig NetworkConfig
 	AccessConfig  AccessConfigRequest
 	Tags          map[string]string
+	// CreatorPrincipalArn and CreatorAccessKeyID identify the caller. They
+	// pick the principal of the bootstrap cluster admin access entry.
+	CreatorPrincipalArn string
+	CreatorAccessKeyID  string
 }
 
 // Cluster is the mock-side representation of an EKS cluster.
@@ -129,6 +141,24 @@ type Cluster struct {
 	// DescribeCluster identity.oidc.issuer. Required for IRSA and
 	// aws_iam_openid_connect_provider wiring.
 	OIDCIssuer string
+	// PreviousVersion and VersionUpgradedAt record the last in-place upgrade.
+	// A rollback to PreviousVersion is allowed for 7 days after it.
+	PreviousVersion   string
+	VersionUpgradedAt time.Time
+	// CreatorPrincipalArn is the IAM principal of the bootstrap admin entry.
+	// It is kept so a later switch to an API mode can add that entry.
+	CreatorPrincipalArn string
+}
+
+// ClusterVersionUpdate is the UpdateClusterVersion request.
+type ClusterVersionUpdate struct {
+	Version string
+	// Force overrides readiness checks, such as a nodegroup that is newer
+	// than a rollback target.
+	Force bool
+	// RollbackTimeoutMinutes is rollbackConfig.timeoutMinutes. Nil means
+	// the field was not sent.
+	RollbackTimeoutMinutes *int
 }
 
 // ClusterUpdate is returned by mutating cluster ops; SDKs poll this via
@@ -153,6 +183,14 @@ type NodegroupScalingConfig struct {
 	DesiredSize int
 }
 
+// NodegroupScalingUpdate is a partial scaling change for UpdateNodegroupConfig.
+// Only the non-nil sizes change; the rest keep their current values.
+type NodegroupScalingUpdate struct {
+	MinSize     *int
+	MaxSize     *int
+	DesiredSize *int
+}
+
 // Taint is a Kubernetes taint applied to a managed node group's nodes. Effect
 // is one of NO_SCHEDULE, PREFER_NO_SCHEDULE, or NO_EXECUTE. A taint is
 // identified by its Key+Effect pair.
@@ -174,6 +212,16 @@ type NodegroupUpdateConfig struct {
 	MaxUnavailablePercentage int
 }
 
+// LaunchTemplateSpecification identifies the EC2 launch template a managed
+// node group is based on. Real EKS requires exactly one of ID or Name on the
+// request; Version is optional and defaults to the template's default version
+// when omitted.
+type LaunchTemplateSpecification struct {
+	ID      string
+	Name    string
+	Version string
+}
+
 // NodegroupConfig configures a new managed node group.
 type NodegroupConfig struct {
 	ClusterName    string
@@ -186,11 +234,25 @@ type NodegroupConfig struct {
 	DiskSize       int
 	Version        string
 	ReleaseVersion string
-	ScalingConfig  NodegroupScalingConfig
-	UpdateConfig   NodegroupUpdateConfig
-	Labels         map[string]string
-	Taints         []Taint
-	Tags           map[string]string
+	// ScalingConfig is optional; nil gets the EKS default of min 1, max 2,
+	// desired 2.
+	ScalingConfig *NodegroupScalingConfig
+	UpdateConfig  NodegroupUpdateConfig
+	Labels        map[string]string
+	Taints        []Taint
+	Tags          map[string]string
+	// LaunchTemplate is optional; when set, it names the EC2 launch template
+	// backing the node group's instances.
+	LaunchTemplate *LaunchTemplateSpecification
+}
+
+// NodegroupVersionUpdate is the UpdateNodegroupVersion request. An empty
+// Version means the cluster version. LaunchTemplate, when set, moves the
+// nodegroup to another version of the launch template it already uses.
+type NodegroupVersionUpdate struct {
+	Version        string
+	ReleaseVersion string
+	LaunchTemplate *LaunchTemplateSpecification
 }
 
 // Nodegroup is the mock-side representation of a managed node group.
@@ -216,14 +278,16 @@ type Nodegroup struct {
 	// ModifiedAt advances on every mutating op (config/version update); on a
 	// freshly created nodegroup it equals CreatedAt.
 	ModifiedAt time.Time
+	// LaunchTemplate mirrors the caller-supplied launch template, when set.
+	LaunchTemplate *LaunchTemplateSpecification
 }
 
 // NodegroupConfigUpdate carries the mutable fields UpdateNodegroupConfig
-// applies. Scaling, when non-nil, is the already-merged target sizing (the
-// caller overlays partial requests). Label and taint changes are expressed as
+// applies. Scaling, when non-nil, names the sizes to change; they are merged
+// onto the current config and the result is validated. Label and taint changes are expressed as
 // add/update and remove deltas, matching the real EKS request shape.
 type NodegroupConfigUpdate struct {
-	Scaling           *NodegroupScalingConfig
+	Scaling           *NodegroupScalingUpdate
 	UpdateConfig      *NodegroupUpdateConfig
 	AddOrUpdateLabels map[string]string
 	RemoveLabels      []string
@@ -284,6 +348,137 @@ type Addon struct {
 	ModifiedAt            time.Time
 }
 
+// Access entry types. Real EKS defaults an omitted type to STANDARD, and the
+// type can't change after creation.
+const (
+	AccessEntryTypeStandard      = "STANDARD"
+	AccessEntryTypeEC2Linux      = "EC2_LINUX"
+	AccessEntryTypeEC2Windows    = "EC2_WINDOWS"
+	AccessEntryTypeFargateLinux  = "FARGATE_LINUX"
+	AccessEntryTypeEC2           = "EC2"
+	AccessEntryTypeHybridLinux   = "HYBRID_LINUX"
+	AccessEntryTypeHyperPodLinux = "HYPERPOD_LINUX"
+)
+
+// Access scope types for an associated access policy.
+const (
+	AccessScopeCluster   = "cluster"
+	AccessScopeNamespace = "namespace"
+)
+
+// AccessEntryConfig configures a new access entry.
+type AccessEntryConfig struct {
+	ClusterName        string
+	PrincipalArn       string
+	Type               string
+	Username           string
+	KubernetesGroups   []string
+	Tags               map[string]string
+	ClientRequestToken string
+}
+
+// AccessEntryUpdate carries the mutable access entry fields. A nil field
+// means the caller left it out, so the stored value stays.
+type AccessEntryUpdate struct {
+	ClusterName      string
+	PrincipalArn     string
+	KubernetesGroups *[]string
+	Username         *string
+}
+
+// AccessScope limits an associated access policy to the whole cluster or to
+// a set of namespaces.
+type AccessScope struct {
+	Type       string
+	Namespaces []string
+}
+
+// AssociatedAccessPolicy is an access policy linked to an access entry.
+type AssociatedAccessPolicy struct {
+	PolicyArn    string
+	AccessScope  AccessScope
+	AssociatedAt time.Time
+	ModifiedAt   time.Time
+}
+
+// AccessEntry grants one IAM principal access to a cluster. Policies holds
+// the associated access policies. Each policy ARN appears at most once.
+type AccessEntry struct {
+	ClusterName        string
+	PrincipalArn       string
+	ARN                string
+	Type               string
+	Username           string
+	KubernetesGroups   []string
+	Tags               map[string]string
+	CreatedAt          time.Time
+	ModifiedAt         time.Time
+	ClientRequestToken string
+	Policies           []AssociatedAccessPolicy
+	// AutoCreated marks a node entry EKS made for a managed nodegroup or a
+	// Fargate profile. EKS removes it when no nodegroup or profile of the
+	// cluster uses the role any more.
+	AutoCreated bool
+}
+
+// AccessPolicy is one entry of the fixed EKS access policy catalog.
+type AccessPolicy struct {
+	Name string
+	ARN  string
+}
+
+// AddonVersionFilter narrows DescribeAddonVersions. Empty fields match all.
+type AddonVersionFilter struct {
+	AddonName         string
+	KubernetesVersion string
+	Types             []string
+	Publishers        []string
+	Owners            []string
+}
+
+// AddonCompatibility says which cluster version an add-on version runs on and
+// whether it is the default there.
+type AddonCompatibility struct {
+	ClusterVersion   string
+	PlatformVersions []string
+	DefaultVersion   bool
+}
+
+// AddonVersionInfo is one published version of an add-on.
+type AddonVersionInfo struct {
+	AddonVersion           string
+	Architecture           []string
+	ComputeTypes           []string
+	Compatibilities        []AddonCompatibility
+	RequiresConfiguration  bool
+	RequiresIamPermissions bool
+}
+
+// AddonInfo is one add-on in the catalog with its versions, newest first.
+type AddonInfo struct {
+	AddonName        string
+	Type             string
+	Owner            string
+	Publisher        string
+	DefaultNamespace string
+	AddonVersions    []AddonVersionInfo
+}
+
+// AddonPodIdentityConfiguration names the service account an add-on uses and
+// the managed policies EKS recommends for its pod identity role.
+type AddonPodIdentityConfiguration struct {
+	ServiceAccount             string
+	RecommendedManagedPolicies []string
+}
+
+// AddonConfiguration is the configuration schema of one add-on version.
+type AddonConfiguration struct {
+	AddonName                string
+	AddonVersion             string
+	ConfigurationSchema      string
+	PodIdentityConfiguration []AddonPodIdentityConfiguration
+}
+
 // EKS is the interface implemented by the EKS provider mock. It mirrors the
 // AWS EKS API operations the SDK-compat handler needs to serve real clients.
 type EKS interface {
@@ -291,8 +486,11 @@ type EKS interface {
 	CreateCluster(ctx context.Context, cfg ClusterConfig) (*Cluster, error)
 	DescribeCluster(ctx context.Context, name string) (*Cluster, error)
 	ListClusters(ctx context.Context) ([]string, error)
-	UpdateClusterConfig(ctx context.Context, name string, cfg VPCConfig, tags map[string]string) (*ClusterUpdate, error)
-	UpdateClusterVersion(ctx context.Context, name, version string) (*ClusterUpdate, error)
+	UpdateClusterConfig(
+		ctx context.Context, name string, cfg *VPCConfig,
+		logging []ClusterLogging, accessConfig *AccessConfigUpdate, tags map[string]string,
+	) (*ClusterUpdate, error)
+	UpdateClusterVersion(ctx context.Context, name string, in ClusterVersionUpdate) (*ClusterUpdate, error)
 	DeleteCluster(ctx context.Context, name string) (*Cluster, error)
 
 	// Updates
@@ -308,7 +506,7 @@ type EKS interface {
 		upd NodegroupConfigUpdate,
 	) (*ClusterUpdate, error)
 	UpdateNodegroupVersion(
-		ctx context.Context, clusterName, nodegroupName, version, releaseVersion string,
+		ctx context.Context, clusterName, nodegroupName string, upd NodegroupVersionUpdate,
 	) (*ClusterUpdate, error)
 	DeleteNodegroup(ctx context.Context, clusterName, nodegroupName string) (*Nodegroup, error)
 
@@ -324,4 +522,23 @@ type EKS interface {
 	ListAddons(ctx context.Context, clusterName string) ([]string, error)
 	UpdateAddon(ctx context.Context, cfg AddonConfig) (*ClusterUpdate, error)
 	DeleteAddon(ctx context.Context, clusterName, addonName string) (*Addon, error)
+
+	// Add-on catalog
+	DescribeAddonVersions(ctx context.Context, filter AddonVersionFilter) ([]AddonInfo, error)
+	DescribeAddonConfiguration(ctx context.Context, addonName, addonVersion string) (*AddonConfiguration, error)
+
+	// Access entries
+	CreateAccessEntry(ctx context.Context, cfg AccessEntryConfig) (*AccessEntry, error)
+	DescribeAccessEntry(ctx context.Context, clusterName, principalArn string) (*AccessEntry, error)
+	ListAccessEntries(ctx context.Context, clusterName, associatedPolicyArn string) ([]string, error)
+	UpdateAccessEntry(ctx context.Context, upd AccessEntryUpdate) (*AccessEntry, error)
+	DeleteAccessEntry(ctx context.Context, clusterName, principalArn string) error
+
+	// Access policies
+	ListAccessPolicies(ctx context.Context) ([]AccessPolicy, error)
+	AssociateAccessPolicy(
+		ctx context.Context, clusterName, principalArn, policyArn string, scope AccessScope,
+	) (*AssociatedAccessPolicy, error)
+	DisassociateAccessPolicy(ctx context.Context, clusterName, principalArn, policyArn string) error
+	ListAssociatedAccessPolicies(ctx context.Context, clusterName, principalArn string) ([]AssociatedAccessPolicy, error)
 }

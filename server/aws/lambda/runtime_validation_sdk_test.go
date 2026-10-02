@@ -24,7 +24,7 @@ func assertInvalidParameterValue(t *testing.T, err error, context string) {
 
 // TestSDKCreateFunctionRuntimeValidation covers CreateFunction's Runtime enum
 // check: a current AWS runtime (including nodejs24.x, released after the
-// initial validRuntimes snapshot was written — a regression guard against
+// initial validRuntimes snapshot was written, as a regression guard against
 // over-rejection) is accepted, and a garbage value is rejected with
 // InvalidParameterValueException.
 func TestSDKCreateFunctionRuntimeValidation(t *testing.T) {

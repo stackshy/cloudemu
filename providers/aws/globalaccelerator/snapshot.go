@@ -22,8 +22,8 @@ type gaSnapshot struct {
 	Attributes     map[string]driver.AcceleratorAttributes `json:"attributes,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// Global Accelerator is control-plane only and holds no bulk assets.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Global Accelerator
+// is control-plane only and holds no bulk assets.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := gaSnapshot{}
 

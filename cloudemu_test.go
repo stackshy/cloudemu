@@ -2,6 +2,7 @@ package cloudemu
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/stackshy/cloudemu/v2/services/scope"
 	"sort"
 	"sync/atomic"
@@ -416,7 +417,7 @@ func TestCrossProvider(t *testing.T) {
 
 // Real-World Scenario Tests
 // These simulate what a real user would do: create a cloud environment,
-// seed resources, then perform operations — all without real cloud resources.
+// seed resources, then perform operations, all without real cloud resources.
 // TestRealWorldAWS_InfraSetup simulates setting up a full AWS infrastructure:
 // VPC → Subnets → Security Groups → EC2 instances → S3 buckets → DNS → Monitoring
 func TestRealWorldAWS_InfraSetup(t *testing.T) {
@@ -466,7 +467,7 @@ func TestRealWorldAWS_InfraSetup(t *testing.T) {
 		t.Fatalf("expected 3 instances, got %d", len(instances))
 	}
 
-	// 3. List running instances — like a real dashboard would
+	// 3. List running instances, like a real dashboard would
 	allInstances, err := aws.EC2.DescribeInstances(ctx, nil, []computedriver.DescribeFilter{
 		{Name: "instance-state-name", Values: []string{compute.StateRunning}},
 	})
@@ -518,7 +519,7 @@ func TestRealWorldAWS_InfraSetup(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	// 9. List objects in bucket — like S3 console
+	// 9. List objects in bucket, like S3 console
 	listResult, err := aws.S3.ListObjects(ctx, "app-configs", storagedriver.ListOptions{Prefix: "prod/"})
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
@@ -559,7 +560,7 @@ func TestRealWorldAWS_InfraSetup(t *testing.T) {
 		t.Fatalf("PutMetricData: %v", err)
 	}
 
-	// 13. Query metrics — like CloudWatch dashboard
+	// 13. Query metrics, like CloudWatch dashboard
 	cpuResult, err := aws.CloudWatch.GetMetricData(ctx, mondriver.GetMetricInput{
 		Namespace: "App/Web", MetricName: "CPUUtilization",
 		Dimensions: map[string]string{"InstanceId": instances[1].ID},
@@ -905,7 +906,7 @@ func TestFIFODeduplication(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Send duplicate within 5-min window — should return same message ID
+	// Send duplicate within 5-min window, should return same message ID
 	out2, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
 		QueueURL:        qInfo.URL,
 		Body:            "hello again",
@@ -928,7 +929,7 @@ func TestFIFODeduplication(t *testing.T) {
 	// Advance clock past 5-minute window
 	clock.Advance(6 * time.Minute)
 
-	// Send same dedup ID again — should be accepted as new message
+	// Send same dedup ID again, should be accepted as new message
 	out3, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
 		QueueURL:        qInfo.URL,
 		Body:            "hello after window",
@@ -1011,7 +1012,7 @@ func TestIAMCheckPermission(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// No policies attached — should deny
+	// No policies attached, should deny
 	allowed, err := p.IAM.CheckPermission(ctx, "alice", "s3:GetObject", "arn:aws:s3:::my-bucket/*")
 	if err != nil {
 		t.Fatal(err)
@@ -1172,7 +1173,7 @@ func TestAlarmTriggeredByAutoMetrics(t *testing.T) {
 
 	// Launch the instance first so we know its id; EC2 auto-metrics are dimensioned
 	// by InstanceId, and CloudWatch matches an alarm to a metric series by its exact
-	// dimension set — so a real user alarms on that instance's InstanceId.
+	// dimension set, so a real user alarms on that instance's InstanceId.
 	instances, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
 		ImageID: "ami-test", InstanceType: "t2.micro",
 	}, 1)
@@ -1191,10 +1192,12 @@ func TestAlarmTriggeredByAutoMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify initial state
+	// PutMetricAlarm evaluates a new alarm at once, so the launch metrics
+	// already in the window put it in ALARM. See API_PutMetricAlarm: "The
+	// alarm is then evaluated and its state is set appropriately."
 	alarms, _ := p.CloudWatch.DescribeAlarms(ctx, []string{"any-cpu"})
-	if alarms[0].State != "INSUFFICIENT_DATA" {
-		t.Errorf("expected INSUFFICIENT_DATA, got %s", alarms[0].State)
+	if alarms[0].State != "ALARM" {
+		t.Errorf("expected ALARM from the launch metrics, got %s", alarms[0].State)
 	}
 
 	// A lifecycle op re-emits the instance's running auto-metrics (CPU=25),
@@ -1343,7 +1346,7 @@ func TestDeadLetterQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 4. Receive the message twice (simulating failed processing — not deleting it)
+	// 4. Receive the message twice (simulating failed processing: not deleting it)
 	for i := 0; i < 2; i++ {
 		msgs, err := p.SQS.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{
 			QueueURL: mainQ.URL,
@@ -1354,7 +1357,7 @@ func TestDeadLetterQueue(t *testing.T) {
 		if len(msgs) != 1 {
 			t.Fatalf("receive %d: expected 1 message, got %d", i+1, len(msgs))
 		}
-		// Don't delete — simulating failure. Make it visible again.
+		// Don't delete, simulating failure. Make it visible again.
 		clock.Advance(2 * time.Second)
 	}
 
@@ -1576,7 +1579,7 @@ func TestLambdaSQSTrigger(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 4. Send messages — Lambda should be invoked automatically.
+	// 4. Send messages, Lambda should be invoked automatically.
 	for i := 0; i < 5; i++ {
 		if _, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
 			QueueURL: q.URL,
@@ -1630,7 +1633,7 @@ func TestLambdaSQSTriggerRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Send one message — the mapping fires.
+	// Send one message: the mapping fires.
 	if _, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "first"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1644,7 +1647,7 @@ func TestLambdaSQSTriggerRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Send another message — the mapping should NOT fire.
+	// Send another message: the mapping should NOT fire.
 	if _, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "second"}); err != nil {
 		t.Fatal(err)
 	}
@@ -2550,7 +2553,7 @@ func TestCrossProviderNewServices(t *testing.T) {
 		})
 	}
 
-	// Test notification across providers — all use name-based topic lookup
+	// Test notification across providers: all use name-based topic lookup
 	notifProviders := []struct {
 		name string
 		d    notifdriver.Notification
@@ -2570,7 +2573,7 @@ func TestCrossProviderNewServices(t *testing.T) {
 				t.Error("expected non-empty ResourceID")
 			}
 
-			// All providers use name as key — portable API contract
+			// All providers use name as key: portable API contract
 			got, err := np.d.GetTopic(ctx, "alerts")
 			if err != nil {
 				t.Fatalf("GetTopic by name: %v", err)
@@ -2697,7 +2700,7 @@ func TestLogQueryInputPointer(t *testing.T) {
 				t.Fatalf("PutLogEvents: %v", err)
 			}
 
-			// Query with pointer — basic query
+			// Query with pointer: basic query
 			results, err := p.d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
 				LogGroup: "ptr-test-group",
 			})
@@ -2708,7 +2711,7 @@ func TestLogQueryInputPointer(t *testing.T) {
 				t.Errorf("expected 3 events, got %d", len(results))
 			}
 
-			// Query with pointer — pattern filter
+			// Query with pointer: pattern filter
 			filtered, err := p.d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
 				LogGroup: "ptr-test-group",
 				Pattern:  "error",
@@ -2720,7 +2723,7 @@ func TestLogQueryInputPointer(t *testing.T) {
 				t.Errorf("expected 1 error event, got %d", len(filtered))
 			}
 
-			// Query with pointer — specific stream
+			// Query with pointer: specific stream
 			streamResults, err := p.d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
 				LogGroup:  "ptr-test-group",
 				LogStream: "stream-1",
@@ -2732,7 +2735,7 @@ func TestLogQueryInputPointer(t *testing.T) {
 				t.Errorf("expected 3 events from stream-1, got %d", len(streamResults))
 			}
 
-			// Query with pointer — limit
+			// Query with pointer: limit
 			limited, err := p.d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
 				LogGroup: "ptr-test-group",
 				Limit:    1,
@@ -5058,12 +5061,17 @@ func TestAWSMetricsEmission(t *testing.T) {
 			t.Errorf("ConsumedWriteCapacityUnits: expected 1, got %v", v)
 		}
 
-		v = helperGetMetric(t, ctx, mon, clk, ns, "SuccessfulRequestCount", dims)
-		if v < 1.0 {
-			t.Errorf("SuccessfulRequestCount: expected >=1, got %v", v)
+		lat, err := mon.GetMetricData(ctx, mondriver.GetMetricInput{
+			Namespace: ns, MetricName: "SuccessfulRequestLatency",
+			Dimensions: map[string]string{"TableName": "m-tbl", "Operation": "PutItem"},
+			StartTime:  clk.Now().Add(-time.Minute), EndTime: clk.Now().Add(time.Minute),
+			Period: 60, Stat: "SampleCount",
+		})
+		if err != nil || len(lat.Values) == 0 || lat.Values[0] < 1 || lat.Unit != "Milliseconds" {
+			t.Errorf("SuccessfulRequestLatency{PutItem}: got %+v, err %v", lat, err)
 		}
 
-		_, err := p.DynamoDB.GetItem(ctx, "m-tbl", map[string]any{"pk": "k1"})
+		_, err = p.DynamoDB.GetItem(ctx, "m-tbl", map[string]any{"pk": "k1"})
 		if err != nil {
 			t.Fatalf("GetItem: %v", err)
 		}
@@ -5101,9 +5109,15 @@ func TestAWSMetricsEmission(t *testing.T) {
 			t.Errorf("Invocations: expected 1, got %v", v)
 		}
 
-		v = helperGetMetric(t, ctx, mon, clk, ns, "Duration", dims)
-		if v != 1.0 {
-			t.Errorf("Duration: expected 1, got %v", v)
+		// Duration is the measured run time on the FakeClock (0ms here), so
+		// assert one Milliseconds sample rather than a value.
+		dur, derr := mon.GetMetricData(ctx, mondriver.GetMetricInput{
+			Namespace: ns, MetricName: "Duration", Dimensions: dims,
+			StartTime: clk.Now().Add(-time.Minute), EndTime: clk.Now().Add(time.Minute),
+			Period: 60, Stat: "SampleCount",
+		})
+		if derr != nil || len(dur.Values) != 1 || dur.Values[0] != 1 || dur.Unit != "Milliseconds" {
+			t.Errorf("Duration: got %+v, err %v; want one Milliseconds sample", dur, derr)
 		}
 
 		v = helperGetMetric(t, ctx, mon, clk, ns, "ConcurrentExecutions", dims)
@@ -5265,14 +5279,15 @@ func TestAWSMetricsEmission(t *testing.T) {
 		dims := map[string]string{"RepositoryName": "m-repo"}
 		ns := "AWS/ECR"
 
-		v := helperGetMetric(t, ctx, mon, clk, ns, "ImagePushCount", dims)
+		// Real ECR publishes only RepositoryPullCount; a push emits nothing.
+		v := helperGetMetric(t, ctx, mon, clk, ns, "RepositoryPullCount", dims)
 		if v != 1.0 {
-			t.Errorf("ImagePushCount: expected 1, got %v", v)
+			t.Errorf("RepositoryPullCount: expected 1, got %v", v)
 		}
 
-		v = helperGetMetric(t, ctx, mon, clk, ns, "ImagePullCount", dims)
-		if v != 1.0 {
-			t.Errorf("ImagePullCount: expected 1, got %v", v)
+		names, err := mon.ListMetrics(ctx, ns)
+		if err != nil || len(names) != 1 || names[0] != "RepositoryPullCount" {
+			t.Errorf("AWS/ECR metrics = %v (err %v), want [RepositoryPullCount]", names, err)
 		}
 	})
 
@@ -6138,7 +6153,7 @@ func TestUpdateItemMissingKey(t *testing.T) {
 
 	// DynamoDB UpdateItem upserts: an update against a missing key creates the
 	// item. Cosmos DB and Firestore instead require the document to exist, so
-	// they return NotFound — the semantics diverge by provider.
+	// they return NotFound: the semantics diverge by provider.
 	t.Run("AWS", func(t *testing.T) {
 		p := NewAWS()
 
@@ -9372,4 +9387,69 @@ func TestTopologyCanConnectGCP(t *testing.T) {
 	p := NewGCP()
 	ctx := context.Background()
 	testTopologyCanConnect(t, ctx, p.GCE, p.VPC, p.CloudDNS)
+}
+
+// TestAlarmStateChangeEventToSQS pins that an alarm transition reaches an SQS
+// queue through a default-bus EventBridge rule, as on AWS.
+func TestAlarmStateChangeEventToSQS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	q, err := p.SQS.CreateQueue(ctx, mqdriver.QueueConfig{Name: "alarm-events"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := p.EventBridge.PutRule(ctx, &ebdriver.RuleConfig{
+		Name: "alarms", EventPattern: `{"source":["aws.cloudwatch"],"detail-type":["CloudWatch Alarm State Change"]}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.EventBridge.PutTargets(ctx, "", "alarms", []ebdriver.Target{{ID: "q", ARN: q.ARN}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
+		Name: "late", Namespace: "App", MetricName: "Latency", ComparisonOperator: "GreaterThanThreshold",
+		Threshold: 1, Period: 300, EvaluationPeriods: 1, Stat: "Average",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.CloudWatch.SetAlarmState(ctx, "late", "ALARM", "e2e"); err != nil {
+		t.Fatal(err)
+	}
+
+	msgs, err := p.SQS.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{QueueURL: q.URL, MaxMessages: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want 1", len(msgs))
+	}
+
+	var ev struct {
+		Source     string   `json:"source"`
+		DetailType string   `json:"detail-type"`
+		Resources  []string `json:"resources"`
+		Detail     struct {
+			AlarmName     string            `json:"alarmName"`
+			State         map[string]string `json:"state"`
+			PreviousState map[string]string `json:"previousState"`
+		} `json:"detail"`
+	}
+
+	if err := json.Unmarshal([]byte(msgs[0].Body), &ev); err != nil {
+		t.Fatal(err)
+	}
+
+	if ev.Source != "aws.cloudwatch" || ev.DetailType != "CloudWatch Alarm State Change" || ev.Detail.AlarmName != "late" {
+		t.Fatalf("unexpected event: %s", msgs[0].Body)
+	}
+
+	if ev.Detail.State["value"] != "ALARM" || ev.Detail.PreviousState["value"] != "INSUFFICIENT_DATA" || len(ev.Resources) != 1 {
+		t.Fatalf("unexpected detail: %s", msgs[0].Body)
+	}
 }

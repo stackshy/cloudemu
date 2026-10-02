@@ -4,12 +4,18 @@ go 1.25.0
 
 require (
 	cloud.google.com/go/artifactregistry v1.20.0
+	cloud.google.com/go/backupdr v1.16.0
 	cloud.google.com/go/bigtable v1.42.0
 	cloud.google.com/go/compute v1.60.0
+	cloud.google.com/go/dataplex v1.28.0
 	cloud.google.com/go/eventarc v1.18.0
 	cloud.google.com/go/firestore v1.22.0
-	cloud.google.com/go/iam v1.7.0
-	cloud.google.com/go/longrunning v0.9.0
+	cloud.google.com/go/functions v1.19.7
+	cloud.google.com/go/iam v1.11.0
+	cloud.google.com/go/longrunning v1.2.0
+	cloud.google.com/go/managedkafka v1.0.0
+	cloud.google.com/go/orchestration v1.11.10
+	cloud.google.com/go/redis v1.18.3
 	cloud.google.com/go/secretmanager v1.16.0
 	cloud.google.com/go/storage v1.62.1
 	github.com/Azure/azure-kusto-go v0.16.1
@@ -18,6 +24,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/containers/azcontainerregistry v0.2.3
 	github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos v1.4.2
 	github.com/Azure/azure-sdk-for-go/sdk/data/aztables v1.4.1
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/apimanagement/armapimanagement/v3 v3.0.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v2 v2.0.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v3 v3.0.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3 v3.0.0-beta.3
@@ -33,6 +40,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/eventgrid/armeventgrid/v2 v2.3.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/eventhub/armeventhub v1.0.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/kusto/armkusto v1.3.1
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/logic/armlogic v1.2.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/machinelearning/armmachinelearning/v4 v4.0.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/monitor/armmonitor v0.13.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/msi/armmsi v1.3.0
@@ -150,6 +158,7 @@ require (
 	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/evanphx/json-patch.v4 v4.12.0
+	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.32.0
 	k8s.io/apimachinery v0.32.0
 	k8s.io/client-go v0.32.0
@@ -245,7 +254,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260724162435-b2f20204f0df // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20241105132330-32ad38e42d3f // indirect
 	k8s.io/utils v0.0.0-20241104100929-3ea5e8cea738 // indirect

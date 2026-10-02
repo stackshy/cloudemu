@@ -37,7 +37,7 @@ func statusCode(t *testing.T, err error) int {
 
 // TestSDKAzureIAMAssignmentDanglingRoleDefinitionRejected confirms creating a
 // role assignment that references a non-existent role definition fails with a
-// 400 — real Azure's referential-integrity guard (RoleDefinitionDoesNotExist).
+// 400: real Azure's referential-integrity guard (RoleDefinitionDoesNotExist).
 func TestSDKAzureIAMAssignmentDanglingRoleDefinitionRejected(t *testing.T) {
 	_, roleAssigns := newSDKClients(t)
 	ctx := context.Background()
@@ -83,7 +83,7 @@ func TestSDKAzureIAMDuplicateAssignmentGUIDConflicts(t *testing.T) {
 
 // TestSDKAzureIAMDuplicateAssignmentTripleConflicts confirms a second, distinct
 // assignment GUID binding the same (principal, role, scope) triple conflicts
-// with 409 — matching real Azure, which rejects duplicate bindings.
+// with 409, matching real Azure, which rejects duplicate bindings.
 func TestSDKAzureIAMDuplicateAssignmentTripleConflicts(t *testing.T) {
 	_, roleAssigns := newSDKClients(t)
 	ctx := context.Background()

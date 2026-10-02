@@ -10,7 +10,7 @@
 // collection root, so it is disjoint from every other handler and from the S3
 // catch-all. (A hypothetical S3 bucket literally named "v1", "api", or
 // "replication" whose first key segment collided with an MSK root would be
-// shadowed; this is an accepted, documented limitation — such bucket names are
+// shadowed. This is an accepted, documented limitation: such bucket names are
 // not used by real workloads and MSK must register before S3.)
 package kafka
 

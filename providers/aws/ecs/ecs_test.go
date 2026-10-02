@@ -418,7 +418,7 @@ func TestRunTaskCountCappedAtMax(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalidArgument(err))
 
-	// An absurd count does not attempt a huge allocation — it errors first.
+	// An absurd count does not attempt a huge allocation. It errors first.
 	_, _, err = m.RunTask(ctx, driver.RunTaskInput{TaskDefinition: "web", Count: 1 << 30})
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalidArgument(err))

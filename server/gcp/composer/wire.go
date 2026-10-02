@@ -249,6 +249,13 @@ func putJSON(m map[string]json.RawMessage, key string, val any) error {
 	return nil
 }
 
+// emptyResponse is google.protobuf.Empty wrapped as an Any, a delete
+// operation's response. The gapic DeleteEnvironment Wait rejects a done
+// operation without one ("unsupported result type <nil>").
+//
+//nolint:gochecknoglobals // immutable wire constant
+var emptyResponse = json.RawMessage(`{"@type":"type.googleapis.com/google.protobuf.Empty"}`)
+
 // environmentResponseAny wraps an environment JSON object as a
 // google.protobuf.Any (adding the "@type" discriminator), the shape a completed
 // operation's `response` carries.

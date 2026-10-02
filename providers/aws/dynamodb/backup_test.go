@@ -194,14 +194,14 @@ func TestBackupSchemaIndependence(t *testing.T) {
 	requireNoError(t, m.RestoreTableFromBackup(ctx, info.BackupArn, "restored1"))
 	requireNoError(t, m.RestoreTableFromBackup(ctx, info.BackupArn, "restored2"))
 
-	// Mutate the SOURCE schema in place — the append-shift previously corrupted
+	// Mutate the SOURCE schema in place. The append-shift previously corrupted
 	// the backing array shared with the backup; the append-grow exercises the
 	// same aliasing on growth.
 	requireNoError(t, m.DeleteIndex(ctx, "products", "idx1"))
 	_, err = m.CreateIndex(ctx, "products", driver.GSIConfig{Name: "idx3", PartitionKey: "g2pk"})
 	requireNoError(t, err)
 
-	// Mutate a RESTORED table in place — this must not leak back into the backup
+	// Mutate a RESTORED table in place. This must not leak back into the backup
 	// or into a sibling restore (which would happen if restore aliased the
 	// backup's slices).
 	requireNoError(t, m.DeleteIndex(ctx, "restored1", "idx2"))

@@ -27,7 +27,7 @@ func newAsyncMock() (*Mock, *config.FakeClock) {
 // TestAsyncSettleCreateModifyRestart pins the AsyncSettle transitions: an
 // instance reports creating (→ wire PENDING_CREATE) then available (→ RUNNABLE)
 // on create, modifying (→ MAINTENANCE) then available on patch, and rebooting
-// (→ MAINTENANCE) then available on restart — all driven by the FakeClock. A
+// (→ MAINTENANCE) then available on restart, all driven by the FakeClock. A
 // start/stop transition clears any pending create window.
 func TestAsyncSettleCreateModifyRestart(t *testing.T) {
 	m, fc := newAsyncMock()

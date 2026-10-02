@@ -16,7 +16,7 @@ import (
 const quotaCountPrefix = "count/"
 
 // legacyQuotaResources are the core kinds real Kubernetes lets a quota's hard
-// map reference by bare plural (no "count/" prefix, no group suffix) — the
+// map reference by bare plural (no "count/" prefix, no group suffix): the
 // pre-generic-quota resource set upstream never migrated onto the count/
 // syntax for backward compatibility.
 //
@@ -34,7 +34,7 @@ var legacyQuotaResources = map[string]bool{
 //
 // On success (nil return), every ResourceQuota that tracks this resource has
 // its status.used bumped to reflect the object about to be persisted, so the
-// reservation is atomic with the check under the caller's held s.mu.Lock —
+// reservation is atomic with the check under the caller's held s.mu.Lock;
 // this method must only be called with that lock already held.
 func (s *ClusterState) checkAndReserveQuota(namespace, kind, resourcePlural string) *metav1.Status {
 	store := s.reg.stores[regKey("", "v1", "resourcequotas")]

@@ -2,34 +2,34 @@
 // (gkehub.googleapis.com/v1) as a server.Handler. Real
 // google.golang.org/api/gkehub/v1 clients, gcloud, and the Terraform google
 // provider's google_gke_hub_membership, google_gke_hub_feature, and
-// google_gke_hub_fleet resources — all GA on the stable hashicorp/google
-// provider at the /v1/ base path — hit this handler unchanged.
+// google_gke_hub_fleet resources, all GA on the stable hashicorp/google
+// provider at the /v1/ base path, hit this handler unchanged.
 //
 // Coverage (membership + feature + fleet control plane only):
 //
-//	POST   /v1/…/memberships?membershipId=  — CreateMembership (LRO)
-//	GET    /v1/…/memberships                — ListMemberships
-//	GET    /v1/…/memberships/{id}           — GetMembership
-//	PATCH  /v1/…/memberships/{id}?updateMask= — PatchMembership (LRO)
-//	DELETE /v1/…/memberships/{id}           — DeleteMembership (LRO)
-//	POST   /v1/…/features?featureId=        — CreateFeature (LRO)
-//	GET    /v1/…/features                   — ListFeatures
-//	GET    /v1/…/features/{id}              — GetFeature
-//	PATCH  /v1/…/features/{id}?updateMask=  — PatchFeature (LRO)
-//	DELETE /v1/…/features/{id}              — DeleteFeature (LRO)
-//	POST   /v1/…/fleets                     — CreateFleet (LRO, singleton "default")
-//	GET    /v1/…/fleets                     — ListFleets
-//	GET    /v1/…/fleets/{id}               — GetFleet
-//	PATCH  /v1/…/fleets/{id}?updateMask=    — PatchFleet (LRO)
-//	DELETE /v1/…/fleets/{id}               — DeleteFleet (LRO)
-//	GET    /v1/…/operations/{op}            — Operations.Get (shared poller)
+//	POST   /v1/…/memberships?membershipId=  : CreateMembership (LRO)
+//	GET    /v1/…/memberships                : ListMemberships
+//	GET    /v1/…/memberships/{id}           : GetMembership
+//	PATCH  /v1/…/memberships/{id}?updateMask= : PatchMembership (LRO)
+//	DELETE /v1/…/memberships/{id}           : DeleteMembership (LRO)
+//	POST   /v1/…/features?featureId=        : CreateFeature (LRO)
+//	GET    /v1/…/features                   : ListFeatures
+//	GET    /v1/…/features/{id}              : GetFeature
+//	PATCH  /v1/…/features/{id}?updateMask=  : PatchFeature (LRO)
+//	DELETE /v1/…/features/{id}              : DeleteFeature (LRO)
+//	POST   /v1/…/fleets                     : CreateFleet (LRO, singleton "default")
+//	GET    /v1/…/fleets                     : ListFleets
+//	GET    /v1/…/fleets/{id}               : GetFleet
+//	PATCH  /v1/…/fleets/{id}?updateMask=    : PatchFleet (LRO)
+//	DELETE /v1/…/fleets/{id}               : DeleteFleet (LRO)
+//	GET    /v1/…/operations/{op}            : Operations.Get (shared poller)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting resource embedded in `response`, so an SDK or Terraform LRO wait
 // terminates on the first poll instead of hanging.
 //
 // Location-scoped operations: GKE Hub's operations live under
-// /v1/projects/{p}/locations/{l}/operations — the SAME space the shared GCP LRO
+// /v1/projects/{p}/locations/{l}/operations, the same space the shared GCP LRO
 // poller owns. Matches returns false for operation paths when a shared registry
 // is wired, letting that poller win; a standalone package server (no registry)
 // serves its own polls. The memberships/features/fleets resource-type guard

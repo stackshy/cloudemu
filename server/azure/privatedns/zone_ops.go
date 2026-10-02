@@ -10,7 +10,7 @@ import (
 // createOrUpdateZone handles PUT .../privateDnsZones/{zone}. The whole zone
 // arrives in one body and fully REPLACES the stored state (ARM CreateOrUpdate).
 // PrivateZones.CreateOrUpdate is an LRO; returning the fully-provisioned body
-// completes the poller on the first response — 201 on create, 200 on update.
+// completes the poller on the first response: 201 on create, 200 on update.
 func (h *Handler) createOrUpdateZone(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body zoneJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -43,7 +43,7 @@ func (h *Handler) getZone(w http.ResponseWriter, r *http.Request, rp *azurearm.R
 	azurearm.WriteJSON(w, http.StatusOK, toZoneJSON(rp, stored))
 }
 
-// updateZoneTags handles PATCH .../privateDnsZones/{zone} — PrivateZones.Update.
+// updateZoneTags handles PATCH .../privateDnsZones/{zone} (PrivateZones.Update).
 // Real armprivatedns UpdateTags REPLACES the tag collection wholesale; every
 // other property is left untouched. A request with tags omitted (nil map) is a
 // no-op.

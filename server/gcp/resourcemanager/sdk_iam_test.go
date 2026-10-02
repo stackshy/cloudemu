@@ -105,7 +105,7 @@ func TestSDKProjectIamPolicyStaleEtagConflict(t *testing.T) {
 		t.Fatalf("first SetIamPolicy: %v", err)
 	}
 
-	// Reusing the now-stale etag must be rejected with 409 ABORTED — the
+	// Reusing the now-stale etag must be rejected with 409 ABORTED, the
 	// read-modify-write contract Terraform's google_project_iam_* rely on.
 	_, err = svc.Projects.SetIamPolicy(testProject, &crm.SetIamPolicyRequest{
 		Policy: &crm.Policy{

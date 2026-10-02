@@ -27,7 +27,7 @@ import (
 // OperationRegistry records the compute#operation names the compute-family
 // handlers (compute, networks/vpc, load balancing) mint, so a subsequent
 // zone/region/global Operations.get resolves a real operation and 404s a name
-// that was never issued — matching real GCP, instead of fabricating DONE for any
+// that was never issued, matching real GCP instead of fabricating DONE for any
 // name. A nil *OperationRegistry records nothing and reports every name as
 // present, preserving the legacy allow-all behavior for a handler constructed
 // without a shared registry (e.g. a package-level test).
@@ -116,7 +116,7 @@ type ResourcePath struct {
 	ScopeName    string // zone/region name; empty when Scope=="global"
 	ResourceType string // e.g. "instances", "operations"
 	ResourceName string // empty for collection paths
-	Action       string // e.g. "start", "stop", "reset" — empty for resource ops
+	Action       string // e.g. "start", "stop", "reset"; empty for resource ops
 }
 
 // ParsePath extracts GCP REST path components from urlPath. Returns ok=false
@@ -224,6 +224,7 @@ const (
 	codeNotFound           = "NOT_FOUND"
 	codeAlreadyExists      = "ALREADY_EXISTS"
 	codeFailedPrecondition = "FAILED_PRECONDITION"
+	codeAborted            = "ABORTED"
 	codePermissionDenied   = "PERMISSION_DENIED"
 	codeResourceExhausted  = "RESOURCE_EXHAUSTED"
 	codeUnimplemented      = "UNIMPLEMENTED"
@@ -237,7 +238,7 @@ const (
 // (all-caps SNAKE_CASE, e.g. "NOT_FOUND"). See
 // https://cloud.google.com/apis/design/errors and the google.rpc.Code enum.
 // Reasons without a canonical code (e.g. HTTP 405 "methodNotAllowed", which has
-// no google.rpc.Code) return "" so the omitempty `status` field is dropped —
+// no google.rpc.Code) return "" so the omitempty `status` field is dropped,
 // matching real GCP, which omits `status` for those responses.
 func canonicalStatus(reason string) string {
 	// Some callers (e.g. eventarc, fcm, vertexai) already pass a canonical
@@ -263,6 +264,8 @@ func camelReasonToCode(reason string) string {
 	case "conditionNotMet", "failedPrecondition", "resourceInUseByAnotherResource",
 		"containerNotEmpty", "cnameResourceRecordSetConflict":
 		return codeFailedPrecondition
+	case "aborted":
+		return codeAborted
 	case "forbidden":
 		return codePermissionDenied
 	case "rateLimitExceeded":
@@ -287,7 +290,8 @@ func isCanonicalCode(s string) bool {
 	//nolint:misspell // google.rpc.Code enum name is CANCELLED (two Ls)
 	case "OK", "CANCELLED", "UNKNOWN", codeInvalidArgument, "DEADLINE_EXCEEDED",
 		codeNotFound, codeAlreadyExists, codePermissionDenied, codeResourceExhausted,
-		codeFailedPrecondition, "ABORTED", "OUT_OF_RANGE", codeUnimplemented,
+		codeFailedPrecondition, codeAborted, "OUT_OF_RANGE", codeUnimplemented,
+
 		codeInternal, codeUnavailable, "DATA_LOSS", "UNAUTHENTICATED":
 		return true
 	default:
@@ -310,9 +314,9 @@ func WriteError(w http.ResponseWriter, status int, reason, msg string) {
 }
 
 // WriteCErr maps a CloudEmu canonical error to the matching GCP HTTP status
-// and reason. The wire message is cerrors.Message(err) — the error's
+// and reason. The wire message is cerrors.Message(err): the error's
 // human-readable text without the canonical code prefix (e.g. "instance x not
-// found", not "NotFound: instance x not found") — matching every other cloud's
+// found", not "NotFound: instance x not found"), matching every other cloud's
 // wire handlers, which never leak the internal error-taxonomy name into the
 // message an SDK surfaces to the caller.
 func WriteCErr(w http.ResponseWriter, err error) {
@@ -380,7 +384,7 @@ type Operation struct {
 // resource at scope/scopeName/resourceType/name. host is the test server URL
 // so selfLink/targetLink are absolute and SDKs can navigate them.
 //
-// Operation.ID must be a numeric string (uint64) — GCP's protobuf JSON
+// Operation.ID must be a numeric string (uint64): GCP's protobuf JSON
 // unmarshaling rejects anything else. The human-readable identifier goes in
 // Name instead.
 func NewDoneOperation(host, project, scope, scopeName, resourceType, name, opType string) Operation {

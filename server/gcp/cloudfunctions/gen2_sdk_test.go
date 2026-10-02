@@ -34,7 +34,7 @@ func newGCPV2Service(t *testing.T) *cloudfunctions2.Service {
 }
 
 // TestSDKGen2CreateGetListDelete reproduces the gen2 (v2 API) blocker: the modern
-// functions/apiv2 + google_cloudfunctions2_function surface must work — create
+// functions/apiv2 + google_cloudfunctions2_function surface must work: create
 // reconciles to ACTIVE with a Cloud Run-backed serviceConfig.uri, and get/list/
 // delete round-trip.
 func TestSDKGen2CreateGetListDelete(t *testing.T) {
@@ -170,7 +170,7 @@ func TestSDKGen2Patch(t *testing.T) {
 
 // TestSDKGen2TrafficAndConcurrency reproduces the perpetual-drift finding: a gen2
 // function's serviceConfig must report allTrafficOnLatestRevision=true (real GCP's
-// default, which terraform's service_config default matches — omitting it diffs
+// default, which terraform's service_config default matches; omitting it diffs
 // true->false on every plan) and default maxInstanceRequestConcurrency to 1, and
 // an explicit maxInstanceRequestConcurrency must round-trip through create and a
 // masked patch.
@@ -226,7 +226,7 @@ func TestSDKGen2TrafficAndConcurrency(t *testing.T) {
 // TestSDKGen2ExplicitAllTrafficFalse guards the drift regression in the other
 // direction: all_traffic_on_latest_revision=false is a legitimate config (real
 // GCF then honors the underlying Cloud Run service's existing traffic split), so
-// an explicit false must round-trip as false — not be clobbered to the default
+// an explicit false must round-trip as false, not be clobbered to the default
 // true. A masked patch of an unrelated field must leave it false, and an explicit
 // true must still round-trip as true.
 func TestSDKGen2ExplicitAllTrafficFalse(t *testing.T) {

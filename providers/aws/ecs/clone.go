@@ -297,3 +297,37 @@ func cloneIntPtr(in *int) *int {
 
 	return &v
 }
+
+// cloneCapacityProvider deep-copies a capacity provider: its Auto Scaling group
+// block (and nested managed scaling), raw Managed Instances configuration, and
+// Tags.
+func cloneCapacityProvider(cp *driver.CapacityProvider) driver.CapacityProvider {
+	out := *cp
+	out.Tags = copyTags(cp.Tags)
+	out.ManagedInstancesProvider = append(json.RawMessage(nil), cp.ManagedInstancesProvider...)
+
+	if cp.AutoScalingGroupProvider != nil {
+		out.AutoScalingGroupProvider = cloneASGProvider(cp.AutoScalingGroupProvider)
+	}
+
+	return out
+}
+
+func cloneASGProvider(in *driver.AutoScalingGroupProvider) *driver.AutoScalingGroupProvider {
+	out := *in
+	if in.ManagedScaling != nil {
+		out.ManagedScaling = cloneManagedScaling(in.ManagedScaling)
+	}
+
+	return &out
+}
+
+func cloneManagedScaling(in *driver.ManagedScaling) *driver.ManagedScaling {
+	out := *in
+	out.TargetCapacity = cloneIntPtr(in.TargetCapacity)
+	out.MinimumScalingStepSize = cloneIntPtr(in.MinimumScalingStepSize)
+	out.MaximumScalingStepSize = cloneIntPtr(in.MaximumScalingStepSize)
+	out.InstanceWarmupPeriod = cloneIntPtr(in.InstanceWarmupPeriod)
+
+	return &out
+}

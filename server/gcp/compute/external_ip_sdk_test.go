@@ -19,7 +19,7 @@ const testRegion = "us-central1"
 
 // newGCPServerWithNet builds an in-process GCP server backed by a fresh GCP
 // cloud with both compute and networking wired, so instances and reserved
-// addresses share one backend — the setup the external-IP linkage needs.
+// addresses share one backend, the setup the external-IP linkage needs.
 func newGCPServerWithNet(t *testing.T) *httptest.Server {
 	t.Helper()
 

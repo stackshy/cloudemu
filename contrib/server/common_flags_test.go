@@ -51,7 +51,7 @@ func TestBatteriesRegistersEveryCommonFlag(t *testing.T) {
 }
 
 // TestBatteriesEngineFlagNamesMatchSharedList proves the engine selectors this
-// module registers are exactly serveflags.EngineFlags — the single list the lean
+// module registers are exactly serveflags.EngineFlags, the single list the lean
 // binary's stub detector also ranges over. A rename in one place fails here.
 func TestBatteriesEngineFlagNamesMatchSharedList(t *testing.T) {
 	fs := buildParseFlagSet()

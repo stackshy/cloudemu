@@ -6,24 +6,24 @@
 //
 // Coverage (v1 REST):
 //
-//	POST   .../repositories?repositoryId={id}              — Create repo (async;
+//	POST   .../repositories?repositoryId={id}              : Create repo (async;
 //	                                                         repository_id alias)
-//	GET    .../repositories/{id}                           — Get repo
-//	GET    .../repositories                                — List repos (paged)
-//	PATCH  .../repositories/{id}                           — Update labels/description/mode
-//	DELETE .../repositories/{id}                           — Delete repo (async)
-//	GET/POST .../repositories/{id}:{get,set}IamPolicy      — Repo IAM
-//	POST   .../repositories/{id}:testIamPermissions        — Repo IAM
-//	GET    .../repositories/{id}/dockerImages             — List docker images (paged)
-//	GET    .../repositories/{id}/packages                 — List packages (paged)
-//	GET    .../repositories/{id}/packages/{pkg}           — Get package
-//	GET    .../repositories/{id}/packages/{pkg}/versions  — List versions (paged)
-//	DELETE .../repositories/{id}/packages/{pkg}/versions/{v} — Delete version
-//	GET    .../repositories/{id}/packages/{pkg}/tags      — List tags (paged)
-//	POST   .../packages/{pkg}/tags?tagId={id}             — Create tag
-//	PATCH  .../packages/{pkg}/tags/{id}                   — Patch tag (blocked by immutableTags)
-//	DELETE .../packages/{pkg}/tags/{id}                   — Delete tag (blocked by immutableTags)
-//	GET    .../repositories/{id}/files                    — List files (paged)
+//	GET    .../repositories/{id}                           : Get repo
+//	GET    .../repositories                                : List repos (paged)
+//	PATCH  .../repositories/{id}                           : Update labels/description/mode
+//	DELETE .../repositories/{id}                           : Delete repo (async)
+//	GET/POST .../repositories/{id}:{get,set}IamPolicy      : Repo IAM
+//	POST   .../repositories/{id}:testIamPermissions        : Repo IAM
+//	GET    .../repositories/{id}/dockerImages             : List docker images (paged)
+//	GET    .../repositories/{id}/packages                 : List packages (paged)
+//	GET    .../repositories/{id}/packages/{pkg}           : Get package
+//	GET    .../repositories/{id}/packages/{pkg}/versions  : List versions (paged)
+//	DELETE .../repositories/{id}/packages/{pkg}/versions/{v} : Delete version
+//	GET    .../repositories/{id}/packages/{pkg}/tags      : List tags (paged)
+//	POST   .../packages/{pkg}/tags?tagId={id}             : Create tag
+//	PATCH  .../packages/{pkg}/tags/{id}                   : Patch tag (blocked by immutableTags)
+//	DELETE .../packages/{pkg}/tags/{id}                   : Delete tag (blocked by immutableTags)
+//	GET    .../repositories/{id}/files                    : List files (paged)
 //
 // The driver has no location dimension, so {l} is accepted and echoed but not
 // used to partition state.
@@ -187,7 +187,7 @@ func splitVerb(seg string) (resource, verb string) {
 // In an assembled server h.ops is the same *lro.Registry the shared poller
 // consults, and that poller is registered ahead of this handler, so it always
 // wins first-match-wins routing for every verb (GET/cancel/DELETE) on every
-// operation name, known or not — this handler never needs to (and, per this
+// operation name, known or not. This handler never needs to (and, per this
 // guard, no longer does) answer for operations it didn't create.
 func (h *Handler) Matches(r *http.Request) bool {
 	rt, ok := parseRoute(r.URL.Path)

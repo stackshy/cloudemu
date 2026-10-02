@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -254,6 +255,15 @@ func TestSetAlarmState(t *testing.T) {
 		err := m.SetAlarmState(ctx, "missing", "OK", "reason")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("invalid state", func(t *testing.T) {
+		err := m.SetAlarmState(ctx, "alarm1", "BOGUS", "x")
+		assert.True(t, cerrors.IsInvalidArgument(err), "got %v", err)
+
+		alarms, _ := m.DescribeAlarms(ctx, []string{"alarm1"})
+		require.Len(t, alarms, 1)
+		assert.Equal(t, "ALARM", alarms[0].State)
 	})
 }
 

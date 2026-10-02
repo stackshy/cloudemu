@@ -248,8 +248,8 @@ func epochSeconds(iso string) float64 {
 // ARN, so we derive a stable identifier the SDK can round-trip. Real
 // EventBridge omits the bus segment for a rule on the default bus
 // ("arn:aws:events:<region>:<account>:rule/<rule>") and includes it only for
-// a custom-bus rule ("arn:aws:events:<region>:<account>:rule/<bus>/<rule>") —
-// see the PutRule API's sample response, which has no bus segment for a
+// a custom-bus rule ("arn:aws:events:<region>:<account>:rule/<bus>/<rule>").
+// See the PutRule API's sample response, which has no bus segment for a
 // default-bus rule.
 func (h *Handler) ruleARN(bus, rule string) string {
 	if bus == "" || bus == defaultBusName {
@@ -310,7 +310,7 @@ func isValidDetail(detail string) bool {
 
 // entryTime converts a PutEvents entry's optional wire-form timestamp (Unix
 // epoch seconds) to a time.Time. A nil entry (the caller omitted Time) yields
-// the zero time, which the driver defaults to the PutEvents call's own time —
+// the zero time, which the driver defaults to the PutEvents call's own time,
 // matching real EventBridge's "if no time stamp is provided" behavior.
 func entryTime(epochSeconds *float64) time.Time {
 	if epochSeconds == nil {

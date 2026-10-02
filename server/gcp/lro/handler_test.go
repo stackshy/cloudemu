@@ -74,7 +74,7 @@ func TestNilRegistryLegacyDone(t *testing.T) {
 }
 
 // TestUnknownOperationCancelIs404 verifies POST …:cancel on an operation name
-// that was never registered is 404 NOT_FOUND, not a fabricated success — the
+// that was never registered is 404 NOT_FOUND, not a fabricated success: the
 // cross-cutting bug this package closes: a bogus operation must 404 on every
 // verb, not just GET.
 func TestUnknownOperationCancelIs404(t *testing.T) {
@@ -180,4 +180,28 @@ func TestRegistryConcurrentAccess(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+// TestRegisteredOperationReplaysMetadata: an operation registered with
+// metadata replays it beside the response; one registered without has none.
+func TestRegisteredOperationReplaysMetadata(t *testing.T) {
+	reg := lro.NewRegistry()
+	reg.RegisterWithMetadata("projects/p/locations/us/operations/op-1",
+		map[string]any{"@type": "t/Resource"}, map[string]any{"@type": "t/OperationMetadata", "verb": "create"})
+	reg.Register("projects/p/locations/us/operations/op-2", nil)
+
+	h := lro.New(reg)
+
+	code, body := get(t, h, opPath)
+	if code != http.StatusOK || !strings.Contains(body, `"metadata":{"@type":"t/OperationMetadata","verb":"create"}`) ||
+		!strings.Contains(body, `"response":{"@type":"t/Resource"}`) {
+		t.Fatalf("op-1: %d %s", code, body)
+	}
+
+	if _, body = get(t, h, "/v1/projects/p/locations/us/operations/op-2"); strings.Contains(body, "metadata") {
+		t.Fatalf("op-2 has metadata: %s", body)
+	}
+
+	var nilReg *lro.Registry
+	nilReg.RegisterWithMetadata("x", nil, nil) // a nil registry is a no-op
 }

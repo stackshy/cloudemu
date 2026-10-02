@@ -3,23 +3,23 @@
 // certificate routes on the vault host so certificate requests reach Key Vault
 // instead of falling through to the permissive Table/Blob storage fallbacks
 // (which mis-parse them into an odata "PartitionKey and RowKey are required"
-// error). Real azcertificates clients — and raw REST callers — create
+// error). Real azcertificates clients, and raw REST callers, create
 // self-signed certificates and get, list, delete and recover them against the
 // KeyVaultCertificates surface of the secrets driver.
 //
 // Coverage (Key Vault 7.x REST shapes):
 //
-//	POST   /certificates/{name}/create           — create (self-signed) certificate
-//	GET    /certificates/{name}[/{version}]       — get current or specific version
-//	GET    /certificates/{name}/versions          — list versions
-//	GET    /certificates/{name}/policy            — get certificate policy
-//	GET    /certificates/{name}/pending           — get (completed) create operation
-//	GET    /certificates                          — list certificates
-//	DELETE /certificates/{name}                   — soft-delete certificate
-//	GET    /deletedcertificates                   — list deleted certificates
-//	GET    /deletedcertificates/{name}            — get deleted certificate
-//	POST   /deletedcertificates/{name}/recover    — recover deleted certificate
-//	DELETE /deletedcertificates/{name}            — purge deleted certificate
+//	POST   /certificates/{name}/create           : create (self-signed) certificate
+//	GET    /certificates/{name}[/{version}]       : get current or specific version
+//	GET    /certificates/{name}/versions          : list versions
+//	GET    /certificates/{name}/policy            : get certificate policy
+//	GET    /certificates/{name}/pending           : get (completed) create operation
+//	GET    /certificates                          : list certificates
+//	DELETE /certificates/{name}                   : soft-delete certificate
+//	GET    /deletedcertificates                   : list deleted certificates
+//	GET    /deletedcertificates/{name}            : get deleted certificate
+//	POST   /deletedcertificates/{name}/recover    : recover deleted certificate
+//	DELETE /deletedcertificates/{name}            : purge deleted certificate
 package keyvault
 
 import (

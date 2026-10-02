@@ -66,6 +66,10 @@ func (h *Handler) routeASG(w http.ResponseWriter, r *http.Request, rp azurearm.R
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createASG(w, r, rp, svc)
@@ -111,7 +115,7 @@ func (*Handler) createASG(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 }
 
 // patchASG applies an ARM UpdateTags PATCH (ApplicationSecurityGroupsClient.
-// UpdateTags — a synchronous 200): the body's tags REPLACE the stored set
+// UpdateTags, a synchronous 200): the body's tags REPLACE the stored set
 // wholesale (tags:{} wipes them), the ASG's other fields are left intact, and
 // the full resource is returned. The get-modify-put is guarded by patchMu so a
 // concurrent PATCH cannot drop the write. A PATCH on a missing ASG is a 404.

@@ -1,4 +1,4 @@
-// Package gcs_test — suite cell STORAGE / gcp / sdk-compat.
+// Package gcs_test: suite cell STORAGE / gcp / sdk-compat.
 //
 // Real cloud.google.com/go/storage SDK journeys for service-account HMAC keys
 // (Projects.hmacKeys) and settable Uniform Bucket-Level Access + Public Access
@@ -126,7 +126,7 @@ func TestGCSHMACKeyServiceAccountRequired(t *testing.T) {
 }
 
 // TestGCSUniformBucketLevelAccessRoundTrips proves UBLA enabled via a bucket
-// patch is persisted and read back with its lockedTime — instead of being
+// patch is persisted and read back with its lockedTime, instead of being
 // dropped by a hardcoded iamConfiguration.
 func TestGCSUniformBucketLevelAccessRoundTrips(t *testing.T) {
 	ctx, client := newStorageClient(t)

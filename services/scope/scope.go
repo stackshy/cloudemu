@@ -1,10 +1,12 @@
-// Package scope identifies the cloud-side container a resource lives in —
+// Package scope identifies the cloud-side container a resource lives in:
 // the Azure subscription/resource group, the GCP project, or the OCI
 // compartment. Drivers record a resource's scope at create time and filter
 // lists by it, so scoped list endpoints (ListByResourceGroup, per-project
 // lists, compartmentId queries) return only what the caller's scope actually
 // contains.
 package scope
+
+import "strings"
 
 // Scope locates a resource. The zero value means "unscoped": AWS resources
 // and portable-API callers that don't care about scoping use it, and it
@@ -26,7 +28,7 @@ func (s Scope) IsZero() bool {
 // Matches reports whether a resource created in scope s is visible under
 // filter f. Empty filter fields match anything, so a zero filter lists
 // everything and a subscription-only filter spans its resource groups.
-// Resources created without scope (portable API) are visible everywhere —
+// Resources created without scope (portable API) are visible everywhere;
 // hiding them from scoped lists would make them unreachable over the wire.
 func (s Scope) Matches(f Scope) bool {
 	if s.IsZero() {
@@ -45,4 +47,18 @@ func (s Scope) Matches(f Scope) bool {
 		return false
 	}
 	return true
+}
+
+// InResourceGroup reports whether a resource created in scope s belongs to the
+// Azure resource group resourceGroup in subscription. Unlike Matches it never
+// treats the zero scope as a wildcard, so an unscoped (portable API) resource
+// is never selected for a resource-group delete. Names compare
+// case-insensitively, as ARM does. An empty subscription on either side
+// matches any subscription: the emulator serves a single estate.
+func (s Scope) InResourceGroup(subscription, resourceGroup string) bool {
+	if s.ResourceGroup == "" || !strings.EqualFold(s.ResourceGroup, resourceGroup) {
+		return false
+	}
+
+	return s.Subscription == "" || subscription == "" || strings.EqualFold(s.Subscription, subscription)
 }

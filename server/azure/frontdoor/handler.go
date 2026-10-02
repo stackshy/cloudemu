@@ -1,6 +1,6 @@
 // Package frontdoor implements the Azure Front Door Standard/Premium
-// (Microsoft.Cdn/profiles) ARM REST API — the profile plus its two
-// independently-addressable child types, afdEndpoints and originGroups — as a
+// (Microsoft.Cdn/profiles) ARM REST API: the profile plus its two
+// independently-addressable child types, afdEndpoints and originGroups, as a
 // server.Handler. Real
 // github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cdn/armcdn ProfilesClient /
 // AFDEndpointsClient / AFDOriginGroupsClient clients, and the Terraform azurerm
@@ -14,15 +14,15 @@
 //
 // Coverage:
 //
-//	PUT    .../profiles/{p}                          — Profiles.BeginCreateOrUpdate (201/200)
-//	GET    .../profiles/{p}                          — Profiles.Get
-//	PATCH  .../profiles/{p}                          — Profiles.Update (tags REPLACE)
-//	DELETE .../profiles/{p}                          — Profiles.BeginDelete (cascades children)
-//	GET    .../{scope}/…/profiles                    — Profiles.List / ListByResourceGroup
-//	PUT/GET/PATCH/DELETE .../profiles/{p}/afdEndpoints/{ep}   — AFDEndpoints.*
-//	GET    .../profiles/{p}/afdEndpoints                       — AFDEndpoints.ListByProfile
-//	PUT/GET/DELETE .../profiles/{p}/originGroups/{og}          — AFDOriginGroups.*
-//	GET    .../profiles/{p}/originGroups                       — AFDOriginGroups.ListByProfile
+//	PUT    .../profiles/{p}                          : Profiles.BeginCreateOrUpdate (201/200)
+//	GET    .../profiles/{p}                          : Profiles.Get
+//	PATCH  .../profiles/{p}                          : Profiles.Update (tags REPLACE)
+//	DELETE .../profiles/{p}                          : Profiles.BeginDelete (cascades children)
+//	GET    .../{scope}/…/profiles                    : Profiles.List / ListByResourceGroup
+//	PUT/GET/PATCH/DELETE .../profiles/{p}/afdEndpoints/{ep}   : AFDEndpoints.*
+//	GET    .../profiles/{p}/afdEndpoints                       : AFDEndpoints.ListByProfile
+//	PUT/GET/DELETE .../profiles/{p}/originGroups/{og}          : AFDOriginGroups.*
+//	GET    .../profiles/{p}/originGroups                       : AFDOriginGroups.ListByProfile
 //
 // The whole resource arrives in one PUT body and fully replaces the stored state
 // (ARM CreateOrUpdate). The profile's sku, location, kind and identity are modeled
@@ -39,6 +39,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	fddriver "github.com/stackshy/cloudemu/v2/services/frontdoor/driver"
 )
@@ -121,6 +122,10 @@ func (h *Handler) serveProfile(w http.ResponseWriter, r *http.Request, rp *azure
 		writeMethodNotAllowed(w)
 	}
 }
+
+// PurgePhase orders this purger in the resource-group cascade: Front Door is a
+// network consumer, so it goes before the virtual network purge.
+func (*Handler) PurgePhase() int { return resourcegroups.PhaseNetworkConsumers }
 
 // PurgeResourceGroup deletes every Front Door profile (cascading its endpoints and
 // origin groups) stored under the given resource group, backing the resource-group

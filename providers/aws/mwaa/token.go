@@ -7,8 +7,8 @@ import (
 )
 
 // CreateCliToken mints a stable Apache Airflow CLI token and the environment's
-// web-server hostname. The token is a deterministic placeholder — this
-// control-plane emulator does not run Apache Airflow — but it is stable across
+// web-server hostname. The token is a deterministic placeholder. This
+// control-plane emulator does not run Apache Airflow, but it is stable across
 // calls so callers can cache it. An unknown environment yields
 // ResourceNotFoundException.
 func (m *Mock) CreateCliToken(_ context.Context, name string) (token, webServerHostname string, err error) {

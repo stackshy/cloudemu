@@ -10,7 +10,9 @@ import (
 func (h *Handler) serveStages(w http.ResponseWriter, r *http.Request, apiID string) {
 	switch r.Method {
 	case http.MethodGet:
-		serveList(w, func() ([]driver.Stage, error) { return h.ag.GetStages(r.Context(), apiID) }, toStageResponse)
+		serveList(w, func() ([]driver.Stage, string, error) {
+			return h.ag.GetStages(r.Context(), apiID, pageInput(r))
+		}, toStageResponse)
 	case http.MethodPost:
 		h.createStage(w, r, apiID)
 	default:
@@ -28,6 +30,7 @@ func (h *Handler) createStage(w http.ResponseWriter, r *http.Request, apiID stri
 		StageName: req.StageName, Description: req.Description, AutoDeploy: req.AutoDeploy,
 		DeploymentID: req.DeploymentID, StageVariables: req.StageVariables,
 		DefaultRouteSettings: routeSettingsToDriver(req.DefaultRouteSettings),
+		Tags:                 req.Tags,
 	})
 	if err != nil {
 		writeErr(w, err)

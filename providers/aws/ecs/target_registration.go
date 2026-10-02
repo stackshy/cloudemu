@@ -17,7 +17,7 @@ type TargetRegistrar interface {
 }
 
 // SetTargetRegistrar wires the ELBv2 mock a service's loadBalancers[] register
-// running tasks against. Safe to leave unset — services with loadBalancers
+// running tasks against. Safe to leave unset. Services with loadBalancers
 // then converge without ever touching a target group.
 func (m *Mock) SetTargetRegistrar(r TargetRegistrar) {
 	m.registrar = r

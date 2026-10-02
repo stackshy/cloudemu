@@ -20,7 +20,7 @@ const maxBodyBytes = 8 << 20
 // every read. The remaining output-only keys real Backup for GKE derives from a
 // live cluster/backup data plane (stateReason, rpoRisk*, backupChannel,
 // restoreChannel, lastSuccessfulBackupTime, protectedPodCount) have no source in
-// a control-plane-only mock, so they are simply not echoed — a Terraform
+// a control-plane-only mock, so they are simply not echoed. A Terraform
 // computed attribute reads back null stably and never drifts.
 //
 //nolint:gochecknoglobals // immutable lookup set

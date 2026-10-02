@@ -4,8 +4,8 @@
 // and version history) and backup selections that assign resources to a plan.
 //
 // The emulator is control-plane only: there is NO backup-job / recovery-point
-// data plane. Every computed field — the vault and plan ARNs, the plan id, a
-// per-version VersionId, the selection id and all creation timestamps — is
+// data plane. Every computed field (the vault and plan ARNs, the plan id, a
+// per-version VersionId, the selection id and all creation timestamps) is
 // minted once at create and stored, so repeated Describe/Get/List reads never
 // drift. Rule, lifecycle, copy-action and selection-condition blocks round-trip
 // verbatim. Vault Lock is modeled as a state machine: a lock set with
@@ -152,7 +152,7 @@ type Vault struct {
 	// Access policy (JSON string) and event notifications.
 	AccessPolicy      string   `json:"accessPolicy,omitempty"`
 	SNSTopicArn       string   `json:"snsTopicArn,omitempty"`
-	BackupVaultEvents []string `json:"backupVaultEvents,omitempty"`
+	BackupVaultEvents []string `json:"backupVaultEvents"`
 
 	// Vault Lock state. Locked is true once a lock is applied. MinRetentionDays
 	// and MaxRetentionDays are the enforced retention bounds. LockDate is set
@@ -255,5 +255,5 @@ type Backup interface {
 	// Tagging.
 	TagResource(ctx context.Context, resourceArn string, tags map[string]string) error
 	UntagResource(ctx context.Context, resourceArn string, tagKeys []string) error
-	ListTags(ctx context.Context, resourceArn string) (map[string]string, error)
+	ListTags(ctx context.Context, resourceArn string, page Page) (tags map[string]string, nextToken string, err error)
 }

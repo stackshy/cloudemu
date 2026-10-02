@@ -83,7 +83,7 @@ func (h *Handler) createTrigger(w http.ResponseWriter, r *http.Request, rt *rout
 // validateTriggerBody validates a Create request's eventFilters and
 // destination, writing the appropriate error response and returning ok=false
 // when either check fails. On success it returns the driver Target the
-// validated destination folds into — a trigger must route somewhere, and real
+// validated destination folds into. A trigger must route somewhere, and real
 // Eventarc rejects a trigger with no destination (or one naming a resource
 // that doesn't exist) with INVALID_ARGUMENT / NOT_FOUND rather than storing a
 // dead route.

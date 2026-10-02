@@ -33,7 +33,7 @@ func TestDescribeInstanceTypesRejectsUnknown(t *testing.T) {
 
 // TestDescribeInstanceTypesReportsProcessorAndNetwork pins that a known type
 // carries currentGeneration, processorInfo (architecture + clock) and networkInfo
-// (performance, max ENIs, IPs per ENI) — fields real DescribeInstanceTypes
+// (performance, max ENIs, IPs per ENI), fields real DescribeInstanceTypes
 // returns and capacity planners read.
 func TestDescribeInstanceTypesReportsProcessorAndNetwork(t *testing.T) {
 	ctx := context.Background()

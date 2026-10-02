@@ -133,7 +133,7 @@ func TestDiskInsertUnquotedSizeGb(t *testing.T) {
 // TestDefaultServiceAccountRealistic verifies that an instance created without a
 // serviceAccounts block reads back the default compute SA with a realistic
 // project-scoped email (never the literal "default") and the default-access
-// scope set — matching real GCP.
+// scope set, matching real GCP.
 func TestDefaultServiceAccountRealistic(t *testing.T) {
 	ts := newGCPTestServer(t)
 	_ = insertInstance(t, ts, "vm-defsa")

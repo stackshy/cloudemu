@@ -12,11 +12,11 @@
 //
 // Coverage:
 //
-//	PUT    .../bastionHosts/{name}    — BastionHosts.BeginCreateOrUpdate (LRO, sync 201/200)
-//	GET    .../bastionHosts/{name}    — BastionHosts.Get
-//	PATCH  .../bastionHosts/{name}    — BastionHosts.UpdateTags
-//	DELETE .../bastionHosts/{name}    — BastionHosts.BeginDelete (LRO, sync-200)
-//	GET    .../{scope}/…/bastionHosts — BastionHosts.List / ListByResourceGroup
+//	PUT    .../bastionHosts/{name}    : BastionHosts.BeginCreateOrUpdate (LRO, sync 201/200)
+//	GET    .../bastionHosts/{name}    : BastionHosts.Get
+//	PATCH  .../bastionHosts/{name}    : BastionHosts.UpdateTags
+//	DELETE .../bastionHosts/{name}    : BastionHosts.BeginDelete (LRO, sync-200)
+//	GET    .../{scope}/…/bastionHosts : BastionHosts.List / ListByResourceGroup
 //
 // The whole host arrives in one PUT body and fully replaces the stored state
 // (ARM CreateOrUpdate). sku and zones are top-level; the dnsName is computed once
@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	bastiondriver "github.com/stackshy/cloudemu/v2/services/bastion/driver"
 )
@@ -99,6 +100,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeMethodNotAllowed(w)
 	}
 }
+
+// PurgePhase orders this purger in the resource-group cascade: bastion hosts
+// reference public IPs and subnets, so they go before the virtual network
+// purge.
+func (*Handler) PurgePhase() int { return resourcegroups.PhaseNetworkConsumers }
 
 // PurgeResourceGroup deletes every bastion host stored under the given resource
 // group, backing the resource-group cascade delete. Best-effort: a single failure

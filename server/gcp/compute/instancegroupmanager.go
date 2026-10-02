@@ -50,7 +50,7 @@ type migResponse struct {
 }
 
 // migCurrentActions is compute#instanceGroupManagerActionsSummary. The emulator
-// applies resizes synchronously, so every target is "none" (stable) — none
+// applies resizes synchronously, so every target is "none" (stable). None
 // equals the target size and every transient counter is zero.
 type migCurrentActions struct {
 	None                   int `json:"none"`
@@ -253,7 +253,7 @@ type migTargetSizeRequest struct {
 }
 
 // setMIGTargetSize handles POST .../instanceGroupManagers/{name}/setTargetSize
-// with the target in the body — a convenience alias over resize.
+// with the target in the body, a convenience alias over resize.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) setMIGTargetSize(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, backend migBackend) {

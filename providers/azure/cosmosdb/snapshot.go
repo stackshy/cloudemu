@@ -36,7 +36,7 @@ type tableSnapshot struct {
 }
 
 // Snapshot captures every container's full state as JSON. includeAssets is
-// unused — Cosmos items are the resource, so they are always captured.
+// unused: Cosmos items are the resource, so they are always captured.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

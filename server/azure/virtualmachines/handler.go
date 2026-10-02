@@ -5,19 +5,19 @@
 //
 // Supported operations (instance lifecycle parity with AWS EC2):
 //
-//	PUT    .../virtualMachines/{name}        — CreateOrUpdate
-//	PATCH  .../virtualMachines/{name}        — Update (merge-patch; dataDisks attach/detach)
-//	GET    .../virtualMachines/{name}        — Get
-//	GET    .../virtualMachines               — List in resource group
-//	GET    .../providers/.../virtualMachines — List in subscription
-//	DELETE .../virtualMachines/{name}        — Delete
-//	POST   .../virtualMachines/{name}/start  — Start
-//	POST   .../virtualMachines/{name}/powerOff — Stop
-//	POST   .../virtualMachines/{name}/restart — Restart
-//	POST   .../virtualMachines/{name}/redeploy — Redeploy (power-cycle to a new host)
-//	POST   .../virtualMachines/{name}/reimage  — Reimage (reset OS disk; VM ends running)
-//	POST   .../virtualMachines/{name}/retrieveBootDiagnosticsData — boot-diagnostics URIs
-//	GET    .../virtualMachines/{name}/bootDiagnostics/serialConsoleLog — serial-log bytes
+//	PUT    .../virtualMachines/{name}        : CreateOrUpdate
+//	PATCH  .../virtualMachines/{name}        : Update (merge-patch; dataDisks attach/detach)
+//	GET    .../virtualMachines/{name}        : Get
+//	GET    .../virtualMachines               : List in resource group
+//	GET    .../providers/.../virtualMachines : List in subscription
+//	DELETE .../virtualMachines/{name}        : Delete
+//	POST   .../virtualMachines/{name}/start  : Start
+//	POST   .../virtualMachines/{name}/powerOff : Stop
+//	POST   .../virtualMachines/{name}/restart : Restart
+//	POST   .../virtualMachines/{name}/redeploy : Redeploy (power-cycle to a new host)
+//	POST   .../virtualMachines/{name}/reimage  : Reimage (reset OS disk; VM ends running)
+//	POST   .../virtualMachines/{name}/retrieveBootDiagnosticsData : boot-diagnostics URIs
+//	GET    .../virtualMachines/{name}/bootDiagnostics/serialConsoleLog : serial-log bytes
 //
 // Remaining less-used operations return 501 Not Implemented.
 package virtualmachines

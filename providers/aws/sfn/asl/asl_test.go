@@ -198,7 +198,7 @@ func TestResultPathMergesOntoRaw(t *testing.T) {
 
 // TestRunHonorsContextCancellation proves the ctx actually reaches the walk loop
 // (if Run discarded it, a cancelled ctx would be unobserved and the run would
-// SUCCEED) — the plumbing the PR2 Task->Lambda recursion guard relies on.
+// SUCCEED), the plumbing the PR2 Task->Lambda recursion guard relies on.
 func TestRunHonorsContextCancellation(t *testing.T) {
 	def, err := Parse(`{"StartAt":"A","States":{"A":{"Type":"Pass","End":true}}}`)
 	if err != nil {

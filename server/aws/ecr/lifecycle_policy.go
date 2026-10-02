@@ -147,10 +147,16 @@ func parseLifecyclePolicyText(text string) (crdriver.LifecyclePolicy, error) {
 			Priority:    src.RulePriority,
 			Description: src.Description,
 			TagStatus:   src.Selection.TagStatus,
-			TagPattern:  firstTagPattern(&src.Selection),
-			CountType:   src.Selection.CountType,
-			CountValue:  src.Selection.CountNumber,
-			Action:      src.Action.Type,
+			// Preserve every entry of tagPatternList/tagPrefixList (real ECR
+			// matches on ANY of them); collapsing to the first entry here would
+			// silently drop the rest during EvaluateLifecyclePolicy and
+			// StartLifecyclePolicyPreview, even though GetLifecyclePolicy still
+			// echoes the full raw document.
+			TagPatternList: append([]string(nil), src.Selection.TagPatternList...),
+			TagPrefixList:  append([]string(nil), src.Selection.TagPrefixList...),
+			CountType:      src.Selection.CountType,
+			CountValue:     src.Selection.CountNumber,
+			Action:         src.Action.Type,
 		})
 	}
 
@@ -158,18 +164,6 @@ func parseLifecyclePolicyText(text string) (crdriver.LifecyclePolicy, error) {
 	// byte-faithfully (Terraform sees no drift), while the structured Rules remain
 	// available for lifecycle evaluation.
 	return crdriver.LifecyclePolicy{Rules: rules, Document: text}, nil
-}
-
-func firstTagPattern(sel *lifecycleSelection) string {
-	if len(sel.TagPatternList) > 0 {
-		return sel.TagPatternList[0]
-	}
-
-	if len(sel.TagPrefixList) > 0 {
-		return sel.TagPrefixList[0]
-	}
-
-	return ""
 }
 
 func marshalLifecyclePolicyText(policy *crdriver.LifecyclePolicy) (string, error) {
@@ -191,7 +185,10 @@ func marshalLifecyclePolicyText(policy *crdriver.LifecyclePolicy) (string, error
 			CountNumber: rule.CountValue,
 		}
 
-		if rule.TagPattern != "" {
+		sel.TagPatternList = append([]string(nil), rule.TagPatternList...)
+		sel.TagPrefixList = append([]string(nil), rule.TagPrefixList...)
+
+		if len(sel.TagPatternList) == 0 && len(sel.TagPrefixList) == 0 && rule.TagPattern != "" {
 			sel.TagPatternList = []string{rule.TagPattern}
 		}
 

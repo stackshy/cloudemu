@@ -352,7 +352,7 @@ func TestSDKAutoscalingClusterReportsServeNodes(t *testing.T) {
 	}
 
 	// Real Bigtable returns serveNodes as the current node count (starting at
-	// the minimum) alongside the autoscaling config — never 0.
+	// the minimum) alongside the autoscaling config, never 0.
 	got, err := svc.Projects.Instances.Clusters.Get(inst + "/clusters/auto").Do()
 	if err != nil {
 		t.Fatalf("Clusters.Get: %v", err)

@@ -30,7 +30,7 @@ const (
 // so each one starts from an empty, isolated backend.
 //
 // Only behavior genuinely shared across AWS DynamoDB, Azure Cosmos DB and GCP
-// Firestore is encoded here — table CRUD, item put/get/update/delete, key-condition
+// Firestore is encoded here: table CRUD, item put/get/update/delete, key-condition
 // queries with deterministic pagination, and the Global Secondary Index surface.
 // Provider-only semantics (DynamoDB's UpdateItem upsert, item-size ceilings,
 // key-type validation, streams/change-feed, transactions, LSIs, ...) stay in each
@@ -190,8 +190,8 @@ func testItemLifecycle(t *testing.T, d dbdriver.Database) {
 
 // testUpdateItem covers UpdateItem's shared contract on an existing item: a SET
 // action sets a new attribute and a REMOVE action drops one, both visible on the
-// next GetItem. (An UpdateItem against a missing item diverges — DynamoDB upserts,
-// Cosmos/Firestore return NotFound — so it is deliberately not asserted here.)
+// next GetItem. (An UpdateItem against a missing item diverges: DynamoDB upserts,
+// while Cosmos/Firestore return NotFound. So it is deliberately not asserted here.)
 func testUpdateItem(t *testing.T, d dbdriver.Database) {
 	t.Helper()
 
@@ -402,7 +402,7 @@ func firstPageSortKeys(t *testing.T, d dbdriver.Database) []string {
 // testSecondaryIndex covers the Global Secondary Index surface shared by all
 // three providers: CreateIndex validates the table and a non-empty name and
 // rejects a duplicate, a created index is describable and listed, and DeleteIndex
-// removes it — with NotFound reported for a missing table or index throughout.
+// removes it, with NotFound reported for a missing table or index throughout.
 func testSecondaryIndex(t *testing.T, d dbdriver.Database) {
 	t.Helper()
 

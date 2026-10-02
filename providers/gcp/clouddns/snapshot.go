@@ -21,7 +21,7 @@ type dnsSnapshot struct {
 	HealthChecks json.RawMessage `json:"healthChecks,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // Cloud DNS holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap dnsSnapshot

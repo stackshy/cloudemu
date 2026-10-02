@@ -65,7 +65,7 @@ func (m *Mock) RecordEvent(e *driver.Event) {
 }
 
 // cloudTrailEventJSON renders the JSON document real CloudTrail returns in the
-// CloudTrailEvent field of a LookupEvents result — the full event record.
+// CloudTrailEvent field of a LookupEvents result, the full event record.
 func (m *Mock) cloudTrailEventJSON(e *driver.Event, now time.Time) string {
 	doc := map[string]any{
 		"eventVersion":       "1.08",
@@ -135,7 +135,7 @@ func (m *Mock) LookupEvents(_ context.Context, in driver.LookupInput) ([]driver.
 // lookupWindow resolves the [start,end) page for a cursor token. It resumes
 // strictly after the cursor event (keyed by id), not a positional offset, so
 // front-insertions between pages (including a LookupEvents call recording
-// itself) don't shift the boundary — a paginate-through-all scan never
+// itself) don't shift the boundary. A paginate-through-all scan never
 // duplicates or skips events.
 func lookupWindow(matched []driver.Event, token string, maxResults int32) (start, end int) {
 	if token != "" {

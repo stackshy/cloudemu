@@ -1,6 +1,6 @@
 // Package driver defines the portable interface for the Google Certificate
 // Authority Service control plane (privateca.googleapis.com/v1). It is
-// control-plane only — the four resource collections a Terraform google provider
+// control-plane only: the four resource collections a Terraform google provider
 // or a real google.golang.org/api/privateca client CRUDs are modeled:
 //
 //	projects/{p}/locations/{loc}/caPools/{id}

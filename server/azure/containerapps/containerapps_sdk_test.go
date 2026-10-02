@@ -293,8 +293,8 @@ func assertContainerAppListed(t *testing.T, ctx context.Context, c *armappcontai
 	}
 }
 
-// assertDiscoverable proves the container app surfaces through Resource Graph —
-// the point of #334 — with its cost-relevant properties projected onto the row.
+// assertDiscoverable proves the container app surfaces through Resource Graph
+// (the point of #334), with its cost-relevant properties projected onto the row.
 func assertDiscoverable(t *testing.T, ctx context.Context, ts *httptest.Server) {
 	t.Helper()
 

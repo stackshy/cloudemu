@@ -68,6 +68,11 @@ func TestSDKAgentLifecycle(t *testing.T) {
 		t.Fatalf("got status %q, want NOT_PREPARED", created.Agent.AgentStatus)
 	}
 
+	// Terraform dereferences promptOverrideConfiguration on every read.
+	if created.Agent.PromptOverrideConfiguration == nil {
+		t.Fatal("expected promptOverrideConfiguration on the agent")
+	}
+
 	got, err := client.GetAgent(ctx, &awsba.GetAgentInput{AgentId: aws.String(agentID)})
 	if err != nil {
 		t.Fatalf("GetAgent: %v", err)
@@ -140,18 +145,7 @@ func TestSDKKnowledgeBaseAndDataSourceLifecycle(t *testing.T) {
 	client := newClient(t)
 	ctx := context.Background()
 
-	kbCfg := &batypes.KnowledgeBaseConfiguration{
-		Type: batypes.KnowledgeBaseTypeVector,
-		VectorKnowledgeBaseConfiguration: &batypes.VectorKnowledgeBaseConfiguration{
-			EmbeddingModelArn: aws.String(embedArn),
-		},
-	}
-
-	kb, err := client.CreateKnowledgeBase(ctx, &awsba.CreateKnowledgeBaseInput{
-		Name:                       aws.String("my-kb"),
-		RoleArn:                    aws.String(roleArn),
-		KnowledgeBaseConfiguration: kbCfg,
-	})
+	kb, err := client.CreateKnowledgeBase(ctx, vectorKBInput("my-kb", nil))
 	if err != nil {
 		t.Fatalf("CreateKnowledgeBase: %v", err)
 	}
@@ -370,6 +364,17 @@ func TestMatchesAnchorsPrefixes(t *testing.T) {
 		{"/flows/flow-1/", true},
 		{"/prompts/", true},
 		{"/prompts/prompt-1/", true},
+		// The shared /tags path is claimed only for bedrock-agent ARNs.
+		{"/tags/arn:aws:bedrock:us-east-1:123456789012:agent/ABCDE12345", true},
+		{"/tags/arn:aws:bedrock:us-east-1:123456789012:agent-alias/ABCDE12345/FGHIJ67890", true},
+		{"/tags/arn:aws:bedrock:us-east-1:123456789012:knowledge-base/ABCDE12345", true},
+		{"/tags/arn:aws:bedrock:us-east-1:123456789012:flow/ABCDE12345/alias/FGHIJ67890", true},
+		{"/tags/arn:aws:bedrock:us-east-1:123456789012:prompt/ABCDE12345:2", true},
+		{"/tags/arn:aws:bedrock:us-east-1:123456789012:session/ABCDE12345", false},
+		{"/tags/arn:aws:bedrock:us-east-1:123456789012:guardrail/abc123", false},
+		{"/tags/arn:aws:eks:us-east-1:123456789012:cluster/agent/x", false},
+		{"/tags/", false},
+		{"/tags", false},
 	}
 
 	for _, tc := range cases {

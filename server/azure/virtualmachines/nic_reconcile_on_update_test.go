@@ -102,7 +102,7 @@ func newReconcileFixture(t *testing.T) (*armcompute.VirtualMachinesClient, *armn
 
 // TestSDKVMUpdateReconcilesNICSwap covers the in-place-update NIC reconcile fix:
 // a VM created with NIC-A, then PUT again pointing at NIC-B, must move the
-// attachment — NIC-B gains the virtualMachine back-reference, NIC-A loses it —
+// attachment: NIC-B gains the virtualMachine back-reference, NIC-A loses it,
 // and, having been detached, NIC-A can now be deleted (no longer InUse /
 // InUseNetworkInterfaceCannotBeDeleted). Before the fix UpdateInstance ignored
 // networkProfile.networkInterfaces, so NIC-B never attached and NIC-A stayed

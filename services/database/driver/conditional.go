@@ -34,7 +34,7 @@ const (
 
 // TransactOp is one operation in an atomic TransactWriteItems. Kind selects the
 // mutation. Condition (optional) is evaluated against the current item before
-// ANY op is applied — all conditions are checked, then all writes applied, under
+// ANY op is applied: all conditions are checked, then all writes applied, under
 // a single lock hold, so the transaction is all-or-nothing. For a Put, Item
 // carries the full item; for the others Key identifies the target and
 // UpdateExpression/ExprNames/ExprValues drive an Update. A ConditionCheck asserts

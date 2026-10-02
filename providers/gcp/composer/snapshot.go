@@ -13,8 +13,8 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // composerSnapshot is the full serialized state of the Composer mock. Both
 // stores hold fully-exported cdriver value types keyed by their full GCP
 // resource name (projects/{p}/locations/{loc}/environments/{env} and
-// .../operations/{op}), so each round-trips through the generic memstore helper
-// — no field promotion is needed. opSeq is the operation-name counter, captured
+// .../operations/{op}), so each round-trips through the generic memstore helper:
+// no field promotion is needed. opSeq is the operation-name counter, captured
 // beside the stores so restored operation ids do not collide with fresh ones.
 // The wired deps (m.opts) and the RWMutex are intentionally not serialized.
 type composerSnapshot struct {
@@ -24,7 +24,7 @@ type composerSnapshot struct {
 }
 
 // Snapshot captures every environment and operation as JSON. includeAssets is
-// unused — Composer admin is control-plane only and holds no bulk object bodies.
+// unused: Composer admin is control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

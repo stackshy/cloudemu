@@ -30,7 +30,7 @@ func registerPlain(t *testing.T, m *Mock, family string) string {
 // --- INACTIVE task definition guard (RunTask / CreateService / UpdateService) ---
 
 // A deregistered (INACTIVE) task definition, referenced by explicit
-// family:revision, can no longer launch new tasks — real ECS rejects it.
+// family:revision, can no longer launch new tasks. Real ECS rejects it.
 func TestRunTaskRejectsInactiveTaskDef(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

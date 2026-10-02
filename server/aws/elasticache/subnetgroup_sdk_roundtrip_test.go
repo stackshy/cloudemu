@@ -107,7 +107,7 @@ func TestCacheSubnetGroupSDKRoundTrip(t *testing.T) {
 }
 
 // TestDeleteCacheSubnetGroupInUseByCluster guards that a subnet group
-// associated with a standalone cache cluster cannot be deleted — real
+// associated with a standalone cache cluster cannot be deleted. Real
 // ElastiCache refuses to delete a group associated with "any clusters", not
 // only replication groups, and returns CacheSubnetGroupInUse.
 func TestDeleteCacheSubnetGroupInUseByCluster(t *testing.T) {

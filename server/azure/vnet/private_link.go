@@ -23,7 +23,7 @@ const (
 	plsAliasHashLen = 12
 )
 
-// ARM JSON shapes — privateEndpoints.
+// ARM JSON shapes: privateEndpoints.
 
 type peConnectionState struct {
 	Status          string `json:"status,omitempty"`
@@ -79,7 +79,7 @@ type privateEndpointListResponse struct {
 	Value []privateEndpointResponse `json:"value"`
 }
 
-// ARM JSON shapes — privateLinkServices.
+// ARM JSON shapes: privateLinkServices.
 
 type plsIPConfigProps struct {
 	PrivateIPAllocationMethod string    `json:"privateIPAllocationMethod,omitempty"`
@@ -179,6 +179,10 @@ func (h *Handler) routePrivateEndpoint(w http.ResponseWriter, r *http.Request, r
 
 	if rp.ResourceName == "" {
 		h.listPrivateEndpoints(w, r, rp, svc)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp, "privateDnsZoneGroups") {
 		return
 	}
 
@@ -384,6 +388,10 @@ func (h *Handler) routePrivateLinkService(w http.ResponseWriter, r *http.Request
 
 	if rp.ResourceName == "" {
 		h.listPrivateLinkServices(w, r, rp, svc)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp, "privateEndpointConnections") {
 		return
 	}
 

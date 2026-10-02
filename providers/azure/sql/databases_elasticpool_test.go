@@ -98,7 +98,7 @@ func TestDatabaseElasticPoolMembershipBlocksDelete(t *testing.T) {
 // created through the Databases capability (what the ARM wire server uses for
 // Microsoft.Sql/servers/databases) previously survived DeleteCluster, which
 // only cleared the legacy Instance store and firewall/vnet/elasticPool/
-// failoverGroup/AAD-admin children — never m.databases.
+// failoverGroup/AAD-admin children, never m.databases.
 func TestCascadeDeleteServerRemovesLogicalDatabases(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

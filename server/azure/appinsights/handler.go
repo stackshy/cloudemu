@@ -7,7 +7,7 @@
 // computes once at create and returns verbatim on every read (the REST contract
 // forbids specifying a different value on a PUT). This handler generates them
 // deterministically and stores them once, so they are stable across repeated
-// GETs — the property that keeps a Terraform plan drift-free. ConnectionString is
+// GETs: the property that keeps a Terraform plan drift-free. ConnectionString is
 // derived from the stored key, region and app id. kind is a top-level field the
 // generic property-echo overlay cannot reach, so it is modeled explicitly here.
 //
@@ -52,6 +52,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if rp.ResourceName == "" {
 		h.list(w, &rp)
+		return
+	}
+
+	if strings.EqualFold(rp.SubResource, subBillingFeatures) && rp.SubResourceName == "" {
+		h.serveBillingFeatures(w, r, &rp)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp, "ProactiveDetectionConfigs", "ApiKeys", "exportconfiguration", "analyticsItems") {
 		return
 	}
 
@@ -102,6 +111,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		cs.AppID = existing.AppID
 		cs.TenantID = existing.TenantID
 		cs.CreationDate = existing.CreationDate
+		cs.Billing = existing.Billing
 	} else {
 		id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeComponent, rp.ResourceName)
 		cs.InstrumentationKey = newInstrumentationKey(id)
@@ -112,12 +122,9 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 
 	h.store.set(cs)
 
-	status := http.StatusOK
-	if !existed {
-		status = http.StatusCreated
-	}
-
-	azurearm.WriteJSON(w, status, toResponse(cs))
+	// Real ARM answers 200 for both create and replace of a component, and
+	// azurerm treats any other status on this PUT as a failure.
+	azurearm.WriteJSON(w, http.StatusOK, toResponse(cs))
 }
 
 // patch handles the ARM Update (HTTP PATCH): tags are replaced wholesale when a

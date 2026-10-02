@@ -216,8 +216,8 @@ func TestSDKNICBackendPoolMembershipReflectsBothSides(t *testing.T) {
 }
 
 // TestSDKNICBackendPoolMembershipClearedBothSides proves that removing the
-// association — by re-PUTting the NIC without the pool ref, or by deleting the
-// NIC — clears it on BOTH sides.
+// association, by re-PUTting the NIC without the pool ref, or by deleting the
+// NIC, clears it on BOTH sides.
 func TestSDKNICBackendPoolMembershipClearedBothSides(t *testing.T) {
 	srv := newLBServer(t)
 	ctx := context.Background()

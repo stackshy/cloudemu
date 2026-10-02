@@ -30,8 +30,8 @@ func TestMatchesTagsARNScoping(t *testing.T) {
 }
 
 // TestTagsDoNotStealMSK confirms that on a server with BOTH Batch and Kafka
-// registered, a kafka tag ARN is not answered by the Batch handler — the
-// regression that broke MSK tagging when Batch was added.
+// registered, a kafka tag ARN is not answered by the Batch handler. That
+// regression broke MSK tagging when Batch was added.
 func TestTagsDoNotStealMSK(t *testing.T) {
 	cloud := cloudemu.NewAWS()
 	ts := httptest.NewServer(awsserver.New(awsserver.Drivers{Batch: cloud.Batch, Kafka: cloud.Kafka}))

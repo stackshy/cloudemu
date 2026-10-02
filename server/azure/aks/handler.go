@@ -6,29 +6,29 @@
 //
 // Wave 1 coverage (control plane only):
 //
-//	PUT    .../providers/Microsoft.ContainerService/managedClusters/{name}                                         — Create or update cluster
-//	GET    .../providers/Microsoft.ContainerService/managedClusters/{name}                                         — Get cluster
-//	PATCH  .../providers/Microsoft.ContainerService/managedClusters/{name}                                         — Update tags
-//	DELETE .../providers/Microsoft.ContainerService/managedClusters/{name}                                         — Delete cluster (cascade)
-//	GET    .../providers/Microsoft.ContainerService/managedClusters                                                — List in resource group
-//	GET    /subscriptions/{s}/providers/Microsoft.ContainerService/managedClusters                                 — List in subscription
-//	PUT    .../managedClusters/{name}/agentPools/{pool}                                                            — Create or update pool
-//	GET    .../managedClusters/{name}/agentPools/{pool}                                                            — Get pool
-//	DELETE .../managedClusters/{name}/agentPools/{pool}                                                            — Delete pool
-//	GET    .../managedClusters/{name}/agentPools                                                                   — List pools
-//	PUT    .../managedClusters/{name}/maintenanceConfigurations/{cfg}                                              — Upsert maintenance cfg
-//	GET    .../managedClusters/{name}/maintenanceConfigurations/{cfg}                                              — Get maintenance cfg
-//	DELETE .../managedClusters/{name}/maintenanceConfigurations/{cfg}                                              — Delete maintenance cfg
-//	GET    .../managedClusters/{name}/maintenanceConfigurations                                                    — List maintenance cfgs
-//	POST   .../managedClusters/{name}/listClusterAdminCredential                                                   — Stub kubeconfig
-//	POST   .../managedClusters/{name}/listClusterUserCredential                                                    — Stub kubeconfig
-//	POST   .../managedClusters/{name}/listClusterMonitoringUserCredential                                          — Stub kubeconfig
-//	POST   .../managedClusters/{name}/rotateClusterCertificates                                                    — Cert rotation no-op
-//	POST   .../managedClusters/{name}/start                                                                        — Start cluster
-//	POST   .../managedClusters/{name}/stop                                                                         — Stop cluster
+//	PUT    .../providers/Microsoft.ContainerService/managedClusters/{name}                                         : Create or update cluster
+//	GET    .../providers/Microsoft.ContainerService/managedClusters/{name}                                         : Get cluster
+//	PATCH  .../providers/Microsoft.ContainerService/managedClusters/{name}                                         : Update tags
+//	DELETE .../providers/Microsoft.ContainerService/managedClusters/{name}                                         : Delete cluster (cascade)
+//	GET    .../providers/Microsoft.ContainerService/managedClusters                                                : List in resource group
+//	GET    /subscriptions/{s}/providers/Microsoft.ContainerService/managedClusters                                 : List in subscription
+//	PUT    .../managedClusters/{name}/agentPools/{pool}                                                            : Create or update pool
+//	GET    .../managedClusters/{name}/agentPools/{pool}                                                            : Get pool
+//	DELETE .../managedClusters/{name}/agentPools/{pool}                                                            : Delete pool
+//	GET    .../managedClusters/{name}/agentPools                                                                   : List pools
+//	PUT    .../managedClusters/{name}/maintenanceConfigurations/{cfg}                                              : Upsert maintenance cfg
+//	GET    .../managedClusters/{name}/maintenanceConfigurations/{cfg}                                              : Get maintenance cfg
+//	DELETE .../managedClusters/{name}/maintenanceConfigurations/{cfg}                                              : Delete maintenance cfg
+//	GET    .../managedClusters/{name}/maintenanceConfigurations                                                    : List maintenance cfgs
+//	POST   .../managedClusters/{name}/listClusterAdminCredential                                                   : Stub kubeconfig
+//	POST   .../managedClusters/{name}/listClusterUserCredential                                                    : Stub kubeconfig
+//	POST   .../managedClusters/{name}/listClusterMonitoringUserCredential                                          : Stub kubeconfig
+//	POST   .../managedClusters/{name}/rotateClusterCertificates                                                    : Cert rotation no-op
+//	POST   .../managedClusters/{name}/start                                                                        : Start cluster
+//	POST   .../managedClusters/{name}/stop                                                                         : Stop cluster
 //
 // The Kubernetes data plane (Deployments / Services / Pods) is intentionally
-// NOT served — that lands in Wave 2. The kubeconfig blobs we return point
+// NOT served: that lands in Wave 2. The kubeconfig blobs we return point
 // at https://AKS-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local so a caller that
 // tries to talk Kubernetes immediately fails with a clear sentinel.
 //
@@ -41,6 +41,7 @@ import (
 	"net/http"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
@@ -84,6 +85,25 @@ type Handler struct {
 // New returns an AKS handler backed by be.
 func New(be Backend) *Handler {
 	return &Handler{be: be}
+}
+
+// rgPurger is the optional capability *aks.Mock exposes for the
+// resource-group delete cascade.
+type rgPurger interface {
+	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+}
+
+// PurgeResourceGroup deletes every managed cluster, with its agent pools and
+// maintenance configurations, in the resource group, backing the
+// resource-group cascade delete. A backend without the capability is reported
+// as an error rather than silently skipped.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	p, ok := h.be.(rgPurger)
+	if !ok {
+		return cerrors.Newf(cerrors.Unimplemented, "aks backend %T cannot purge a resource group", h.be)
+	}
+
+	return p.PurgeResourceGroup(ctx, subscription, resourceGroup)
 }
 
 // Matches returns true for ARM Microsoft.ContainerService managedClusters
@@ -184,6 +204,10 @@ func (h *Handler) serveClusterCollection(w http.ResponseWriter, r *http.Request,
 
 //nolint:dupl // sub-resource route shapes are intentionally typed; sharing via generics adds noise.
 func (h *Handler) serveAgentPoolRoute(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, rp, childMaxDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)
@@ -209,6 +233,10 @@ func (h *Handler) serveAgentPoolRoute(w http.ResponseWriter, r *http.Request, rp
 
 //nolint:dupl // sub-resource route shapes are intentionally typed; sharing via generics adds noise.
 func (h *Handler) serveMaintenanceRoute(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, rp, childMaxDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)

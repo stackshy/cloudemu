@@ -92,11 +92,21 @@ type Integration struct {
 }
 
 // Deployment is a point-in-time snapshot of a REST API published to a stage.
+// The resource tree captured at CreateDeployment time is what every stage
+// pointing at the deployment serves. APISummary is that tree's
+// path -> method -> summary view, filled by GetDeployment only.
 type Deployment struct {
 	ID          string
 	RestAPIID   string
 	Description string
 	CreatedDate int64
+	APISummary  map[string]map[string]MethodSnapshot
+}
+
+// MethodSnapshot is one method's entry in a deployment's APISummary.
+type MethodSnapshot struct {
+	AuthorizationType string
+	APIKeyRequired    bool
 }
 
 // Stage is a named, addressable deployment of a REST API (e.g. "prod").
@@ -107,6 +117,12 @@ type Stage struct {
 	Description  string
 	CreatedDate  int64
 	Variables    map[string]string
+	// ClientCertificateID is the client certificate the stage presents to HTTP
+	// backends; empty when none is attached.
+	ClientCertificateID string
+	// DocumentationVersion is the documentation snapshot associated with the
+	// stage; empty when none is.
+	DocumentationVersion string
 }
 
 // CreateRestAPIInput carries the fields CreateRestApi accepts.
@@ -141,18 +157,22 @@ type PutIntegrationInput struct {
 
 // CreateDeploymentInput carries the fields CreateDeployment accepts. A non-empty
 // StageName auto-creates (or re-points) that stage to the new deployment, exactly
-// as the real CreateDeployment does.
+// as the real CreateDeployment does. StageDescription applies when the stage is
+// created; Variables are merged into the stage's variables.
 type CreateDeploymentInput struct {
-	StageName   string
-	Description string
+	StageName        string
+	StageDescription string
+	Description      string
+	Variables        map[string]string
 }
 
 // CreateStageInput carries the fields CreateStage accepts.
 type CreateStageInput struct {
-	StageName    string
-	DeploymentID string
-	Description  string
-	Variables    map[string]string
+	StageName            string
+	DeploymentID         string
+	Description          string
+	Variables            map[string]string
+	DocumentationVersion string
 }
 
 // ProxyRequest is a data-plane request to route through a deployed stage.
@@ -180,6 +200,148 @@ type ProxyResponse struct {
 	MultiValueHeaders map[string][]string
 	Body              string
 	IsBase64Encoded   bool
+}
+
+// Documentation part location types (DocumentationPartLocation.type).
+const (
+	DocTypeAPI            = "API"
+	DocTypeAuthorizer     = "AUTHORIZER"
+	DocTypeModel          = "MODEL"
+	DocTypeResource       = "RESOURCE"
+	DocTypeMethod         = "METHOD"
+	DocTypePathParameter  = "PATH_PARAMETER"
+	DocTypeQueryParameter = "QUERY_PARAMETER"
+	DocTypeRequestHeader  = "REQUEST_HEADER"
+	DocTypeRequestBody    = "REQUEST_BODY"
+	DocTypeResponse       = "RESPONSE"
+	DocTypeResponseHeader = "RESPONSE_HEADER"
+	DocTypeResponseBody   = "RESPONSE_BODY"
+)
+
+// ClientCertificate is an API Gateway generated, self-signed client
+// certificate. PEMEncodedCertificate holds only the public certificate.
+type ClientCertificate struct {
+	ID                    string
+	Description           string
+	PEMEncodedCertificate string
+	CreatedDate           int64 // unix seconds
+	ExpirationDate        int64 // unix seconds
+	Tags                  map[string]string
+}
+
+// GenerateClientCertificateInput carries the fields GenerateClientCertificate
+// accepts.
+type GenerateClientCertificateInput struct {
+	Description string
+	Tags        map[string]string
+}
+
+// PageInput is the position/limit pair every paged Get* collection takes. A
+// zero Limit selects the AWS default of 25.
+type PageInput struct {
+	Position string
+	Limit    int
+}
+
+// ClientCertificatePage is one page of GetClientCertificates. Position is empty
+// on the last page.
+type ClientCertificatePage struct {
+	Items    []ClientCertificate
+	Position string
+}
+
+// DocumentationPartLocation identifies the API entity a documentation part
+// describes. Fields that do not apply to Type are empty.
+type DocumentationPartLocation struct {
+	Type       string
+	Path       string
+	Method     string
+	StatusCode string
+	Name       string
+}
+
+// DocumentationPart is one documentation entry of a REST API. Properties is
+// the JSON content map encoded as a string.
+type DocumentationPart struct {
+	ID         string
+	Location   DocumentationPartLocation
+	Properties string
+}
+
+// CreateDocumentationPartInput carries the fields CreateDocumentationPart
+// accepts.
+type CreateDocumentationPartInput struct {
+	Location   DocumentationPartLocation
+	Properties string
+}
+
+// GetDocumentationPartsInput carries the GetDocumentationParts filters.
+// NameQuery matches location names containing it; LocationStatus is
+// DOCUMENTED or UNDOCUMENTED.
+type GetDocumentationPartsInput struct {
+	Type           string
+	Path           string
+	NameQuery      string
+	LocationStatus string
+	PageInput
+}
+
+// DocumentationPartPage is one page of GetDocumentationParts.
+type DocumentationPartPage struct {
+	Items    []DocumentationPart
+	Position string
+}
+
+// ImportDocumentationPartsInput carries an ImportDocumentationParts request.
+// Body is an OpenAPI/Swagger document (JSON or YAML) whose
+// x-amazon-apigateway-documentation extension lists the parts. Mode is merge
+// (the default) or overwrite.
+type ImportDocumentationPartsInput struct {
+	Mode           string
+	FailOnWarnings bool
+	Body           []byte
+}
+
+// DocumentationPartIDs is the ImportDocumentationParts result.
+type DocumentationPartIDs struct {
+	IDs      []string
+	Warnings []string
+}
+
+// DocumentationVersion is a named snapshot of a REST API's documentation
+// parts.
+type DocumentationVersion struct {
+	Version     string
+	Description string
+	CreatedDate int64
+}
+
+// CreateDocumentationVersionInput carries the fields CreateDocumentationVersion
+// accepts. A non-empty StageName associates the new version with that stage.
+type CreateDocumentationVersionInput struct {
+	Version     string
+	StageName   string
+	Description string
+}
+
+// DocumentationVersionPage is one page of GetDocumentationVersions.
+type DocumentationVersionPage struct {
+	Items    []DocumentationVersion
+	Position string
+}
+
+// ThrottleSettings is the account-level request rate and burst limit.
+type ThrottleSettings struct {
+	BurstLimit int
+	RateLimit  float64
+}
+
+// Account is the per-region API Gateway account settings resource.
+type Account struct {
+	CloudWatchRoleARN string
+	Throttle          ThrottleSettings
+	Features          []string
+	APIKeyVersion     string
 }
 
 // APIGateway is the interface an API Gateway provider implements: the REST API
@@ -235,9 +397,53 @@ type APIGateway interface {
 	UpdateStage(ctx context.Context, restAPIID, stageName string, ops []PatchOperation) (*Stage, error)
 	DeleteStage(ctx context.Context, restAPIID, stageName string) error
 
-	// InvokeRoute resolves req.HTTPMethod+req.Path against the deployed stage's
-	// resource tree ({proxy+} greedy paths and {param} placeholders supported)
-	// and, for an AWS_PROXY/AWS Lambda integration, invokes the target function
-	// and returns its mapped HTTP response.
+	// GenerateClientCertificate creates a self-signed client certificate valid
+	// for 365 days.
+	GenerateClientCertificate(ctx context.Context, in GenerateClientCertificateInput) (*ClientCertificate, error)
+	GetClientCertificate(ctx context.Context, id string) (*ClientCertificate, error)
+	GetClientCertificates(ctx context.Context, page PageInput) (*ClientCertificatePage, error)
+	// UpdateClientCertificate applies a patchOperations document (only
+	// /description is mutable).
+	UpdateClientCertificate(ctx context.Context, id string, ops []PatchOperation) (*ClientCertificate, error)
+	// DeleteClientCertificate removes a certificate. It fails while a stage
+	// still references it.
+	DeleteClientCertificate(ctx context.Context, id string) error
+
+	CreateDocumentationPart(ctx context.Context, restAPIID string, in *CreateDocumentationPartInput) (*DocumentationPart, error)
+	GetDocumentationPart(ctx context.Context, restAPIID, partID string) (*DocumentationPart, error)
+	GetDocumentationParts(ctx context.Context, restAPIID string, in *GetDocumentationPartsInput) (*DocumentationPartPage, error)
+	// UpdateDocumentationPart applies a patchOperations document (only
+	// /properties is mutable).
+	UpdateDocumentationPart(ctx context.Context, restAPIID, partID string, ops []PatchOperation) (*DocumentationPart, error)
+	DeleteDocumentationPart(ctx context.Context, restAPIID, partID string) error
+	ImportDocumentationParts(ctx context.Context, restAPIID string, in ImportDocumentationPartsInput) (*DocumentationPartIDs, error)
+
+	// CreateDocumentationVersion snapshots the API's current documentation
+	// parts under a version name.
+	CreateDocumentationVersion(ctx context.Context, restAPIID string, in CreateDocumentationVersionInput) (*DocumentationVersion, error)
+	GetDocumentationVersion(ctx context.Context, restAPIID, version string) (*DocumentationVersion, error)
+	GetDocumentationVersions(ctx context.Context, restAPIID string, page PageInput) (*DocumentationVersionPage, error)
+	// UpdateDocumentationVersion applies a patchOperations document (only
+	// /description is mutable).
+	UpdateDocumentationVersion(ctx context.Context, restAPIID, version string, ops []PatchOperation) (*DocumentationVersion, error)
+	// DeleteDocumentationVersion removes a version. It fails while a stage
+	// still references it.
+	DeleteDocumentationVersion(ctx context.Context, restAPIID, version string) error
+
+	GetAccount(ctx context.Context) (*Account, error)
+	// UpdateAccount applies a patchOperations document (/cloudwatchRoleArn
+	// replace or remove, /features add or remove).
+	UpdateAccount(ctx context.Context, ops []PatchOperation) (*Account, error)
+
+	// TagResource, UntagResource and GetTags manage tags on a REST API or client
+	// certificate addressed by its ARN.
+	TagResource(ctx context.Context, arn string, tags map[string]string) error
+	UntagResource(ctx context.Context, arn string, keys []string) error
+	GetTags(ctx context.Context, arn string) (map[string]string, error)
+
+	// InvokeRoute routes req through the tree its stage's deployment captured.
+	// It resolves req.HTTPMethod+req.Path ({proxy+} greedy paths and {param}
+	// placeholders supported) and, for an AWS_PROXY/AWS Lambda integration,
+	// invokes the target function and returns its mapped HTTP response.
 	InvokeRoute(ctx context.Context, req *ProxyRequest) (*ProxyResponse, error)
 }

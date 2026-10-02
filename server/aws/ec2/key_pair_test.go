@@ -19,8 +19,8 @@ import (
 )
 
 // TestCreateKeyPairReturnsKeyIDAndUsablePEM pins that keyPairId is a real
-// key-... id (not an ARN) and that KeyMaterial parses as a PEM RSA private key
-// — the old 20-byte stub broke every SSH-connect flow.
+// key-... id (not an ARN) and that KeyMaterial parses as a PEM RSA private key.
+// The old 20-byte stub broke every SSH-connect flow.
 func TestCreateKeyPairReturnsKeyIDAndUsablePEM(t *testing.T) {
 	ctx := context.Background()
 	client := newEC2(t)

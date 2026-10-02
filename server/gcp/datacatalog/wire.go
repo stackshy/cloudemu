@@ -13,7 +13,7 @@ import (
 // maxBodyBytes caps a decoded request body.
 const maxBodyBytes = 8 << 20
 
-// resource-name builders (server side) — must match the driver's stable names.
+// resource-name builders (server side); must match the driver's stable names.
 func egResourceName(project, location, eg string) string {
 	return "projects/" + project + "/locations/" + location + "/" + entryGroupsSeg + "/" + eg
 }

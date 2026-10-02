@@ -44,7 +44,7 @@ type provisionedConcurrencyManager interface {
 }
 
 // provisionedConcurrencyResponse is the AWS Put/GetProvisionedConcurrencyConfig
-// response shape (no FunctionArn — that only appears on the List item shape).
+// response shape (no FunctionArn; that only appears on the List item shape).
 type provisionedConcurrencyResponse struct {
 	RequestedProvisionedConcurrentExecutions int    `json:"RequestedProvisionedConcurrentExecutions,omitempty"`
 	AvailableProvisionedConcurrentExecutions int    `json:"AvailableProvisionedConcurrentExecutions,omitempty"`
@@ -176,7 +176,7 @@ func putProvisionedConcurrency(
 // getProvisionedConcurrency checks the function exists first so a subsequent
 // NotFound from the provider is unambiguously "no config for this qualifier"
 // (ProvisionedConcurrencyConfigNotFoundException) rather than "function
-// missing" (ResourceNotFoundException) — real Lambda distinguishes the two.
+// missing" (ResourceNotFoundException). Real Lambda distinguishes the two.
 func (h *Handler) getProvisionedConcurrency(
 	w http.ResponseWriter, r *http.Request, mgr provisionedConcurrencyManager, name, qualifier string,
 ) {
@@ -216,7 +216,7 @@ func (h *Handler) deleteProvisionedConcurrency(
 // writeProvisionedConcurrencyNotFound emits the 404
 // ProvisionedConcurrencyConfigNotFoundException real Lambda returns when a
 // function exists but has no provisioned-concurrency config for the requested
-// qualifier — distinct from the generic ResourceNotFoundException a missing
+// qualifier, distinct from the generic ResourceNotFoundException a missing
 // function reports.
 func writeProvisionedConcurrencyNotFound(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusNotFound, "ProvisionedConcurrencyConfigNotFoundException", cerrors.Message(err))

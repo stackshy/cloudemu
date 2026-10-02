@@ -11,7 +11,7 @@ import (
 )
 
 // TestSnapshotRestoreRoundTrip proves the Azure Monitor mock serializes its
-// entire state — metric buffer, alarms, and action groups — and restores it into
+// entire state, metric buffer, alarms, and action groups, and restores it into
 // a fresh mock identity-preservingly.
 func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	ctx := context.Background()

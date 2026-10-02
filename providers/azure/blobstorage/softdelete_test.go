@@ -234,7 +234,7 @@ func blobInDeleted(t *testing.T, ctx context.Context, m *Mock, container, blob s
 // TestSoftDeleteSameKeyConcurrentNoLoss hammers the SAME blob key with racing
 // Delete-then-Undelete and Undelete-then-Delete sequences. The objects↔softDeleted
 // transition must be atomic under ctr.mu, so after every round the blob lands in
-// EXACTLY ONE store — never dropped from both (permanent loss) and never absent.
+// EXACTLY ONE store, never dropped from both (permanent loss) and never absent.
 // Repeated many rounds to surface the interleaving a distinct-key race can't.
 func TestSoftDeleteSameKeyConcurrentNoLoss(t *testing.T) {
 	ctx := context.Background()

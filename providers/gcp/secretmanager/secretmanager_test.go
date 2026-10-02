@@ -390,7 +390,7 @@ func TestDeleteIsHardDeleteRecreatable(t *testing.T) {
 		assert.NotEqual(t, "recreate-me", s.Name, "deleted secret must not appear in ListSecrets")
 	}
 
-	// Same secretId re-creates cleanly — no AlreadyExists.
+	// Same secretId re-creates cleanly: no AlreadyExists.
 	info, err := m.CreateSecret(ctx, driver.SecretConfig{Name: "recreate-me"}, []byte("v2"))
 	require.NoError(t, err)
 	assert.Equal(t, "recreate-me", info.Name)

@@ -45,7 +45,7 @@ func TestReadReplicaSharesEngineBackedSourceEndpoint(t *testing.T) {
 		t.Fatalf("replica source linkage not set: %q", replica.ReadReplicaSource)
 	}
 
-	// A replica shares the source's data — it must not provision its own database.
+	// A replica shares the source's data. It must not provision its own database.
 	for _, p := range eng.provisioned {
 		if p.InstanceID == "rep" {
 			t.Fatalf("replica must not provision a separate database: %+v", p)

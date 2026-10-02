@@ -2,131 +2,117 @@ package vpc
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
-	"net"
 	"net/http"
 	"sort"
-	"strings"
-	"sync"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
-
-// reservedIPBase is the start of the synthetic range CloudEmu hands out for
-// reserved addresses that the caller didn't pin to a specific IP.
-const reservedIPBase = "10.128.0.0"
 
 // Addresses are reserved IP ranges. Private services access uses a global one
 // to carve out the block a managed service is peered into, so a caller
 // reserves it while building a network and releases it while tearing one
-// down — which is where its absence stops the work.
+// down, which is where its absence stops the work.
 //
-// Like routers, these are held in the handler rather than the networking
-// driver: a reserved range with a purpose and prefix length is specific to
-// this provider's shape, not part of the portable subset.
+// The records live in the GCP networking provider (driver.GCPAddressStore),
+// not in this handler, so they (and their labels / labelFingerprint) are in the
+// emulator snapshot, survive a restore, and read the same through the Go
+// library and `serve`. addressStore adapts that capability to the handler: a
+// networking driver without it serves addresses as 501.
 type addressStore struct {
-	mu        sync.RWMutex
-	addresses map[string]map[string]json.RawMessage // project/scope -> name -> body
-	seq       uint32                                // monotonic IP allocator
+	store netdriver.GCPAddressStore
 }
 
-func newAddressStore() *addressStore {
-	return &addressStore{addresses: map[string]map[string]json.RawMessage{}}
+func newAddressStore(n netdriver.Networking) *addressStore {
+	s, _ := n.(netdriver.GCPAddressStore)
+
+	return &addressStore{store: s}
 }
 
-// allocIP hands out the next IP from the synthetic reserved range. Real GCP
-// allocates an address at reservation time; a caller reading back status
-// RESERVED with an actual IP is what unblocks PSA/VPC-peering range setup.
-func (s *addressStore) allocIP() string {
-	s.mu.Lock()
-	s.seq++
-	n := s.seq
-	s.mu.Unlock()
+// errAddressesUnsupported is returned when the networking driver does not
+// implement the reserved-address capability.
+var errAddressesUnsupported = cerrors.New(cerrors.Unimplemented,
+	"compute addresses are not supported by this networking driver")
 
-	base := net.ParseIP(reservedIPBase).To4()
-
-	v := binary.BigEndian.Uint32(base) + n
-	out := make(net.IP, net.IPv4len)
-	binary.BigEndian.PutUint32(out, v)
-
-	return out.String()
-}
-
-func (s *addressStore) key(project, scope string) string { return project + "/" + scope }
-
-func (s *addressStore) put(project, scope, name string, body json.RawMessage) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	k := s.key(project, scope)
-	if s.addresses[k] == nil {
-		s.addresses[k] = map[string]json.RawMessage{}
+func (s *addressStore) insert(ctx context.Context, project, scope, name string, body json.RawMessage) error {
+	if s.store == nil {
+		return errAddressesUnsupported
 	}
 
-	s.addresses[k][name] = body
+	return s.store.InsertGCPAddress(ctx, netdriver.GCPAddress{Project: project, Scope: scope, Name: name, Body: body})
 }
 
-func (s *addressStore) get(project, scope, name string) (json.RawMessage, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (s *addressStore) get(ctx context.Context, project, scope, name string) (json.RawMessage, bool) {
+	if s.store == nil {
+		return nil, false
+	}
 
-	b, ok := s.addresses[s.key(project, scope)][name]
+	a, err := s.store.GetGCPAddress(ctx, project, scope, name)
+	if err != nil {
+		return nil, false
+	}
 
-	return b, ok
+	return a.Body, true
 }
 
-func (s *addressStore) list(project, scope string) []json.RawMessage {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (s *addressStore) list(ctx context.Context, project, scope string) []json.RawMessage {
+	if s.store == nil {
+		return nil
+	}
 
-	byName := s.addresses[s.key(project, scope)]
-	out := make([]json.RawMessage, 0, len(byName))
+	all, err := s.store.ListGCPAddresses(ctx, project, scope)
+	if err != nil {
+		return nil
+	}
 
-	for _, b := range byName {
-		out = append(out, b)
+	out := make([]json.RawMessage, 0, len(all))
+	for i := range all {
+		out = append(out, all[i].Body)
 	}
 
 	return out
 }
 
 // allByScope returns every stored address for a project grouped by the scope
-// ("global" or a region name) it was reserved in — the grouping aggregatedList
+// ("global" or a region name) it was reserved in. The grouping aggregatedList
 // projects into per-scope buckets.
-func (s *addressStore) allByScope(project string) map[string][]json.RawMessage {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
+func (s *addressStore) allByScope(ctx context.Context, project string) map[string][]json.RawMessage {
 	out := map[string][]json.RawMessage{}
-	prefix := project + "/"
 
-	for k, byName := range s.addresses {
-		if !strings.HasPrefix(k, prefix) {
-			continue
-		}
+	if s.store == nil {
+		return out
+	}
 
-		scope := strings.TrimPrefix(k, prefix)
-		for _, b := range byName {
-			out[scope] = append(out[scope], b)
-		}
+	all, err := s.store.ListGCPAddresses(ctx, project, "")
+	if err != nil {
+		return out
+	}
+
+	for i := range all {
+		out[all[i].Scope] = append(out[all[i].Scope], all[i].Body)
 	}
 
 	return out
 }
 
-func (s *addressStore) delete(project, scope, name string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *addressStore) delete(ctx context.Context, project, scope, name string) bool {
+	return s.store != nil && s.store.DeleteGCPAddress(ctx, project, scope, name) == nil
+}
 
-	k := s.key(project, scope)
-	if _, ok := s.addresses[k][name]; !ok {
-		return false
+// allocIP hands out the next IP from the provider's synthetic reserved range.
+// Real GCP allocates an address at reservation time; a caller reading back
+// status RESERVED with an actual IP is what unblocks PSA/VPC-peering range setup.
+func (s *addressStore) allocIP(ctx context.Context) string {
+	if s.store == nil {
+		return ""
 	}
 
-	delete(s.addresses[k], name)
+	ip, _ := s.store.AllocateGCPAddressIP(ctx)
 
-	return true
+	return ip
 }
 
 // scopeOf keys an address by the scope it was reserved in, so a global
@@ -166,6 +152,16 @@ func (h *Handler) routeAddresses(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
+	if rp.Action != "" {
+		if rp.Action == setLabelsAction && r.Method == http.MethodPost {
+			h.setAddressLabels(w, r, rp)
+		} else {
+			gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
+		}
+
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.getAddress(w, r, rp)
@@ -192,27 +188,38 @@ func (h *Handler) insertAddress(w http.ResponseWriter, r *http.Request, rp gcpre
 		return
 	}
 
-	if _, exists := h.addresses.get(rp.Project, scopeOf(rp), named.Name); exists {
+	if h.addresses.store == nil {
+		writeAddressErr(w, errAddressesUnsupported)
+		return
+	}
+
+	if _, exists := h.addresses.get(r.Context(), rp.Project, scopeOf(rp), named.Name); exists {
 		gcprest.WriteError(w, http.StatusConflict, "alreadyExists",
 			"address "+named.Name+" already exists")
 
 		return
 	}
 
-	h.addresses.put(rp.Project, scopeOf(rp), named.Name,
-		h.enrichAddress(raw, rp, hostOf(r), named.Name))
+	err := h.addresses.insert(r.Context(), rp.Project, scopeOf(rp), named.Name,
+		h.enrichAddress(r.Context(), raw, rp, hostOf(r), named.Name))
+	if err != nil {
+		writeAddressErr(w, err)
+		return
+	}
 
 	gcprest.WriteJSON(w, http.StatusOK, h.ops.RecordDone(hostOf(r), rp.Project,
 		rp.Scope, rp.ScopeName, resourceAddresses, named.Name, "insert"))
 }
 
 // enrichAddress fills the server-assigned fields real GCP stamps on a reserved
-// address — kind, id, status=RESERVED, an allocated IP, selfLink, region and
-// creationTimestamp — while preserving everything the caller sent (purpose,
+// address: kind, id, status=RESERVED, an allocated IP, selfLink, region and
+// creationTimestamp, while preserving everything the caller sent (purpose,
 // prefixLength, addressType, …). Without this a Get reads back all-empty.
 //
 //nolint:gocritic // rp is a request-scoped value
-func (h *Handler) enrichAddress(raw json.RawMessage, rp gcprest.ResourcePath, host, name string) json.RawMessage {
+func (h *Handler) enrichAddress(ctx context.Context, raw json.RawMessage, rp gcprest.ResourcePath,
+	host, name string,
+) json.RawMessage {
 	var body map[string]any
 	if err := json.Unmarshal(raw, &body); err != nil || body == nil {
 		return raw
@@ -224,8 +231,9 @@ func (h *Handler) enrichAddress(raw json.RawMessage, rp gcprest.ResourcePath, ho
 	body["selfLink"] = gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, resourceAddresses, name)
 	body["creationTimestamp"] = nowRFC3339()
 
+	// labelFingerprint is stamped by the provider on insert.
 	if addr, ok := body["address"].(string); !ok || addr == "" {
-		body["address"] = h.addresses.allocIP()
+		body["address"] = h.addresses.allocIP(ctx)
 	}
 
 	if rp.Scope == gcprest.ScopeRegions {
@@ -242,7 +250,7 @@ func (h *Handler) enrichAddress(raw json.RawMessage, rp gcprest.ResourcePath, ho
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) getAddress(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	body, ok := h.addresses.get(rp.Project, scopeOf(rp), rp.ResourceName)
+	body, ok := h.addresses.get(r.Context(), rp.Project, scopeOf(rp), rp.ResourceName)
 	if !ok {
 		gcprest.WriteError(w, http.StatusNotFound, "notFound",
 			"address "+rp.ResourceName+" not found")
@@ -257,14 +265,14 @@ func (h *Handler) getAddress(w http.ResponseWriter, r *http.Request, rp gcprest.
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) listAddresses(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	all := h.addresses.list(rp.Project, scopeOf(rp))
+	all := h.addresses.list(r.Context(), rp.Project, scopeOf(rp))
 	filter := r.URL.Query().Get("filter")
 	usersByIP := h.addressUsersByIP(r.Context(), hostOf(r), rp.Project)
 
 	items := make([]json.RawMessage, 0, len(all))
 
 	for _, body := range all {
-		if nameMatches(filter, rawName(body)) {
+		if addressMatches(filter, body) {
 			items = append(items, reflectAddressUsage(body, usersByIP))
 		}
 	}
@@ -292,7 +300,7 @@ func (h *Handler) listAddresses(w http.ResponseWriter, r *http.Request, rp gcpre
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) aggregatedListAddresses(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	byScope := h.addresses.allByScope(rp.Project)
+	byScope := h.addresses.allByScope(r.Context(), rp.Project)
 	filter := r.URL.Query().Get("filter")
 	host := hostOf(r)
 	usersByIP := h.addressUsersByIP(r.Context(), host, rp.Project)
@@ -307,7 +315,7 @@ func (h *Handler) aggregatedListAddresses(w http.ResponseWriter, r *http.Request
 		list := make([]json.RawMessage, 0, len(bodies))
 
 		for _, b := range bodies {
-			if nameMatches(filter, rawName(b)) {
+			if addressMatches(filter, b) {
 				list = append(list, reflectAddressUsage(b, usersByIP))
 			}
 		}
@@ -352,7 +360,7 @@ func (h *Handler) deleteAddress(w http.ResponseWriter, r *http.Request, rp gcpre
 	// an accessConfig natIP, returning 400 resourceInUseByAnotherResource (the
 	// same in-use guard the disk/subnetwork deletes carry). The address deletes
 	// cleanly once the instance releasing it is gone.
-	body, ok := h.addresses.get(rp.Project, scopeOf(rp), rp.ResourceName)
+	body, ok := h.addresses.get(r.Context(), rp.Project, scopeOf(rp), rp.ResourceName)
 	if !ok {
 		gcprest.WriteError(w, http.StatusNotFound, "notFound",
 			"address "+rp.ResourceName+" not found")
@@ -370,7 +378,7 @@ func (h *Handler) deleteAddress(w http.ResponseWriter, r *http.Request, rp gcpre
 		}
 	}
 
-	if !h.addresses.delete(rp.Project, scopeOf(rp), rp.ResourceName) {
+	if !h.addresses.delete(r.Context(), rp.Project, scopeOf(rp), rp.ResourceName) {
 		gcprest.WriteError(w, http.StatusNotFound, "notFound",
 			"address "+rp.ResourceName+" not found")
 
@@ -485,4 +493,15 @@ func addressIP(body json.RawMessage) string {
 	_ = json.Unmarshal(body, &a)
 
 	return a.Address
+}
+
+// writeAddressErr writes a provider error for an address call, answering a
+// driver without the address capability with 501.
+func writeAddressErr(w http.ResponseWriter, err error) {
+	if cerrors.GetCode(err) == cerrors.Unimplemented {
+		gcprest.WriteError(w, http.StatusNotImplemented, "notImplemented", cerrors.Message(err))
+		return
+	}
+
+	gcprest.WriteCErr(w, err)
 }

@@ -2,13 +2,13 @@
 // control-plane API: accelerators, their listeners and the endpoint groups under
 // each listener, plus per-accelerator attributes (flow logs) and resource tags.
 //
-// Global Accelerator is a GLOBAL service — its ARNs carry an empty region field
+// Global Accelerator is a GLOBAL service: its ARNs carry an empty region field
 // (arn:aws:globalaccelerator::<acct>:accelerator/<id>) and its control plane is
 // reached in us-west-2. The emulator is control-plane only: it does NOT route
 // any real traffic and runs no health checks. An accelerator is created
-// synchronously with stable computed fields — AcceleratorArn, DnsName,
+// synchronously with stable computed fields (AcceleratorArn, DnsName,
 // DualStackDnsName, two deterministic static IPv4 addresses (IpSets), Status and
-// CreatedTime — minted once at create and stored, so repeated DescribeAccelerator
+// CreatedTime), minted once at create and stored, so repeated DescribeAccelerator
 // and ListAccelerators reads never drift. Status settles to DEPLOYED at once (the
 // real service takes minutes) so an IaC waiter completes without hanging.
 //
@@ -38,7 +38,7 @@ type PortRange struct {
 
 // IPSet is a set of static IP addresses of one family assigned to an
 // accelerator. IpFamily is the legacy member; IpAddressFamily is its modern
-// spelling — both are emitted so old and new SDKs read the value.
+// spelling, and both are emitted so old and new SDKs read the value.
 type IPSet struct {
 	IPFamily        string   `json:"ipFamily,omitempty"`
 	IPAddresses     []string `json:"ipAddresses,omitempty"`

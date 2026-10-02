@@ -129,7 +129,7 @@ func (s *sharedStack) dataClient(t *testing.T, endpoint string) *azcosmos.Client
 // TestCosmosDoesNotStealBlobPaths proves that with blob and cosmos coexisting
 // and NO account named after the leading segment, a blob path whose first
 // segment is a "dbs"/"offers" virtual-directory prefix is served by the Blob
-// handler — not stolen by the Cosmos data plane (which would answer PUT with a
+// handler, not stolen by the Cosmos data plane (which would answer PUT with a
 // 405). The Blob handler stamps X-Ms-Version on every response; the Cosmos
 // handler never does, so that header proves Blob served the request.
 func TestCosmosDoesNotStealBlobPaths(t *testing.T) {

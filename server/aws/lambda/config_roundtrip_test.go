@@ -40,7 +40,7 @@ func zipWith(t *testing.T, name, body string) []byte {
 
 // TestSDKCreateFunctionPublish covers CreateFunction with Publish=true: AWS
 // publishes version 1 and the response is that published version's configuration
-// (Version "1", :1-qualified ARN). Before the fix Publish was ignored — the
+// (Version "1", :1-qualified ARN). Before the fix Publish was ignored: the
 // response stayed $LATEST and no version was cut, breaking Terraform
 // aws_lambda_function{publish=true}.
 func TestSDKCreateFunctionPublish(t *testing.T) {

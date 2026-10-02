@@ -2,9 +2,9 @@ package driver
 
 import "context"
 
-// Microsoft.Network's Private Link surface — privateEndpoints and
-// privateLinkServices — has no equivalent in the cross-cloud Networking model,
-// so — like AzureNetworkGateways and AzurePublicIPPrefixes — the Azure provider
+// Microsoft.Network's Private Link surface (privateEndpoints and
+// privateLinkServices) has no equivalent in the cross-cloud Networking model,
+// so, like AzureNetworkGateways and AzurePublicIPPrefixes, the Azure provider
 // stores it through this OPTIONAL, type-asserted capability. AWS and GCP do not
 // implement it. Both resource types are addressed by (resourceGroup, name) to
 // match ARM; an empty resourceGroup on a List means subscription-wide.
@@ -49,8 +49,8 @@ type AzurePrivateLinkServiceIPConfiguration struct {
 	Primary                   bool
 }
 
-// AzurePrivateLinkService is one Microsoft.Network/privateLinkServices resource
-// — the provider side of a Private Link, fronted by a load balancer.
+// AzurePrivateLinkService is one Microsoft.Network/privateLinkServices resource:
+// the provider side of a Private Link, fronted by a load balancer.
 type AzurePrivateLinkService struct {
 	Name                    string
 	ResourceGroup           string

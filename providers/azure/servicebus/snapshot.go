@@ -43,7 +43,7 @@ type queueSnapshot struct {
 	Sessions               map[string]*sessionState `json:"sessions,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // Service Bus message bodies are the queue state, not bulk object assets.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := serviceBusSnapshot{Queues: make(map[string]*queueSnapshot, m.queues.Len())}

@@ -100,7 +100,7 @@ func (s *ClusterState) markPodRunningLocked(pod *corev1.Pod) {
 }
 
 // markPodUnschedulableLocked leaves a Pod Pending with a PodScheduled=False
-// condition (reason Unschedulable) and no Pod IP — the state a real pod sits in
+// condition (reason Unschedulable) and no Pod IP: the state a real pod sits in
 // when no node can accept it. The FailedScheduling event is emitted by
 // scheduleNodeLocked. Callers hold s.mu.
 func markPodUnschedulableLocked(pod *corev1.Pod, now metav1.Time) {
@@ -127,7 +127,7 @@ func (s *ClusterState) newControllerPod(
 	// caller's (the controller's) shared template map, and record the hash so a
 	// later template change is detected as a rolling update.
 	// Capacity is a hint; the map grows to fit the extra pod-template-hash key.
-	// (Avoid len()+1 arithmetic — it trips CodeQL's allocation-overflow query.)
+	// (Avoid len()+1 arithmetic; it trips CodeQL's allocation-overflow query.)
 	labels := make(map[string]string, len(tmpl.Labels))
 	for k, v := range tmpl.Labels {
 		labels[k] = v
@@ -166,7 +166,7 @@ func (s *ClusterState) buildControllerPod(
 
 // podTemplateHashLabel mirrors the upstream label a ReplicaSet stamps on its
 // Pods; a change to the pod template changes the hash, which the reconciler
-// treats as a rolling update — stale-hash Pods are replaced.
+// treats as a rolling update: stale-hash Pods are replaced.
 const podTemplateHashLabel = "pod-template-hash"
 
 //nolint:gocritic // hugeParam: k8s template struct, copy is intentional.
@@ -259,7 +259,7 @@ func (s *ClusterState) syncScaledPods(
 }
 
 // syncStablePods reconciles the owner's Pods to exactly the named set (stable
-// identity — StatefulSet). Returns the materialized count and how many of those
+// identity, StatefulSet). Returns the materialized count and how many of those
 // are actually Running.
 //
 //nolint:gocritic // hugeParam: k8s template/owner structs, copy is intentional.
@@ -320,7 +320,7 @@ func (s *ClusterState) reconcileServiceEndpointsLocked(svc *corev1.Service) {
 		subsets = []corev1.EndpointSubset{{Addresses: addrs, Ports: endpointPorts(svc)}}
 	}
 
-	// Only touch the stores when the address set actually changed — resync runs
+	// Only touch the stores when the address set actually changed. Resync runs
 	// for every Service on any Pod change, so most calls are no-ops and must not
 	// emit spurious watch events / bump ResourceVersions. The EndpointSlice
 	// mirrors the same addresses, so it only needs updating when Endpoints did.
@@ -483,7 +483,7 @@ func labelsMatch(selector, labels map[string]string) bool {
 // reconcileDeploymentLocked brings the Pods owned by dep to its desired count
 // and refreshes dep.Status, then resyncs Service endpoints. (The intermediate
 // ReplicaSet object is not yet materialized; Pods are owned by the Deployment
-// directly — a documented simplification.) Callers hold s.mu.
+// directly, a documented simplification.) Callers hold s.mu.
 func (s *ClusterState) reconcileDeploymentLocked(dep *appsv1.Deployment) {
 	defaultDeploymentStrategy(dep)
 
@@ -495,7 +495,7 @@ func (s *ClusterState) reconcileDeploymentLocked(dep *appsv1.Deployment) {
 	desired := clampPodCount(requested)
 	noteClampMeta(&dep.ObjectMeta, requested, desired)
 
-	// Emit ScalingReplicaSet only on an actual replica-count change — this
+	// Emit ScalingReplicaSet only on an actual replica-count change. This
 	// reconcile runs on every create/update/patch, so an ungated emit would fire
 	// on a no-op annotation patch (dedup absorbs volume, not the wrong semantics).
 	prevReplicas := dep.Status.Replicas
@@ -564,8 +564,7 @@ func reconcileDaemonSet(s *ClusterState, obj *unstructured.Unstructured) {
 	defaultDaemonSetStrategy(obj)
 
 	// A DaemonSet runs one Pod per node whose labels satisfy the template's
-	// nodeSelector AND whose taints the template tolerates — one Pod per matching
-	// node, N automatically once multi-node scheduling is on. A non-matching
+	// nodeSelector AND whose taints the template tolerates. A non-matching
 	// selector (or an untolerated taint) yields zero Pods for that node.
 	tmpl := podTemplateFromUnstructured(obj)
 	placements := s.daemonSetPlacementsLocked(obj.GetName(), tmpl)
@@ -652,7 +651,7 @@ func (s *ClusterState) syncDaemonSetPods(
 	return len(placements)
 }
 
-// reconcilePVC marks a PersistentVolumeClaim Bound — cloudemu dynamically
+// reconcilePVC marks a PersistentVolumeClaim Bound. cloudemu dynamically
 // "provisions" storage immediately (there is no real volume plugin).
 func reconcilePVC(_ *ClusterState, obj *unstructured.Unstructured) {
 	if phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase"); phase == "" {
@@ -693,7 +692,7 @@ const (
 
 // reconcileJob runs a Job to completion: it reconciles the Job's owned Pods to
 // exactly `completions` (default 1) Succeeded Pods and marks the Job Complete.
-// Reconciling to the exact count — rather than only topping up — means a lowered
+// Reconciling to the exact count, rather than only topping up, means a lowered
 // completions drops the surplus Pods, so status.succeeded reflects the current
 // spec instead of overstating it with Pods from a previous, larger run.
 func reconcileJob(s *ClusterState, obj *unstructured.Unstructured) {
@@ -738,7 +737,7 @@ func reconcileJob(s *ClusterState, obj *unstructured.Unstructured) {
 		owned = append(owned, pod)
 	}
 
-	// Count Pods that actually reached Succeeded — a Pod left Pending by a failed
+	// Count Pods that actually reached Succeeded. A Pod left Pending by a failed
 	// schedule (multi-node: infeasible requests) is not a completion, so a Job
 	// that can't place its Pods is not reported Complete.
 	succeeded := 0
@@ -762,7 +761,7 @@ func reconcileJob(s *ClusterState, obj *unstructured.Unstructured) {
 }
 
 // markPodSucceededLocked drives a Pod to the completed (Succeeded) terminal
-// state used by Job pods — but only if it actually scheduled. A Pod that failed
+// state used by Job pods, but only if it actually scheduled. A Pod that failed
 // to schedule (multi-node: no feasible node) is left Pending/Unschedulable by
 // markPodRunningLocked and must NOT be forced Succeeded, or reconcileJob would
 // falsely report an unschedulable Job complete. Callers hold s.mu.
@@ -798,7 +797,7 @@ const (
 //   - whenDeleted=Delete stamps the StatefulSet as the PVC owner so
 //     garbageCollectLocked reaps the PVCs when the StatefulSet is deleted. The
 //     default (Retain) leaves NO owner ref, so the volumes survive a delete /
-//     helm uninstall — matching real k8s, where data is not lost on uninstall.
+//     helm uninstall, matching real k8s, where data is not lost on uninstall.
 //   - whenScaled=Delete removes the PVCs whose ordinal falls outside the new
 //     replica count. This is an EXPLICIT reap: StatefulSet scale-down deletes
 //     Pods with a bare delete that never invokes garbageCollectLocked, so a Pod
@@ -836,7 +835,7 @@ func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured,
 				continue
 			}
 
-			// Fresh deep copy per ordinal — NestedMap copies once, so hoisting it
+			// Fresh deep copy per ordinal: NestedMap copies once, so hoisting it
 			// out of the loop would alias one spec map across every PVC.
 			spec, _, _ := unstructured.NestedMap(tmpl, "spec")
 
@@ -853,7 +852,7 @@ func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured,
 			pvc.SetUID(types.UID(newUID()))
 			pvc.SetCreationTimestamp(s.now())
 
-			// Only whenDeleted=Delete stamps the owner ref — the one case where the
+			// Only whenDeleted=Delete stamps the owner ref: the one case where the
 			// STS-delete cascade should reap the PVC. Under the Retain default the
 			// PVC is deliberately ownerless so it outlives the StatefulSet.
 			if whenDeleted == pvcRetentionDelete {
@@ -868,7 +867,7 @@ func (s *ClusterState) syncStatefulSetPVCsLocked(sts *unstructured.Unstructured,
 }
 
 // statefulSetPVCRetentionPolicy reads spec.persistentVolumeClaimRetentionPolicy,
-// defaulting either field to Retain when unset — the apiserver default.
+// defaulting either field to Retain when unset, matching the apiserver default.
 func statefulSetPVCRetentionPolicy(sts *unstructured.Unstructured) (whenDeleted, whenScaled string) {
 	whenDeleted, whenScaled = pvcRetentionRetain, pvcRetentionRetain
 
@@ -886,7 +885,7 @@ func statefulSetPVCRetentionPolicy(sts *unstructured.Unstructured) (whenDeleted,
 }
 
 // reapScaledStatefulSetPVCsLocked deletes the volumeClaimTemplate PVCs whose
-// ordinal is >= replicas — the whenScaled=Delete behavior. It scans the PVC
+// ordinal is >= replicas (the whenScaled=Delete behavior). It scans the PVC
 // store for "<template>-<sts>-<ordinal>" names in the namespace and reaps the
 // out-of-range ones explicitly, because StatefulSet scale-down never runs the
 // ownerReference garbage collector.
@@ -929,7 +928,7 @@ func ownerRefOf(obj *unstructured.Unstructured) metav1.OwnerReference {
 // maxReconciledPods caps how many Pods a single controller materializes. The
 // reconciler runs synchronously under the cluster lock, so an unbounded
 // replicas/completions (a copied prod manifest, a typo, a fuzz input) would
-// otherwise allocate and hang the entire cluster API — a real apiserver just
+// otherwise allocate and hang the entire cluster API; a real apiserver just
 // stores the integer and lets asynchronous controllers catch up. Clamping keeps
 // the emulator responsive; the object's own spec is preserved unchanged.
 const maxReconciledPods = 500
@@ -1013,7 +1012,7 @@ func podTemplateFromUnstructured(obj *unstructured.Unstructured) corev1.PodTempl
 
 // setWorkloadStatus mirrors the workload's replica counts onto the standard
 // status fields (ReplicaSet/StatefulSet share these names). total is the
-// materialized Pod count; ready is how many are actually Running — they differ
+// materialized Pod count; ready is how many are actually Running. They differ
 // only when a Pod failed to schedule and sits Pending, so readyReplicas/
 // availableReplicas reflect capacity rather than mere existence.
 func setWorkloadStatus(obj *unstructured.Unstructured, total, ready int) {

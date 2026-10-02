@@ -30,7 +30,7 @@ const (
 	defaultSKU        = "standard"
 
 	// urlShardModulo bounds the synthetic regional shard in a workspace URL
-	// (adb-{id}.{shard}.azuredatabricks.net), matching Azure's 1–2 digit shard.
+	// (adb-{id}.{shard}.azuredatabricks.net), matching Azure's 1-2 digit shard.
 	urlShardModulo = 100
 )
 

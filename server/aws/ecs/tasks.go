@@ -164,6 +164,7 @@ func (h *Handler) describeTasks(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Tasks   []string `json:"tasks"`
 		Cluster string   `json:"cluster"`
+		Include []string `json:"include"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -175,6 +176,13 @@ func (h *Handler) describeTasks(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 
 		return
+	}
+
+	// Tags are only returned when the caller opts in via include=TAGS.
+	if !includes(req.Include, "TAGS") {
+		for i := range tasks {
+			tasks[i].Tags = nil
+		}
 	}
 
 	h.writeTasks(w, tasks, failures)

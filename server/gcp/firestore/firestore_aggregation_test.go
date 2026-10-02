@@ -299,7 +299,7 @@ func TestDatabaseAggregationCountUpTo(t *testing.T) {
 
 // TestAggregationCrossDatabaseIsolation runs :runAggregationQuery against the
 // same collection under two databases of one project and asserts each database
-// counts only its own documents — confirming the #969 (project, database)
+// counts only its own documents, confirming the #969 (project, database)
 // namespace keying still holds on the aggregation path.
 func TestAggregationCrossDatabaseIsolation(t *testing.T) {
 	cloudP := cloudemu.NewGCP()

@@ -43,7 +43,7 @@ func newTagServer(t *testing.T) (*ec2.Client, *awselbv2.Client) {
 
 // TestDescribeTagsReturnsEC2InstanceTag pins that an EC2-scoped DescribeTags
 // (signed with the ec2 credential) falls through the elbv2 gate to the EC2
-// handler and reports tags applied via CreateTags — the regression the elbv2
+// handler and reports tags applied via CreateTags, the regression the elbv2
 // gate would otherwise turn into a 400 InvalidAction.
 func TestDescribeTagsReturnsEC2InstanceTag(t *testing.T) {
 	ctx := context.Background()
@@ -141,7 +141,7 @@ func TestDescribeTagsKeyFilterNarrows(t *testing.T) {
 
 // TestDescribeTagsELBScopedRoutesToELBv2 pins that an ELBv2-scoped DescribeTags
 // (signed with the elasticloadbalancing credential) still routes to the elbv2
-// handler — the gate must keep claiming its own DescribeTags, not defer every
+// handler: the gate must keep claiming its own DescribeTags, not defer every
 // call to EC2.
 func TestDescribeTagsELBScopedRoutesToELBv2(t *testing.T) {
 	ctx := context.Background()

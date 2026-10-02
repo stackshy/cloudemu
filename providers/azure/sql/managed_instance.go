@@ -230,7 +230,7 @@ func (m *Mock) FailoverManagedInstance(_ context.Context, name string) error {
 
 // transitionManagedInstance moves a managed instance from one state to another,
 // no-op when already in the target state and a precondition error when it is in
-// neither — matching the sibling flex/Cloud SQL lifecycle guards.
+// neither, matching the sibling flex/Cloud SQL lifecycle guards.
 func (m *Mock) transitionManagedInstance(_ context.Context, name, from, to, verb string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -17,9 +17,13 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 type caSnapshot struct {
 	Environments json.RawMessage `json:"environments,omitempty"`
 	Apps         json.RawMessage `json:"apps,omitempty"`
+	// DaprComponents and Storages are the environments' children. A snapshot
+	// written before they existed has neither key.
+	DaprComponents json.RawMessage `json:"daprComponents,omitempty"`
+	Storages       json.RawMessage `json:"storages,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // Container Apps hold no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()
@@ -35,7 +39,17 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 		return nil, fmt.Errorf("containerapps: snapshot apps: %w", err)
 	}
 
-	return json.Marshal(caSnapshot{Environments: envs, Apps: apps})
+	dapr, err := m.dapr.Snapshot()
+	if err != nil {
+		return nil, fmt.Errorf("containerapps: snapshot dapr components: %w", err)
+	}
+
+	storages, err := m.storages.Snapshot()
+	if err != nil {
+		return nil, fmt.Errorf("containerapps: snapshot storages: %w", err)
+	}
+
+	return json.Marshal(caSnapshot{Environments: envs, Apps: apps, DaprComponents: dapr, Storages: storages})
 }
 
 // Restore rebuilds every environment and container app under its original id.
@@ -57,6 +71,18 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	if len(snap.Apps) > 0 {
 		if err := m.apps.LoadSnapshot(snap.Apps); err != nil {
 			return fmt.Errorf("containerapps: restore apps: %w", err)
+		}
+	}
+
+	if len(snap.DaprComponents) > 0 {
+		if err := m.dapr.LoadSnapshot(snap.DaprComponents); err != nil {
+			return fmt.Errorf("containerapps: restore dapr components: %w", err)
+		}
+	}
+
+	if len(snap.Storages) > 0 {
+		if err := m.storages.LoadSnapshot(snap.Storages); err != nil {
+			return fmt.Errorf("containerapps: restore storages: %w", err)
 		}
 	}
 

@@ -22,8 +22,9 @@ func (m *Mock) ImportCertificate(_ context.Context, in driver.ImportCertificateI
 		return "", err
 	}
 
-	// Validate the private key parses and matches the certificate — the most
-	// common real-ACM import error. tls.X509KeyPair does both checks at once.
+	// Validate the private key parses and matches the certificate. A mismatched
+	// key/cert pair is the most common real-ACM import error; tls.X509KeyPair
+	// does both checks at once.
 	if _, err := tls.X509KeyPair(pemBytes(in.CertificatePEM), pemBytes(in.PrivateKeyPEM)); err != nil {
 		return "", invalidParameter("private key could not be parsed or does not match the certificate: %v", err)
 	}
@@ -106,7 +107,7 @@ func (m *Mock) ExportCertificate(
 	defer cd.mu.RUnlock()
 
 	// Real ACM refuses to export the private key of a public AMAZON_ISSUED
-	// certificate — only imported and private-CA certs are exportable. The key
+	// certificate. Only imported and private-CA certs are exportable. The key
 	// exists server-side (we need it to serve GetCertificate), so the gate is on
 	// Type, matching GetCertificate's own key-withholding.
 	if cd.cert.Type == driver.TypeAmazonIssued {

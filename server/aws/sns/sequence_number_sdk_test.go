@@ -11,7 +11,7 @@ import (
 
 // TestSDKPublishFifoReturnsSequenceNumber asserts the wire layer surfaces the
 // FIFO-only SequenceNumber real SNS returns from Publish, and omits it for a
-// standard topic — a real aws-sdk-go-v2 client that orders FIFO messages by
+// standard topic. A real aws-sdk-go-v2 client that orders FIFO messages by
 // SequenceNumber otherwise reads an empty value.
 func TestSDKPublishFifoReturnsSequenceNumber(t *testing.T) {
 	client := newSDKClient(t)

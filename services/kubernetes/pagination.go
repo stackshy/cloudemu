@@ -74,15 +74,15 @@ func resumeIndex[T any](items []T, lastKey string) int {
 // listPage slices items for a `?limit=&continue=` list request (client-go's
 // chunked pager / kubectl chunked listing). When limit is absent or non-positive
 // the full slice is returned with an empty token, preserving the unpaginated
-// default. The returned string is the value for list metadata.continue — "" on
-// the final (or only) page. Items MUST already be sorted by key; every list path
+// default. The returned string is the value for list metadata.continue ("" on
+// the final (or only) page). Items MUST already be sorted by key; every list path
 // here sorts by namespace/name before calling this.
 //
 // Resume is anchored to the token's last-emitted key: the next page skips to the
 // first item whose key is strictly greater, so a mutation before that key cannot
 // skip or duplicate a later item. A malformed continue token (bad base64/JSON or
-// wrong shape) writes a 410 Gone Status and returns ok=false — the client-go
-// contract — instead of silently returning the full list. A well-formed token
+// wrong shape) writes a 410 Gone Status and returns ok=false, matching the
+// client-go contract, instead of silently returning the full list. A well-formed token
 // whose key was since deleted is NOT an error: resume proceeds from the next
 // greater key.
 func listPage[T any](items []T, w http.ResponseWriter, r *http.Request) (page []T, cont string, ok bool) {
@@ -91,7 +91,7 @@ func listPage[T any](items []T, w http.ResponseWriter, r *http.Request) (page []
 		return items, "", true
 	}
 
-	// Elements that aren't metav1.Object can't be key-paginated — return the
+	// Elements that aren't metav1.Object can't be key-paginated, so return the
 	// full list. All elements share type T, so probing the first suffices.
 	if len(items) > 0 {
 		if _, keyed := objectKey(&items[0]); !keyed {

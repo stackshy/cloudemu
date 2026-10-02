@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	cfn "github.com/stackshy/cloudemu/v2/services/cloudformation"
 )
 
 func (h *Handler) createStack(w http.ResponseWriter, r *http.Request) {
@@ -34,8 +35,27 @@ func (h *Handler) updateStack(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) continueUpdateRollback(w http.ResponseWriter, r *http.Request) {
+	err := h.api.ContinueUpdateRollback(r.Context(), &cfn.ContinueUpdateRollbackInput{
+		StackName:       r.Form.Get("StackName"),
+		ResourcesToSkip: awsquery.ListStrings(r.Form, "ResourcesToSkip.member"),
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, continueUpdateRollbackResponse{Xmlns: Namespace, Meta: meta()})
+}
+
 func (h *Handler) deleteStack(w http.ResponseWriter, r *http.Request) {
-	if err := h.api.DeleteStack(r.Context(), r.Form.Get("StackName")); err != nil {
+	in := &cfn.DeleteStackInput{
+		StackName:       r.Form.Get("StackName"),
+		RetainResources: awsquery.ListStrings(r.Form, "RetainResources.member"),
+		DeletionMode:    r.Form.Get("DeletionMode"),
+	}
+
+	if err := h.api.DeleteStack(r.Context(), in); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -117,7 +137,7 @@ func (h *Handler) describeStackResources(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	stackID := h.stackID(r, name)
+	stackID, stackName := h.stackIdentity(r, name)
 
 	var resp describeStackResourcesResponse
 	resp.Xmlns = Namespace
@@ -125,7 +145,7 @@ func (h *Handler) describeStackResources(w http.ResponseWriter, r *http.Request)
 
 	for _, res := range resources {
 		resp.Result.StackResources = append(resp.Result.StackResources, resourceXML{
-			StackID: stackID, StackName: name, LogicalResourceID: res.LogicalID,
+			StackID: stackID, StackName: stackName, LogicalResourceID: res.LogicalID,
 			PhysicalResourceID: res.PhysicalID, ResourceType: res.Type,
 			Timestamp: isoTime(res.Timestamp), ResourceStatus: res.Status,
 			ResourceStatusReason: res.StatusReason,
@@ -172,13 +192,77 @@ func (h *Handler) getTemplate(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, resp)
 }
 
-// stackID resolves a stack's id for stamping onto resource rows (they carry the
-// StackId, not just the name). A lookup failure degrades to the name.
-func (h *Handler) stackID(r *http.Request, name string) string {
-	stacks, err := h.api.DescribeStacks(r.Context(), name)
+// stackIdentity resolves a stack's id and name for stamping onto resource rows.
+// The request may name the stack by either. A lookup failure degrades to the
+// value given.
+func (h *Handler) stackIdentity(r *http.Request, nameOrID string) (id, name string) {
+	stacks, err := h.api.DescribeStacks(r.Context(), nameOrID)
 	if err != nil || len(stacks) == 0 {
-		return name
+		return nameOrID, nameOrID
 	}
 
-	return stacks[0].ID
+	return stacks[0].ID, stacks[0].Name
+}
+
+func (h *Handler) getTemplateSummary(w http.ResponseWriter, r *http.Request) {
+	sum, err := h.api.GetTemplateSummary(r.Context(), &cfn.GetTemplateSummaryInput{
+		StackName:    r.Form.Get("StackName"),
+		TemplateBody: r.Form.Get("TemplateBody"),
+		TemplateURL:  r.Form.Get("TemplateURL"),
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	var resp getTemplateSummaryResponse
+	resp.Xmlns = Namespace
+	resp.Meta = meta()
+	resp.Result.Description = sum.Description
+	resp.Result.Capabilities = sum.Capabilities
+	resp.Result.CapabilitiesReason = sum.CapabilitiesReason
+	resp.Result.DeclaredTransforms = sum.DeclaredTransforms
+	resp.Result.ResourceTypes = sum.ResourceTypes
+	resp.Result.Version = sum.Version
+
+	for _, p := range sum.Parameters {
+		x := parameterDeclarationXML{ParameterKey: p.Key, ParameterType: p.Type, NoEcho: p.NoEcho, Description: p.Description}
+		if p.HasDefault {
+			x.DefaultValue = &p.DefaultValue
+		}
+
+		resp.Result.Parameters = append(resp.Result.Parameters, x)
+	}
+
+	awsquery.WriteXMLResponse(w, resp)
+}
+
+func (h *Handler) validateTemplate(w http.ResponseWriter, r *http.Request) {
+	sum, err := h.api.ValidateTemplate(r.Context(), &cfn.ValidateTemplateInput{
+		TemplateBody: r.Form.Get("TemplateBody"),
+		TemplateURL:  r.Form.Get("TemplateURL"),
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	var resp validateTemplateResponse
+	resp.Xmlns = Namespace
+	resp.Meta = meta()
+	resp.Result.Description = sum.Description
+	resp.Result.Capabilities = sum.Capabilities
+	resp.Result.CapabilitiesReason = sum.CapabilitiesReason
+	resp.Result.DeclaredTransforms = sum.DeclaredTransforms
+
+	for _, p := range sum.Parameters {
+		x := templateParameterXML{ParameterKey: p.Key, NoEcho: p.NoEcho, Description: p.Description}
+		if p.HasDefault {
+			x.DefaultValue = &p.DefaultValue
+		}
+
+		resp.Result.Parameters = append(resp.Result.Parameters, x)
+	}
+
+	awsquery.WriteXMLResponse(w, resp)
 }

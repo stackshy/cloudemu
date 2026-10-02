@@ -14,7 +14,7 @@ import (
 
 // TestSDKTopicEventSubscriptionPatch drives TopicEventSubscriptions.BeginUpdate
 // (PATCH): the supplied field (filter) is updated while an omitted field
-// (destination) is preserved — no nil-mask data loss.
+// (destination) is preserved: no nil-mask data loss.
 func TestSDKTopicEventSubscriptionPatch(t *testing.T) {
 	cf, _ := newEGFactory(t)
 	ctx := context.Background()

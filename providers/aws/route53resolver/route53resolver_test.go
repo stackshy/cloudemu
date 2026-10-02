@@ -518,7 +518,7 @@ func TestTaggingMergeAndUntag(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	// Tagging targets a real, live resource — a bogus ARN is rejected.
+	// Tagging targets a real, live resource. A bogus ARN is rejected.
 	ep, err := m.CreateResolverEndpoint(ctx, &driver.CreateResolverEndpointInput{
 		Name: "ep", Direction: directionInbound,
 		IPAddresses: []driver.IPAddress{{SubnetID: "s"}, {SubnetID: "s2"}},
@@ -610,7 +610,7 @@ func TestFirewallRuleDuplicateAndAtomicBatch(t *testing.T) {
 	})
 	assert.True(t, cerrors.IsAlreadyExists(err))
 
-	// A batch containing an in-batch duplicate is rejected atomically — nothing
+	// A batch containing an in-batch duplicate is rejected atomically: nothing
 	// from the batch is stored, so RuleCount stays at the single prior rule.
 	_, err = m.BatchCreateFirewallRules(ctx, []driver.FirewallRuleInput{
 		{FirewallRuleGroupID: rg.ID, FirewallDomainListID: "dl-2", Priority: 3, Action: "BLOCK"},

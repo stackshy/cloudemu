@@ -17,7 +17,7 @@ import (
 
 // TestSDKFullWorkspaceDataPlane stands up a SINGLE Azure server with the whole
 // Databricks data plane registered and drives the real WorkspaceClient through
-// a full lifecycle of every resource family against that one endpoint — the
+// a full lifecycle of every resource family against that one endpoint, the
 // way a real user would, proving the handlers coexist and behave correctly
 // together (not just in isolation).
 func TestSDKFullWorkspaceDataPlane(t *testing.T) {

@@ -6,21 +6,21 @@
 // google_firestore_database / google_firestore_index resources) hit this
 // handler the same way they hit firestore.googleapis.com:
 //
-//	POST   /v1/projects/{p}/databases?databaseId={db}                     — create database (LRO)
-//	GET    /v1/projects/{p}/databases                                     — list databases
-//	GET    /v1/projects/{p}/databases/{db}                                — get database
-//	PATCH  /v1/projects/{p}/databases/{db}?updateMask=...                 — patch database (LRO)
-//	DELETE /v1/projects/{p}/databases/{db}?etag=...                       — delete database (LRO)
-//	GET/DELETE /v1/projects/{p}/databases/{db}/operations/{op}            — poll/delete LRO
-//	POST   /v1/projects/{p}/databases/{db}/collectionGroups/{cg}/indexes  — create index (LRO)
-//	GET    /v1/projects/{p}/databases/{db}/collectionGroups/{cg}/indexes[/{i}] — list/get index
-//	DELETE /v1/projects/{p}/databases/{db}/collectionGroups/{cg}/indexes/{i}   — delete index
+//	POST   /v1/projects/{p}/databases?databaseId={db}                     : create database (LRO)
+//	GET    /v1/projects/{p}/databases                                     : list databases
+//	GET    /v1/projects/{p}/databases/{db}                                : get database
+//	PATCH  /v1/projects/{p}/databases/{db}?updateMask=...                 : patch database (LRO)
+//	DELETE /v1/projects/{p}/databases/{db}?etag=...                       : delete database (LRO)
+//	GET/DELETE /v1/projects/{p}/databases/{db}/operations/{op}            : poll/delete LRO
+//	POST   /v1/projects/{p}/databases/{db}/collectionGroups/{cg}/indexes  : create index (LRO)
+//	GET    /v1/projects/{p}/databases/{db}/collectionGroups/{cg}/indexes[/{i}] : list/get index
+//	DELETE /v1/projects/{p}/databases/{db}/collectionGroups/{cg}/indexes/{i}   : delete index
 //
 // Routing note: the document Handler.Matches greedily claims every
-// /v1/projects/ path. This admin handler is registered BEFORE it (see
-// server/gcp/gcp.go) and its Matches claims ONLY the admin shapes above — every
+// /v1/projects/ path. This admin handler is registered before it (see
+// server/gcp/gcp.go) and its Matches claims only the admin shapes above; every
 // path whose segment after databases/{db} is documents (or absent) is left to
-// the data-plane handler — so the two coexist on one server without either
+// the data-plane handler, so the two coexist on one server without either
 // shadowing the other.
 package firestore
 

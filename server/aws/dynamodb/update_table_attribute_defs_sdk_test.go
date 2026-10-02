@@ -1,4 +1,4 @@
-// update_table_attribute_defs_sdk_test.go — real aws-sdk-go-v2 coverage of the
+// update_table_attribute_defs_sdk_test.go: real aws-sdk-go-v2 coverage of the
 // attribute-definition reconciliation an UpdateTable must perform when it adds
 // or removes a GSI. Real DynamoDB keeps AttributeDefinitions equal to exactly
 // the attributes the table key and its surviving indexes reference: adding a GSI

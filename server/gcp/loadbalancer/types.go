@@ -6,7 +6,7 @@ package loadbalancer
 
 // --- backend services (→ driver target groups) ---
 
-// backend is one entry of a backend service's backends[] — the instance-group
+// backend is one entry of a backend service's backends[], the instance-group
 // or NEG reference plus its balancing knobs. google_compute_backend_service
 // sends this on every apply, so it must round-trip.
 type backend struct {
@@ -28,6 +28,8 @@ type cdnPolicy struct {
 	DefaultTTL int    `json:"defaultTtl,omitempty"`
 	ClientTTL  int    `json:"clientTtl,omitempty"`
 	MaxTTL     int    `json:"maxTtl,omitempty"`
+	// SignedURLKeyNames is output-only: set through add/deleteSignedUrlKey.
+	SignedURLKeyNames []string `json:"signedUrlKeyNames,omitempty"`
 }
 
 type backendServiceRequest struct {
@@ -44,6 +46,11 @@ type backendServiceRequest struct {
 	ConnectionDraining  *connectionDraining `json:"connectionDraining,omitempty"`
 	CdnPolicy           *cdnPolicy          `json:"cdnPolicy,omitempty"`
 	EnableCDN           *bool               `json:"enableCDN,omitempty"`
+	// Fingerprint is the optimistic-concurrency token on patch/update. Insert
+	// ignores it, since Terraform may send one in the create body.
+	Fingerprint string `json:"fingerprint,omitempty"`
+	// Network is immutable (ForceNew in Terraform), so only insert stores it.
+	Network string `json:"network,omitempty"`
 }
 
 type backendServiceResponse struct {
@@ -65,6 +72,8 @@ type backendServiceResponse struct {
 	Fingerprint         string              `json:"fingerprint,omitempty"`
 	CreationTimestamp   string              `json:"creationTimestamp,omitempty"`
 	SelfLink            string              `json:"selfLink"`
+	Region              string              `json:"region,omitempty"`
+	Network             string              `json:"network,omitempty"`
 }
 
 // resourceGroupReference is the getHealth request body: the instance-group (or
@@ -107,6 +116,15 @@ type forwardingRuleRequest struct {
 	Target              string `json:"target,omitempty"`
 	BackendService      string `json:"backendService,omitempty"`
 	LoadBalancingScheme string `json:"loadBalancingScheme,omitempty"`
+	Network             string `json:"network,omitempty"`
+	Subnetwork          string `json:"subnetwork,omitempty"`
+
+	AllPorts          *bool             `json:"allPorts,omitempty"`
+	Ports             []string          `json:"ports,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	IPVersion         string            `json:"ipVersion,omitempty"`
+	NetworkTier       string            `json:"networkTier,omitempty"`
+	AllowGlobalAccess *bool             `json:"allowGlobalAccess,omitempty"`
 }
 
 type forwardingRuleResponse struct {
@@ -120,8 +138,22 @@ type forwardingRuleResponse struct {
 	Target              string `json:"target,omitempty"`
 	BackendService      string `json:"backendService,omitempty"`
 	LoadBalancingScheme string `json:"loadBalancingScheme,omitempty"`
+	Network             string `json:"network,omitempty"`
+	Subnetwork          string `json:"subnetwork,omitempty"`
+	PscConnectionStatus string `json:"pscConnectionStatus,omitempty"`
+	PscConnectionID     string `json:"pscConnectionId,omitempty"`
 	CreationTimestamp   string `json:"creationTimestamp,omitempty"`
 	SelfLink            string `json:"selfLink"`
+
+	Region            string            `json:"region,omitempty"`
+	AllPorts          *bool             `json:"allPorts,omitempty"`
+	Ports             []string          `json:"ports,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	LabelFingerprint  string            `json:"labelFingerprint"`
+	Fingerprint       string            `json:"fingerprint,omitempty"`
+	IPVersion         string            `json:"ipVersion,omitempty"`
+	NetworkTier       string            `json:"networkTier,omitempty"`
+	AllowGlobalAccess *bool             `json:"allowGlobalAccess,omitempty"`
 }
 
 type forwardingRuleListResponse struct {

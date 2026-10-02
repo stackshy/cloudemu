@@ -78,7 +78,7 @@ type blobPrefixXML struct {
 }
 
 type metadataXML struct {
-	// Metadata is dynamic — encoded inline as child elements during marshal.
+	// Metadata is dynamic: encoded inline as child elements during marshal.
 	// We store as a map and use a custom marshaller below.
 	Items map[string]string `xml:"-"`
 }

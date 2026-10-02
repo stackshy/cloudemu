@@ -18,7 +18,7 @@ const storageEventFilterAttrBucket = "bucket"
 // an object-change event (server/gcp/gcs does not export its objectResource
 // type, so the fields this package needs are redeclared here). The CloudEvent
 // `data` payload a real Eventarc-backed Cloud Storage trigger delivers IS
-// this resource verbatim — the object's metadata, never its bytes.
+// this resource verbatim, the object's metadata, never its bytes.
 type storageObjectResource struct {
 	Kind           string            `json:"kind"`
 	ID             string            `json:"id"`
@@ -42,7 +42,7 @@ type storageObjectResource struct {
 // wraps {message, subscription}), a storage trigger's data IS the object
 // resource directly. Real Eventarc delivers binary-mode CloudEvents (ce-* as
 // HTTP headers, the bare data as the body), but driver.InvokeInput carries
-// only a payload — no headers — so structured mode is the closest
+// only a payload (no headers), so structured mode is the closest
 // self-contained equivalent the emulator's invoke contract can deliver (same
 // tradeoff as the Pub/Sub gen2 envelope in pubsubtrigger.go).
 type gen2StorageEvent struct {
@@ -62,7 +62,7 @@ type gen2StorageEvent struct {
 // carry a direct storage eventTrigger in this shape; a gen1 storage-triggered
 // function is delivered through the legacy GCS notificationConfig -> Pub/Sub
 // -> function chain instead (server/gcp/gcs's TopicPublisher + this
-// package's InvokeForTopic), so it is out of scope here. Best-effort — a
+// package's InvokeForTopic), so it is out of scope here. Best-effort: a
 // missing or failing function is swallowed so an object write/delete never
 // fails. It implements the gcs handler's FunctionInvoker.
 //

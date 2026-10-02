@@ -26,7 +26,7 @@ func (m *Mock) CreateResource(_ context.Context, restAPIID, parentID, pathPart s
 
 	parent, ok := ad.resources[parentID]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", parentID)
+		return nil, cerrors.New(cerrors.NotFound, msgResourceNotFound)
 	}
 
 	fullPath := joinPath(parent.Path, pathPart)
@@ -74,7 +74,7 @@ func (m *Mock) GetResources(_ context.Context, restAPIID string) ([]driver.Resou
 		out = append(out, copyResource(r))
 	}
 
-	// Deterministic order (root "/" first, then tree order) — the backing map
+	// Deterministic order (root "/" first, then tree order). The backing map
 	// iterates randomly, which would make GetResources non-deterministic.
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 
@@ -93,7 +93,7 @@ func (m *Mock) DeleteResource(_ context.Context, restAPIID, resourceID string) e
 	defer ad.mu.Unlock()
 
 	if _, ok := ad.resources[resourceID]; !ok {
-		return cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+		return cerrors.New(cerrors.NotFound, msgResourceNotFound)
 	}
 
 	if resourceID == ad.api.RootResourceID {
@@ -143,7 +143,7 @@ func (m *Mock) GetResource(_ context.Context, restAPIID, resourceID string) (*dr
 
 	r, ok := ad.resources[resourceID]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+		return nil, cerrors.New(cerrors.NotFound, msgResourceNotFound)
 	}
 
 	out := copyResource(r)
@@ -172,8 +172,8 @@ func findByPath(resources map[string]*driver.Resource, path string) *driver.Reso
 	return nil
 }
 
-// isPathParam reports whether a pathPart is a variable segment — a "{param}"
-// placeholder or a "{proxy+}" greedy segment — rather than a literal.
+// isPathParam reports whether a pathPart is a variable segment: a "{param}"
+// placeholder or a "{proxy+}" greedy segment, rather than a literal.
 func isPathParam(pathPart string) bool {
 	return strings.HasPrefix(pathPart, "{") && strings.HasSuffix(pathPart, "}")
 }

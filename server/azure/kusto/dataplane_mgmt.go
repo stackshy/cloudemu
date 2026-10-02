@@ -54,7 +54,7 @@ func execMgmt(store *tableStore, db, csl string) ([]kql.Table, error) {
 	}
 }
 
-// hasCmd reports whether lower is exactly kw or begins with "kw " — so
+// hasCmd reports whether lower is exactly kw or begins with "kw ", so
 // "show table" matches "show table Events schema" but not "show tables".
 func hasCmd(lower, kw string) bool {
 	return lower == kw || strings.HasPrefix(lower, kw+" ") || strings.HasPrefix(lower, kw+"(")

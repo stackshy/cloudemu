@@ -2,7 +2,7 @@
 // It models the Batch control plane: compute environments, job queues, and
 // job-definition revisions, plus resource tagging.
 //
-// The interface is deliberately narrow — a backend stores what it is given and
+// The interface is deliberately narrow: a backend stores what it is given and
 // echoes it back, generating ARNs, ECS cluster ARNs, and job-definition
 // revisions, and provisioning synchronously (a created resource is VALID/ACTIVE
 // immediately). Deeply nested request payloads (computeResources,

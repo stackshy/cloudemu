@@ -4,7 +4,7 @@ import "sync"
 
 // keyedMutex hands out one mutex per string key (a Cosmos container's qualified
 // table name), created on first use. It serializes the compound check-then-write
-// operations a single container needs — a document create's
+// operations a single container needs: a document create's
 // [documentExists + checkUniqueKeys + PutItem] must be one uninterruptible step,
 // or two concurrent creates carrying the same (partition, unique-key value) can
 // both pass the uniqueness check and both insert, violating Cosmos's 409

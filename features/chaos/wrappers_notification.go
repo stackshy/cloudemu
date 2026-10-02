@@ -7,7 +7,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-// chaosNotification wraps a notification driver. All ops are wrapped — the
+// chaosNotification wraps a notification driver. All ops are wrapped: the
 // surface is small and every call is data-plane.
 type chaosNotification struct {
 	notifdriver.Notification

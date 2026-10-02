@@ -11,6 +11,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -241,11 +242,11 @@ func (h *Handler) updateExisting(
 	azurearm.WriteJSON(w, http.StatusOK, h.buildVMResponse(r.Context(), existing, rp, req, provisioningSucceeded))
 }
 
-// update handles PATCH virtualMachines/{name} — ARM's BeginUpdate. Unlike PUT,
+// update handles PATCH virtualMachines/{name} (ARM's BeginUpdate). Unlike PUT,
 // Update is a merge-patch (RFC 7386): only the fields present in the body are
 // applied and everything else is left untouched. It applies the modeled
-// mutable fields a PATCH may carry — hardwareProfile.vmSize (resize), tags
-// (merged into the existing set), identity — via the driver's PatchInstance,
+// mutable fields a PATCH may carry: hardwareProfile.vmSize (resize), tags
+// (merged into the existing set), identity, via the driver's PatchInstance,
 // which leaves omitted fields (priority, licenseType, existing tags, …) intact,
 // rather than routing through UpdateInstance (whose full cfg-replace assumes
 // PUT's whole-body shape and would blank what a partial PATCH omits). Unmodeled
@@ -282,7 +283,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 	}
 
 	// A PATCH that omits storageProfile.dataDisks entirely (nil slice) leaves the
-	// attached disks untouched — true merge-patch. But a PATCH that *supplies* a
+	// attached disks untouched: true merge-patch. But a PATCH that *supplies* a
 	// dataDisks array (non-nil, empty included) is a full replace of the disk set:
 	// real Azure detaches every disk whose LUN is absent from the array (this is
 	// how `az vm update` / BeginUpdate remove a data disk). json.Unmarshal yields
@@ -315,7 +316,7 @@ func dataDisksOf(s *storageProfile) []dataDisk {
 }
 
 // dataDisksPresent reports whether the request explicitly supplied a
-// storageProfile.dataDisks array (non-nil, empty included) — the signal that a
+// storageProfile.dataDisks array (non-nil, empty included): the signal that a
 // PATCH is a full replace of the data-disk set rather than a merge-patch that
 // omitted the field. It stays false when storageProfile or its dataDisks array
 // was absent, so an omitted array leaves attachments untouched.
@@ -325,8 +326,8 @@ func dataDisksPresent(s *storageProfile) bool {
 
 // applyDataDisks reconciles instanceID's attached data disks against disks,
 // the request's storageProfile.dataDisks. declarative selects full-replace
-// semantics — the array is the VM's complete desired data-disk state, so any
-// currently attached disk whose LUN is absent from disks is detached — versus
+// semantics: the array is the VM's complete desired data-disk state, so any
+// currently attached disk whose LUN is absent from disks is detached, versus
 // merge-patch semantics, where a disk is detached only when its own entry sets
 // toBeDetached and entries absent from the request are left untouched. PUT
 // CreateOrUpdate always uses full-replace; PATCH Update uses full-replace when
@@ -615,7 +616,7 @@ func osDiskOf(vols []computedriver.VolumeInfo, instanceID string) (string, bool)
 }
 
 // detachUnlistedDisks detaches every attached disk whose LUN is absent from
-// seen — the declarative-PUT half of applyDataDisks' reconciliation.
+// seen: the declarative-PUT half of applyDataDisks' reconciliation.
 func detachUnlistedDisks(ctx context.Context, c computedriver.Compute, attached map[int]string, seen map[int]bool) error {
 	for lun, volID := range attached {
 		if seen[lun] {
@@ -825,11 +826,18 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 		return
 	}
 
-	// TerminateInstances cascades the VM's attached managed disks per each
-	// attachment's deleteOption (recorded as VolumeInfo.DeleteOnTermination):
-	// a "Delete" disk is deleted with the VM, a "Detach" disk is released
-	// (returned to Unattached) rather than left dangling — matching real Azure.
-	if err := h.compute.TerminateInstances(r.Context(), []string{inst.ID}); err != nil {
+	// The delete cascades the VM's attached managed disks per each attachment's
+	// deleteOption (recorded as VolumeInfo.DeleteOnTermination): a "Delete" disk
+	// is deleted with the VM, a "Detach" disk is released (returned to
+	// Unattached) rather than left dangling, matching real Azure. Azure has no
+	// terminated state, so a driver that can remove the VM outright does so;
+	// otherwise the VM is terminated, which findByName already treats as gone.
+	terminate := h.compute.TerminateInstances
+	if del, ok := h.compute.(computedriver.AzureVMDeleter); ok {
+		terminate = del.DeleteInstances
+	}
+
+	if err := terminate(r.Context(), []string{inst.ID}); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -837,120 +845,24 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 	writeAcceptedAsync(w, r, rp.Subscription, "delete-"+rp.ResourceName)
 }
 
-// PurgeResourceGroup terminates every virtual machine — and deletes every
-// virtual machine scale set (via purgeScaleSets) — created under the given
-// resource group, backing the resource-group cascade delete. Instances record
-// their group (Instance.ResourceGroup) on the ARM create path, so membership is
-// an exact match. Resource-group comparison is case-insensitive, matching ARM.
-// The subscription is unused (the emulator is single-estate).
-//
-// Real Azure's resource-group delete removes every resource the group contains,
-// including managed disks, regardless of a VM's attachment-scoped deleteOption
-// (which governs VM deletion, not RG deletion). So purgeInstances terminates the
-// VMs first (detaching their disks), then purgeDisks deletes every managed disk
-// recorded under this group — attached-then-detached, "Detach"-option, and
-// standalone disks alike. A disk that lives in a DIFFERENT resource group but was
-// attached to a VM here keeps its own group's tag, so purgeDisks leaves it
-// behind: it survives, detached (Unattached), exactly as real Azure leaves a
-// cross-group disk when its VM's group is deleted.
+// PurgePhase orders this purger in the resource-group cascade: virtual machines
+// go first: deleting them detaches the NICs and disks other purgers delete.
+func (*Handler) PurgePhase() int { return resourcegroups.PhaseCompute }
+
+// PurgeResourceGroup backs the resource-group cascade delete: it forwards to
+// the compute driver's PurgeComputeResourceGroup, which removes every VM, scale
+// set, managed disk, snapshot, image and SSH public key recorded under the
+// group. Real Azure's group delete removes every managed disk in the group
+// regardless of a VM's attachment-scoped deleteOption. The subscription is
+// unused (the emulator is single-estate). A driver without the capability is
+// reported as an error rather than silently skipped.
 func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup string) error {
-	var firstErr error
-
-	if err := h.purgeInstances(ctx, resourceGroup); err != nil {
-		firstErr = err
-	}
-
-	if serr := h.purgeScaleSets(ctx, resourceGroup); serr != nil && firstErr == nil {
-		firstErr = serr
-	}
-
-	if derr := h.purgeDisks(ctx, resourceGroup); derr != nil && firstErr == nil {
-		firstErr = derr
-	}
-
-	return firstErr
-}
-
-// purgeDisks deletes every managed disk recorded under the given resource group,
-// the disk half of the RG cascade. It runs after purgeInstances, so any disk
-// still attached has been released (Unattached) and DeleteVolume accepts it; a
-// "Delete"-option disk already removed by TerminateInstances no longer appears in
-// the volume list, so it is not double-deleted. Membership is the disk's recorded
-// group tag (diskRGTag), matching the disks handler, so a cross-group disk is left
-// untouched. Resource-group comparison is case-insensitive, matching ARM.
-func (h *Handler) purgeDisks(ctx context.Context, resourceGroup string) error {
-	vols, err := h.compute.DescribeVolumes(ctx, nil)
-	if err != nil {
-		return err
-	}
-
-	var firstErr error
-
-	for i := range vols {
-		if !strings.EqualFold(tagOr(vols[i].Tags, diskRGTag, ""), resourceGroup) {
-			continue
-		}
-
-		if derr := h.compute.DeleteVolume(ctx, vols[i].ID); derr != nil && firstErr == nil {
-			firstErr = derr
-		}
-	}
-
-	return firstErr
-}
-
-// purgeInstances terminates every virtual machine under the given resource
-// group — the VM half of the cascade. TerminateInstances cascades each VM's
-// attached disks per their deleteOption.
-func (h *Handler) purgeInstances(ctx context.Context, resourceGroup string) error {
-	instances, err := h.compute.DescribeInstances(ctx, nil, nil)
-	if err != nil {
-		return err
-	}
-
-	ids := make([]string, 0, len(instances))
-
-	for i := range instances {
-		if strings.EqualFold(instances[i].ResourceGroup, resourceGroup) {
-			ids = append(ids, instances[i].ID)
-		}
-	}
-
-	if len(ids) == 0 {
-		return nil
-	}
-
-	return h.compute.TerminateInstances(ctx, ids)
-}
-
-// purgeScaleSets deletes every virtual machine scale set under the given
-// resource group, so an RG cascade tears down its scale sets too (matching the
-// VM teardown above). A driver that does not implement the scale-set store is a
-// no-op. Resource-group comparison is case-insensitive, matching ARM.
-func (h *Handler) purgeScaleSets(ctx context.Context, resourceGroup string) error {
-	store, ok := h.compute.(scaleSetStore)
+	p, ok := h.compute.(computedriver.AzureResourceGroupPurger)
 	if !ok {
-		return nil
+		return cerrors.Newf(cerrors.Unimplemented, "compute driver %T cannot purge a resource group", h.compute)
 	}
 
-	sets, err := store.ListScaleSets(ctx)
-	if err != nil {
-		return err
-	}
-
-	var firstErr error
-
-	for i := range sets {
-		if !strings.EqualFold(sets[i].ResourceGroup, resourceGroup) {
-			continue
-		}
-
-		if derr := store.DeleteScaleSet(ctx, sets[i].Name); derr != nil && firstErr == nil {
-			firstErr = derr
-		}
-	}
-
-	return firstErr
+	return p.PurgeComputeResourceGroup(ctx, resourceGroup)
 }
 
 // start handles POST virtualMachines/{name}/start.
@@ -1105,7 +1017,7 @@ func (h *Handler) generalize(w http.ResponseWriter, r *http.Request, rp azurearm
 
 // capture handles POST virtualMachines/{name}/capture. It copies the VM's
 // virtual hard disks and returns a template (VirtualMachineCaptureResult) that
-// can recreate similar VMs. The VM must first be generalized — capturing a
+// can recreate similar VMs. The VM must first be generalized; capturing a
 // non-generalized VM is rejected, matching real Azure.
 //
 //nolint:gocritic // rp is a request-scoped value
@@ -1272,7 +1184,7 @@ func writeAcceptedAsync(w http.ResponseWriter, r *http.Request, subscription, op
 // A terminated instance never matches: the shared compute driver keeps a
 // terminated instance's record around (AWS EC2's DescribeInstances keeps
 // reporting a terminated instance for a while, which the driver models), but
-// real Azure ARM deletes the resource outright — a GET/PATCH/power-action/PUT
+// real Azure ARM deletes the resource outright: a GET/PATCH/power-action/PUT
 // against a deleted VM's name gets a 404 ResourceNotFound, and a re-PUT of the
 // same name provisions a brand-new VM rather than resurrecting the old one.
 func findByName(ctx context.Context, c computedriver.Compute, resourceGroup, name string) (*computedriver.Instance, error) {
@@ -1480,7 +1392,7 @@ const (
 
 // buildVMResponse builds the ARM vmResponse for inst, augmenting
 // storageProfile.dataDisks with the disks actually attached to it (via
-// attachedDataDisks) so every response reflects real attachment state —
+// attachedDataDisks) so every response reflects real attachment state,
 // including a disk attached by an earlier request, not just the one that
 // produced this particular response.
 //

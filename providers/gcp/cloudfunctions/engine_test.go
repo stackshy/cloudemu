@@ -150,7 +150,7 @@ func TestGCPDeleteRemovesFromEngine(t *testing.T) {
 // CreateFunction racer never tears down the winner's deployment. funcengine's
 // Deploy/Remove are keyed by name only, so a naive "clean up my own
 // deployment" Remove(name) call by a losing racer removes whatever is
-// currently registered under that name — which can be the winner's.
+// currently registered under that name, which can be the winner's.
 type concurrentEngine struct {
 	mu   sync.Mutex
 	live map[string]bool
@@ -192,8 +192,8 @@ func (e *concurrentEngine) Remove(_ context.Context, name string) error {
 
 // TestGCPConcurrentCreateSameNameKeepsWinnerInvokable races many CreateFunction
 // calls for the same name against each other with a real FunctionEngine
-// configured. Exactly one must win (AlreadyExists for the rest), and — the
-// case this test exists for — the winner's engine deployment must survive:
+// configured. Exactly one must win (AlreadyExists for the rest), and (the
+// case this test exists for) the winner's engine deployment must survive:
 // a losing racer must never remove it out from under the winner. Run under
 // -race.
 func TestGCPConcurrentCreateSameNameKeepsWinnerInvokable(t *testing.T) {

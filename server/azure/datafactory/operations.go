@@ -11,7 +11,7 @@ import (
 // arrives in one body and fully REPLACES the stored state, matching ARM's
 // CreateOrUpdate semantics. Factories.CreateOrUpdate is synchronous; returning
 // the fully-provisioned body (provisioningState=Succeeded) completes the client
-// on the first response — 201 on create, 200 on update.
+// on the first response: 201 on create, 200 on update.
 func (h *Handler) createOrUpdateFactory(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body factoryJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -44,7 +44,7 @@ func (h *Handler) getFactory(w http.ResponseWriter, r *http.Request, rp *azurear
 	azurearm.WriteJSON(w, http.StatusOK, toFactoryJSON(rp, stored))
 }
 
-// updateFactory handles PATCH .../factories/{name} — Factories.Update. Tags and
+// updateFactory handles PATCH .../factories/{name} (Factories.Update). Tags and
 // identity are REPLACED wholesale (resource-level UpdateTags = replace, not
 // merge); every other property is left untouched. Fields omitted from the body
 // leave that field unchanged.
@@ -136,7 +136,7 @@ var factoryModeledKeys = []string{
 }
 
 // factoryOtherProps returns the deferred/echo-through properties (everything but
-// the modeled keys — repoConfiguration, purviewConfiguration, encryption, ...).
+// the modeled keys: repoConfiguration, purviewConfiguration, encryption, ...).
 func factoryOtherProps(props map[string]any) map[string]any {
 	if len(props) == 0 {
 		return nil

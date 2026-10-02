@@ -66,7 +66,7 @@ func (h *Handler) setIamPolicy(w http.ResponseWriter, r *http.Request, resType, 
 	// h.mu.Lock() (read-compare-write in a single critical section), so
 	// concurrent setIamPolicy calls that all read the same starting etag
 	// can't all "win" the way a separate getIamPolicy-then-setIamPolicy pair
-	// here would allow (a lost update) — mirrors providers/gcp/gcs's
+	// here would allow (a lost update), mirrors providers/gcp/gcs's
 	// CompareAndSetBucketIAMPolicy for bucket IAM (#1014).
 	h.mu.Lock()
 

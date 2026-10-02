@@ -50,11 +50,11 @@ func TestWrapContainerRegistryDeleteRepositoryChaos(t *testing.T) {
 func TestWrapContainerRegistryGetRepositoryChaos(t *testing.T) {
 	r, e := newChaosContainerRegistry(t)
 	ctx := context.Background()
-	_, _ = r.CreateRepository(ctx, regdriver.RepositoryConfig{Name: "g"})
+	_, _ = r.CreateRepository(ctx, regdriver.RepositoryConfig{Name: "gr"})
 
 	e.Apply(chaos.ServiceOutage("containerregistry", time.Hour))
 
-	if _, err := r.GetRepository(ctx, "g"); err == nil {
+	if _, err := r.GetRepository(ctx, "gr"); err == nil {
 		t.Error("expected chaos error on GetRepository")
 	}
 }

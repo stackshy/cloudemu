@@ -13,18 +13,35 @@
 //
 // Coverage (query protocol):
 //
-//	CreateStack              — API.CreateStack
-//	UpdateStack              — API.UpdateStack
-//	DeleteStack              — API.DeleteStack
-//	DescribeStacks           — API.DescribeStacks
-//	DescribeStackEvents      — API.DescribeStackEvents
-//	ListStacks               — API.ListStacks
-//	DescribeStackResources   — API.DescribeStackResources
-//	ListStackResources       — API.ListStackResources
-//	GetTemplate              — API.GetTemplate
+//	CreateStack                API.CreateStack
+//	UpdateStack                API.UpdateStack
+//	ContinueUpdateRollback     API.ContinueUpdateRollback
+//	DeleteStack                API.DeleteStack
+//	DescribeStacks             API.DescribeStacks
+//	DescribeStackEvents        API.DescribeStackEvents
+//	ListStacks                 API.ListStacks
+//	DescribeStackResources     API.DescribeStackResources
+//	ListStackResources         API.ListStackResources
+//	GetTemplate                API.GetTemplate
+//	ValidateTemplate           API.ValidateTemplate
+//	GetTemplateSummary         API.GetTemplateSummary
+//	CreateChangeSet            API.CreateChangeSet
+//	DescribeChangeSet          API.DescribeChangeSet
+//	ListChangeSets             API.ListChangeSets
+//	ExecuteChangeSet           API.ExecuteChangeSet
+//	DeleteChangeSet            API.DeleteChangeSet
+//	ListExports                API.ListExports
+//	ListImports                API.ListImports
+//	UpdateTerminationProtection API.UpdateTerminationProtection
+//	DescribeAccountLimits      API.DescribeAccountLimits
+//	EstimateTemplateCost       API.EstimateTemplateCost
+//
+// Templates may be JSON or YAML, given inline (TemplateBody) or as an S3
+// object URL (TemplateURL).
 package cloudformation
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -45,6 +62,7 @@ const (
 var cfnActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
 	"CreateStack":            {},
 	"UpdateStack":            {},
+	"ContinueUpdateRollback": {},
 	"DeleteStack":            {},
 	"DescribeStacks":         {},
 	"DescribeStackEvents":    {},
@@ -52,6 +70,19 @@ var cfnActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"DescribeStackResources": {},
 	"ListStackResources":     {},
 	"GetTemplate":            {},
+	"ValidateTemplate":       {},
+	"GetTemplateSummary":     {},
+	actionCreateChangeSet:    {},
+	actionDescribeChangeSet:  {},
+	actionListChangeSets:     {},
+	actionExecuteChangeSet:   {},
+	actionDeleteChangeSet:    {},
+
+	actionListExports:                 {},
+	actionListImports:                 {},
+	actionUpdateTerminationProtection: {},
+	actionDescribeAccountLimits:       {},
+	actionEstimateTemplateCost:        {},
 }
 
 // Handler serves CloudFormation query-protocol requests against a stack API.
@@ -97,6 +128,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.createStack(w, r)
 	case "UpdateStack":
 		h.updateStack(w, r)
+	case "ContinueUpdateRollback":
+		h.continueUpdateRollback(w, r)
 	case "DeleteStack":
 		h.deleteStack(w, r)
 	case "DescribeStacks":
@@ -111,17 +144,37 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listStackResources(w, r)
 	case "GetTemplate":
 		h.getTemplate(w, r)
+	case "ValidateTemplate":
+		h.validateTemplate(w, r)
+	case "GetTemplateSummary":
+		h.getTemplateSummary(w, r)
+	case actionCreateChangeSet, actionDescribeChangeSet, actionListChangeSets, actionExecuteChangeSet, actionDeleteChangeSet:
+		h.serveChangeSet(w, r)
+	case actionListExports, actionListImports, actionUpdateTerminationProtection, actionDescribeAccountLimits,
+		actionEstimateTemplateCost:
+		h.serveAccount(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction",
 			"unknown CloudFormation action: "+r.Form.Get("Action"))
 	}
 }
 
-// writeErr maps cloudemu errors to CloudFormation XML error responses.
+// writeErr maps cloudemu errors to CloudFormation XML error responses. An
+// error that names its own exception, such as
+// InsufficientCapabilitiesException, is reported under that name.
 func writeErr(w http.ResponseWriter, err error) {
 	msg := cerrors.Message(err)
 
+	var named *cfn.ExceptionError
+
 	switch {
+	case errors.As(err, &named):
+		status := http.StatusBadRequest
+		if named.Exception() == cfn.ExceptionChangeSetNotFound {
+			status = http.StatusNotFound
+		}
+
+		awsquery.WriteXMLError(w, status, named.Exception(), msg)
 	case cerrors.IsNotFound(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "ValidationError", msg)
 	case cerrors.IsAlreadyExists(err):

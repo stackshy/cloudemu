@@ -1,5 +1,5 @@
 // Package elasticsan provides an in-memory mock of Azure Elastic SAN
-// (Microsoft.ElasticSan/elasticSans) — the ARM control plane only. It manages
+// (Microsoft.ElasticSan/elasticSans), the ARM control plane only. It manages
 // the top-level elasticSans resource lifecycle (create/update/get/delete/list);
 // the nested volumeGroups and volumes, private endpoints and the iSCSI data
 // plane are out of scope.
@@ -12,13 +12,13 @@
 //   - totalIops       = baseSizeTiB * 5000  (5,000 IOPS per base TiB)
 //   - totalMBps       = baseSizeTiB * 200   (200 MB/s per base TiB)
 //   - totalSizeTiB    = baseSizeTiB + extendedCapacitySizeTiB
-//   - totalVolumeSizeGiB = 0 — the sum of provisioned volume sizes; volumes are
+//   - totalVolumeSizeGiB = 0: the sum of provisioned volume sizes; volumes are
 //     a deferred nested resource, so a bare SAN reports 0 (matching real Azure).
-//   - volumeGroupCount   = 0 — same reason.
+//   - volumeGroupCount   = 0: same reason.
 //   - provisioningState  = "Succeeded" once provisioning completes.
 //
 // Extended (additional) capacity adds storage but NOT IOPS or throughput, so it
-// never contributes to totalIops/totalMBps — only to totalSizeTiB. The totals
+// never contributes to totalIops/totalMBps, only to totalSizeTiB. The totals
 // are recomputed whenever base_size_in_tib or extended_size_in_tib changes on an
 // update, which is exactly what Terraform expects.
 package elasticsan
@@ -83,7 +83,7 @@ type ElasticSan struct {
 	ExtendedSizeTiB     int64  `json:"extendedCapacitySizeTiB"`
 	PublicNetworkAccess string `json:"publicNetworkAccess"`
 
-	// Computed, stable fields — derived from the sizes and sku.
+	// Computed, stable fields: derived from the sizes and sku.
 	ProvisioningState  string `json:"provisioningState"`
 	TotalIops          int64  `json:"totalIops"`
 	TotalMBps          int64  `json:"totalMBps"`

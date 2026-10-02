@@ -90,7 +90,7 @@ func TestSDKAzureSQLServerDeleteCascadesDatabases(t *testing.T) {
 // TestSDKAzureSQLDatabaseElasticPoolMembership is the HIGH regression: setting
 // databaseProperties.elasticPoolId through the Databases API must actually
 // bind the database to the pool (persisted + echoed on read), and the pool
-// must then refuse deletion while that database is still a member — matching
+// must then refuse deletion while that database is still a member, matching
 // real Azure's ElasticPoolNotEmpty error
 // (learn.microsoft.com/rest/api/sql/elastic-pools/delete: "Request to delete
 // an elastic pool that is not empty").
@@ -180,10 +180,10 @@ func TestSDKAzureSQLDatabaseElasticPoolMembership(t *testing.T) {
 // TestSDKAzureSQLDatabasePatchClearsElasticPoolID is the HIGH regression: real
 // Azure SQL removes a database from its elastic pool when a PATCH sets
 // properties.elasticPoolId to "" (learn.microsoft.com/azure/azure-sql/database/
-// elastic-pool-overview — moving a database into/out of a pool). Before the
+// elastic-pool-overview, moving a database into/out of a pool). Before the
 // fix, the wire layer decoded elasticPoolId as a plain string, so an explicit
 // "" was indistinguishable from the field being omitted and the merge silently
-// kept the database's existing pool membership — the PATCH had no effect and
+// kept the database's existing pool membership; the PATCH had no effect and
 // the pool could never be deleted afterward.
 func TestSDKAzureSQLDatabasePatchClearsElasticPoolID(t *testing.T) {
 	cf := newFactory(t)
@@ -292,7 +292,7 @@ func TestSDKAzureSQLDatabaseUpdateBadElasticPoolPreservesDatabase(t *testing.T) 
 		t.Fatal("update with nonexistent elasticPoolId: expected error")
 	}
 
-	// The database must still exist — the rejected update must have no
+	// The database must still exist: the rejected update must have no
 	// side effect, not have deleted it out from under the failed request.
 	got, err := dbs.Get(ctx, "rg-1", "srv1", "keepme", nil)
 	if err != nil {
@@ -307,7 +307,7 @@ func TestSDKAzureSQLDatabaseUpdateBadElasticPoolPreservesDatabase(t *testing.T) 
 // TestSDKAzureSQLDatabaseCreateBadElasticPoolNotParentNotFound is the MEDIUM
 // regression: creating a brand-new database on an EXISTING server with an
 // elasticPoolId that doesn't resolve must not be reported as
-// ParentResourceNotFound — that code means the parent SERVER is missing, and
+// ParentResourceNotFound: that code means the parent SERVER is missing, and
 // here the server exists. Real Azure answers 400 TargetElasticPoolDoesNotExist
 // (learn.microsoft.com/rest/api/sql/databases/create-or-update).
 func TestSDKAzureSQLDatabaseCreateBadElasticPoolNotParentNotFound(t *testing.T) {

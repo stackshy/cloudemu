@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -34,10 +35,9 @@ import (
 // Wave 1 placeholder for the cluster API server endpoint. Wave 2 will swap
 // in a real per-cluster apiserver address.
 const (
-	wavePlaceholderEndpoint  = "https://EKS-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local"
-	defaultPlatformVersion   = "eks.1"
-	defaultKubernetesVersion = "1.29"
-	namespaceEKS             = "AWS/EKS"
+	wavePlaceholderEndpoint = "https://EKS-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local"
+	defaultPlatformVersion  = "eks.1"
+	namespaceEKS            = "AWS/EKS"
 
 	// Managed-nodegroup defaults real EKS applies when the caller omits them.
 	defaultNodegroupInstanceType = "t3.medium"
@@ -81,6 +81,9 @@ type Mock struct {
 	fargateProfiles *memstore.Store[eksdriver.FargateProfile]
 	addons          *memstore.Store[eksdriver.Addon]
 	updates         *memstore.Store[eksdriver.ClusterUpdate]
+	// accessEntries is keyed by accessEntryKey(cluster, principalArn). Each
+	// entry holds its own policy associations.
+	accessEntries *memstore.Store[eksdriver.AccessEntry]
 
 	opts           *config.Options
 	monitoring     mondriver.Monitoring
@@ -105,7 +108,26 @@ type Mock struct {
 	// nodegroupSettle is the nodegroup analog of clusterSettle, keyed by
 	// nodegroupKey(clusterName, nodegroupName).
 	nodegroupSettle *settle.Set
+	// updateSettle keeps an update record InProgress (keyed by update ID)
+	// until the cluster or nodegroup change it tracks has settled.
+	updateSettle *settle.Set
+	// clusterOldVersions and nodegroupOldVersions hold the version a cluster
+	// or nodegroup keeps reporting while a version update settles. The stored
+	// row already carries the new version. Guarded by mu.
+	clusterOldVersions   map[string]oldVersion
+	nodegroupOldVersions map[string]oldVersion
 }
+
+// oldVersion is what a cluster or nodegroup reports until window elapses.
+type oldVersion struct {
+	version        string
+	releaseVersion string
+	window         settle.Window
+}
+
+// updateStatusInProgress is the status of an update whose change is still
+// settling; the stored record carries the final Successful status.
+const updateStatusInProgress = "InProgress"
 
 // New creates a new AWS EKS mock.
 func New(opts *config.Options) *Mock {
@@ -115,10 +137,15 @@ func New(opts *config.Options) *Mock {
 		fargateProfiles: memstore.New[eksdriver.FargateProfile](),
 		addons:          memstore.New[eksdriver.Addon](),
 		updates:         memstore.New[eksdriver.ClusterUpdate](),
+		accessEntries:   memstore.New[eksdriver.AccessEntry](),
 		opts:            opts,
 		k8sUIDs:         make(map[string]string),
 		clusterSettle:   settle.NewSet(),
 		nodegroupSettle: settle.NewSet(),
+		updateSettle:    settle.NewSet(),
+
+		clusterOldVersions:   make(map[string]oldVersion),
+		nodegroupOldVersions: make(map[string]oldVersion),
 	}
 }
 
@@ -159,7 +186,7 @@ func addonKey(clusterName, addonName string) string {
 // stub assumed "SDK clients only base64-decode it for the kubeconfig", which
 // holds for the raw SDK but not for anything that then builds a TLS config:
 // client-go calls AppendCertsFromPEM and fails with "unable to parse bytes as
-// PEM block" — an error raised at kubernetes.NewForConfig, far from EKS, that
+// PEM block", an error raised at kubernetes.NewForConfig, far from EKS, that
 // gives no hint the CA was synthetic. Any tool deriving a kubeconfig from
 // DescribeCluster (which is the documented way to reach an EKS cluster) hits
 // this immediately.
@@ -201,6 +228,18 @@ func (m *Mock) recordUpdate(u *eksdriver.ClusterUpdate) *eksdriver.ClusterUpdate
 	out := *u
 
 	return &out
+}
+
+// recordSettlingUpdate records an update that stays InProgress for d, the
+// settle window of the change it tracks. With d = 0 it is recordUpdate.
+// Callers must hold m.mu.
+func (m *Mock) recordSettlingUpdate(u *eksdriver.ClusterUpdate, d time.Duration) *eksdriver.ClusterUpdate {
+	out := m.recordUpdate(u)
+
+	m.updateSettle.Begin(u.ID, updateStatusInProgress, u.CreatedAt, d)
+	out.Status = m.updateSettle.State(u.ID, m.opts.Clock.Now(), out.Status)
+
+	return out
 }
 
 func (m *Mock) clusterARN(region, name string) string {
@@ -304,6 +343,66 @@ func resolveClusterLogging(in []eksdriver.ClusterLogging) []eksdriver.ClusterLog
 	return out
 }
 
+// clusterLoggingGroups is the max number of groups a normalized logging
+// config carries: one for enabled types, one for disabled types.
+const clusterLoggingGroups = 2
+
+// clusterLoggingState flattens a []ClusterLogging into a per-type enabled map.
+func clusterLoggingState(groups []eksdriver.ClusterLogging) map[string]bool {
+	state := make(map[string]bool, len(allClusterLogTypes()))
+
+	for _, l := range groups {
+		for _, t := range l.Types {
+			state[t] = l.Enabled
+		}
+	}
+
+	return state
+}
+
+// applyClusterLogging merges incoming per-type log setup onto cur, preserving
+// the state of any log type the caller doesn't mention. Real EKS UpdateClusterConfig
+// only touches the log types actually listed in the request, not the whole set.
+// The result is normalized into (up to) two groups, enabled types and disabled
+// types, in allClusterLogTypes() order, matching the canonical shape real EKS
+// reports after an update.
+func applyClusterLogging(cur, incoming []eksdriver.ClusterLogging) []eksdriver.ClusterLogging {
+	if len(incoming) == 0 {
+		return cur
+	}
+
+	state := clusterLoggingState(cur)
+	for t, enabled := range clusterLoggingState(incoming) {
+		state[t] = enabled
+	}
+
+	var enabled, disabled []string
+
+	for _, t := range allClusterLogTypes() {
+		v, ok := state[t]
+		if !ok {
+			continue
+		}
+
+		if v {
+			enabled = append(enabled, t)
+		} else {
+			disabled = append(disabled, t)
+		}
+	}
+
+	out := make([]eksdriver.ClusterLogging, 0, clusterLoggingGroups)
+	if len(enabled) > 0 {
+		out = append(out, eksdriver.ClusterLogging{Types: enabled, Enabled: true})
+	}
+
+	if len(disabled) > 0 {
+		out = append(out, eksdriver.ClusterLogging{Types: disabled, Enabled: false})
+	}
+
+	return out
+}
+
 // resolveNetworkConfig fills in the EKS networking defaults: ipFamily "ipv4",
 // and a service CIDR for the chosen family when the caller omits it (real EKS
 // auto-assigns one so DescribeCluster is always populated).
@@ -356,6 +455,61 @@ func copyTaints(src []eksdriver.Taint) []eksdriver.Taint {
 	copy(out, src)
 
 	return out
+}
+
+// applyLaunchTemplateVersion moves a nodegroup to another version of the
+// launch template it was created with. EKS doesn't let UpdateNodegroupVersion
+// add a launch template or switch to a different one.
+func applyLaunchTemplateVersion(ng *eksdriver.Nodegroup, lt *eksdriver.LaunchTemplateSpecification) error {
+	if lt == nil {
+		return nil
+	}
+
+	cur := ng.LaunchTemplate
+	if cur == nil {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"Nodegroup %s was not created with a launch template, so a launch template can't be specified.",
+			ng.NodegroupName)
+	}
+
+	if (lt.ID == "") == (lt.Name == "") {
+		return cerrors.New(cerrors.InvalidArgument,
+			"Either provide launch template ID or launch template name in the request.")
+	}
+
+	if !sameLaunchTemplate(cur, lt) {
+		return cerrors.New(cerrors.InvalidArgument,
+			"The launch template of a nodegroup can't be changed. Only its version can be updated.")
+	}
+
+	if lt.Version != "" {
+		next := *cur
+		next.Version = lt.Version
+		ng.LaunchTemplate = &next
+	}
+
+	return nil
+}
+
+// sameLaunchTemplate reports whether lt names the template cur points at. A
+// field the nodegroup doesn't know is not compared.
+func sameLaunchTemplate(cur, lt *eksdriver.LaunchTemplateSpecification) bool {
+	idDiffers := lt.ID != "" && cur.ID != "" && lt.ID != cur.ID
+	nameDiffers := lt.Name != "" && cur.Name != "" && lt.Name != cur.Name
+
+	return !idDiffers && !nameDiffers
+}
+
+// copyLaunchTemplate returns a defensive copy of a nodegroup's launch template
+// spec, or nil when the caller omitted one.
+func copyLaunchTemplate(src *eksdriver.LaunchTemplateSpecification) *eksdriver.LaunchTemplateSpecification {
+	if src == nil {
+		return nil
+	}
+
+	out := *src
+
+	return &out
 }
 
 // taintKey identifies a taint for merge/remove; real EKS treats Key+Effect as
@@ -434,20 +588,67 @@ func mergeLabels(cur, addOrUpdate map[string]string, remove []string) map[string
 	return out
 }
 
-// validateScaling rejects an inconsistent scaling config the way real EKS does
-// (InvalidParameterException): minSize must not exceed maxSize and desiredSize
-// must fall within [minSize, maxSize]. An all-zero config (scaling omitted) is
-// valid and left to defaults.
-func validateScaling(s eksdriver.NodegroupScalingConfig) error {
-	if s.MinSize > s.MaxSize {
-		return cerrors.Newf(cerrors.InvalidArgument,
-			"minSize (%d) must not be greater than maxSize (%d)", s.MinSize, s.MaxSize)
+// Nodegroup scaling defaults and limits. A CreateNodegroup without a
+// scalingConfig gets min 1, max 2, desired 2. maxSize is capped at the default
+// "Nodes per managed node group" service quota.
+const (
+	defaultNodegroupMinSize     = 1
+	defaultNodegroupMaxSize     = 2
+	defaultNodegroupDesiredSize = 2
+	maxNodesPerNodegroup        = 450
+)
+
+// resolveScaling returns the scaling config a new nodegroup starts with: the
+// requested one, or the EKS default when the request omitted it.
+func resolveScaling(s *eksdriver.NodegroupScalingConfig) eksdriver.NodegroupScalingConfig {
+	if s == nil {
+		return eksdriver.NodegroupScalingConfig{
+			MinSize:     defaultNodegroupMinSize,
+			MaxSize:     defaultNodegroupMaxSize,
+			DesiredSize: defaultNodegroupDesiredSize,
+		}
 	}
 
-	if s.DesiredSize < s.MinSize || s.DesiredSize > s.MaxSize {
+	return *s
+}
+
+// mergeScaling applies the sizes named in upd onto cur.
+func mergeScaling(cur eksdriver.NodegroupScalingConfig, upd *eksdriver.NodegroupScalingUpdate) eksdriver.NodegroupScalingConfig {
+	if upd.MinSize != nil {
+		cur.MinSize = *upd.MinSize
+	}
+
+	if upd.MaxSize != nil {
+		cur.MaxSize = *upd.MaxSize
+	}
+
+	if upd.DesiredSize != nil {
+		cur.DesiredSize = *upd.DesiredSize
+	}
+
+	return cur
+}
+
+// validateScaling rejects a scaling config the way real EKS does
+// (InvalidParameterException): minSize and desiredSize are at least 0, maxSize
+// is between 1 and the node quota, and minSize <= desiredSize <= maxSize. The
+// ordering messages are the ones EKS returns.
+func validateScaling(s eksdriver.NodegroupScalingConfig) error {
+	switch {
+	case s.MinSize < 0:
+		return cerrors.New(cerrors.InvalidArgument, "minSize must be greater than or equal to 0")
+	case s.DesiredSize < 0:
+		return cerrors.New(cerrors.InvalidArgument, "desiredSize must be greater than or equal to 0")
+	case s.MaxSize < 1:
+		return cerrors.New(cerrors.InvalidArgument, "maxSize must be greater than or equal to 1")
+	case s.MaxSize > maxNodesPerNodegroup:
+		return cerrors.Newf(cerrors.InvalidArgument, "maxSize can't be greater than %d", maxNodesPerNodegroup)
+	case s.MinSize > s.DesiredSize:
 		return cerrors.Newf(cerrors.InvalidArgument,
-			"desiredSize (%d) must be between minSize (%d) and maxSize (%d)",
-			s.DesiredSize, s.MinSize, s.MaxSize)
+			"Minimum capacity %d can't be greater than desired size %d", s.MinSize, s.DesiredSize)
+	case s.DesiredSize > s.MaxSize:
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"desired capacity %d can't be greater than max size %d", s.DesiredSize, s.MaxSize)
 	}
 
 	return nil
@@ -552,6 +753,18 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg eksdriver.ClusterConfig) (
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "cluster %q already exists", cfg.Name)
 	}
 
+	if mode := cfg.AccessConfig.AuthenticationMode; mode != "" {
+		if err := validateAuthMode(mode); err != nil {
+			return nil, err
+		}
+	}
+
+	if cfg.Version != "" {
+		if err := validateKubernetesVersion(cfg.Version); err != nil {
+			return nil, err
+		}
+	}
+
 	version := cfg.Version
 	if version == "" {
 		// Real EKS defaults to the latest supported Kubernetes version when the
@@ -584,6 +797,8 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg eksdriver.ClusterConfig) (
 		AccessConfig:  resolveAccessConfig(cfg.AccessConfig),
 		Tags:          copyTags(cfg.Tags),
 		CreatedAt:     m.opts.Clock.Now().UTC(),
+
+		CreatorPrincipalArn: m.creatorPrincipalArn(cfg),
 	}
 
 	// Wave 2: if a Kubernetes data-plane server is wired, register a fresh
@@ -592,9 +807,11 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg eksdriver.ClusterConfig) (
 	if m.k8sAPI != nil {
 		uid, _ := m.k8sAPI.RegisterCluster()
 		m.k8sUIDs[cfg.Name] = uid
+		m.k8sAPI.SetClusterVersion(uid, kubernetes.DistributionEKS, serverPatchVersion(version))
 	}
 
 	m.clusters.Set(cfg.Name, cluster)
+	m.bootstrapCreatorEntryLocked(&cluster)
 
 	m.emitClusterMetrics(cfg.Name)
 
@@ -649,10 +866,23 @@ func (m *Mock) clusterStatusLocked(c *eksdriver.Cluster) string {
 	return m.clusterSettle.State(c.Name, m.opts.Clock.Now(), c.Status)
 }
 
-// overlayClusterStatus mutates c.Status in place to the settle-overlaid value.
+// overlayClusterStatus mutates c.Status in place to the settle-overlaid value,
+// and puts back the old version while a version update is still settling.
 // Caller must hold at least an RLock on m.mu.
 func (m *Mock) overlayClusterStatus(c *eksdriver.Cluster) {
 	c.Status = m.clusterStatusLocked(c)
+	c.Version = m.clusterVersionLocked(c)
+}
+
+// clusterVersionLocked returns the version c's control plane runs right now:
+// the old one while an UpdateClusterVersion is settling, else the stored one.
+// Caller must hold at least an RLock on m.mu.
+func (m *Mock) clusterVersionLocked(c *eksdriver.Cluster) string {
+	if old, ok := m.clusterOldVersions[c.Name]; ok && !old.window.Settled(m.opts.Clock.Now()) {
+		return old.version
+	}
+
+	return c.Version
 }
 
 // nodegroupStatusLocked is the nodegroup analog of clusterStatusLocked.
@@ -663,6 +893,12 @@ func (m *Mock) nodegroupStatusLocked(ng *eksdriver.Nodegroup) string {
 // overlayNodegroupStatus is the nodegroup analog of overlayClusterStatus.
 func (m *Mock) overlayNodegroupStatus(ng *eksdriver.Nodegroup) {
 	ng.Status = m.nodegroupStatusLocked(ng)
+
+	key := nodegroupKey(ng.ClusterName, ng.NodegroupName)
+	if old, ok := m.nodegroupOldVersions[key]; ok && !old.window.Settled(m.opts.Clock.Now()) {
+		ng.Version = old.version
+		ng.ReleaseVersion = old.releaseVersion
+	}
 }
 
 // DescribeCluster looks up a cluster by name.
@@ -690,26 +926,40 @@ func (m *Mock) ListClusters(_ context.Context) ([]string, error) {
 	return m.clusters.Keys(), nil
 }
 
-// UpdateClusterConfig records a logical update for VPC config / logging /
-// tags. Wave 1 applies the changes synchronously and returns a Successful
-// update so SDK pollers terminate immediately.
-//
-//nolint:gocritic // cfg matches the driver interface signature; one copy on entry is fine.
-func (m *Mock) UpdateClusterConfig(
-	_ context.Context, name string, cfg eksdriver.VPCConfig, tags map[string]string,
-) (*eksdriver.ClusterUpdate, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// clusterConfigUpdateType picks the EKS UpdateType that best reflects what a
+// UpdateClusterConfig call actually changed, matching the real API's
+// per-change-kind types (a single call only ever changes one kind of thing:
+// access config, logging, or VPC config). accessConfig takes priority since
+// it is the narrowest / most specific change; vpcEndpointChanged separates
+// the "endpoint access" flavor from a broader subnet/SG/CIDR VpcConfigUpdate.
+func clusterConfigUpdateType(accessConfigChanged, loggingChanged, vpcEndpointChanged, vpcOtherChanged bool) string {
+	switch {
+	case accessConfigChanged:
+		return "AccessConfigUpdate"
+	case loggingChanged:
+		return "LoggingUpdate"
+	case vpcEndpointChanged:
+		return "EndpointAccessUpdate"
+	case vpcOtherChanged:
+		return "VpcConfigUpdate"
+	default:
+		return "ConfigUpdate"
+	}
+}
 
-	c, ok := m.clusters.Get(name)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", name)
+// applyVPCUpdate merges a caller-supplied resourcesVpcConfig onto the stored
+// cluster, reporting whether the endpoint-access flags and/or the other VPC
+// fields changed. A nil cfg means the caller omitted resourcesVpcConfig
+// entirely, so nothing is touched. The endpoint-access flags are
+// NOT reset to false on a logging/accessConfig/tags-only update.
+func applyVPCUpdate(c *eksdriver.Cluster, cfg *eksdriver.VPCConfig) (endpointChanged, otherChanged bool) {
+	if cfg == nil {
+		return false, false
 	}
 
-	if status := m.clusterStatusLocked(&c); status != eksdriver.ClusterStatusActive {
-		return nil, resourceInUseErrf(
-			"cluster %q already has a pending update (status %s); only one update is allowed at a time", name, status)
-	}
+	otherChanged = len(cfg.SubnetIDs) > 0 || len(cfg.SecurityGroupIDs) > 0 || len(cfg.PublicAccessCidrs) > 0
+	endpointChanged = cfg.EndpointPublicAccess != c.VPCConfig.EndpointPublicAccess ||
+		cfg.EndpointPrivateAccess != c.VPCConfig.EndpointPrivateAccess
 
 	if len(cfg.SubnetIDs) > 0 {
 		c.VPCConfig.SubnetIDs = copyStrings(cfg.SubnetIDs)
@@ -726,28 +976,88 @@ func (m *Mock) UpdateClusterConfig(
 	c.VPCConfig.EndpointPublicAccess = cfg.EndpointPublicAccess
 	c.VPCConfig.EndpointPrivateAccess = cfg.EndpointPrivateAccess
 
+	return endpointChanged, otherChanged
+}
+
+// UpdateClusterConfig records a logical update for VPC config / logging /
+// access config / tags, applying every supplied change to the stored cluster
+// so DescribeCluster reflects it. A nil cfg leaves VPC config untouched (real
+// EKS only changes the fields the request actually carries). Wave 1 applies
+// changes synchronously and returns a Successful update so SDK pollers
+// terminate immediately.
+func (m *Mock) UpdateClusterConfig(
+	_ context.Context, name string, cfg *eksdriver.VPCConfig,
+	logging []eksdriver.ClusterLogging, accessConfig *eksdriver.AccessConfigUpdate, tags map[string]string,
+) (*eksdriver.ClusterUpdate, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c, ok := m.clusters.Get(name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", name)
+	}
+
+	if status := m.clusterStatusLocked(&c); status != eksdriver.ClusterStatusActive {
+		return nil, resourceInUseErrf(
+			"cluster %q already has a pending update (status %s); only one update is allowed at a time", name, status)
+	}
+
+	accessConfigChanged := accessConfig != nil && accessConfig.AuthenticationMode != ""
+	if accessConfigChanged {
+		if err := validateAuthModeUpdate(c.AccessConfig.AuthenticationMode, accessConfig.AuthenticationMode); err != nil {
+			return nil, err
+		}
+
+		gainsAPI := !apiAuthMode(c.AccessConfig.AuthenticationMode)
+		c.AccessConfig.AuthenticationMode = accessConfig.AuthenticationMode
+
+		if gainsAPI {
+			m.backfillAccessEntriesLocked(&c)
+		}
+	}
+
+	vpcEndpointChanged, vpcOtherChanged := applyVPCUpdate(&c, cfg)
+
+	loggingChanged := len(logging) > 0
+	if loggingChanged {
+		c.Logging = applyClusterLogging(c.Logging, logging)
+	}
+
 	if tags != nil {
 		c.Tags = copyTags(tags)
 	}
 
 	m.clusters.Set(name, c)
 
-	m.clusterSettle.Begin(name, eksdriver.ClusterStatusUpdating, m.opts.Clock.Now(),
-		m.opts.SettleDuration(settle.DefaultClusterSettle))
+	d := m.opts.SettleDuration(settle.DefaultClusterSettle)
+	m.clusterSettle.Begin(name, eksdriver.ClusterStatusUpdating, m.opts.Clock.Now(), d)
 
-	return m.recordUpdate(&eksdriver.ClusterUpdate{
+	return m.recordSettlingUpdate(&eksdriver.ClusterUpdate{
 		ID:          newUpdateID(),
-		Type:        "EndpointAccessUpdate",
+		Type:        clusterConfigUpdateType(accessConfigChanged, loggingChanged, vpcEndpointChanged, vpcOtherChanged),
 		Status:      "Successful",
 		CreatedAt:   m.opts.Clock.Now().UTC(),
 		ClusterName: name,
-	}), nil
+	}, d), nil
 }
 
-// UpdateClusterVersion bumps the Kubernetes version of an existing cluster.
-func (m *Mock) UpdateClusterVersion(_ context.Context, name, version string) (*eksdriver.ClusterUpdate, error) {
+// UpdateClusterVersion moves a cluster up one minor version. A one-minor
+// rollback is allowed within 7 days of the upgrade that reached the current
+// version. Force skips only the rollback readiness check.
+func (m *Mock) UpdateClusterVersion(
+	_ context.Context, name string, in eksdriver.ClusterVersionUpdate,
+) (*eksdriver.ClusterUpdate, error) {
+	version := in.Version
 	if version == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "version is required")
+	}
+
+	if err := validateKubernetesVersion(version); err != nil {
+		return nil, err
+	}
+
+	if err := validateRollbackConfig(in.RollbackTimeoutMinutes); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
@@ -763,19 +1073,45 @@ func (m *Mock) UpdateClusterVersion(_ context.Context, name, version string) (*e
 			"cluster %q already has a pending update (status %s); only one update is allowed at a time", name, status)
 	}
 
+	updateType, err := m.clusterVersionChange(&c, version, in.Force)
+	if err != nil {
+		return nil, err
+	}
+
+	if updateType == updateTypeRollback {
+		// A rolled-back cluster did not reach its version by an upgrade, so
+		// it can't roll back again.
+		c.PreviousVersion = ""
+		c.VersionUpgradedAt = time.Time{}
+	} else {
+		c.PreviousVersion = c.Version
+		c.VersionUpgradedAt = m.opts.Clock.Now().UTC()
+	}
+
+	now := m.opts.Clock.Now()
+	d := m.opts.SettleDuration(settle.DefaultClusterSettle)
+
+	// The stored row takes the new version. Until the update settles the
+	// control plane still runs the old one, so describes and /version keep
+	// reporting it and switch when the window elapses. With AsyncSettle off
+	// d is 0 and the switch is immediate.
+	m.clusterOldVersions[name] = oldVersion{version: c.Version, window: settle.Pending("", now, d)}
 	c.Version = version
 	m.clusters.Set(name, c)
 
-	m.clusterSettle.Begin(name, eksdriver.ClusterStatusUpdating, m.opts.Clock.Now(),
-		m.opts.SettleDuration(settle.DefaultClusterSettle))
+	if uid, ok := m.k8sUIDs[name]; ok && m.k8sAPI != nil {
+		m.k8sAPI.SetClusterVersionAt(uid, kubernetes.DistributionEKS, serverPatchVersion(version), m.opts.Clock, now.Add(d))
+	}
 
-	return m.recordUpdate(&eksdriver.ClusterUpdate{
+	m.clusterSettle.Begin(name, eksdriver.ClusterStatusUpdating, now, d)
+
+	return m.recordSettlingUpdate(&eksdriver.ClusterUpdate{
 		ID:          newUpdateID(),
-		Type:        "VersionUpdate",
+		Type:        updateType,
 		Status:      "Successful",
-		CreatedAt:   m.opts.Clock.Now().UTC(),
+		CreatedAt:   now.UTC(),
 		ClusterName: name,
-	}), nil
+	}, d), nil
 }
 
 // DeleteCluster removes a cluster (only if no nodegroups, Fargate profiles,
@@ -816,6 +1152,8 @@ func (m *Mock) DeleteCluster(_ context.Context, name string) (*eksdriver.Cluster
 
 	m.clusters.Delete(name)
 	m.clusterSettle.Clear(name)
+	delete(m.clusterOldVersions, name)
+	m.deleteClusterAccessEntriesLocked(name)
 
 	// Resolve the endpoint before deregistering: the response describes the
 	// cluster as it was, and reading afterwards yields the not-implemented
@@ -825,7 +1163,7 @@ func (m *Mock) DeleteCluster(_ context.Context, name string) (*eksdriver.Cluster
 
 	// Wave 2: tear down the cluster's Kubernetes data-plane state too. The
 	// UID map entry is dropped after deregister so subsequent describes find
-	// nothing — matching the real cluster going away.
+	// nothing, matching the real cluster going away.
 	if uid, ok := m.k8sUIDs[name]; ok && m.k8sAPI != nil {
 		m.k8sAPI.DeregisterCluster(uid)
 		delete(m.k8sUIDs, name)
@@ -846,6 +1184,7 @@ func (m *Mock) DescribeUpdate(_ context.Context, clusterName, updateID string) (
 	}
 
 	out := u
+	out.Status = m.updateSettle.State(u.ID, m.opts.Clock.Now(), u.Status)
 
 	return &out, nil
 }
@@ -912,11 +1251,17 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 			"nodegroup %q already exists in cluster %q", cfg.NodegroupName, cfg.ClusterName)
 	}
 
-	if err := validateScaling(cfg.ScalingConfig); err != nil {
+	scaling := resolveScaling(cfg.ScalingConfig)
+	if err := validateScaling(scaling); err != nil {
 		return nil, err
 	}
 
 	if err := validateUpdateConfig(cfg.UpdateConfig); err != nil {
+		return nil, err
+	}
+
+	version, err := resolveNodegroupVersion(&parent, cfg.Version)
+	if err != nil {
 		return nil, err
 	}
 
@@ -934,9 +1279,9 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 		AmiType:        amiType,
 		CapacityType:   cfg.CapacityType,
 		DiskSize:       diskSize,
-		Version:        cfg.Version,
+		Version:        version,
 		ReleaseVersion: cfg.ReleaseVersion,
-		ScalingConfig:  cfg.ScalingConfig,
+		ScalingConfig:  scaling,
 		UpdateConfig:   resolveUpdateConfig(cfg.UpdateConfig),
 		Status:         eksdriver.NodegroupStatusActive,
 		Labels:         copyTags(cfg.Labels),
@@ -944,9 +1289,12 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 		Tags:           copyTags(cfg.Tags),
 		CreatedAt:      now,
 		ModifiedAt:     now,
+		LaunchTemplate: copyLaunchTemplate(cfg.LaunchTemplate),
 	}
 
 	m.nodegroups.Set(key, ng)
+	m.addNodeEntryLocked(&parent, ng.NodeRole, nodegroupEntryType(ng.AmiType))
+	m.syncNodegroupNodesLocked(&ng, ng.ScalingConfig.DesiredSize)
 
 	// Under AsyncSettle a fresh nodegroup reports CREATING until the window
 	// elapses, matching real EKS. With the default (AsyncSettle off)
@@ -1026,11 +1374,12 @@ func (m *Mock) UpdateNodegroupConfig(
 	}
 
 	if upd.Scaling != nil {
-		if err := validateScaling(*upd.Scaling); err != nil {
+		scaling := mergeScaling(ng.ScalingConfig, upd.Scaling)
+		if err := validateScaling(scaling); err != nil {
 			return nil, err
 		}
 
-		ng.ScalingConfig = *upd.Scaling
+		ng.ScalingConfig = scaling
 	}
 
 	if upd.UpdateConfig != nil {
@@ -1046,24 +1395,27 @@ func (m *Mock) UpdateNodegroupConfig(
 	ng.ModifiedAt = m.opts.Clock.Now().UTC()
 
 	m.nodegroups.Set(key, ng)
+	m.syncNodegroupNodesLocked(&ng, ng.ScalingConfig.DesiredSize)
 
-	m.nodegroupSettle.Begin(key, eksdriver.NodegroupStatusUpdating, m.opts.Clock.Now(),
-		m.opts.SettleDuration(settle.DefaultClusterSettle))
+	d := m.opts.SettleDuration(settle.DefaultClusterSettle)
+	m.nodegroupSettle.Begin(key, eksdriver.NodegroupStatusUpdating, m.opts.Clock.Now(), d)
 
-	return m.recordUpdate(&eksdriver.ClusterUpdate{
+	return m.recordSettlingUpdate(&eksdriver.ClusterUpdate{
 		ID:            newUpdateID(),
 		Type:          "ConfigUpdate",
 		Status:        "Successful",
 		CreatedAt:     m.opts.Clock.Now().UTC(),
 		ClusterName:   clusterName,
 		NodegroupName: nodegroupName,
-	}), nil
+	}, d), nil
 }
 
 // UpdateNodegroupVersion bumps the Kubernetes version of a nodegroup.
 func (m *Mock) UpdateNodegroupVersion(
-	_ context.Context, clusterName, nodegroupName, version, releaseVersion string,
+	_ context.Context, clusterName, nodegroupName string, upd eksdriver.NodegroupVersionUpdate,
 ) (*eksdriver.ClusterUpdate, error) {
+	version, releaseVersion := upd.Version, upd.ReleaseVersion
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1081,9 +1433,31 @@ func (m *Mock) UpdateNodegroupVersion(
 			nodegroupName, status)
 	}
 
-	if version != "" {
-		ng.Version = version
+	parent, ok := m.clusters.Get(clusterName)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", clusterName)
 	}
+
+	// Resolve against the version the control plane runs now, which lags the
+	// stored one while an UpdateClusterVersion is settling.
+	parent.Version = m.clusterVersionLocked(&parent)
+
+	resolved, err := resolveNodegroupVersion(&parent, version)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := applyLaunchTemplateVersion(&ng, upd.LaunchTemplate); err != nil {
+		return nil, err
+	}
+
+	now := m.opts.Clock.Now()
+	d := m.opts.SettleDuration(settle.DefaultClusterSettle)
+	m.nodegroupOldVersions[key] = oldVersion{
+		version: ng.Version, releaseVersion: ng.ReleaseVersion, window: settle.Pending("", now, d),
+	}
+
+	ng.Version = resolved
 
 	if releaseVersion != "" {
 		ng.ReleaseVersion = releaseVersion
@@ -1092,18 +1466,18 @@ func (m *Mock) UpdateNodegroupVersion(
 	ng.ModifiedAt = m.opts.Clock.Now().UTC()
 
 	m.nodegroups.Set(key, ng)
+	m.syncNodegroupNodesLocked(&ng, ng.ScalingConfig.DesiredSize)
 
-	m.nodegroupSettle.Begin(key, eksdriver.NodegroupStatusUpdating, m.opts.Clock.Now(),
-		m.opts.SettleDuration(settle.DefaultClusterSettle))
+	m.nodegroupSettle.Begin(key, eksdriver.NodegroupStatusUpdating, now, d)
 
-	return m.recordUpdate(&eksdriver.ClusterUpdate{
+	return m.recordSettlingUpdate(&eksdriver.ClusterUpdate{
 		ID:            newUpdateID(),
 		Type:          "VersionUpdate",
 		Status:        "Successful",
-		CreatedAt:     m.opts.Clock.Now().UTC(),
+		CreatedAt:     now.UTC(),
 		ClusterName:   clusterName,
 		NodegroupName: nodegroupName,
-	}), nil
+	}, d), nil
 }
 
 // DeleteNodegroup removes a nodegroup.
@@ -1123,6 +1497,9 @@ func (m *Mock) DeleteNodegroup(_ context.Context, clusterName, nodegroupName str
 
 	m.nodegroups.Delete(key)
 	m.nodegroupSettle.Clear(key)
+	delete(m.nodegroupOldVersions, key)
+	m.removeNodeEntryLocked(clusterName, ng.NodeRole)
+	m.syncNodegroupNodesLocked(&ng, 0)
 
 	out := ng
 
@@ -1170,6 +1547,7 @@ func (m *Mock) CreateFargateProfile(
 	}
 
 	m.fargateProfiles.Set(key, fp)
+	m.addNodeEntryLocked(&parent, fp.PodExecutionRole, eksdriver.AccessEntryTypeFargateLinux)
 
 	out := fp
 
@@ -1233,6 +1611,7 @@ func (m *Mock) DeleteFargateProfile(
 	fp.Status = eksdriver.FargateProfileStatusDeleting
 
 	m.fargateProfiles.Delete(key)
+	m.removeNodeEntryLocked(clusterName, fp.PodExecutionRole)
 
 	out := fp
 
@@ -1265,12 +1644,21 @@ func (m *Mock) CreateAddon(_ context.Context, cfg eksdriver.AddonConfig) (*eksdr
 			"add-on %q already installed on cluster %q", cfg.AddonName, cfg.ClusterName)
 	}
 
+	version, err := resolveAddonVersion(cfg.AddonName, m.clusterVersionLocked(&parent), cfg.AddonVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validateConfigurationValues(cfg.ConfigurationValues); err != nil {
+		return nil, err
+	}
+
 	now := m.opts.Clock.Now().UTC()
 
 	ad := eksdriver.Addon{
 		ClusterName:           cfg.ClusterName,
 		AddonName:             cfg.AddonName,
-		AddonVersion:          cfg.AddonVersion,
+		AddonVersion:          version,
 		ARN:                   m.addonARN(arnRegion(parent.ARN, m.opts.Region), cfg.ClusterName, cfg.AddonName),
 		ServiceAccountRoleArn: cfg.ServiceAccountRoleArn,
 		ConfigurationValues:   cfg.ConfigurationValues,
@@ -1340,7 +1728,21 @@ func (m *Mock) UpdateAddon(_ context.Context, cfg eksdriver.AddonConfig) (*eksdr
 	}
 
 	if cfg.AddonVersion != "" {
-		ad.AddonVersion = cfg.AddonVersion
+		parent, ok := m.clusters.Get(cfg.ClusterName)
+		if !ok {
+			return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", cfg.ClusterName)
+		}
+
+		version, err := resolveAddonVersion(cfg.AddonName, m.clusterVersionLocked(&parent), cfg.AddonVersion)
+		if err != nil {
+			return nil, err
+		}
+
+		ad.AddonVersion = version
+	}
+
+	if err := validateConfigurationValues(cfg.ConfigurationValues); err != nil {
+		return nil, err
 	}
 
 	if cfg.ServiceAccountRoleArn != "" {

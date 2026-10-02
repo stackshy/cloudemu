@@ -287,6 +287,87 @@ func TestSDKDescribeDomainConfigEnvelope(t *testing.T) {
 	}
 }
 
+// TestSDKUpdateDomainConfigPartialUpdate proves UpdateDomainConfig is a real
+// field-level merge over the wire: a second call that sends only ClusterConfig
+// (WarmCount) and only EBSOptions (VolumeType) must not revert the
+// InstanceType/InstanceCount and VolumeSize/EBSEnabled an earlier call set.
+func TestSDKUpdateDomainConfigPartialUpdate(t *testing.T) {
+	ctx := context.Background()
+	c := newOSClient(t)
+
+	if _, err := c.CreateDomain(ctx, &awsos.CreateDomainInput{
+		DomainName:    aws.String("partial-domain"),
+		EngineVersion: aws.String("OpenSearch_2.11"),
+	}); err != nil {
+		t.Fatalf("CreateDomain: %v", err)
+	}
+
+	if _, err := c.UpdateDomainConfig(ctx, &awsos.UpdateDomainConfigInput{
+		DomainName: aws.String("partial-domain"),
+		ClusterConfig: &ostypes.ClusterConfig{
+			InstanceType:  ostypes.OpenSearchPartitionInstanceTypeM6gLargeSearch,
+			InstanceCount: aws.Int32(3),
+		},
+		EBSOptions: &ostypes.EBSOptions{
+			EBSEnabled: aws.Bool(true),
+			VolumeType: ostypes.VolumeTypeGp2,
+			VolumeSize: aws.Int32(100),
+		},
+	}); err != nil {
+		t.Fatalf("first UpdateDomainConfig: %v", err)
+	}
+
+	// Second call touches only WarmCount and VolumeType; every other field is
+	// left off the wire entirely (the SDK omits nil pointer fields).
+	upd, err := c.UpdateDomainConfig(ctx, &awsos.UpdateDomainConfigInput{
+		DomainName: aws.String("partial-domain"),
+		ClusterConfig: &ostypes.ClusterConfig{
+			WarmCount: aws.Int32(2),
+		},
+		EBSOptions: &ostypes.EBSOptions{
+			VolumeType: ostypes.VolumeTypeGp3,
+		},
+	})
+	if err != nil {
+		t.Fatalf("second UpdateDomainConfig: %v", err)
+	}
+
+	cc := upd.DomainConfig.ClusterConfig.Options
+	if cc == nil || cc.InstanceType != ostypes.OpenSearchPartitionInstanceTypeM6gLargeSearch || aws.ToInt32(cc.InstanceCount) != 3 {
+		t.Fatalf("second update reverted ClusterConfig fields it did not send: %+v", cc)
+	}
+
+	if aws.ToInt32(cc.WarmCount) != 2 {
+		t.Fatalf("second update did not apply WarmCount: %+v", cc)
+	}
+
+	ebs := upd.DomainConfig.EBSOptions.Options
+	if ebs == nil || !aws.ToBool(ebs.EBSEnabled) || aws.ToInt32(ebs.VolumeSize) != 100 {
+		t.Fatalf("second update reverted EBSOptions fields it did not send: %+v", ebs)
+	}
+
+	if ebs.VolumeType != ostypes.VolumeTypeGp3 {
+		t.Fatalf("second update did not apply VolumeType: %+v", ebs)
+	}
+
+	// DescribeDomainConfig must reflect the same merged state.
+	desc, err := c.DescribeDomainConfig(ctx, &awsos.DescribeDomainConfigInput{DomainName: aws.String("partial-domain")})
+	if err != nil {
+		t.Fatalf("DescribeDomainConfig: %v", err)
+	}
+
+	descCC := desc.DomainConfig.ClusterConfig.Options
+	if descCC == nil || descCC.InstanceType != ostypes.OpenSearchPartitionInstanceTypeM6gLargeSearch ||
+		aws.ToInt32(descCC.InstanceCount) != 3 || aws.ToInt32(descCC.WarmCount) != 2 {
+		t.Fatalf("DescribeDomainConfig did not reflect merged ClusterConfig: %+v", descCC)
+	}
+
+	descEBS := desc.DomainConfig.EBSOptions.Options
+	if descEBS == nil || !aws.ToBool(descEBS.EBSEnabled) || aws.ToInt32(descEBS.VolumeSize) != 100 || descEBS.VolumeType != ostypes.VolumeTypeGp3 {
+		t.Fatalf("DescribeDomainConfig did not reflect merged EBSOptions: %+v", descEBS)
+	}
+}
+
 // TestSDKMinimalDomainAlwaysReturnsOptionBlocks guards a real-user divergence:
 // the terraform aws_opensearch_domain read path flattens CognitoOptions and
 // EBSOptions without a nil check, so a domain created without them must still

@@ -142,8 +142,8 @@ func listAppSettings(w http.ResponseWriter, r *http.Request, rp azurearm.Resourc
 	})
 }
 
-// updateAppSettings serves PUT .../config/appsettings — WebApps_
-// UpdateApplicationSettings. Per the ARM contract, this replaces the app's
+// updateAppSettings serves PUT .../config/appsettings (WebApps_
+// UpdateApplicationSettings). Per the ARM contract, this replaces the app's
 // entire settings map (not a merge) and echoes it back in the response.
 //
 //nolint:gocritic // rp travels the dispatch chain once per request.

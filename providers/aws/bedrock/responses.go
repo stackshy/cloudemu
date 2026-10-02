@@ -51,6 +51,71 @@ type cohereResponse struct {
 	Generations []cohereGeneration `json:"generations"`
 }
 
+type novaContent struct {
+	Text string `json:"text"`
+}
+
+type novaMessage struct {
+	Role    string        `json:"role"`
+	Content []novaContent `json:"content"`
+}
+
+type novaOutput struct {
+	Message novaMessage `json:"message"`
+}
+
+type novaUsage struct {
+	InputTokens  int `json:"inputTokens"`
+	OutputTokens int `json:"outputTokens"`
+	TotalTokens  int `json:"totalTokens"`
+}
+
+// novaResponse is the Amazon Nova InvokeModel envelope.
+type novaResponse struct {
+	Output     novaOutput `json:"output"`
+	StopReason string     `json:"stopReason"`
+	Usage      novaUsage  `json:"usage"`
+}
+
+type mistralOutput struct {
+	Text       string `json:"text"`
+	StopReason string `json:"stop_reason"`
+}
+
+// mistralResponse is the Mistral text-completion envelope.
+type mistralResponse struct {
+	Outputs []mistralOutput `json:"outputs"`
+}
+
+// cohereRResponse is the Cohere Command R and R+ chat envelope.
+type cohereRResponse struct {
+	Text         string `json:"text"`
+	GenerationID string `json:"generation_id"`
+	FinishReason string `json:"finish_reason"`
+}
+
+type deepSeekChoice struct {
+	Text       string `json:"text"`
+	StopReason string `json:"stop_reason"`
+}
+
+// deepSeekResponse is the DeepSeek-R1 InvokeModel envelope.
+type deepSeekResponse struct {
+	Choices []deepSeekChoice `json:"choices"`
+}
+
+// cohereEmbedResponse is the Cohere Embed v3 envelope.
+type cohereEmbedResponse struct {
+	ID           string      `json:"id"`
+	ResponseType string      `json:"response_type"`
+	Embeddings   [][]float64 `json:"embeddings"`
+}
+
+// imageResponse is the Titan Image Generator envelope: base64 images.
+type imageResponse struct {
+	Images []string `json:"images"`
+}
+
 type genericResponse struct {
 	Completion string `json:"completion"`
 	StopReason string `json:"stop_reason"`

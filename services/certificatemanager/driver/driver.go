@@ -1,6 +1,6 @@
 // Package driver defines the portable interface for the Google Certificate
 // Manager control plane (certificatemanager.googleapis.com/v1). It is
-// control-plane only — the three location-scoped resource collections a
+// control-plane only: the three location-scoped resource collections a
 // Terraform google provider or a real google.golang.org/api/certificatemanager
 // client CRUDs are modeled:
 //
@@ -39,7 +39,7 @@ import (
 // separately so the full resource name and location scoping can be rebuilt
 // without re-parsing. CreateTime/UpdateTime are derived deterministically and
 // stay stable across reads. Fields holds every caller-supplied, non-computed
-// body key verbatim — plus any computed body value seeded once at create (a DNS
+// body key verbatim, plus any computed body value seeded once at create (a DNS
 // authorization's dnsResourceRecord, a managed certificate's state), which then
 // round-trips as a stable passthrough value.
 type Resource struct {

@@ -39,7 +39,7 @@ func TestCompatAWSIAM(t *testing.T) {
 	sess := compat.BootAWS(t, awsserver.Drivers{
 		IAM: cloud.IAM,
 		// EC2 shares the AWS query protocol; wiring it exercises dispatch
-		// precedence — the IAM handler must claim the body first.
+		// precedence: the IAM handler must claim the body first.
 		EC2: cloud.EC2,
 	})
 

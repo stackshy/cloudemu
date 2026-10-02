@@ -7,8 +7,8 @@
 // container app runs one revision's worth of containers behind an optional
 // ingress. Both are Azure-only ARM resources with no cross-cloud portable
 // driver, so their state lives here on a provider mock, exactly like Azure
-// user-assigned managed identities. The values a discoverer prices on — a
-// container's cpu/memory and the app's scale.minReplicas — are preserved
+// user-assigned managed identities. The values a discoverer prices on, a
+// container's cpu/memory and the app's scale.minReplicas, are preserved
 // verbatim from create so they survive a create -> discover round trip.
 package containerapps
 
@@ -133,7 +133,7 @@ type UserAssignedIdentity struct {
 
 // ContainerApp is a stored container app. Fqdn and LatestRevisionName are minted
 // once at create and preserved across updates. Revisions is the app's revision
-// history — a new entry is materialized every time the template changes.
+// history: a new entry is materialized every time the template changes.
 // IdentityType/PrincipalID/TenantID/UserAssignedIdentities carry the app's
 // managed-identity block, synthesized on write so a create -> read round trip
 // matches real Azure.
@@ -191,6 +191,10 @@ type Mock struct {
 	clock config.Clock
 	envs  *memstore.Store[Environment]
 	apps  *memstore.Store[ContainerApp]
+	// dapr and storages hold the environments' daprComponents and storages
+	// children, keyed by the environment key plus "/" and the child name.
+	dapr     *memstore.Store[envChildRecord[DaprComponent]]
+	storages *memstore.Store[envChildRecord[EnvStorage]]
 }
 
 // New creates an empty Container Apps mock. The clock stamps revision createdTime
@@ -203,9 +207,11 @@ func New(opts *config.Options) *Mock {
 	}
 
 	return &Mock{
-		clock: clock,
-		envs:  memstore.New[Environment](),
-		apps:  memstore.New[ContainerApp](),
+		clock:    clock,
+		envs:     memstore.New[Environment](),
+		apps:     memstore.New[ContainerApp](),
+		dapr:     memstore.New[envChildRecord[DaprComponent]](),
+		storages: memstore.New[envChildRecord[EnvStorage]](),
 	}
 }
 
@@ -279,7 +285,10 @@ func (m *Mock) DeleteEnvironment(_ context.Context, sub, rg, name string) (bool,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return m.envs.Delete(key(sub, rg, typeEnvironments, name)), nil
+	k := key(sub, rg, typeEnvironments, name)
+	m.deleteEnvChildrenLocked(k)
+
+	return m.envs.Delete(k), nil
 }
 
 // ListEnvironmentsByResourceGroup returns every environment in sub/rg.
@@ -398,6 +407,7 @@ func (m *Mock) PurgeResourceGroup(_ context.Context, sub, rg string) error {
 	envs := m.envs.All()
 	for k := range envs {
 		if strings.EqualFold(envs[k].Subscription, sub) && strings.EqualFold(envs[k].ResourceGroup, rg) {
+			m.deleteEnvChildrenLocked(k)
 			m.envs.Delete(k)
 		}
 	}

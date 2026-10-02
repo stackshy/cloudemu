@@ -97,7 +97,7 @@ func TestPodAttach_WebSocketSyntheticSession(t *testing.T) {
 	assertSuccessStatus(t, frames[remotecommand.StreamErr])
 }
 
-// The v4 subprotocol (kubectl < 1.29) must also be honored — v4/v5 are the ones
+// The v4 subprotocol (kubectl < 1.29) must also be honored: v4/v5 are the ones
 // wsstream.NewDefaultChannelProtocols omits and we register by hand.
 func TestPodExec_WebSocketV4Protocol(t *testing.T) {
 	base, done := newFixture(t)

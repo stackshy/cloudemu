@@ -7,7 +7,7 @@
 // handler claims any path ending in workRequests and answers uniformly.
 //
 // Every CloudEmu mutation completes synchronously, so an accepted work request
-// is already SUCCEEDED — the envelope exists to keep SDK waiters happy and to
+// is already SUCCEEDED. The envelope exists to keep SDK waiters happy and to
 // carry the created resource's OCID back to them.
 package workrequest
 

@@ -193,7 +193,7 @@ func TestCreateInstanceReleasesLockDuringProvision(t *testing.T) {
 }
 
 // TestCloneInstanceProvisionsDistinctDatabase proves a clone is backed by its
-// OWN engine database (named after the clone), never the source's — the alias
+// OWN engine database (named after the clone), never the source's: the alias
 // that let clone writes corrupt the source and a clone delete DROP the source.
 func TestCloneInstanceProvisionsDistinctDatabase(t *testing.T) {
 	eng := &recordingEngine{host: "127.0.0.1", port: 55432}

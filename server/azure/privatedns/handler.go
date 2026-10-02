@@ -1,6 +1,6 @@
 // Package privatedns implements the Azure Private DNS
-// (Microsoft.Network/privateDnsZones) ARM REST API — private zones,
-// virtualNetworkLinks and record sets — as a server.Handler. Real
+// (Microsoft.Network/privateDnsZones) ARM REST API: private zones,
+// virtualNetworkLinks and record sets, as a server.Handler. Real
 // github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns
 // clients and the Terraform azurerm provider, configured with a custom endpoint,
 // hit this handler the same way they hit management.azure.com, driving the
@@ -8,28 +8,28 @@
 //
 // Private DNS shares the Microsoft.Network ARM provider with the VNet, public
 // DNS, load-balancer, app-gateway and firewall handlers, but claims a disjoint
-// resource type (privateDnsZones — distinct from the public DNS handler's
+// resource type (privateDnsZones, distinct from the public DNS handler's
 // dnsZones even case-insensitively), so registration order between them is
 // unconstrained. It must register before the permissive BlobStorage fallback.
 //
 // Coverage:
 //
-//	PUT    .../privateDnsZones/{z}                          — PrivateZones.CreateOrUpdate (LRO, sync 201/200)
-//	PATCH  .../privateDnsZones/{z}                          — PrivateZones.Update (tags replace)
-//	GET    .../privateDnsZones/{z}                          — PrivateZones.Get
-//	DELETE .../privateDnsZones/{z}                          — PrivateZones.Delete (LRO, sync-200)
-//	GET    .../providers/Microsoft.Network/privateDnsZones  — PrivateZones.List
-//	GET    .../resourceGroups/{rg}/…/privateDnsZones        — PrivateZones.ListByResourceGroup
-//	PUT    .../privateDnsZones/{z}/virtualNetworkLinks/{l}  — VirtualNetworkLinks.CreateOrUpdate
-//	GET    .../privateDnsZones/{z}/virtualNetworkLinks/{l}  — VirtualNetworkLinks.Get
-//	PATCH  .../privateDnsZones/{z}/virtualNetworkLinks/{l}  — VirtualNetworkLinks.Update (tags replace)
-//	DELETE .../privateDnsZones/{z}/virtualNetworkLinks/{l}  — VirtualNetworkLinks.Delete
-//	GET    .../privateDnsZones/{z}/virtualNetworkLinks      — VirtualNetworkLinks.List
-//	PUT    .../privateDnsZones/{z}/{type}/{name}            — RecordSets.CreateOrUpdate
-//	GET    .../privateDnsZones/{z}/{type}/{name}            — RecordSets.Get
-//	DELETE .../privateDnsZones/{z}/{type}/{name}            — RecordSets.Delete
-//	GET    .../privateDnsZones/{z}/{type}                   — RecordSets.ListByType
-//	GET    .../privateDnsZones/{z}/ALL                      — RecordSets.List
+//	PUT    .../privateDnsZones/{z}                          : PrivateZones.CreateOrUpdate (LRO, sync 201/200)
+//	PATCH  .../privateDnsZones/{z}                          : PrivateZones.Update (tags replace)
+//	GET    .../privateDnsZones/{z}                          : PrivateZones.Get
+//	DELETE .../privateDnsZones/{z}                          : PrivateZones.Delete (LRO, sync-200)
+//	GET    .../providers/Microsoft.Network/privateDnsZones  : PrivateZones.List
+//	GET    .../resourceGroups/{rg}/…/privateDnsZones        : PrivateZones.ListByResourceGroup
+//	PUT    .../privateDnsZones/{z}/virtualNetworkLinks/{l}  : VirtualNetworkLinks.CreateOrUpdate
+//	GET    .../privateDnsZones/{z}/virtualNetworkLinks/{l}  : VirtualNetworkLinks.Get
+//	PATCH  .../privateDnsZones/{z}/virtualNetworkLinks/{l}  : VirtualNetworkLinks.Update (tags replace)
+//	DELETE .../privateDnsZones/{z}/virtualNetworkLinks/{l}  : VirtualNetworkLinks.Delete
+//	GET    .../privateDnsZones/{z}/virtualNetworkLinks      : VirtualNetworkLinks.List
+//	PUT    .../privateDnsZones/{z}/{type}/{name}            : RecordSets.CreateOrUpdate
+//	GET    .../privateDnsZones/{z}/{type}/{name}            : RecordSets.Get
+//	DELETE .../privateDnsZones/{z}/{type}/{name}            : RecordSets.Delete
+//	GET    .../privateDnsZones/{z}/{type}                   : RecordSets.ListByType
+//	GET    .../privateDnsZones/{z}/ALL                      : RecordSets.List
 package privatedns
 
 import (
@@ -37,6 +37,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	pddriver "github.com/stackshy/cloudemu/v2/services/privatedns/driver"
 )
@@ -91,6 +92,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if azurearm.TooDeep(w, r, &rp, childMaxDepth) {
+		return
+	}
+
 	switch {
 	case rp.SubResource == "":
 		h.serveZone(w, r, &rp)
@@ -101,8 +106,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case isRecordType(rp.SubResource):
 		h.serveRecord(w, r, &rp)
 	default:
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound",
-			"unsupported private dns sub-resource "+rp.SubResource)
+		azurearm.WriteUnknownType(w, r, &rp)
 	}
 }
 
@@ -189,6 +193,10 @@ func (h *Handler) serveRecordListAll(w http.ResponseWriter, r *http.Request, rp 
 
 	h.listRecordsAll(w, r, rp)
 }
+
+// PurgePhase orders this purger in the resource-group cascade: private DNS
+// zones hold virtual network links, so they go with the network phase.
+func (*Handler) PurgePhase() int { return resourcegroups.PhaseNetwork }
 
 // PurgeResourceGroup deletes every Private DNS zone (cascading to its links and
 // records) stored under the given resource group, backing the resource-group

@@ -9,7 +9,7 @@ import (
 )
 
 // Deployment → ReplicaSet → Pod interposition. Real Deployments don't own Pods
-// directly — they own a ReplicaSet per pod-template revision, and the ReplicaSet
+// directly: they own a ReplicaSet per pod-template revision, and the ReplicaSet
 // owns the Pods. Materializing the intermediate ReplicaSet makes `kubectl get
 // rs` and owner-reference-walking operators behave like a real cluster, and a
 // pod-template change becomes a new ReplicaSet (a real rolling update) rather
@@ -23,7 +23,7 @@ import (
 func (s *ClusterState) syncDeploymentReplicaSetLocked(dep *appsv1.Deployment, desired int) (total, ready int32) {
 	st := s.reg.getStore(apiGroupApps, "v1", "replicasets")
 	if st == nil {
-		// Registry unavailable (should not happen) — fall back to direct ownership.
+		// Registry unavailable (should not happen): fall back to direct ownership.
 		tot, rdy := s.syncScaledPods(dep.Namespace, dep.Name, deploymentOwnerRef(dep), dep.Spec.Template, desired)
 
 		return clampInt32(tot), clampInt32(rdy)
@@ -75,7 +75,7 @@ func (s *ClusterState) upsertDeploymentRSLocked(
 }
 
 // pruneStaleDeploymentRSLocked deletes ReplicaSets owned by dep whose name isn't
-// the current revision — a rolling update retires the old revision's Pods via
+// the current revision. A rolling update retires the old revision's Pods via
 // the normal owner cascade.
 func (s *ClusterState) pruneStaleDeploymentRSLocked(st *registryStore, dep *appsv1.Deployment, keepName string) {
 	for key, rs := range st.items {

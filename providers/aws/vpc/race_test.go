@@ -11,7 +11,7 @@ import (
 )
 
 // The records in these stores are held by pointer, so a mutation through one
-// handle is visible to — and races — every concurrent reader of the same
+// handle is visible to, and races, every concurrent reader of the same
 // record. These tests exist to fail under `-race` if the guarding is ever
 // dropped again; the ENI guard was added on its own once, and the identical
 // pattern in the VPC-attribute, route-table and elastic-IP paths went
@@ -151,7 +151,7 @@ func TestAssociateAddress_ConcurrentWithDescribe(t *testing.T) {
 		defer wg.Done()
 
 		// Exactly one association may succeed; the rest are already-associated.
-		// Either outcome is fine — the point is that neither races the reads.
+		// Either outcome is fine. The point is that neither races the reads.
 		_, _ = m.AssociateAddress(ctx, eip.AllocationID, driver.AssociateAddressInput{InstanceID: "i-test"})
 	}()
 

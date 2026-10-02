@@ -30,7 +30,7 @@ import (
 //   - clusters.Get returns a Cluster whose Endpoint points at the in-memory
 //     K8s API server (not the GKE-DATAPLANE-NOT-IMPLEMENTED sentinel).
 //   - client-go uses that Endpoint to deploy a Phase-2 workload stack.
-//   - clusters.Delete tears the K8s state down — subsequent client-go calls
+//   - clusters.Delete tears the K8s state down. Subsequent client-go calls
 //     against the orphaned endpoint fail.
 //
 //nolint:funlen // single end-to-end scenario across many resource kinds.
@@ -87,7 +87,7 @@ func TestSDKGKEDataPlane_FullWorkloadStack(t *testing.T) {
 
 	cs := mustClientset(t, got.Endpoint)
 
-	// Drive a Phase-2 workload stack — same surface the EKS and AKS tests
+	// Drive a Phase-2 workload stack, same surface the EKS and AKS tests
 	// exercise.
 	if _, err := cs.CoreV1().Namespaces().Create(ctx,
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "shop"}},
@@ -170,7 +170,7 @@ func TestSDKGKEDataPlane_FullWorkloadStack(t *testing.T) {
 		t.Fatalf("Pod phase: got %q, want Running", pod.Status.Phase)
 	}
 
-	// Delete the cluster — the K8s state must go with it.
+	// Delete the cluster. The K8s state must go with it.
 	if _, err := svc.Projects.Locations.Clusters.Delete(parent + "/clusters/" + name).Context(ctx).Do(); err != nil {
 		t.Fatalf("Clusters.Delete: %v", err)
 	}

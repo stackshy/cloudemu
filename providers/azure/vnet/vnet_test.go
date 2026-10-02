@@ -1403,7 +1403,7 @@ func TestTagMutation(t *testing.T) {
 // TestDeleteVPCCascadesSubnets covers the provider-layer cascade: deleting a
 // virtual network removes its child subnets (as real Azure does), so a typed-API
 // or in-process-library caller does not leave orphaned, globally-addressable
-// subnet rows behind — the same behavior the ARM wire performs.
+// subnet rows behind, the same behavior the ARM wire performs.
 func TestDeleteVPCCascadesSubnets(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

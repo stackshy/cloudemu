@@ -9,7 +9,7 @@ import (
 )
 
 // TestSDKRDSClusterAttributes asserts a created DBCluster reports the
-// descriptive attributes real Aurora returns — EngineMode, a resource id,
+// descriptive attributes real Aurora returns: EngineMode, a resource id,
 // AllocatedStorage, StorageEncrypted and the spread of AvailabilityZones.
 func TestSDKRDSClusterAttributes(t *testing.T) {
 	client := newSDKClient(t)

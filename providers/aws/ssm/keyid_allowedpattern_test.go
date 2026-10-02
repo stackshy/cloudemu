@@ -82,7 +82,7 @@ func TestPutKeyIDOnNonSecureRejected(t *testing.T) {
 	}
 }
 
-// GetParameter (and GetParameters) must NOT expose KeyId — real SSM's Parameter
+// GetParameter (and GetParameters) must NOT expose KeyId. Real SSM's Parameter
 // shape has no KeyId field; it only appears on DescribeParameters metadata.
 func TestGetParameterOmitsKeyID(t *testing.T) {
 	m := newMock()

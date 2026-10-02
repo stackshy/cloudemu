@@ -114,10 +114,10 @@ func TestListRepositoriesPortable(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, len(repos))
 
-	_, err = cr.CreateRepository(ctx, driver.RepositoryConfig{Name: "a"})
+	_, err = cr.CreateRepository(ctx, driver.RepositoryConfig{Name: "repo-a"})
 	require.NoError(t, err)
 
-	_, err = cr.CreateRepository(ctx, driver.RepositoryConfig{Name: "b"})
+	_, err = cr.CreateRepository(ctx, driver.RepositoryConfig{Name: "repo-b"})
 	require.NoError(t, err)
 
 	repos, err = cr.ListRepositories(ctx)

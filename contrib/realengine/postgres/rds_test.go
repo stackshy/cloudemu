@@ -23,7 +23,7 @@ import (
 // TestRDSPostgresE2E performs the exact flow a real user runs against AWS:
 // create an RDS Postgres instance with the AWS SDK, read its endpoint, connect
 // to it with a real Postgres client using the master credentials, run SQL, then
-// delete the instance — except it all runs against CloudEmu backed by a real
+// delete the instance, except it all runs against CloudEmu backed by a real
 // embedded Postgres (no Docker, no cloud account).
 func TestRDSPostgresE2E(t *testing.T) {
 	eng := postgres.New(55450)
@@ -52,7 +52,7 @@ func TestRDSPostgresE2E(t *testing.T) {
 		password   = "app-secret-pw"
 	)
 
-	// 1. Create the instance — exactly like `aws rds create-db-instance`.
+	// 1. Create the instance, exactly like `aws rds create-db-instance`.
 	_, err = client.CreateDBInstance(ctx, &rds.CreateDBInstanceInput{
 		DBInstanceIdentifier: aws.String(instanceID),
 		Engine:               aws.String("postgres"),
@@ -66,7 +66,7 @@ func TestRDSPostgresE2E(t *testing.T) {
 		t.Fatalf("CreateDBInstance: %v", err)
 	}
 
-	// 2. Read the endpoint the SDK reports — the real embedded Postgres address.
+	// 2. Read the endpoint the SDK reports, the real embedded Postgres address.
 	desc, err := client.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
 		DBInstanceIdentifier: aws.String(instanceID),
 	})
@@ -113,7 +113,7 @@ func TestRDSPostgresE2E(t *testing.T) {
 
 	_ = db.Close()
 
-	// 4. Delete the instance — the real database is torn down.
+	// 4. Delete the instance, the real database is torn down.
 	if _, err := client.DeleteDBInstance(ctx, &rds.DeleteDBInstanceInput{
 		DBInstanceIdentifier: aws.String(instanceID),
 		SkipFinalSnapshot:    aws.Bool(true),

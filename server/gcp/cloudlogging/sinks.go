@@ -135,7 +135,7 @@ func createSink(w http.ResponseWriter, r *http.Request, gcp logdriver.GCPLogging
 	sink := body.toDriver(body.Name)
 
 	// writerIdentity is output-only: its value is chosen by query params, never
-	// the request body — a unique per-parent service agent
+	// the request body: a unique per-parent service agent
 	// (uniqueWriterIdentity=true) or an explicit one (customWriterIdentity). When
 	// neither is set this is "" and the provider fills the shared, non-unique
 	// account.

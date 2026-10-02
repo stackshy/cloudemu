@@ -17,7 +17,7 @@ const (
 	pathQueryV2 = "/v2/rest/query"
 
 	// defaultCluster is the cluster namespace used when the request Host is not a
-	// Kusto cluster DNS name — the httptest / bare-IP case, and cloudemu serve on
+	// Kusto cluster DNS name: the httptest / bare-IP case, and cloudemu serve on
 	// its HTTPS port, where every request lands on the same server regardless of
 	// host. This keeps the SDK/CLI pointed at a plain endpoint working.
 	defaultCluster = "cloudemu"
@@ -32,7 +32,7 @@ const (
 )
 
 // DataPlaneHandler serves the Kusto query data plane: control commands
-// (/v1/rest/mgmt) and — once the KQL engine lands — queries (/v1|v2/rest/query).
+// (/v1/rest/mgmt) and, once the KQL engine lands, queries (/v1|v2/rest/query).
 // It owns the ingested table state, scoped per (cluster, database), and is
 // driverless like the ARM control-plane Handler.
 type DataPlaneHandler struct {

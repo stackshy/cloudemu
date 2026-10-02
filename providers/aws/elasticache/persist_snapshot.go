@@ -37,8 +37,8 @@ type cacheDataSnapshot struct {
 	Items json.RawMessage       `json:"items,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// cache entry values are the payload and are always captured.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Cache entry values
+// are the payload and are always captured.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap persistSnapshot
 	if err := m.snapshotStores(&snap); err != nil {

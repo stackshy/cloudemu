@@ -140,7 +140,7 @@ func TestDuplicateRouteCode(t *testing.T) {
 }
 
 // TestDeleteMissingRouteCode pins that deleting a route that does not exist on an
-// existing route table answers InvalidRoute.NotFound — not the route-table code,
+// existing route table answers InvalidRoute.NotFound, not the route-table code,
 // which would falsely imply the table itself is missing.
 func TestDeleteMissingRouteCode(t *testing.T) {
 	ctx := context.Background()
@@ -181,7 +181,7 @@ func TestSubnetOutOfVPCRangeCode(t *testing.T) {
 	}
 
 	// The internal "InvalidSubnet.Range:" routing marker must never leak into the
-	// user-facing message — real EC2 messages carry no code prefix.
+	// user-facing message. Real EC2 messages carry no code prefix.
 	assertNoLeakedPrefix(t, apiMessage(t, err))
 }
 
@@ -209,7 +209,7 @@ func TestSubnetConflictCleanMessage(t *testing.T) {
 }
 
 // TestReleaseBogusAllocationCode pins that releasing an unknown allocation id
-// answers InvalidAllocationID.NotFound — not the unrelated InvalidVpcID.NotFound.
+// answers InvalidAllocationID.NotFound, not the unrelated InvalidVpcID.NotFound.
 func TestReleaseBogusAllocationCode(t *testing.T) {
 	ctx := context.Background()
 	c := newRoutingEdgeEC2(t)
@@ -227,7 +227,7 @@ func TestReleaseBogusAllocationCode(t *testing.T) {
 }
 
 // TestNatGatewayBadSubnetCode pins that a NAT gateway in a nonexistent subnet
-// answers InvalidSubnetID.NotFound — the subnet is what's missing, not the NAT.
+// answers InvalidSubnetID.NotFound. The subnet is what's missing, not the NAT.
 func TestNatGatewayBadSubnetCode(t *testing.T) {
 	ctx := context.Background()
 	c := newRoutingEdgeEC2(t)

@@ -5,19 +5,19 @@
 //
 // Coverage (workflow control plane only):
 //
-//	POST   /v1/…/workflows?workflowId=      — CreateWorkflow (LRO)
-//	GET    /v1/…/workflows                  — ListWorkflows
-//	GET    /v1/…/workflows/{id}             — GetWorkflow
-//	PATCH  /v1/…/workflows/{id}?updateMask= — PatchWorkflow (LRO)
-//	DELETE /v1/…/workflows/{id}             — DeleteWorkflow (LRO)
-//	GET    /v1/…/operations/{op}            — Operations.Get (shared poller)
+//	POST   /v1/…/workflows?workflowId=      : CreateWorkflow (LRO)
+//	GET    /v1/…/workflows                  : ListWorkflows
+//	GET    /v1/…/workflows/{id}             : GetWorkflow
+//	PATCH  /v1/…/workflows/{id}?updateMask= : PatchWorkflow (LRO)
+//	DELETE /v1/…/workflows/{id}             : DeleteWorkflow (LRO)
+//	GET    /v1/…/operations/{op}            : Operations.Get (shared poller)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting resource embedded in `response` as a typed Any, so an SDK or
 // Terraform LRO wait terminates on the first poll instead of hanging.
 //
 // Location-scoped operations: Workflows' operations live under
-// /v1/projects/{p}/locations/{l}/operations — the SAME space the shared GCP LRO
+// /v1/projects/{p}/locations/{l}/operations, the same space the shared GCP LRO
 // poller owns. Matches returns false for operation paths when a shared registry
 // is wired, letting that poller win; a standalone package server (no registry)
 // serves its own polls. The workflows resource-type guard keeps this handler

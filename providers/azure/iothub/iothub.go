@@ -1,12 +1,12 @@
 // Package iothub provides an in-memory mock of Azure IoT Hub
-// (Microsoft.Devices/IotHubs) — the ARM control plane only. It manages the hub
+// (Microsoft.Devices/IotHubs), the ARM control plane only. It manages the hub
 // lifecycle (create-or-update, get, patch, delete, list-by-group,
 // list-by-subscription), the shared-access-policy keys retrieved via the
 // listkeys / getKeysForKeyName actions, and the nested event-hub consumer
 // groups (.../eventHubEndpoints/events/ConsumerGroups/{name}).
 //
-// The IoT Hub data plane — the device registry, device twins, telemetry
-// ingestion and cloud-to-device messaging — is out of scope; this surface is
+// The IoT Hub data plane (the device registry, device twins, telemetry
+// ingestion and cloud-to-device messaging) is out of scope; this surface is
 // the management-plane resource provider only. No devices are registered and no
 // messages are routed; a hub is a stored resource, not a live broker.
 //
@@ -19,7 +19,7 @@
 //     path, partitionIds), minted once at create and byte-stable across reads.
 //   - the shared-access-policy primaryKey / secondaryKey pairs, minted once at
 //     create, stored, and byte-stable across every listkeys call. They are
-//     never echoed on the plain hub GET — only the listkeys actions surface
+//     never echoed on the plain hub GET, only the listkeys actions surface
 //     them, matching real IoT Hub behavior.
 //   - a consumer group's etag, minted once at create.
 //

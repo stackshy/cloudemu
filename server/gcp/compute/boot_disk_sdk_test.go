@@ -196,7 +196,7 @@ func listDiskNames(ctx context.Context, t *testing.T, disks *gcpcompute.DisksCli
 }
 
 // TestSDKDeleteHonorsAutoDelete proves instances.delete deletes an autoDelete=true
-// disk (the boot disk) and detaches — but keeps — an autoDelete=false disk.
+// disk (the boot disk) and detaches (but keeps) an autoDelete=false disk.
 func TestSDKDeleteHonorsAutoDelete(t *testing.T) {
 	client, ts, ctx := newInstancesEnv(t)
 	disks := newDisksSDKClient(t, ts)

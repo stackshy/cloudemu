@@ -272,6 +272,10 @@ type ReplicationGroup struct {
 	SubnetGroupName string
 	ARN             string
 
+	// ParameterGroupName is the cache parameter group the group's nodes use.
+	// Empty means the engine default. AWS-only.
+	ParameterGroupName string
+
 	// ReaderAddress / ReaderPort are the read-only endpoint clients use to scale
 	// reads across the group's replicas. AWS-only; empty for other clouds.
 	ReaderAddress string
@@ -296,6 +300,10 @@ type ReplicationGroupConfig struct {
 	NumCacheNodes    int
 	SubnetGroupName  string
 	SecurityGroupIDs []string
+
+	// ParameterGroupName names an existing cache parameter group. Empty means
+	// the engine default. AWS-only.
+	ParameterGroupName string
 
 	// AutomaticFailoverEnabled requests automatic failover for the group,
 	// reflected as AutomaticFailover ("enabled"/"disabled") on Describe.

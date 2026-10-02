@@ -1,4 +1,4 @@
-// dynamodb_op_surface_test.go — real-user-journey tests for the management
+// dynamodb_op_surface_test.go: real-user-journey tests for the management
 // operations added to complete the DynamoDB control-plane surface: Kinesis
 // streaming destinations, Contributor Insights, version-2017 global tables,
 // and the account-level DescribeLimits/DescribeEndpoints. Each drives the

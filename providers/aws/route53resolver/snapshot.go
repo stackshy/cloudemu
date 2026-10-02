@@ -11,9 +11,9 @@ import (
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // route53resolverSnapshot is the full serialized state of the AWS Route 53
-// Resolver mock. Every memstore store holds a fully-exported value type — a
+// Resolver mock. Every memstore store holds a fully-exported value type: a
 // *driver pointer type for each resource, or a plain string / []string /
-// []driver.Tag for the policy, firewall-domain, tag, and idempotency stores — so
+// []driver.Tag for the policy, firewall-domain, tag, and idempotency stores, so
 // each round-trips through the generic memstore helper under its exact key. The
 // composite keys matter and are preserved: fwRules is keyed by
 // "group|domainList|qtype", tags by resource ARN, and idem by
@@ -76,8 +76,8 @@ func (m *Mock) storeRefs(snap *route53resolverSnapshot) []struct {
 	}
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// Route 53 Resolver is control-plane only and holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Route 53 Resolver is
+// control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

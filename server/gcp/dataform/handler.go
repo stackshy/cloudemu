@@ -1,18 +1,18 @@
 // Package dataform implements the Google Cloud Dataform control plane
 // (dataform.googleapis.com) as a server.Handler on the /v1beta1/ version prefix.
-// Dataform ships a v1beta1 API only — there is no /v1/ — so both the
+// Dataform ships a v1beta1 API only (there is no /v1/), so both the
 // hashicorp/google-beta provider's google_dataform_repository resource (the
 // resource lives only in google-beta) and a real
 // google.golang.org/api/dataform/v1beta1 client target /v1beta1/ unchanged.
 //
-// Coverage (region-scoped repository control plane only, synchronous REST — no
+// Coverage (region-scoped repository control plane only, synchronous REST, no
 // LRO):
 //
-//	POST   /v1beta1/…/repositories?repositoryId=        — CreateRepository
-//	GET    /v1beta1/…/repositories                      — ListRepositories
-//	GET    /v1beta1/…/repositories/{repo}               — GetRepository
-//	PATCH  /v1beta1/…/repositories/{repo}?updateMask=   — PatchRepository
-//	DELETE /v1beta1/…/repositories/{repo}?force=        — DeleteRepository
+//	POST   /v1beta1/…/repositories?repositoryId=        : CreateRepository
+//	GET    /v1beta1/…/repositories                      : ListRepositories
+//	GET    /v1beta1/…/repositories/{repo}               : GetRepository
+//	PATCH  /v1beta1/…/repositories/{repo}?updateMask=   : PatchRepository
+//	DELETE /v1beta1/…/repositories/{repo}?force=        : DeleteRepository
 //
 // Every RPC returns the resource (or an empty object for delete) directly with
 // no google.longrunning.Operation wrapper. The repositories resource-segment
@@ -32,8 +32,11 @@ import (
 )
 
 const (
-	// apiV1Beta1 is the only API version Dataform exposes.
+	// apiV1Beta1 is the version the Terraform provider (google-beta) uses;
+	// the gapic and discovery clients use apiV1. The Repository schema is the
+	// same in both.
 	apiV1Beta1 = "v1beta1"
+	apiV1      = "v1"
 
 	projectsSeg     = "projects"
 	locationsSeg    = "locations"
@@ -47,6 +50,10 @@ const (
 // driver.
 type Handler struct {
 	db dfdriver.Dataform
+
+	// shared turns on the v1 rules for a server that also mounts Artifact
+	// Registry; see shared.go.
+	shared bool
 }
 
 // route holds the parsed components of a Dataform repositories path. repo is the
@@ -55,25 +62,30 @@ type route struct {
 	project  string
 	location string
 	repo     string
+	v1       bool // the /v1/ path, which Artifact Registry shares
 }
 
 // New returns a Dataform handler backed by db.
 func New(db dfdriver.Dataform) *Handler { return &Handler{db: db} }
 
 // parseRoute extracts the components of a Dataform repositories path under the
-// /v1beta1/ prefix. It accepts the repositories collection and item forms.
+// /v1beta1/ or /v1/ prefix. It accepts the repositories collection and item
+// forms.
 func parseRoute(urlPath string) (route, bool) {
-	prefix := "/" + apiV1Beta1 + "/"
-	if !strings.HasPrefix(urlPath, prefix) {
-		return route{}, false
+	rest, isBeta := strings.CutPrefix(urlPath, "/"+apiV1Beta1+"/")
+	if !isBeta {
+		var isV1 bool
+		if rest, isV1 = strings.CutPrefix(urlPath, "/"+apiV1+"/"); !isV1 {
+			return route{}, false
+		}
 	}
 
-	parts := strings.Split(strings.TrimPrefix(urlPath, prefix), "/")
+	parts := strings.Split(rest, "/")
 	if len(parts) < minParts || parts[0] != projectsSeg || parts[2] != locationsSeg || parts[4] != repositoriesSeg {
 		return route{}, false
 	}
 
-	rt := route{project: parts[1], location: parts[3]}
+	rt := route{project: parts[1], location: parts[3], v1: !isBeta}
 
 	switch len(parts) {
 	case minParts: // repositories collection
@@ -89,10 +101,13 @@ func parseRoute(urlPath string) (route, bool) {
 // Matches claims the Dataform repositories hierarchy. The repositories
 // resource-segment guard keeps it disjoint from every other /v1beta1/projects/
 // handler.
-func (*Handler) Matches(r *http.Request) bool {
-	_, ok := parseRoute(r.URL.Path)
+func (h *Handler) Matches(r *http.Request) bool {
+	rt, ok := parseRoute(r.URL.Path)
+	if !ok {
+		return false
+	}
 
-	return ok
+	return !rt.v1 || h.matchesV1(r, &rt)
 }
 
 // ServeHTTP routes on whether the path addresses a collection or an item, then

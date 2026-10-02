@@ -9,9 +9,9 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-// createOrUpdateGroup handles PUT — ContainerGroups.BeginCreateOrUpdate. The LRO
+// createOrUpdateGroup handles PUT (ContainerGroups.BeginCreateOrUpdate). The LRO
 // completes inline: returning the resource body terminates the SDK's poller on
-// the first response. A fresh create answers 201, an in-place update 200 —
+// the first response. A fresh create answers 201, an in-place update 200,
 // matching ARM PUT.
 func (h *Handler) createOrUpdateGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body containerGroupJSON
@@ -37,7 +37,7 @@ func (h *Handler) createOrUpdateGroup(w http.ResponseWriter, r *http.Request, rp
 	azurearm.WriteJSON(w, status, toGroupJSON(rp, group))
 }
 
-// updateGroup handles PATCH — ContainerGroups.Update. Real Azure's Update is a
+// updateGroup handles PATCH (ContainerGroups.Update). Real Azure's Update is a
 // PATCH that merges the request tags into an existing group and returns it
 // (200). A missing group answers 404.
 func (h *Handler) updateGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -80,7 +80,7 @@ func (h *Handler) lifecycleGroup(w http.ResponseWriter, r *http.Request, rp *azu
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// execContainer handles POST .../containers/{c}/exec — Containers.ExecuteCommand.
+// execContainer handles POST .../containers/{c}/exec (Containers.ExecuteCommand).
 // It returns the exec websocket URI and one-time password.
 func (h *Handler) execContainer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	if r.Method != http.MethodPost {
@@ -108,7 +108,7 @@ func (h *Handler) execContainer(w http.ResponseWriter, r *http.Request, rp *azur
 	})
 }
 
-// getGroup handles GET on a single resource — ContainerGroups.Get.
+// getGroup handles GET on a single resource (ContainerGroups.Get).
 func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	group, err := h.aci.GetContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
@@ -120,7 +120,7 @@ func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.
 	azurearm.WriteJSON(w, http.StatusOK, toGroupJSON(rp, group))
 }
 
-// deleteGroup handles DELETE — ContainerGroups.BeginDelete. Returning 200 with
+// deleteGroup handles DELETE (ContainerGroups.BeginDelete). Returning 200 with
 // the deleted resource body completes the SDK's poller on the first response.
 func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	group, err := h.aci.GetContainerGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
@@ -139,8 +139,8 @@ func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request, rp *azurea
 	azurearm.WriteJSON(w, http.StatusOK, toGroupJSON(rp, group))
 }
 
-// listGroups handles GET on the collection — ContainerGroups.ListByResourceGroup
-// / List. The filter carries the path's subscription and, for RG-level lists,
+// listGroups handles GET on the collection (ContainerGroups.ListByResourceGroup
+// / List). The filter carries the path's subscription and, for RG-level lists,
 // its resource group.
 func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	groups, err := h.aci.ListContainerGroups(r.Context(),
@@ -159,7 +159,7 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request, rp *azurear
 	azurearm.WriteJSON(w, http.StatusOK, containerGroupListResult{Value: out})
 }
 
-// containerLogs handles GET .../containers/{c}/logs — Containers.ListLogs. The
+// containerLogs handles GET .../containers/{c}/logs (Containers.ListLogs). The
 // container name is the sub-resource name; an optional tail query caps the
 // returned lines.
 func (h *Handler) containerLogs(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

@@ -10,7 +10,7 @@ import (
 )
 
 // TestOCIEndpointBinds boots the batteries server with --providers aws,oci and
-// asserts the OCI endpoint binds and answers HTTP — proving --oci-port and the
+// asserts the OCI endpoint binds and answers HTTP, proving --oci-port and the
 // oci provider thread through serverkit. It uses a raw HTTP request (no OCI SDK
 // dependency): any HTTP status proves the listener is up and the handler runs.
 func TestOCIEndpointBinds(t *testing.T) {
@@ -42,7 +42,7 @@ func TestOCIEndpointBinds(t *testing.T) {
 }
 
 // TestKubernetesEndpointReachable boots with the shared Kubernetes data-plane
-// enabled (--k8s-port set) and asserts its HTTPS endpoint answers — proving
+// enabled (--k8s-port set) and asserts its HTTPS endpoint answers, proving
 // --k8s-port threads through and serverkit binds the k8s listener with its
 // self-signed serving cert. The cert is self-signed, so the client skips
 // verification; any HTTP status proves the TLS listener is up.

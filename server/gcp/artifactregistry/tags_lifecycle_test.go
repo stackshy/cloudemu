@@ -89,7 +89,7 @@ func TestSDKArtifactRegistryTagsCreate(t *testing.T) {
 
 // TestSDKArtifactRegistryTagsCreateOnImmutableRepoAllowed guards that a
 // brand-new tag id is always allowed even when the repository has
-// dockerConfig.immutableTags enabled — only mutating an existing tag
+// dockerConfig.immutableTags enabled. Only mutating an existing tag
 // (patch/delete) is blocked, not creating one.
 func TestSDKArtifactRegistryTagsCreateOnImmutableRepoAllowed(t *testing.T) {
 	svc, reg := newARService(t)

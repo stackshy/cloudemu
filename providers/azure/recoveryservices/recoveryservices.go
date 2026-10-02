@@ -1,14 +1,14 @@
 // Package recoveryservices provides an in-memory mock of Azure Recovery Services
-// (Microsoft.RecoveryServices/vaults) — the ARM control plane only. It manages
+// (Microsoft.RecoveryServices/vaults), the ARM control plane only. It manages
 // the vault lifecycle (create-or-update, get, patch, delete, list-by-group,
 // list-by-subscription), the vault's system/user-assigned managed identity and
 // SKU, and the three per-vault configuration surfaces: the backup resource vault
 // config (soft-delete / security), the backup resource storage config (storage
 // redundancy) and the backup policies child collection.
 //
-// The Recovery Services data plane — Site Recovery replication (fabrics,
+// The Recovery Services data plane (Site Recovery replication (fabrics,
 // protection containers, recovery plans), protected items, recovery points and
-// backup-job execution — is out of scope; this surface is the management-plane
+// backup-job execution) is out of scope; this surface is the management-plane
 // resource provider only. No workloads are protected and no backups run; a
 // policy is a stored document, not an active schedule.
 //

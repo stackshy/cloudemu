@@ -126,7 +126,7 @@ func reconcileActive(app *ContainerApp, latest string) {
 
 // validateTrafficLocked enforces Azure's ingress traffic rules: every entry must
 // name an existing revision (or set latestRevision), and the weights must sum to
-// 100. An empty traffic block is valid — Azure then routes 100% to the latest
+// 100. An empty traffic block is valid: Azure then routes 100% to the latest
 // revision. Callers hold m.mu.
 func validateTrafficLocked(app *ContainerApp) error {
 	if app.Ingress == nil || len(app.Ingress.Traffic) == 0 {
@@ -340,7 +340,7 @@ func revisionIndex(app *ContainerApp, revName string) int {
 
 // templateSuffix derives a stable revision suffix from a template's content, so
 // two identical templates map to the same revision and a changed template mints
-// a new one — mirroring Azure's content-addressed auto suffix.
+// a new one, mirroring Azure's content-addressed auto suffix.
 func templateSuffix(t Template) string {
 	data, _ := json.Marshal(t)
 	sum := sha256.Sum256(data)

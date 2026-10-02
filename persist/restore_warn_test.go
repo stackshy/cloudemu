@@ -13,7 +13,7 @@ import (
 )
 
 // TestRestoreWarnsOnUnmatchedService covers #817: a snapshot that carries a
-// service the running build no longer exposes must not be silently dropped — the
+// service the running build no longer exposes must not be silently dropped. The
 // skip is intentional, but it is logged as a warning so a state-loss on restore
 // is visible in the server logs rather than swallowed.
 func TestRestoreWarnsOnUnmatchedService(t *testing.T) {

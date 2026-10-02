@@ -195,8 +195,8 @@ func TestStartInstances(t *testing.T) {
 	})
 
 	t.Run("rejects start on terminated", func(t *testing.T) {
-		// Real AWS rejects starting a terminated instance —
-		// the strict-state behavior is intentional here.
+		// Real AWS rejects starting a terminated instance. The strict-state
+		// behavior is intentional here.
 		instances, _ := m.RunInstances(ctx, defaultConfig(), 1)
 		termID := instances[0].ID
 		_ = m.TerminateInstances(ctx, []string{termID})
@@ -232,8 +232,8 @@ func TestStopInstances(t *testing.T) {
 	})
 
 	t.Run("rejects stop on terminated", func(t *testing.T) {
-		// Real AWS rejects stopping a terminated instance —
-		// strict-state behavior is intentional here.
+		// Real AWS rejects stopping a terminated instance. Strict-state behavior
+		// is intentional here.
 		instances, _ := m.RunInstances(ctx, defaultConfig(), 1)
 		termID := instances[0].ID
 		_ = m.TerminateInstances(ctx, []string{termID})

@@ -16,7 +16,7 @@ import (
 // mu guards draft, versions and nextVer. memstore only serializes access to
 // its map, not to the record it points at, so every reader and mutator of a
 // *guardrailRecord must hold mu. The record therefore contains a sync.RWMutex
-// and MUST NOT be copied by value — always pass and store it as a pointer.
+// and MUST NOT be copied by value. Always pass and store it as a pointer.
 type guardrailRecord struct {
 	mu       sync.RWMutex
 	draft    *driver.Guardrail

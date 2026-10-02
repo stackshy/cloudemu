@@ -13,14 +13,14 @@ import (
 )
 
 // streamAttempts bounds how many times a streaming test re-runs when the
-// eventstream connection tears down mid-flight before all frames are read — a
-// benign httptest+eventstream artifact under -race/parallel load (the server
+// eventstream connection tears down mid-flight before all frames are read. That
+// is a benign httptest+eventstream artifact under -race/parallel load (the server
 // always writes the full, deterministic sequence). A clean stream carries every
 // frame, so a completed attempt never retries; only a benign teardown does.
 const streamAttempts = 5
 
 // collectConverseStream runs one ConverseStream attempt and returns the
-// reassembled assistant text and whether the stream completed — i.e. carried
+// reassembled assistant text and whether the stream completed, i.e. carried
 // its full start/stop/metadata lifecycle. Since metadata is emitted last, a
 // complete stream is guaranteed to have delivered every contentBlockDelta;
 // an incomplete result means a benign mid-flight teardown truncated the frames

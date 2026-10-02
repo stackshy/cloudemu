@@ -4,8 +4,8 @@ import "context"
 
 // Microsoft.Network/publicIPPrefixes reserves a contiguous CIDR range from which
 // standard public IP addresses can be drawn. The cross-cloud Networking model has
-// no equivalent, so — like AzureNetworkMetadata and AzureApplicationSecurityGroups
-// — the Azure provider stores it through this OPTIONAL, type-asserted capability.
+// no equivalent, so, like AzureNetworkMetadata and AzureApplicationSecurityGroups,
+// the Azure provider stores it through this OPTIONAL, type-asserted capability.
 // AWS and GCP do not implement it.
 
 // AzurePublicIPPrefix is one Microsoft.Network/publicIPPrefixes resource,

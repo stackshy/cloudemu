@@ -8,22 +8,22 @@
 //
 // Coverage (the lake → zone → asset hierarchy, LRO-wrapped):
 //
-//	POST   /v1/…/lakes?lakeId=                                   — CreateLake (LRO)
-//	GET    /v1/…/lakes                                           — ListLakes
-//	GET    /v1/…/lakes/{lake}                                    — GetLake
-//	PATCH  /v1/…/lakes/{lake}?updateMask=                        — PatchLake (LRO)
-//	DELETE /v1/…/lakes/{lake}                                    — DeleteLake (LRO, cascades)
-//	POST   /v1/…/lakes/{lake}/zones?zoneId=                      — CreateZone (LRO)
-//	GET    /v1/…/lakes/{lake}/zones                              — ListZones
-//	GET    /v1/…/lakes/{lake}/zones/{zone}                       — GetZone
-//	PATCH  /v1/…/lakes/{lake}/zones/{zone}?updateMask=           — PatchZone (LRO)
-//	DELETE /v1/…/lakes/{lake}/zones/{zone}                       — DeleteZone (LRO, cascades)
-//	POST   /v1/…/zones/{zone}/assets?assetId=                    — CreateAsset (LRO)
-//	GET    /v1/…/zones/{zone}/assets                             — ListAssets
-//	GET    /v1/…/zones/{zone}/assets/{asset}                     — GetAsset
-//	PATCH  /v1/…/zones/{zone}/assets/{asset}?updateMask=         — PatchAsset (LRO)
-//	DELETE /v1/…/zones/{zone}/assets/{asset}                     — DeleteAsset (LRO)
-//	GET    /v1/…/operations/{op}                                 — Operations.Get (shared poller)
+//	POST   /v1/…/lakes?lakeId=                                   : CreateLake (LRO)
+//	GET    /v1/…/lakes                                           : ListLakes
+//	GET    /v1/…/lakes/{lake}                                    : GetLake
+//	PATCH  /v1/…/lakes/{lake}?updateMask=                        : PatchLake (LRO)
+//	DELETE /v1/…/lakes/{lake}                                    : DeleteLake (LRO, cascades)
+//	POST   /v1/…/lakes/{lake}/zones?zoneId=                      : CreateZone (LRO)
+//	GET    /v1/…/lakes/{lake}/zones                              : ListZones
+//	GET    /v1/…/lakes/{lake}/zones/{zone}                       : GetZone
+//	PATCH  /v1/…/lakes/{lake}/zones/{zone}?updateMask=           : PatchZone (LRO)
+//	DELETE /v1/…/lakes/{lake}/zones/{zone}                       : DeleteZone (LRO, cascades)
+//	POST   /v1/…/zones/{zone}/assets?assetId=                    : CreateAsset (LRO)
+//	GET    /v1/…/zones/{zone}/assets                             : ListAssets
+//	GET    /v1/…/zones/{zone}/assets/{asset}                     : GetAsset
+//	PATCH  /v1/…/zones/{zone}/assets/{asset}?updateMask=         : PatchAsset (LRO)
+//	DELETE /v1/…/zones/{zone}/assets/{asset}                     : DeleteAsset (LRO)
+//	GET    /v1/…/operations/{op}                                 : Operations.Get (shared poller)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting resource embedded in `response` as a typed Any, so an SDK or
@@ -33,7 +33,7 @@
 // assets; deleting a zone cascades to its assets.
 //
 // Location-scoped operations: Dataplex's operations live under
-// /v1/projects/{p}/locations/{l}/operations — the same space the shared GCP LRO
+// /v1/projects/{p}/locations/{l}/operations, the same space the shared GCP LRO
 // poller owns. Matches returns false for operation paths when a shared registry
 // is wired, letting that poller win; a standalone package server serves its own
 // polls. The lakes resource-segment guard keeps this handler disjoint from every
@@ -49,6 +49,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	dpdriver "github.com/stackshy/cloudemu/v2/services/dataplex/driver"
 )
@@ -91,6 +92,10 @@ type level struct {
 	seg     string // "lakes" | "zones" | "assets"
 	idParam string // "lakeId" | "zoneId" | "assetId"
 	typeURL string
+
+	// enums is the level's numeric-enum table, applied to request bodies and
+	// to stored fields on read.
+	enums gcpenum.Fields
 
 	// validate rejects a create/patch body that violates a level invariant (a
 	// zone type/location_type enum, an asset resource_spec.type enum). Nil where

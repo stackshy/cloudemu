@@ -19,8 +19,8 @@ const NumberJSONTag = "$ddbN"
 // values beyond float64's 53-bit mantissa (large ids, money, high-precision
 // counters) must round-trip through storage without being parsed through
 // float64. Keeping the original string makes PutItem/GetItem lossless. Arithmetic
-// (SET a = a + :n, ADD) still coerces to float64 — a documented precision limit,
-// the same one NumberSet carries — but storage and read-back are exact.
+// (SET a = a + :n, ADD) still coerces to float64, a documented precision limit
+// the same one NumberSet carries, but storage and read-back are exact.
 type Number string
 
 // MarshalJSON emits a self-describing object ({"$ddbN":"25"}) so the exact
@@ -63,7 +63,7 @@ func (n Number) Float() (float64, bool) {
 }
 
 // rat parses n into an exact rational so two decimals compare by their true
-// numeric value without ever passing through float64 — the difference between
+// numeric value without ever passing through float64: the difference between
 // two 30-digit ids that share the same float64 must survive. A leading '+' and
 // scientific notation are accepted; a malformed number reports ok=false.
 func (n Number) rat() (*big.Rat, bool) {

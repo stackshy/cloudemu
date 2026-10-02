@@ -114,7 +114,7 @@ type MetricFilterInfo struct {
 
 // SubscriptionFilterConfig describes a subscription filter to create or update.
 // A subscription filter streams matching log events (as they are ingested via
-// PutLogEvents) to a destination — a Lambda function, Kinesis stream, or
+// PutLogEvents) to a destination: a Lambda function, Kinesis stream, or
 // Firehose delivery stream identified by DestinationARN.
 type SubscriptionFilterConfig struct {
 	Name           string

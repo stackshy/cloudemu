@@ -72,7 +72,7 @@ func (m *Mock) CreateRouteTable(_ context.Context, cfg driver.RouteTableConfig) 
 
 // DeleteRouteTable deletes the route table with the given ID.
 //
-// The VPC's main route table cannot be deleted on its own — real EC2 refuses
+// The VPC's main route table cannot be deleted on its own. Real EC2 refuses
 // it, and a caller sweeping a VPC's route tables must skip it rather than
 // treat the failure as a broken teardown.
 func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
@@ -95,7 +95,12 @@ func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
 		}
 	}
 
+	m.mu.Lock()
 	m.routeTables.Delete(id)
+	// A Gateway endpoint that used the table loses it, the same as a
+	// ModifyVpcEndpoint RemoveRouteTableId.
+	m.dropRouteTableFromEndpoints(id)
+	m.mu.Unlock()
 
 	return nil
 }
@@ -105,7 +110,7 @@ func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
 // Associations are joined in here rather than kept on the route table itself:
 // they live in their own store (a subnet can be re-pointed at another table),
 // and Describe is the only channel through which a caller can learn an
-// association ID — which it must have before it can disassociate.
+// association ID, which it must have before it can disassociate.
 func (m *Mock) DescribeRouteTables(_ context.Context, ids []string) ([]driver.RouteTable, error) {
 	m.mu.RLock()
 
@@ -151,7 +156,7 @@ func (m *Mock) CreateRoute(
 	}
 
 	for _, r := range rt.Routes {
-		if r.DestinationCIDR == destinationCIDR {
+		if r.DestinationCIDR != "" && r.DestinationCIDR == destinationCIDR {
 			return errors.Newf(errors.AlreadyExists,
 				"route for %q already exists in route table %q", destinationCIDR, routeTableID)
 		}
@@ -209,7 +214,9 @@ func (m *Mock) DeleteRoute(_ context.Context, routeTableID, destinationCIDR stri
 	}
 
 	for i, r := range rt.Routes {
-		if r.DestinationCIDR == destinationCIDR {
+		// Prefix-list routes carry no CIDR, so an empty destination never
+		// matches one of them.
+		if r.DestinationCIDR != "" && r.DestinationCIDR == destinationCIDR {
 			rt.Routes = append(rt.Routes[:i], rt.Routes[i+1:]...)
 			return nil
 		}

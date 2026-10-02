@@ -135,7 +135,7 @@ func enrichSubscriptionProperties(props []byte, topicID string) json.RawMessage 
 // stampSubscriptionDefaults fills the read-only defaults Event Grid reports for
 // an event subscription when the caller did not set them: eventDeliverySchema
 // (EventGridSchema) and a retryPolicy of 30 delivery attempts / 1440-minute
-// event TTL. Caller-supplied values are preserved — only absent fields are
+// event TTL. Caller-supplied values are preserved; only absent fields are
 // filled, matching real Azure's GET response, so a subscription created with an
 // explicit retry policy or delivery schema round-trips unchanged while one
 // created without still reports the documented defaults.
@@ -215,7 +215,7 @@ func (h *Handler) createOrUpdateEventSubscription(w http.ResponseWriter, r *http
 
 // mergeRawProperties overlays the top-level keys of patch onto existing,
 // returning the merged properties JSON. Keys absent from patch are preserved
-// (partial-merge PATCH semantics — no nil-mask data loss); keys present in patch
+// (partial-merge PATCH semantics, no nil-mask data loss); keys present in patch
 // replace their prior value. An empty patch leaves existing untouched. This
 // covers the EventSubscriptionUpdateParameters fields (destination, filter,
 // labels, deadLetterDestination, retryPolicy, eventDeliverySchema) without
@@ -252,7 +252,7 @@ func mergeRawProperties(existing, patch json.RawMessage) json.RawMessage {
 // preserving fields the caller omitted, and re-stores the subscription (200).
 // The SDK's EventSubscriptionUpdateParameters marshals its fields (destination,
 // filter, labels, deadLetterDestination, retryPolicy, eventDeliverySchema) at
-// the top level — no "properties" wrapper — matching the shape stored for the
+// the top level, with no "properties" wrapper, matching the shape stored for the
 // subscription, so the whole body is merged. 404 when the subscription does not
 // exist, before any write.
 func (h *Handler) updateEventSubscription(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

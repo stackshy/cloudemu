@@ -27,7 +27,7 @@ func TestSnapshotRoundTripBedrock(t *testing.T) {
 
 	if _, err := src.CreateInferenceProfile(ctx, driver.InferenceProfileConfig{
 		Name:                "prof-1",
-		ModelSourceCopyFrom: "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-v2",
+		ModelSourceCopyFrom: "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0",
 	}); err != nil {
 		t.Fatalf("create inference profile: %v", err)
 	}

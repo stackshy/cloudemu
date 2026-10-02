@@ -3,8 +3,8 @@ package pubsub
 import "encoding/base64"
 
 const (
-	// iamEtagTag is the protobuf tag byte for field 1 (varint wire type) —
-	// mirrors the encoding real Google IAM policy etags use (and the one
+	// iamEtagTag is the protobuf tag byte for field 1 (varint wire type).
+	// It mirrors the encoding real Google IAM policy etags use (and the one
 	// providers/gcp/gcs mints for bucket IAM policy etags): base64 of a
 	// single-field protobuf message carrying a monotonically increasing
 	// version, e.g. "CAE=" decodes to tag 0x08 (field 1, varint) followed by

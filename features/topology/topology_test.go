@@ -302,7 +302,7 @@ func TestEvaluateSecurityGroupsReferencedGroupAllowed(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Ingress allowed from the app SG by reference — no CIDR at all.
+	// Ingress allowed from the app SG by reference, no CIDR at all.
 	err = vpcMock.AddIngressRule(ctx, dstSG.ID, netdriver.SecurityRule{
 		Protocol: "tcp", FromPort: 5432, ToPort: 5432, ReferencedGroupID: srcSG.ID,
 	})
@@ -344,7 +344,7 @@ func TestEvaluateSecurityGroupsReferencedGroupDenied(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Ingress allowed only from otherSG — the source (srcSG) is not a member.
+	// Ingress allowed only from otherSG; the source (srcSG) is not a member.
 	err = vpcMock.AddIngressRule(ctx, dstSG.ID, netdriver.SecurityRule{
 		Protocol: "tcp", FromPort: 5432, ToPort: 5432, ReferencedGroupID: otherSG.ID,
 	})
@@ -608,7 +608,7 @@ func TestCanConnectReferencedGroupAllowed(t *testing.T) {
 
 	vpcID, subnetID, srcSGID, dstSGID := createVPCWithSubnetAndSGs(t, ctx, vpcMock, "10.0.0.0/16", false)
 
-	// dst allows ingress from the source SG by reference — no CIDR.
+	// dst allows ingress from the source SG by reference, no CIDR.
 	err := vpcMock.AddIngressRule(ctx, dstSGID, netdriver.SecurityRule{
 		Protocol: "tcp", FromPort: 443, ToPort: 443, ReferencedGroupID: srcSGID,
 	})
@@ -822,8 +822,8 @@ func TestTraceRoute(t *testing.T) {
 
 	// The subnet has to be associated with this table for its routes to
 	// govern the subnet's traffic. Without the association the subnet uses the
-	// VPC's main route table, which carries only the local route — so 8.8.8.8
-	// would be genuinely unroutable, exactly as it would be in the real cloud.
+	// VPC's main route table, which carries only the local route, so 8.8.8.8
+	// would be unroutable, as it would be in the real cloud.
 	_, err = vpcMock.AssociateRouteTable(ctx, rt.ID, subnet.ID)
 	require.NoError(t, err)
 
@@ -898,9 +898,9 @@ func TestResolveNotFound(t *testing.T) {
 }
 
 // A subnet with no explicit association uses the VPC's main route table, which
-// carries only the local route. Traffic off the VPC is then genuinely
-// unroutable — and reporting otherwise would tell a caller a path exists that
-// the real cloud would drop.
+// carries only the local route. Traffic off the VPC is then unroutable, and
+// reporting otherwise would tell a caller a path exists that the real cloud
+// would drop.
 func TestTraceRouteUnassociatedSubnetUsesMainTable(t *testing.T) {
 	engine, ec2Mock, vpcMock, _ := newTestEngine()
 	ctx := context.Background()

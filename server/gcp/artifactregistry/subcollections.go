@@ -78,8 +78,8 @@ func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, rt *rout
 	}
 }
 
-// deletePackage removes a package (packages.delete) — the driver models one
-// image per package keyed by digest, so this deletes that image — and returns a
+// deletePackage removes a package (packages.delete). The driver models one
+// image per package keyed by digest, so this deletes that image, and returns a
 // done LRO the SDK/gcloud polls.
 func (h *Handler) deletePackage(w http.ResponseWriter, r *http.Request, rt *route) {
 	if _, ok := h.findImage(w, r, rt); !ok {

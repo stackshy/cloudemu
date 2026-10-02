@@ -2,6 +2,7 @@ package ecr
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -683,7 +685,7 @@ func TestImageTagMutability(t *testing.T) {
 			// Distinct manifest content so the two pushes content-address to
 			// distinct digests, exercising a genuine tag MOVE rather than a
 			// byte-identical re-push (which is ImageAlreadyExistsException
-			// regardless of mutability — see TestPutImageIdenticalRepush).
+			// regardless of mutability; see TestPutImageIdenticalRepush).
 			_, err = m.PutImage(ctx, &driver.ImageManifest{
 				Repository: "my-repo", Tag: "v1", SizeBytes: 100, Manifest: `{"v":1}`,
 			})
@@ -951,6 +953,82 @@ func TestPreviewLifecyclePolicy(t *testing.T) {
 	})
 }
 
+// TestLifecyclePolicyMultiEntrySelection guards that a rule's tagPatternList
+// and tagPrefixList are matched against ALL of their entries, not just the
+// first. Real ECR expires an image if any of its tags satisfies any pattern
+// (glob) or prefix (literal) in either list.
+func TestLifecyclePolicyMultiEntrySelection(t *testing.T) {
+	m, fc := newTestMock()
+	ctx := context.Background()
+
+	createTestRepo(t, m, "multi-selection-repo")
+
+	policy := driver.LifecyclePolicy{
+		Rules: []driver.LifecycleRule{
+			{
+				Priority:      1,
+				TagStatus:     "tagged",
+				TagPrefixList: []string{"prod", "stg"},
+				CountType:     "imageCountMoreThan",
+				CountValue:    0,
+				Action:        "expire",
+			},
+		},
+	}
+
+	require.NoError(t, m.PutLifecyclePolicy(ctx, "multi-selection-repo", policy))
+
+	prod := pushTestImage(t, m, "multi-selection-repo", "prod-v1")
+	fc.Advance(time.Minute)
+	stg := pushTestImage(t, m, "multi-selection-repo", "stg-v1")
+	fc.Advance(time.Minute)
+	pushTestImage(t, m, "multi-selection-repo", "dev-v1")
+
+	results, _, err := m.PreviewLifecyclePolicy(ctx, "multi-selection-repo", nil)
+	require.NoError(t, err)
+
+	byDigest := map[string]bool{}
+	for _, r := range results {
+		byDigest[r.Digest] = true
+	}
+
+	assert.True(t, byDigest[prod.Digest], "prod-v1 (first tagPrefixList entry) should match")
+	assert.True(t, byDigest[stg.Digest], "stg-v1 (second tagPrefixList entry) should also match, not just the first")
+	assert.Len(t, results, 2, "dev-v1 matches neither prefix and must not expire")
+}
+
+// TestLifecyclePolicyTagPrefixIsLiteralNotGlob guards that tagPrefixList
+// entries are matched as literal string prefixes, not glob patterns: a prefix
+// of "prod" must match the tag "prod-v1" even though "prod" is not a glob that
+// matches "prod-v1" under path.Match semantics.
+func TestLifecyclePolicyTagPrefixIsLiteralNotGlob(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	createTestRepo(t, m, "prefix-literal-repo")
+
+	policy := driver.LifecyclePolicy{
+		Rules: []driver.LifecycleRule{
+			{
+				Priority:      1,
+				TagStatus:     "tagged",
+				TagPrefixList: []string{"prod"},
+				CountType:     "imageCountMoreThan",
+				CountValue:    0,
+				Action:        "expire",
+			},
+		},
+	}
+
+	require.NoError(t, m.PutLifecyclePolicy(ctx, "prefix-literal-repo", policy))
+	pushTestImage(t, m, "prefix-literal-repo", "prod-v1")
+
+	results, _, err := m.PreviewLifecyclePolicy(ctx, "prefix-literal-repo", nil)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, []string{"prod-v1"}, results[0].Tags)
+}
+
 func TestImageScan(t *testing.T) {
 	m, _ := newTestMock()
 	ctx := context.Background()
@@ -1030,21 +1108,34 @@ func TestMetricsEmission(t *testing.T) {
 
 	createTestRepo(t, m, "metrics-repo")
 
-	t.Run("PutImage emits ImagePushCount", func(t *testing.T) {
+	t.Run("PutImage emits no push metric", func(t *testing.T) {
 		pushTestImage(t, m, "metrics-repo", "v1")
 
 		metrics, err := cw.ListMetrics(ctx, "AWS/ECR")
 		require.NoError(t, err)
-		assert.Contains(t, metrics, "ImagePushCount")
+		// Real ECR publishes no push-count metric at all.
+		assert.NotContains(t, metrics, "ImagePushCount")
+		assert.Empty(t, metrics)
 	})
 
-	t.Run("GetImage emits ImagePullCount", func(t *testing.T) {
+	t.Run("GetImage emits RepositoryPullCount", func(t *testing.T) {
 		_, err := m.GetImage(ctx, "metrics-repo", "v1")
 		require.NoError(t, err)
 
 		metrics, err := cw.ListMetrics(ctx, "AWS/ECR")
 		require.NoError(t, err)
-		assert.Contains(t, metrics, "ImagePullCount")
+		assert.Equal(t, []string{"RepositoryPullCount"}, metrics)
+
+		res, err := cw.GetMetricData(ctx, mondriver.GetMetricInput{
+			Namespace: "AWS/ECR", MetricName: "RepositoryPullCount",
+			Dimensions: map[string]string{"RepositoryName": "metrics-repo"},
+			StartTime:  fc.Now().Add(-time.Minute), EndTime: fc.Now().Add(time.Minute),
+			Period: 60, Stat: "Sum",
+		})
+		require.NoError(t, err)
+		require.Len(t, res.Values, 1)
+		assert.InDelta(t, 1.0, res.Values[0], 0)
+		assert.Equal(t, "Count", res.Unit)
 	})
 }
 
@@ -1088,6 +1179,11 @@ func pushManifest(t *testing.T, m *Mock, repo, tag, digest, manifest string) *dr
 	require.NoError(t, err)
 
 	return detail
+}
+
+// manifestDigest is the sha256 digest ECR computes for a manifest.
+func manifestDigest(manifest string) string {
+	return fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(manifest)))
 }
 
 func findByDigest(images []driver.ImageDetail, digest string) *driver.ImageDetail {
@@ -1136,7 +1232,7 @@ func TestPutImageExplicitDigestAccumulatesTags(t *testing.T) {
 	ctx := context.Background()
 	createTestRepo(t, m, "repo")
 
-	const digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	digest := manifestDigest(`{"a":1}`)
 	first := pushManifest(t, m, "repo", "v1", digest, `{"a":1}`)
 	assert.ElementsMatch(t, []string{"v1"}, first.Tags)
 
@@ -1157,7 +1253,7 @@ func TestDeleteImageByTagUntagsOnly(t *testing.T) {
 	ctx := context.Background()
 	createTestRepo(t, m, "repo")
 
-	const digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	digest := manifestDigest(`{"b":1}`)
 	pushManifest(t, m, "repo", "v1", digest, `{"b":1}`)
 	pushManifest(t, m, "repo", "v2", digest, `{"b":1}`)
 
@@ -1181,7 +1277,7 @@ func TestDeleteImageByDigestRemovesManifest(t *testing.T) {
 	ctx := context.Background()
 	createTestRepo(t, m, "repo")
 
-	const digest = "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+	digest := manifestDigest(`{"c":1}`)
 	pushManifest(t, m, "repo", "v1", digest, `{"c":1}`)
 	pushManifest(t, m, "repo", "v2", digest, `{"c":1}`)
 

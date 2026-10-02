@@ -29,10 +29,17 @@ func (m *Mock) CreateMountTarget(ctx context.Context, in driver.CreateMountTarge
 	}
 
 	subnet := m.resolveSubnet(ctx, in.SubnetID)
-	vpcID, azName, azIdent := m.mountTargetPlacement(fd.fs.FileSystemID, subnet)
 
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
+
+	vpcID, azName, azIdent := m.mountTargetPlacement(&fd.fs, subnet)
+
+	// A One Zone file system only takes a mount target in its own zone.
+	if zone := fd.fs.AvailabilityZoneName; zone != "" && azName != zone {
+		return nil, &driver.ResourceError{Kind: driver.KindAvailabilityZone, Err: errors.Newf(errors.InvalidArgument,
+			"subnet %q is in %s but file system %q is in %s", in.SubnetID, azName, fd.fs.FileSystemID, zone)}
+	}
 
 	// EFS allows one mount target per Availability Zone. When the subnet's AZ is
 	// known, enforce that (two subnets in one AZ conflict); otherwise fall back to
@@ -71,12 +78,19 @@ func (m *Mock) CreateMountTarget(ctx context.Context, in driver.CreateMountTarge
 // mountTargetPlacement resolves the VpcId and Availability Zone for a mount
 // target. A resolved subnet supplies the real VPC and AZ; otherwise the VpcId is
 // a deterministic value tied to the file system (so every mount target of one
-// file system shares it) and the AZ defaults to the region's first zone.
+// file system shares it). With no subnet AZ, a One Zone file system uses its
+// own zone and a Regional one uses the region's first zone.
 func (m *Mock) mountTargetPlacement(
-	fileSystemID string, subnet *netdriver.SubnetInfo,
+	fs *driver.FileSystem, subnet *netdriver.SubnetInfo,
 ) (vpcID, azName, azIdent string) {
+	fileSystemID := fs.FileSystemID
 	azName = m.opts.Region + "a"
 	azIdent = azID(m.opts.Region)
+
+	if fs.AvailabilityZoneName != "" {
+		azName = fs.AvailabilityZoneName
+		azIdent = azIDFromName(fs.AvailabilityZoneName)
+	}
 
 	if subnet != nil {
 		vpcID = subnet.VPCID
@@ -176,8 +190,8 @@ const ipSegmentSize = 256
 const mtFirstHost = 4
 
 // allocateIP returns explicit if the caller supplied one. Otherwise it hands out
-// the next private IPv4 inside the subnet's CIDR — real EFS auto-assigns a free
-// address from the target subnet — falling back to a synthetic-but-unique
+// the next private IPv4 inside the subnet's CIDR (real EFS auto-assigns a free
+// address from the target subnet), falling back to a synthetic-but-unique
 // 10.0.x.y address when the subnet can't be resolved. Every call returns a
 // distinct address: a fixed default would let two mount targets (even across
 // different subnets and file systems) collide on the same private IP, which
@@ -226,8 +240,8 @@ func (m *Mock) allocateIP(explicit, subnetID string, subnet *netdriver.SubnetInf
 // nextIP hands out a globally-unique fallback address (10.0.x.y) when no subnet
 // CIDR is available to allocate an in-range address from. The counter is offset
 // by mtFirstHost so the first address is 10.0.0.4, never the 10.0.0.0 network
-// address (nor the reserved low hosts) — real EFS/EC2 never assigns those to a
-// mount target.
+// address (nor the reserved low hosts), since real EFS/EC2 never assigns those
+// to a mount target.
 func (m *Mock) nextIP() string {
 	m.ipMu.Lock()
 	n := m.ipCounters[""] + mtFirstHost
@@ -389,7 +403,7 @@ func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointI
 
 	// Store the access point and publish it via apIndex BEFORE claiming the
 	// ClientToken, so a racing same-token loser can always resolve the winner's
-	// access point by id — there is no lookup-before-store window (the F1
+	// access point by id: there is no lookup-before-store window (the F1
 	// file-system path is safe the same way: its loser recovers by id, not by
 	// object lookup).
 	fd.mu.Lock()
@@ -412,7 +426,7 @@ func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointI
 	m.apIndex.Set(id, in.FileSystemID)
 
 	// ClientToken idempotency: claim the token. If another same-token call won the
-	// race, roll back this just-created access point and return the existing one —
+	// race, roll back this just-created access point and return the existing one:
 	// never a duplicate, never AccessPointNotFound.
 	if in.ClientToken != "" && !m.apTokenIndex.SetIfAbsent(in.ClientToken, id) {
 		fd.mu.Lock()

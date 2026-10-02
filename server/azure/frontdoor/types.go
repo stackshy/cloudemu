@@ -3,8 +3,8 @@ package frontdoor
 // Azure ARM JSON wire structures and constants for Microsoft.Cdn/profiles and its
 // afdEndpoints / originGroups child types. Only the shell fields that live outside
 // the "properties" object (location, sku, kind, identity, tags) are typed; the
-// properties themselves are carried as generic JSON so nested values — including
-// explicit zeros in loadBalancingSettings — round-trip verbatim.
+// properties themselves are carried as generic JSON so nested values (including
+// explicit zeros in loadBalancingSettings) round-trip verbatim.
 
 const (
 	providerName = "Microsoft.Cdn"

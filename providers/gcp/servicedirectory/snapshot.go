@@ -12,7 +12,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // serviceDirectorySnapshot is the full serialized state of the Service Directory
 // mock. Each store holds fully-exported driver value types keyed by their full
-// GCP resource name, so each round-trips through the generic memstore helper —
+// GCP resource name, so each round-trips through the generic memstore helper:
 // no field promotion is needed. The wired deps (m.opts) and the RWMutex are
 // intentionally not serialized.
 type serviceDirectorySnapshot struct {
@@ -22,7 +22,7 @@ type serviceDirectorySnapshot struct {
 }
 
 // Snapshot captures every namespace, service, and endpoint as JSON.
-// includeAssets is unused — Service Directory is control-plane only and holds no
+// includeAssets is unused: Service Directory is control-plane only and holds no
 // bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()

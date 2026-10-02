@@ -14,7 +14,7 @@
 // discovering client can proceed. In practice the aws-sdk-go-v2 client and
 // terraform-provider-aws skip discovery entirely when a custom endpoint is
 // configured (the emulator's endpoint override), so operations reach this
-// handler directly — DescribeEndpoints is served for completeness and for
+// handler directly. DescribeEndpoints is served for completeness and for
 // clients that do discover.
 package timestreamwrite
 

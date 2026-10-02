@@ -11,7 +11,7 @@ import (
 )
 
 // asgNamespace is the XML namespace AutoScaling responses carry. Distinct
-// from EC2's namespace — the SDK's parser tolerates either, but we emit the
+// from EC2's namespace: the SDK's parser tolerates either, but we emit the
 // "right" one so the wire capture matches real AWS.
 const asgNamespace = "http://autoscaling.amazonaws.com/doc/2011-01-01/"
 
@@ -192,7 +192,7 @@ func (h *Handler) updateAutoScalingGroup(w http.ResponseWriter, r *http.Request)
 	// specifying a new DesiredCapacity: a new MinSize larger than the current size
 	// raises desired to MinSize; a new MaxSize smaller than the current size lowers
 	// desired to MaxSize. (docs.aws.amazon.com/autoscaling/ec2/APIReference/
-	// API_UpdateAutoScalingGroup.html — "Note the following about changing ...")
+	// API_UpdateAutoScalingGroup.html: "Note the following about changing ...")
 	if _, explicit := r.Form["DesiredCapacity"]; !explicit || r.Form.Get("DesiredCapacity") == "" {
 		if minSize > desired {
 			desired = minSize
@@ -354,7 +354,7 @@ func toASGInstances(g *computedriver.AutoScalingGroup) []asgInstanceXML {
 }
 
 // asgFormInt returns the form value for key as an int, or fallback when the
-// client omitted the field — the basis of AutoScaling's partial-update semantics.
+// client omitted the field, the basis of AutoScaling's partial-update semantics.
 func asgFormInt(form map[string][]string, key string, fallback int) int {
 	vals, ok := form[key]
 	if !ok || len(vals) == 0 || vals[0] == "" {
@@ -425,6 +425,6 @@ func (h *Handler) listASGs(r *http.Request) ([]computedriver.AutoScalingGroup, e
 
 func writeASGErr(w http.ResponseWriter, err error) {
 	// A FailedPrecondition from the ASG driver is a delete blocked by live
-	// instances (no ForceDelete) — AWS answers that with ResourceInUse (400).
+	// instances (no ForceDelete); AWS answers that with ResourceInUse (400).
 	writeErrWithNotFound(w, err, "AutoScalingGroupNotFound", "ResourceInUse")
 }

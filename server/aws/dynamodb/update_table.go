@@ -135,7 +135,7 @@ func (h *Handler) applyGSIUpdates(ctx context.Context, table string, updates []g
 
 // syncAttributeDefinitions reconciles the table's attribute definitions after
 // GSI create/delete updates so DescribeTable surfaces exactly the attributes the
-// table key and its surviving indexes reference — matching real DynamoDB. It is
+// table key and its surviving indexes reference, as real DynamoDB does. It is
 // a no-op when the request touches neither indexes nor attribute definitions, or
 // when the provider does not expose the capability.
 func (h *Handler) syncAttributeDefinitions(
@@ -215,8 +215,8 @@ func (h *Handler) applyTableSettings(ctx context.Context, table, tableClass stri
 }
 
 // validateThroughputChange resolves the billing mode and capacity an
-// UpdateTable request would leave a table in — merging any field the request
-// omits with the table's current stored value — and enforces AWS's
+// UpdateTable request would leave a table in (merging any field the request
+// omits with the table's current stored value) and enforces AWS's
 // PROVISIONED/PAY_PER_REQUEST throughput rule against the result. A field the
 // request explicitly supplies always overrides; an omitted one falls back to
 // the stored value so re-affirming an unrelated field (e.g. adding a GSI)
@@ -257,8 +257,8 @@ func (h *Handler) validateThroughputChange(ctx context.Context, table, billingMo
 // validateGSICreateThroughputs enforces the per-GSI PROVISIONED/PAY_PER_REQUEST
 // throughput rule (validateGSIThroughput) against every GSI Create in an
 // UpdateTable request. The effective billing mode is the request's own
-// BillingMode when it changes it, otherwise the table's current stored mode —
-// the same resolution validateThroughputChange uses — so adding a GSI without
+// BillingMode when it changes it, otherwise the table's current stored mode
+// (the same resolution validateThroughputChange uses), so adding a GSI without
 // touching billing is checked against the table as it stands today. A request
 // with no GSI creates skips the DescribeTable lookup entirely.
 func (h *Handler) validateGSICreateThroughputs(

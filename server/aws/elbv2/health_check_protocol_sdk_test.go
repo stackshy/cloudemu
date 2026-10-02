@@ -13,7 +13,7 @@ import (
 // group with no explicit health_check block defaults HealthCheckProtocol to
 // HTTP, not HTTPS. Real ELBv2 never mirrors a target group's own protocol
 // onto its health check (see the CreateTargetGroup API reference); mirroring
-// it — the prior emulator behavior — surfaced as a perpetual Terraform plan
+// it (the prior emulator behavior) surfaced as a perpetual Terraform plan
 // diff on any aws_lb_target_group with protocol = "HTTPS".
 func TestSDKHTTPSTargetGroupDefaultsHealthCheckToHTTP(t *testing.T) {
 	client := newSDKClient(t)
@@ -70,7 +70,7 @@ func TestSDKTCPTargetGroupDefaultsHealthCheckToTCP(t *testing.T) {
 }
 
 // TestSDKLambdaTargetGroupHealthCheck proves a lambda target group reports
-// HealthCheckEnabled=false and carries no health-check protocol — real ELBv2
+// HealthCheckEnabled=false and carries no health-check protocol. Real ELBv2
 // disables health checks for a lambda group by default and returns no protocol,
 // so returning one makes Terraform reject the group with "health_check.protocol
 // cannot be specified when target_type is lambda". The lambda-specific numeric

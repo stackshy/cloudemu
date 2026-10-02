@@ -258,7 +258,7 @@ func TestSDKAzureIAMRoleAssignmentLifecycle(t *testing.T) {
 
 // TestSDKAzureIAMRoleDefinitionListScopeAndAbove verifies real Azure's
 // documented RoleDefinitions List semantics (MS Learn:
-// rest/api/authorization/role-definitions/list — "Get all role definitions
+// rest/api/authorization/role-definitions/list: "Get all role definitions
 // that are applicable at scope and above"): a list at a scope returns role
 // definitions scoped to that scope and its ancestors, never one scoped only
 // to a descendant resource beneath it.
@@ -283,7 +283,7 @@ func TestSDKAzureIAMRoleDefinitionListScopeAndAbove(t *testing.T) {
 	mustCreateRole(t, roleDefs, ctx, vmScope, vmRoleID, "VM Role")
 
 	// Listing at the subscription scope must return only the subscription-
-	// scoped role — the RG- and VM-scoped roles are descendants, not
+	// scoped role: the RG- and VM-scoped roles are descendants, not
 	// ancestors, of the subscription.
 	names := listRoleNames(t, roleDefs, testScope)
 	if !names[subRoleID] {

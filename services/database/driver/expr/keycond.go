@@ -163,7 +163,7 @@ func (p *parser) parseBetweenCond(kc *KeyCond) error {
 }
 
 // keyName parses a single attribute name (resolving a #alias). Key attributes
-// are simple top-level names — nested paths and indexes are rejected.
+// are simple top-level names; nested paths and indexes are rejected.
 func (p *parser) keyName() (string, error) {
 	path, err := p.parsePath()
 	if err != nil {

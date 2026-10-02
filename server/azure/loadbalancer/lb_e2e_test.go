@@ -13,7 +13,7 @@ func lbChildID(child, name string) string {
 		"/providers/Microsoft.Network/loadBalancers/lb-full/" + child + "/" + name
 }
 
-// Finding #9: PUT is a full replace — children omitted from the body are
+// Finding #9: PUT is a full replace: children omitted from the body are
 // removed rather than accumulating.
 func TestSDKLBFullReplace(t *testing.T) {
 	client := newLBClient(t)

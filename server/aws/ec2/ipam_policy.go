@@ -202,7 +202,7 @@ func (*Handler) modifyIpamPolicyAllocationRules(w http.ResponseWriter, r *http.R
 	}
 
 	// The SDK output carries IpamPolicyDocument (element ipamPolicyDocument),
-	// not a Return field — emit the modified document so the caller sees it.
+	// not a Return field. Emit the modified document so the caller sees it.
 	awsquery.WriteXMLResponse(w, struct {
 		XMLName  xml.Name              `xml:"ModifyIpamPolicyAllocationRulesResponse"`
 		Xmlns    string                `xml:"xmlns,attr"`

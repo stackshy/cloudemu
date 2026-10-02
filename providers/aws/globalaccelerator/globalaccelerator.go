@@ -3,7 +3,7 @@
 // endpoint groups under each listener, plus per-accelerator flow-log attributes
 // and resource tags.
 //
-// The mock is control-plane only — it routes no real traffic and runs no health
+// The mock is control-plane only. It routes no real traffic and runs no health
 // checks. An accelerator is created synchronously with stable computed fields
 // (arn, two deterministic static IPv4 addresses, dnsName, dualStackDnsName,
 // status, createdTime) minted once at create and stored, so repeated reads never
@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/globalaccelerator/driver"
@@ -79,16 +80,29 @@ type Mock struct {
 	endpointGroups *memstore.Store[driver.EndpointGroup]
 	attributes     *memstore.Store[driver.AcceleratorAttributes]
 	opts           *config.Options
+
+	// acceleratorTokens, listenerTokens and endpointGroupTokens dedup the
+	// IdempotencyToken of CreateAccelerator, CreateListener and
+	// CreateEndpointGroup: a retried create returns the resource already
+	// provisioned for it (same ARN, static IPs) instead of minting a second one.
+	// The Global Accelerator API reference documents no token lifetime, so all
+	// three use idempotency.DefaultTTL.
+	acceleratorTokens   *idempotency.Store
+	listenerTokens      *idempotency.Store
+	endpointGroupTokens *idempotency.Store
 }
 
 // New creates a new Global Accelerator mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		accelerators:   memstore.New[driver.Accelerator](),
-		listeners:      memstore.New[driver.Listener](),
-		endpointGroups: memstore.New[driver.EndpointGroup](),
-		attributes:     memstore.New[driver.AcceleratorAttributes](),
-		opts:           opts,
+		accelerators:        memstore.New[driver.Accelerator](),
+		listeners:           memstore.New[driver.Listener](),
+		endpointGroups:      memstore.New[driver.EndpointGroup](),
+		attributes:          memstore.New[driver.AcceleratorAttributes](),
+		opts:                opts,
+		acceleratorTokens:   idempotency.New(idempotency.DefaultTTL),
+		listenerTokens:      idempotency.New(idempotency.DefaultTTL),
+		endpointGroupTokens: idempotency.New(idempotency.DefaultTTL),
 	}
 }
 

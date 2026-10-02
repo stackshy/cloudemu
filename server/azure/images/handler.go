@@ -65,6 +65,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, rp)
@@ -553,7 +557,7 @@ func mergeTags(in map[string]string, name, resourceGroup, sourceVM, osType strin
 
 // reservedTagPrefix is the namespace of the cloudemu-internal bookkeeping tags
 // (armNameTag, rgTag, sourceVMTag, osTypeTag). A PATCH caller may not set any tag
-// in it — those keys carry the image's ARM identity.
+// in it: those keys carry the image's ARM identity.
 const reservedTagPrefix = "cloudemu:"
 
 // withoutReservedTags drops any cloudemu:-prefixed key from a PATCH-supplied tag

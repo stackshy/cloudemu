@@ -1,7 +1,7 @@
 // Package guardduty provides an in-memory mock implementation of Amazon
 // GuardDuty: detectors that are provisioned immediately ENABLED, and their
-// child resources — IP sets, threat-intel sets, threat-entity sets,
-// trusted-entity sets, and filters — each keyed under their owning detector.
+// child resources (IP sets, threat-intel sets, threat-entity sets,
+// trusted-entity sets, and filters) each keyed under their owning detector.
 //
 // It implements the full GuardDuty API surface end to end: detectors and their
 // child resources (IP sets, threat-intel/entity sets, trusted-entity sets,

@@ -2,15 +2,31 @@ package fis
 
 import (
 	"context"
+	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/services/fis/driver"
 )
 
 // CreateExperimentTemplate provisions a new experiment template synchronously
 // with stable computed fields (id, arn, creationTime, lastUpdateTime). The
-// actions, targets and stop conditions are stored verbatim.
+// actions, targets and stop conditions are stored verbatim. A repeated
+// clientToken within the dedup window returns the live template already created
+// for it (as it reads now, after any update) instead of minting a second one;
+// once that template is deleted the token creates afresh.
 func (m *Mock) CreateExperimentTemplate(
-	_ context.Context, in *driver.CreateExperimentTemplateInput,
+	ctx context.Context, in *driver.CreateExperimentTemplateInput,
+) (*driver.ExperimentTemplate, error) {
+	now := m.now()
+
+	return idempotency.Do(ctx, m.templateTokens, in.ClientToken, now, m.GetExperimentTemplate,
+		func() (*driver.ExperimentTemplate, error) { return m.createExperimentTemplate(in, now) },
+		func(t *driver.ExperimentTemplate) string { return t.ID })
+}
+
+// createExperimentTemplate validates the request and stores one new template.
+func (m *Mock) createExperimentTemplate(
+	in *driver.CreateExperimentTemplateInput, now time.Time,
 ) (*driver.ExperimentTemplate, error) {
 	if in.Description == "" {
 		return nil, validation("description is required")
@@ -28,7 +44,6 @@ func (m *Mock) CreateExperimentTemplate(
 		return nil, validation("at least one action is required")
 	}
 
-	now := m.now()
 	id := templateID()
 
 	t := driver.ExperimentTemplate{

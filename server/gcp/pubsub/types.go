@@ -76,7 +76,7 @@ type listSubscriptionsResponse struct {
 	NextPageToken string         `json:"nextPageToken,omitempty"`
 }
 
-// listTopicSubscriptionsResponse is topics.subscriptions.list — a list of
+// listTopicSubscriptionsResponse is topics.subscriptions.list: a list of
 // subscription resource names (strings), not full Subscription objects.
 type listTopicSubscriptionsResponse struct {
 	Subscriptions []string `json:"subscriptions"`

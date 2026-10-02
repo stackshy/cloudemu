@@ -9,7 +9,7 @@
 // GET /experimentTemplates/{id}, PATCH /experimentTemplates/{id},
 // POST /experiments, DELETE /experiments/{id}, POST /tags/{arn}); there is no
 // X-Amz-Target header and no version prefix. Matches claims the
-// /experimentTemplates and /experiments trees — which are distinctive to FIS —
+// /experimentTemplates and /experiments trees, which are distinctive to FIS,
 // and the shared /tags path only when the ARN names a FIS (:fis:) resource, so
 // it runs before the S3 catch-all and never shadows a sibling service's tag
 // operations.

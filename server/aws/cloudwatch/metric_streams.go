@@ -4,8 +4,8 @@ package cloudwatch
 // GetMetricStream, ListMetricStreams, DeleteMetricStream, StartMetricStreams,
 // StopMetricStreams) over the rpc-v2-cbor protocol, backing the
 // aws_cloudwatch_metric_stream Terraform resource. The store is an AWS-local
-// optional capability so the shared Monitoring interface — and the Azure/GCP
-// providers — stay unchanged.
+// optional capability so the shared Monitoring interface (and the Azure/GCP
+// providers) stay unchanged.
 
 import (
 	"context"
@@ -205,7 +205,13 @@ func (h *Handler) listMetricStreams(w http.ResponseWriter, r *http.Request, body
 		size = in.MaxResults
 	}
 
-	from, to, next := pageWindow(len(entries), decodeOffsetToken(in.NextToken), size)
+	offset, err := offsetFromToken(in.NextToken, errInvalidNextToken)
+	if err != nil {
+		writeMetricStreamDriverErr(w, err)
+		return
+	}
+
+	from, to, next := pageWindow(len(entries), offset, size)
 
 	rows := make([]metricStreamEntryCBR, 0, to-from)
 
@@ -236,7 +242,7 @@ type deleteMetricStreamInput struct {
 
 // deleteMetricStream is structurally identical to deleteDashboards (unmarshal
 // a single-field input, call the matching AWS-local store method, write an
-// empty success response) — the two resources' delete semantics genuinely
+// empty success response). The two resources' delete semantics really do
 // share this shape, so the duplication is inherent rather than a missed
 // abstraction.
 //
@@ -302,20 +308,18 @@ func (h *Handler) setMetricStreamsRunning(w http.ResponseWriter, r *http.Request
 	writeCBORResponse(w, struct{}{})
 }
 
-// writeMetricStreamDriverErr maps a metric-stream driver error to the real
-// CloudWatch error shape names these operations document — ResourceNotFoundException
-// (GetMetricStream) and InvalidParameterValueException (PutMetricStream) —
-// which carry the "Exception" suffix that the shared writeDriverErr's shorter
-// names (used by the older alarm operations) drop. The exact name matters: an
-// SDK/Terraform delete-waiter matches on the deserialized error code, and a
-// mismatched name looks like an unexpected failure rather than a signal that
-// the resource is gone.
+// writeMetricStreamDriverErr maps a metric-stream driver error to the error
+// codes these operations return: ResourceNotFoundException (GetMetricStream)
+// and InvalidParameterValue (PutMetricStream). The code is the shape's query
+// error code, so ResourceNotFoundException keeps its suffix while
+// InvalidParameterValueException goes on the wire as InvalidParameterValue.
+// The exact code matters: an SDK/Terraform delete-waiter matches on it.
 func writeMetricStreamDriverErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
 		writeCBORError(w, http.StatusNotFound, "ResourceNotFoundException", err.Error())
 	case cerrors.IsInvalidArgument(err):
-		writeCBORError(w, http.StatusBadRequest, "InvalidParameterValueException", err.Error())
+		writeCBORError(w, http.StatusBadRequest, errInvalidParameterValue, cerrors.Message(err))
 	default:
 		writeDriverErr(w, err)
 	}

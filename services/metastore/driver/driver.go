@@ -1,6 +1,6 @@
 // Package driver defines the portable interface for the Google Dataproc
 // Metastore control plane (metastore.googleapis.com/v1). It is control-plane
-// only — the single location-scoped resource collection a Terraform google
+// only: the single location-scoped resource collection a Terraform google
 // provider or a real google.golang.org/api/metastore client CRUDs is modeled:
 //
 //	projects/{p}/locations/{region}/services/{id}
@@ -15,7 +15,7 @@
 // top-level server-defaulted fields (port 9083, databaseType MYSQL,
 // releaseChannel STABLE, tier). The wire layer mints the computed values once at
 // create and seeds the defaults so a client that omits them reads the same
-// values the real API fills — the classic Dataproc Metastore refresh-drift
+// values the real API fills, the classic Dataproc Metastore refresh-drift
 // point. The nested telemetryConfig/hiveMetastoreConfig blocks are Optional and
 // NOT server-defaulted (the Terraform provider models them as non-Computed
 // blocks), so they are carried through verbatim and never injected. Every
@@ -38,7 +38,7 @@ import (
 // separately so the full resource name and location scoping can be rebuilt
 // without re-parsing. CreateTime/UpdateTime are derived deterministically and
 // stay stable across reads. Fields holds every caller-supplied, non-computed
-// body key verbatim — plus the computed body values seeded once at create
+// body key verbatim, plus the computed body values seeded once at create
 // (endpointUri, state, stateMessage, artifactGcsUri, uid, and the top-level
 // server defaults port/databaseType/releaseChannel/tier), which then round-trip
 // as stable passthrough values.

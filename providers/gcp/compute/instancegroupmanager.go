@@ -6,7 +6,7 @@ import (
 
 // InstanceGroupManager is the in-memory record backing a zonal GCE managed
 // instance group (compute#instanceGroupManager). Only the fields the emulator
-// round-trips are modeled — targetSize is the load-bearing one, since the
+// round-trips are modeled: targetSize is the load-bearing one, since the
 // Terraform google provider derives a GKE node pool's node_count by summing the
 // targetSize of the MIGs its instanceGroupUrls point at. Host-dependent links
 // (selfLink, zone URL, instanceGroup URL) are built by the wire handler from the

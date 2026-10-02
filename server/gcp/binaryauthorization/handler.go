@@ -1,24 +1,24 @@
 // Package binaryauthorization implements the binaryauthorization.googleapis.com
 // v1 REST API as a server.Handler. Real
-// google.golang.org/api/binaryauthorization/v1 clients — and Terraform's google
+// google.golang.org/api/binaryauthorization/v1 clients, and Terraform's google
 // provider (google_binary_authorization_policy / google_binary_authorization_
-// attestor) — pointed at this server manage the per-project Policy singleton and
+// attestor), pointed at this server manage the per-project Policy singleton and
 // CRUD attestors end-to-end against the Binary Authorization driver.
 //
-// Coverage (v1 REST), all SYNCHRONOUS (the resource, or Empty for delete, or the
-// IAM Policy, is returned directly — Binary Authorization has no long-running
+// Coverage (v1 REST), all synchronous (the resource, or Empty for delete, or the
+// IAM Policy, is returned directly: Binary Authorization has no long-running
 // operations):
 //
-//	GET    /v1/projects/{p}/policy                              — Get policy (singleton)
-//	PUT    /v1/projects/{p}/policy                              — Update policy (full replace)
-//	POST   /v1/projects/{p}/attestors?attestorId={id}          — Create attestor
-//	GET    /v1/projects/{p}/attestors/{a}                      — Get attestor
-//	GET    /v1/projects/{p}/attestors                          — List attestors (paged)
-//	PUT    /v1/projects/{p}/attestors/{a}                      — Update attestor (full replace)
-//	DELETE /v1/projects/{p}/attestors/{a}                      — Delete attestor
-//	POST   /v1/projects/{p}/attestors/{a}:getIamPolicy         — Get IAM policy
-//	POST   /v1/projects/{p}/attestors/{a}:setIamPolicy         — Set IAM policy
-//	POST   /v1/projects/{p}/attestors/{a}:testIamPermissions   — Test IAM permissions
+//	GET    /v1/projects/{p}/policy                              : Get policy (singleton)
+//	PUT    /v1/projects/{p}/policy                              : Update policy (full replace)
+//	POST   /v1/projects/{p}/attestors?attestorId={id}          : Create attestor
+//	GET    /v1/projects/{p}/attestors/{a}                      : Get attestor
+//	GET    /v1/projects/{p}/attestors                          : List attestors (paged)
+//	PUT    /v1/projects/{p}/attestors/{a}                      : Update attestor (full replace)
+//	DELETE /v1/projects/{p}/attestors/{a}                      : Delete attestor
+//	POST   /v1/projects/{p}/attestors/{a}:getIamPolicy         : Get IAM policy
+//	POST   /v1/projects/{p}/attestors/{a}:setIamPolicy         : Set IAM policy
+//	POST   /v1/projects/{p}/attestors/{a}:testIamPermissions   : Test IAM permissions
 //
 // This is the control plane only. The policy singleton has no create/delete; a
 // project that never set a policy reads back a seeded default. Deep config blocks

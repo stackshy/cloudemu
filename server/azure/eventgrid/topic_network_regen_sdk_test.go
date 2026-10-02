@@ -74,7 +74,7 @@ func TestSDKTopicPublicNetworkAccessDefaultsToEnabled(t *testing.T) {
 
 // TestSDKTopicUpdatePatchReplacesTags locks B2 (revised): Topics.BeginUpdate
 // (PATCH) succeeds, REPLACES the topic's tag set wholesale with the supplied
-// tags (a pre-existing tag absent from the body is dropped, not merged —
+// tags (a pre-existing tag absent from the body is dropped, not merged,
 // matching real Azure's resource-level tag PATCH semantics and this
 // codebase's convention elsewhere, e.g. cosmosaccount/images), and applies
 // the mutable publicNetworkAccess.

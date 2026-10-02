@@ -45,7 +45,7 @@ func (*BackupPolicy) ARMType() string {
 	return providerNamespace + "/" + vaultType + "/backupPolicies"
 }
 
-// Config is a stored per-vault configuration singleton — either the
+// Config is a stored per-vault configuration singleton, either the
 // BackupResourceVaultConfig (soft-delete / security, Kind==ConfigSegment) or the
 // BackupResourceStorageConfig (storage redundancy, Kind==StorageConfigSegment).
 // The two share an identical shape, so one type and one store back both; Kind
@@ -84,7 +84,7 @@ func policyKey(sub, rg, vault, name string) string {
 }
 
 // CreateOrUpdatePolicy creates or updates a backup policy under its parent vault.
-// The parent vault must exist — otherwise it returns a NotFound error (the wire
+// The parent vault must exist: otherwise it returns a NotFound error (the wire
 // layer maps it to ParentResourceNotFound). The etag is minted once at create and
 // preserved across updates. It returns the stored policy and whether it was newly
 // created.
@@ -177,7 +177,7 @@ func (m *Mock) GetVaultConfig(_ context.Context, sub, rg, vault string) (Config,
 }
 
 // UpdateVaultConfig merges the supplied properties onto the vault's backup config
-// (its defaults when unset). Both the ARM PUT and PATCH map here — real Azure
+// (its defaults when unset). Both the ARM PUT and PATCH map here: real Azure
 // treats each as an update of the security config.
 func (m *Mock) UpdateVaultConfig(_ context.Context, sub, rg, vault string, props json.RawMessage) (Config, error) {
 	return m.updateConfig(sub, rg, vault, ConfigSegment, defaultVaultConfigProps, props)

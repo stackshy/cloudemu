@@ -294,7 +294,7 @@ func (h *Handler) putLogEvents(w http.ResponseWriter, r *http.Request) {
 // getLogEventsWindow picks the [start,end) slice bounds for a GetLogEvents page
 // over an ascending (oldest→newest) event set. A continuation token wins and is
 // direction-aware: a forward token marks the START of the next page, a backward
-// token marks the END (exclusive) of the previous page — so following the
+// token marks the END (exclusive) of the previous page. So following the
 // backward token yields the older window, not the current one. With no token the
 // AWS default (startFromHead false) returns the tail (latest events first) and
 // startFromHead=true returns the head.

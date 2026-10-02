@@ -135,6 +135,20 @@ func gcpMetricNames() []string {
 	}
 }
 
+// metricUnit is the Cloud Monitoring unit of a GCE instance metric.
+// cpu/utilization is a fraction ("10^2.%"). The network counts are bytes and
+// the disk counts are unit "1".
+func metricUnit(name string) string {
+	switch name {
+	case "instance/cpu/utilization":
+		return "10^2.%"
+	case "instance/network/received_bytes_count", "instance/network/sent_bytes_count":
+		return "By"
+	default:
+		return "1"
+	}
+}
+
 // gcpZoneTagKey mirrors the wire layer's zone tag (server/gcp/compute
 // instance_state.go keyZone): a GCE instance's launch zone is round-tripped
 // through its tags because the driver Instance model has no zone field. The
@@ -186,7 +200,7 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime, 
 				Namespace:  "compute.googleapis.com",
 				MetricName: metricName,
 				Value:      values[i],
-				Unit:       "None",
+				Unit:       metricUnit(metricName),
 				Dimensions: dims,
 				Timestamp:  ts,
 			})
@@ -211,7 +225,7 @@ func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID, zone string
 			Namespace:  "compute.googleapis.com",
 			MetricName: metricName,
 			Value:      values[i],
-			Unit:       "None",
+			Unit:       metricUnit(metricName),
 			Dimensions: dims,
 			Timestamp:  now,
 		}
@@ -824,7 +838,7 @@ func (m *Mock) DescribeSnapshots(_ context.Context, ids []string) ([]driver.Snap
 
 // SetVolumeLabelsGCP replaces a disk's user labels: set entries are written and
 // remove keys deleted on the disk's tag map (internal cloudemu tags are left
-// untouched — the wire layer only passes user labels). GCP-specific; reached via
+// untouched; the wire layer only passes user labels). GCP-specific; reached via
 // a type assertion from the GCE wire handler for disks.setLabels.
 func (m *Mock) SetVolumeLabelsGCP(volumeID string, set map[string]string, remove []string) error {
 	return setStoreLabels(m.volumes, volumeID, func(v *driver.VolumeInfo) *map[string]string { return &v.Tags },
@@ -875,7 +889,7 @@ func setStoreLabels[T any](
 // it is unaffected. The result is always non-nil.
 func mergeTags(src, set map[string]string, remove []string) map[string]string {
 	// src and set originate from caller-supplied labels. Guard the raw source
-	// length — no runtime arithmetic on a request-derived value, so nothing for an
+	// length: no runtime arithmetic on a request-derived value, so nothing for an
 	// overflow check to flag, and the guard bounds the allocation. The map still
 	// grows to hold every key, including those from set; this only sizes the hint.
 	const maxTagCap = 10000
@@ -904,7 +918,7 @@ func mergeTags(src, set map[string]string, remove []string) map[string]string {
 
 //nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.
 func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
-	// GCP images are created from a disk, snapshot, or import — not from a
+	// GCP images are created from a disk, snapshot, or import, not from a
 	// source instance. An empty InstanceID is one of those source-based paths,
 	// so only validate when a specific instance was named (the EC2-style path).
 	if cfg.InstanceID != "" {

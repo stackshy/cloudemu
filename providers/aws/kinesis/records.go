@@ -43,7 +43,7 @@ func validateBatchSize(sd *streamData, entries []driver.PutRecordsRequestEntry) 
 
 	for i := range entries {
 		if len(entries[i].Data) > limit {
-			return validationErr("record %d data of %d bytes exceeds the %d-byte limit",
+			return invalidArg("record %d data of %d bytes exceeds the %d-byte limit",
 				i, len(entries[i].Data), limit)
 		}
 
@@ -51,7 +51,7 @@ func validateBatchSize(sd *streamData, entries []driver.PutRecordsRequestEntry) 
 	}
 
 	if total > maxBatchBytes {
-		return validationErr("PutRecords batch of %d bytes exceeds the %d-byte limit", total, maxBatchBytes)
+		return invalidArg("PutRecords batch of %d bytes exceeds the %d-byte limit", total, maxBatchBytes)
 	}
 
 	return nil
@@ -112,6 +112,8 @@ func shardForHashKey(shards []*shardState, key *big.Int) *shardState {
 //
 //nolint:gocritic // in is the public PutRecord input, taken by value to match the driver API
 func (m *Mock) PutRecord(ctx context.Context, in driver.PutRecordInput) (*driver.PutRecordResult, error) {
+	start := m.now()
+
 	if in.PartitionKey == "" {
 		return nil, invalidArg("PartitionKey is required")
 	}
@@ -125,7 +127,7 @@ func (m *Mock) PutRecord(ctx context.Context, in driver.PutRecordInput) (*driver
 
 	if limit := recordSizeLimit(sd); len(in.Data) > limit {
 		sd.mu.Unlock()
-		return nil, validationErr("record data of %d bytes exceeds the %d-byte limit", len(in.Data), limit)
+		return nil, invalidArg("record data of %d bytes exceeds the %d-byte limit", len(in.Data), limit)
 	}
 
 	shard, seq, err := m.appendRecord(sd, in.PartitionKey, in.ExplicitHashKey, in.Data)
@@ -143,9 +145,11 @@ func (m *Mock) PutRecord(ctx context.Context, in driver.PutRecordInput) (*driver
 		ShardID: shard, SequenceNumber: seq, PartitionKey: in.PartitionKey,
 		Data: in.Data, ArrivalTime: m.now(),
 	}
-	streamARN := m.streamARN(ctx, sd.desc.StreamName)
+	streamName := sd.desc.StreamName
+	streamARN := m.streamARN(ctx, streamName)
 	sd.mu.Unlock()
 
+	m.emitPutRecordMetrics(ctx, streamName, len(in.Data), start)
 	m.deliverToLambda(ctx, streamARN, []driver.LambdaEventRecord{esm})
 
 	return res, nil
@@ -156,12 +160,14 @@ func (m *Mock) PutRecord(ctx context.Context, in driver.PutRecordInput) (*driver
 func (m *Mock) PutRecords(
 	ctx context.Context, name, arn string, entries []driver.PutRecordsRequestEntry,
 ) ([]driver.PutRecordsResultEntry, int32, error) {
+	start := m.now()
+
 	if len(entries) == 0 {
 		return nil, 0, invalidArg("Records must contain at least one entry")
 	}
 
 	if len(entries) > maxBatchRecords {
-		return nil, 0, validationErr("a PutRecords request may contain at most %d records, got %d",
+		return nil, 0, invalidArg("a PutRecords request may contain at most %d records, got %d",
 			maxBatchRecords, len(entries))
 	}
 
@@ -205,17 +211,26 @@ func (m *Mock) PutRecords(
 		})
 	}
 
-	var failed int32
+	var (
+		failed    int32
+		succBytes int
+	)
 
 	for i := range out {
 		if out[i].ErrorCode != "" {
 			failed++
+		} else {
+			succBytes += len(entries[i].Data)
 		}
 	}
 
-	streamARN := m.streamARN(ctx, sd.desc.StreamName)
+	streamName := sd.desc.StreamName
+	streamARN := m.streamARN(ctx, streamName)
 	sd.mu.Unlock()
 
+	m.emitPutRecordsMetrics(ctx, streamName, putRecordsOutcome{
+		total: len(entries), failed: int(failed), bytes: succBytes,
+	}, start)
 	m.deliverToLambda(ctx, streamARN, esm)
 
 	return out, failed, nil
@@ -244,7 +259,7 @@ func (m *Mock) appendRecord(
 	shard := shardForHashKey(sd.shards, key)
 	if shard == nil {
 		// Unreachable for MD5-routed keys (they tile the full range) and for
-		// bounds-checked explicit keys — a genuine internal invariant.
+		// bounds-checked explicit keys, a genuine internal invariant.
 		return "", "", errInUse("no open shard covers the record's hash key")
 	}
 
@@ -353,13 +368,28 @@ func indexBySeq(records []driver.Record, seq string, after bool) (int, error) {
 	return 0, invalidArg("sequence number %q not found in shard", seq)
 }
 
-// GetRecords returns records from the iterator position and advances it.
-func (m *Mock) GetRecords(_ context.Context, shardIterator string, limit int32) (*driver.GetRecordsOutput, error) {
+// GetRecords returns records from the iterator position and advances it, then
+// publishes the stream-level GetRecords.* metrics for the successful read.
+func (m *Mock) GetRecords(ctx context.Context, shardIterator string, limit int32) (*driver.GetRecordsOutput, error) {
+	start := m.now()
+
 	tok, err := decodeIterator(shardIterator)
 	if err != nil {
 		return nil, err
 	}
 
+	out, err := m.readRecords(tok, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	m.emitGetRecordsMetrics(ctx, tok.StreamName, out.Records, start)
+
+	return out, nil
+}
+
+// readRecords serves one GetRecords page for a decoded iterator.
+func (m *Mock) readRecords(tok iteratorToken, limit int32) (*driver.GetRecordsOutput, error) {
 	createdAt := time.UnixMilli(tok.CreatedAtMillis).UTC()
 	if m.now().Sub(createdAt) > shardIteratorTTL {
 		return nil, expiredIterator(
@@ -465,8 +495,8 @@ type listShardsToken struct {
 }
 
 // filter reconstructs the ShardFilter a paginating token must keep applying.
-// Full-set and AFTER_SHARD_ID filters aren't persisted — the AfterShard cursor
-// already captures them — so only the state-narrowing types come back here.
+// Full-set and AFTER_SHARD_ID filters aren't persisted. The AfterShard cursor
+// already captures them, so only the state-narrowing types come back here.
 func (t listShardsToken) filter() *driver.ShardFilter {
 	if t.FilterType == "" {
 		return nil

@@ -1,5 +1,5 @@
 // Package communication provides an in-memory mock of Azure Communication
-// Services (Microsoft.Communication/communicationServices) — the ARM control
+// Services (Microsoft.Communication/communicationServices), the ARM control
 // plane only. It manages the communicationServices resource lifecycle
 // (create/update/get/delete/list) and the listKeys / regenerateKey actions; the
 // data plane (sending SMS/email/chat, calling, phone numbers) is out of scope.
@@ -19,7 +19,7 @@
 //   - identity.principalId / identity.tenantId for a system-assigned identity.
 //
 // Every computed field is derived deterministically from the resource identity,
-// so the same resource always reports the same values — across gets, patches,
+// so the same resource always reports the same values, across gets, patches,
 // listKeys and a snapshot/restore.
 package communication
 

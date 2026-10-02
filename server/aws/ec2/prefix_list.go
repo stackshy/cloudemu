@@ -21,9 +21,9 @@ type prefixListXML struct {
 	PrefixListArn  string    `xml:"prefixListArn,omitempty"`
 	PrefixListName string    `xml:"prefixListName"`
 	AddressFamily  string    `xml:"addressFamily"`
-	MaxEntries     int       `xml:"maxEntries"`
+	MaxEntries     *int      `xml:"maxEntries,omitempty"`
 	State          string    `xml:"state"`
-	Version        int       `xml:"version"`
+	Version        *int      `xml:"version,omitempty"`
 	OwnerID        string    `xml:"ownerId,omitempty"`
 	Tags           []tagItem `xml:"tagSet>item,omitempty"`
 }
@@ -95,30 +95,79 @@ func (h *Handler) deletePrefixList(w http.ResponseWriter, r *http.Request, p net
 	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, PL: h.toPrefixListXML(regionFromRequest(r), out)})
 }
 
+// describePrefixLists answers DescribeManagedPrefixLists. Like real EC2 it
+// returns the AWS-owned service lists (owner AWS) next to the account's own,
+// and an explicitly named id that is neither is InvalidPrefixListID.NotFound.
 func (h *Handler) describePrefixLists(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
-	items, err := p.DescribeManagedPrefixLists(r.Context(), awsquery.ListStrings(r.Form, "PrefixListId"))
+	filters := awsquery.Filters(r.Form)
+	if err := validateNetworkingFilters(filters, h.matchManagedPrefixListFilter); err != nil {
+		writePrefixListErr(w, err)
+		return
+	}
+
+	ids := awsquery.ListStrings(r.Form, "PrefixListId")
+
+	items, err := p.DescribeManagedPrefixLists(r.Context(), ids)
 	if err != nil {
 		writePrefixListErr(w, err)
+		return
+	}
+
+	items = append(items, h.awsManagedPrefixLists(r, ids)...)
+
+	if missing := missingPrefixListID(ids, items); missing != "" {
+		writePrefixListErr(w, cerrors.Newf(cerrors.NotFound, "The prefix list ID '%s' does not exist", missing))
 		return
 	}
 
 	region := regionFromRequest(r)
 
 	out := make([]prefixListXML, 0, len(items))
+
 	for i := range items {
-		out = append(out, h.toPrefixListXML(region, &items[i]))
+		if matchNetworkingFilters(&items[i], filters, h.matchManagedPrefixListFilter) {
+			out = append(out, h.toPrefixListXML(region, &items[i]))
+		}
 	}
+
+	page, next := pageNetworkingXML(out, r, func(x prefixListXML) string { return x.PrefixListID })
 
 	awsquery.WriteXMLResponse(w, struct {
 		XMLName xml.Name        `xml:"DescribeManagedPrefixListsResponse"`
 		Xmlns   string          `xml:"xmlns,attr"`
 		Req     string          `xml:"requestId"`
 		Set     []prefixListXML `xml:"prefixListSet>item"`
-	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
+		Next    string          `xml:"nextToken,omitempty"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: page, Next: next})
 }
 
-func (*Handler) getPrefixListEntries(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
-	entries, err := p.GetManagedPrefixListEntries(r.Context(), r.Form.Get("PrefixListId"))
+// missingPrefixListID returns the first of ids with no list in items.
+func missingPrefixListID(ids []string, items []netdriver.PrefixList) string {
+	found := make(map[string]bool, len(items))
+	for i := range items {
+		found[items[i].ID] = true
+	}
+
+	for _, id := range ids {
+		if !found[id] {
+			return id
+		}
+	}
+
+	return ""
+}
+
+func (h *Handler) getPrefixListEntries(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
+	id := r.Form.Get("PrefixListId")
+
+	entries, err := p.GetManagedPrefixListEntries(r.Context(), id)
+	if cerrors.IsNotFound(err) {
+		// The AWS-owned service lists are readable too.
+		if owned := h.awsManagedPrefixLists(r, []string{id}); len(owned) == 1 {
+			entries, err = owned[0].Entries, nil
+		}
+	}
+
 	if err != nil {
 		writePrefixListErr(w, err)
 		return
@@ -129,12 +178,18 @@ func (*Handler) getPrefixListEntries(w http.ResponseWriter, r *http.Request, p n
 		out = append(out, prefixListEntryXML{Cidr: entries[i].CIDR, Description: entries[i].Description})
 	}
 
+	// Entries keep their list order; the cidr is unique within a list, so it
+	// doubles as the page token key.
+	page, next := paginateXML(out, r.Form.Get("MaxResults"), r.Form.Get("NextToken"),
+		func(e prefixListEntryXML) string { return e.Cidr })
+
 	awsquery.WriteXMLResponse(w, struct {
 		XMLName xml.Name             `xml:"GetManagedPrefixListEntriesResponse"`
 		Xmlns   string               `xml:"xmlns,attr"`
 		Req     string               `xml:"requestId"`
 		Set     []prefixListEntryXML `xml:"entrySet>item"`
-	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
+		Next    string               `xml:"nextToken,omitempty"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: page, Next: next})
 }
 
 func (h *Handler) modifyPrefixList(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
@@ -265,22 +320,34 @@ func parsePrefixListEntries(r *http.Request) []netdriver.PrefixListEntry {
 }
 
 func (h *Handler) toPrefixListXML(region string, p *netdriver.PrefixList) prefixListXML {
-	return prefixListXML{
-		PrefixListID: p.ID, PrefixListArn: h.prefixListARN(region, p.ID),
-		PrefixListName: p.Name, AddressFamily: p.AddressFamily,
-		MaxEntries: p.MaxEntries, State: p.State, Version: p.Version,
-		OwnerID: h.accountID, Tags: toTagItems(p.Tags),
+	x := prefixListXML{
+		PrefixListID: p.ID, PrefixListName: p.Name, AddressFamily: p.AddressFamily,
+		State: p.State, OwnerID: nonEmpty(p.OwnerID, h.accountID), Tags: toTagItems(p.Tags),
 	}
+	x.PrefixListArn = prefixListARN(region, x.OwnerID, p.ID)
+
+	// AWS-owned lists carry no maxEntries or version; customer lists always do.
+	if p.OwnerID == "" {
+		maxEntries, version := p.MaxEntries, p.Version
+		x.MaxEntries, x.Version = &maxEntries, &version
+	}
+
+	return x
 }
 
 // prefixListARN builds the managed-prefix-list ARN AWS returns; the SDK and
 // Terraform read prefixListArn to reference the list in policies and rules.
-func (h *Handler) prefixListARN(region, id string) string {
+// The AWS-owned lists carry "aws" in the account field.
+func prefixListARN(region, owner, id string) string {
 	if id == "" {
 		return ""
 	}
 
-	return "arn:aws:ec2:" + region + ":" + h.accountID + ":prefix-list/" + id
+	if owner == "AWS" {
+		owner = "aws"
+	}
+
+	return "arn:aws:ec2:" + region + ":" + owner + ":prefix-list/" + id
 }
 
 func writePrefixListErr(w http.ResponseWriter, err error) {

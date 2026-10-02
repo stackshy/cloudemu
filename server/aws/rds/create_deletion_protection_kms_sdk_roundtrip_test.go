@@ -144,7 +144,7 @@ func TestSDKRDSCreateKmsKeyIdRoundTrips(t *testing.T) {
 
 // TestSDKRDSDeleteWithLiveReplicaLeavesNoFinalSnapshot guards the delete
 // ordering: deleting a source that still has a live read replica is rejected,
-// and the FinalDBSnapshotIdentifier supplied on that call must NOT persist — a
+// and the FinalDBSnapshotIdentifier supplied on that call must NOT persist. A
 // rejected delete leaves no phantom final snapshot behind.
 func TestSDKRDSDeleteWithLiveReplicaLeavesNoFinalSnapshot(t *testing.T) {
 	client := newSDKClient(t)

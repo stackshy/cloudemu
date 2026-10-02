@@ -94,7 +94,7 @@ func TestDeleteSpecificVersion(t *testing.T) {
 	require.Len(t, res.Versions, 2)
 	older := res.Versions[0].VersionID
 
-	// Delete the older version — it's gone, current remains.
+	// Delete the older version: it's gone, current remains.
 	require.NoError(t, m.DeleteBlobVersion(ctx, "c1", "k1", older))
 
 	_, err = m.GetBlobVersion(ctx, "c1", "k1", older)
@@ -124,7 +124,7 @@ func TestDeleteBaseKeepsVersions(t *testing.T) {
 	require.NoError(t, m.PutObject(ctx, "c1", "k1", []byte("v1"), "text/plain", nil))
 	require.NoError(t, m.PutObject(ctx, "c1", "k1", []byte("v2"), "text/plain", nil))
 
-	// Delete the base blob — with versioning on, the versions survive.
+	// Delete the base blob: with versioning on, the versions survive.
 	require.NoError(t, m.DeleteObject(ctx, "c1", "k1"))
 
 	_, err := m.GetObject(ctx, "c1", "k1")
@@ -174,12 +174,12 @@ func TestSetTierAndPropertiesDoNotMintVersion(t *testing.T) {
 
 	require.Equal(t, 1, countVersions())
 
-	// Set Blob Tier is an in-place tier change — no new version.
+	// Set Blob Tier is an in-place tier change: no new version.
 	_, err := m.SetBlobTier(ctx, "c1", "k1", accessTierCool)
 	require.NoError(t, err)
 	assert.Equal(t, 1, countVersions(), "Set Blob Tier must not mint a version")
 
-	// Set Blob Properties is an in-place property update — no new version.
+	// Set Blob Properties is an in-place property update: no new version.
 	_, err = m.SetBlobProperties(ctx, "c1", "k1", &driver.BlobProperties{ContentType: "application/json"})
 	require.NoError(t, err)
 	assert.Equal(t, 1, countVersions(), "Set Blob Properties must not mint a version")

@@ -51,8 +51,8 @@ const secretARNSuffixLen = 6
 
 // SecretARNSuffix returns a fresh random 6-character alphanumeric suffix,
 // matching the trailing "-XXXXXX" AWS adds to a Secrets Manager ARN's resource
-// segment. Real Secrets Manager draws a new suffix on every CreateSecret call —
-// including when a secret is deleted and recreated under the same name — so
+// segment. Real Secrets Manager draws a new suffix on every CreateSecret call,
+// including when a secret is deleted and recreated under the same name, so
 // the old ARN never accidentally resolves to the new secret; callers must
 // generate it once at creation time and persist the resulting ARN (it is not
 // re-derivable from the name). It draws from crypto/rand; a random source
@@ -78,7 +78,7 @@ func SecretARNSuffix() string {
 
 // SyntheticGUID derives a deterministic GUID-shaped string from seed. The value
 // is synthetic (a stand-in for an Azure principal/tenant id), not a real
-// security identifier — the same seed always yields the same GUID so tests are
+// security identifier: the same seed always yields the same GUID so tests are
 // stable.
 func SyntheticGUID(seed string) string {
 	h1 := fnv.New64a()
@@ -106,6 +106,82 @@ func next() uint64 {
 func GenerateID(prefix string) string {
 	return fmt.Sprintf("%s%08x", prefix, next())
 }
+
+// Character sets for AWS-shaped random identifiers.
+const (
+	base32Upper   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+	lowerAlphaNum = "abcdefghijklmnopqrstuvwxyz0123456789"
+	upperAlphaNum = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	hexLower      = "0123456789abcdef"
+)
+
+// randString returns n characters drawn from alphabet via crypto/rand. A random
+// source failure degrades to a correctly-shaped constant string rather than
+// panicking, so callers always get a valid-length id.
+func randString(n int, alphabet string) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		for i := range b {
+			b[i] = alphabet[0]
+		}
+
+		return string(b)
+	}
+
+	for i := range b {
+		b[i] = alphabet[int(b[i])%len(alphabet)]
+	}
+
+	return string(b)
+}
+
+// accessKeyRandLen is the number of characters after the AKIA/ASIA prefix in an
+// AWS access key id (prefix + 16 = 20 chars total).
+const accessKeyRandLen = 16
+
+// AccessKeyID returns an AWS-shaped IAM access key id: the "AKIA" prefix plus 16
+// uppercase base32 characters (20 chars total). The AWS SDKs and CLI validate the
+// shape client-side (minimum length 16) before sending UpdateAccessKey /
+// DeleteAccessKey, so a shorter id makes key rotation/deletion impossible through
+// the real tooling.
+func AccessKeyID() string { return "AKIA" + randString(accessKeyRandLen, base32Upper) }
+
+// TempAccessKeyID is the STS temporary-credential variant of AccessKeyID (ASIA
+// prefix), used for assumed-role / session credentials.
+func TempAccessKeyID() string { return "ASIA" + randString(accessKeyRandLen, base32Upper) }
+
+// longIDRandLen is the hex-suffix length AWS's newer resource ids use.
+const longIDRandLen = 17
+
+// GenerateLongID returns prefix followed by a 17-character lowercase hex suffix,
+// the length AWS's newer resource ids use (e.g. VPC Lattice svc-/sn-/tg-/rule-).
+// The SDKs validate these client-side, so the legacy 8-char GenerateID is too
+// short and is rejected before the request is sent.
+func GenerateLongID(prefix string) string { return prefix + randString(longIDRandLen, hexLower) }
+
+// appSyncAPIIDLen is the length of an AppSync GraphQL API id.
+const appSyncAPIIDLen = 26
+
+// AppSyncAPIID returns a 26-character lowercase-alphanumeric id matching the shape
+// AppSync mints for a GraphQL API. The SDKs embed it in ARNs the CLI validates, so
+// the legacy 8-char id breaks TagResource/ListTagsForResource client-side.
+func AppSyncAPIID() string { return randString(appSyncAPIIDLen, lowerAlphaNum) }
+
+// bedrockProfileIDLen is the length of a Bedrock application inference profile id.
+const bedrockProfileIDLen = 12
+
+// BedrockInferenceProfileID returns a 12-character lowercase-alphanumeric id,
+// the shape Bedrock mints for an application inference profile.
+func BedrockInferenceProfileID() string { return randString(bedrockProfileIDLen, lowerAlphaNum) }
+
+// bedrockAgentIDLen is the length of every Bedrock Agents resource id.
+const bedrockAgentIDLen = 10
+
+// BedrockAgentResourceID returns a 10-character uppercase-alphanumeric id, the
+// shape Bedrock Agents mints for agents, aliases, knowledge bases, data sources,
+// ingestion jobs, flows and prompts. Their ARNs embed it and the tagging API's
+// ARN pattern requires exactly this shape.
+func BedrockAgentResourceID() string { return randString(bedrockAgentIDLen, upperAlphaNum) }
 
 // ARN generates an AWS ARN.
 func ARN(partition, service, region, accountID, resource string) string {

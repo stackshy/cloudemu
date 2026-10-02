@@ -31,8 +31,8 @@ const (
 // TestComputeGCESerialPortOutputE2E runs the exact flow a real user runs against
 // GCP: create a Compute Engine instance (instances.insert) with a startup-script
 // that echoes a marker, then read instances.getSerialPortOutput and assert the
-// marker appears in the serial console contents — proving a real container
-// actually ran the boot script — all against CloudEmu backed by a real Docker
+// marker appears in the serial console contents, proving a real container
+// actually ran the boot script, all against CloudEmu backed by a real Docker
 // container (no cloud account), driven by the real cloud.google.com/go compute
 // SDK. Then delete the instance and assert the backing container is torn down
 // (no leak).
@@ -57,7 +57,7 @@ func TestComputeGCESerialPortOutputE2E(t *testing.T) {
 
 	script := "#!/bin/sh\necho " + marker
 
-	// 1. Create the instance — exactly like `gcloud compute instances create`
+	// 1. Create the instance, like `gcloud compute instances create`
 	//    with --metadata startup-script=... (GCE carries the boot script as a
 	//    metadata item keyed "startup-script").
 	insertOp, err := client.Insert(ctx, &computepb.InsertInstanceRequest{
@@ -85,7 +85,7 @@ func TestComputeGCESerialPortOutputE2E(t *testing.T) {
 		t.Fatalf("Insert wait: %v", err)
 	}
 
-	// 2. Read the serial port output — the real container's boot-script output.
+	// 2. Read the serial port output: the real container's boot-script output.
 	serial, err := client.GetSerialPortOutput(ctx, &computepb.GetSerialPortOutputInstanceRequest{
 		Project:  gceProject,
 		Zone:     gceZone,
@@ -100,7 +100,7 @@ func TestComputeGCESerialPortOutputE2E(t *testing.T) {
 		t.Fatalf("serial port output missing marker %q: got %q", marker, serial.GetContents())
 	}
 
-	// 3. Delete the instance — the real container is torn down.
+	// 3. Delete the instance: the real container is torn down.
 	delOp, err := client.Delete(ctx, &computepb.DeleteInstanceRequest{
 		Project: gceProject, Zone: gceZone, Instance: gceVMName,
 	})
@@ -119,8 +119,8 @@ func TestComputeGCESerialPortOutputE2E(t *testing.T) {
 }
 
 // newInstancesClient builds a real cloud.google.com/go InstancesRESTClient
-// pointing at the plain-HTTP test server. Authentication is disabled — the
-// handler ignores credential headers — and the endpoint/HTTP client are the
+// pointing at the plain-HTTP test server. Authentication is disabled (the
+// handler ignores credential headers), and the endpoint/HTTP client are the
 // test server's, so the SDK's REST transport talks to CloudEmu.
 func newInstancesClient(t *testing.T, ts *httptest.Server) *gcpcompute.InstancesClient {
 	t.Helper()

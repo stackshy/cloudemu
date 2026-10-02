@@ -158,7 +158,7 @@ func TestWaitServerReady(t *testing.T) {
 	// M1 regression guard: readiness is a plain TCP-accept probe, so an AWS
 	// endpoint that is NOT serving /_cloudemu/health (e.g. `serve --admin=false`,
 	// modeled here by a bare listener with no HTTP handler) is still seen as
-	// ready — it must not time out and get the healthy server killed.
+	// ready. It must not time out and get the healthy server killed.
 	awsLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

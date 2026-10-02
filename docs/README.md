@@ -1,29 +1,31 @@
 # CloudEmu Documentation
 
-CloudEmu is a zero-cost, in-memory emulation of the AWS, Azure, GCP, OCI, and Kubernetes cloud APIs. Run it as a standalone server (`cloudemu serve` or the `ghcr.io/stackshy/cloudemu` Docker image) and point any app in any language at a local endpoint, or use it in-process from Go via the SDK-compat HTTP server or the typed mock API -- for testing and development without real cloud accounts, network, or bill. Drivers are in-memory by default and can be backed by opt-in [real engines](features.md#11-real-data-plane-engines-opt-in) (real SQL/Redis/function code) when you need real workloads.
+CloudEmu is an in-memory emulator for the AWS, Azure, GCP, OCI and Kubernetes APIs. You can run it as a standalone server (`cloudemu serve` or the `ghcr.io/stackshy/cloudemu` Docker image) and point an app in any language at a local endpoint. From Go you can also use it in-process, through the SDK-compat HTTP server or the typed mock API. Either way you test and develop without a cloud account, network access or a bill. Drivers are in-memory by default; when you need real workloads, you can back them with opt-in [real engines](features.md#11-real-data-plane-engines-opt-in) (real SQL, Redis or function code).
 
 ## Table of Contents
 
-- [Architecture](architecture.md) -- Three-layer design, package structure, cross-service wiring
-- [Structure & Naming](STRUCTURE.md) -- Canonical service names, file-naming rule, per-directory layout, and where new code goes
-- [Services](services.md) -- Complete provider resource reference with all operations across every supported service
-- [Features](features.md) -- Cross-cutting features: auto-metrics, alarm evaluation, IAM policy checking, FIFO dedup, cost tracking, and more
-- [SDK Server](sdk-server.md) -- SDK-compatible HTTP server (use the real aws-sdk-go-v2 against CloudEmu)
-- [Standalone Server](standalone-server.md) -- Run CloudEmu as a local dev cloud (`cloudemu serve` / Docker), point any language at it
-- [Integration](integration.md) -- Wire CloudEmu into your real app and tests (not a throwaway demo)
-- [Terraform / OpenTofu](terraform.md) -- Run real Terraform/OpenTofu against CloudEmu (the `cloudemu-tf` wrapper + manual provider config)
-- [Topology](topology.md) -- Network topology simulation engine
-- [Chaos](chaos.md) -- Fault, latency, and throttling injection across the service layer
-- [Persistence](persistence.md) -- Snapshot and restore the whole emulator's state (opt-in, identity-preserving)
-- [Getting Started](getting-started.md) -- Installation, provider creation, basic examples, configuration
-- [OCI Conventions](oci-conventions.md) -- The contract every OCI service implementation follows
+- [Architecture](architecture.md): the three-layer design, package map, cross-service wiring
+- [Structure & Naming](STRUCTURE.md): service names, file naming, per-directory layout, and where new code goes
+- [Services](services.md): curated per-provider resource reference for the core service categories
+- [Features](features.md): auto-metrics, alarm evaluation, IAM policy checks, FIFO dedup, cost tracking, and more
+- [SDK Server](sdk-server.md): the in-process SDK-compatible HTTP server (use the real aws-sdk-go-v2 against CloudEmu)
+- [Standalone Server](standalone-server.md): run CloudEmu as a local dev cloud (`cloudemu serve` / Docker) and point any language at it
+- [Integration](integration.md): connect your existing app and tests to CloudEmu
+- [Terraform / OpenTofu](terraform.md): run Terraform/OpenTofu against CloudEmu (the `cloudemu-tf` wrapper or a manual provider config)
+- [Topology](topology.md): the network topology engine
+- [Chaos](chaos.md): fault, latency and throttling injection in the service layer
+- [Persistence](persistence.md): snapshot and restore the whole emulator's state (opt-in, keeps resource IDs)
+- [Getting Started](getting-started.md): installation, creating providers, basic examples, configuration
+- [OCI Conventions](oci-conventions.md): the rules every OCI service implementation follows
+- [Capability coverage](coverage/README.md): every service and operation, generated from the code
 
 ## Quick Links
 
 | Topic | Link |
 |-------|------|
 | Creating an AWS provider | [Getting Started](getting-started.md#creating-providers) |
-| All service operations | [Services Reference](services.md#master-table) |
+| All service operations | [Capability coverage](coverage/README.md) |
+| Core service categories | [Services Reference](services.md#master-table) |
 | Using real AWS SDK clients | [SDK Server](sdk-server.md) |
 | Running Terraform/OpenTofu | [Terraform](terraform.md) |
 | Integrating into your app | [Integration](integration.md) |
@@ -33,4 +35,4 @@ CloudEmu is a zero-cost, in-memory emulation of the AWS, Azure, GCP, OCI, and Ku
 | Real data-plane engines | [Features](features.md#11-real-data-plane-engines-opt-in) |
 | Snapshot & restore state | [Persistence](persistence.md) |
 | Configuration options | [Getting Started](getting-started.md#configuration-options) |
-| Package structure | [Architecture](architecture.md#package-structure-overview) |
+| Package structure | [Architecture](architecture.md#package-map) |

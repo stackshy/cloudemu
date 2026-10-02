@@ -64,7 +64,7 @@ func mkVPCSubnet(t *testing.T, c *ec2.Client) (vpcID, subnetID string) {
 }
 
 // allocEIP allocates an Elastic IP and returns its allocation id. A public NAT
-// gateway requires a real allocation — real EC2 rejects a fabricated one with
+// gateway requires a real allocation; real EC2 rejects a fabricated one with
 // InvalidAllocationID.NotFound.
 func allocEIP(ctx context.Context, t *testing.T, c *ec2.Client) string {
 	t.Helper()
@@ -177,7 +177,7 @@ func TestNatGatewayPrivateConnectivity(t *testing.T) {
 // TestNatGatewayPublicRequiresAllocation pins that a public NAT gateway without an
 // AllocationId is rejected (MissingParameter), an unknown allocation is
 // InvalidAllocationID.NotFound, and a private gateway carrying an AllocationId is
-// rejected — matching real EC2's Elastic IP rules.
+// rejected, matching real EC2's Elastic IP rules.
 func TestNatGatewayPublicRequiresAllocation(t *testing.T) {
 	ctx := context.Background()
 	c := newRoutingEdgeEC2(t)

@@ -14,7 +14,7 @@ import (
 // TestOCIProviderRoundTripPreservesCrossRefs is the whole-provider proof for the
 // OCI half of #582: a VCN + subnet, a user, a policy and a metric seeded across
 // the Identity / VCN / Monitoring mocks all survive a full ExportAll -> JSON ->
-// RestoreAll into a FRESH provider, and — crucially — the subnet still resolves
+// RestoreAll into a FRESH provider, and the subnet still resolves
 // to its VCN under the same OCIDs. The OCI provider exposes services as driver
 // interfaces, so this also exercises the interface-aware discovery path.
 func TestOCIProviderRoundTripPreservesCrossRefs(t *testing.T) {
@@ -72,7 +72,7 @@ func TestOCIProviderRoundTripPreservesCrossRefs(t *testing.T) {
 	}
 
 	// The subnet keeps its OCID and its VCNID cross-reference resolves to the
-	// restored VCN — a snapshot that dropped the VCN would leave it dangling.
+	// restored VCN: a snapshot that dropped the VCN would leave it dangling.
 	subnets, err := dst.VCN.DescribeSubnets(ctx, []string{subnet.ID})
 	if err != nil {
 		t.Fatalf("describe restored subnet: %v", err)

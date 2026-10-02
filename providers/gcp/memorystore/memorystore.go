@@ -94,7 +94,7 @@ func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64,
 			Namespace:  "redis.googleapis.com",
 			MetricName: metricName,
 			Value:      value,
-			Unit:       "None",
+			Unit:       "1", // every metric here is a count, unit "1" in Cloud Monitoring
 			Dimensions: dims,
 			Timestamp:  m.opts.Clock.Now(),
 		},
@@ -231,7 +231,7 @@ func (m *Mock) ListCaches(_ context.Context, filter scope.Scope) ([]driver.Cache
 	return caches, nil
 }
 
-// UpdateCache replaces the mutable fields of an existing cache — ARM
+// UpdateCache replaces the mutable fields of an existing cache, using ARM
 // CreateOrUpdate-on-existing semantics (node type and tags come from the
 // request; identity, endpoint, and CreatedAt are preserved).
 func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.CacheInfo, error) {

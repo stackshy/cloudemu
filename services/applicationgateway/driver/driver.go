@@ -1,14 +1,14 @@
 // Package driver defines the storage contract for the Azure Application Gateway
 // (Microsoft.Network/applicationGateways).
 //
-// Application Gateway is an Azure-only, deeply-nested "echo-class" resource: a
-// single PUT carries the whole gateway — SKU, zones, identity and seven required
+// Application Gateway is an Azure-only, deeply-nested "echo-class" resource. A
+// single PUT carries the whole gateway: SKU, zones, identity, seven required
 // nested collections (gatewayIPConfigurations, frontendIPConfigurations,
 // frontendPorts, backendAddressPools, backendHttpSettingsCollection,
-// httpListeners, requestRoutingRules) plus optional probes and sslCertificates —
+// httpListeners, requestRoutingRules), and optional probes and sslCertificates,
 // whose items cross-reference each other by ARM sub-resource id. The cross-cloud
-// LoadBalancer / networking models cannot represent this shape, so — like
-// AzureLoadBalancers and AzureApplicationSecurityGroups — the Azure provider
+// LoadBalancer / networking models cannot represent this shape, so, like
+// AzureLoadBalancers and AzureApplicationSecurityGroups, the Azure provider
 // stores the ARM gateway natively and exposes it through this dedicated,
 // single-provider interface. AWS and GCP have no equivalent.
 //
@@ -26,8 +26,8 @@ import "context"
 // AzureAppGatewayChild is one item of a nested Application Gateway collection
 // (a backend pool, listener, routing rule, ...). Name is the ARM child name;
 // Properties is the item's "properties" object stored verbatim as generic JSON
-// so every value — including explicit booleans and cross-collection {id}
-// references — survives a round-trip unchanged. The wire handler stamps the
+// so every value, including explicit booleans and cross-collection {id}
+// references, survives a round-trip unchanged. The wire handler stamps the
 // item's ARM id/type/etag and injects provisioningState on read.
 type AzureAppGatewayChild struct {
 	Name       string

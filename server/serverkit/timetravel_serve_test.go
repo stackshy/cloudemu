@@ -40,7 +40,7 @@ func ttDo(t *testing.T, h http.Handler, method, path, body string) *httptest.Res
 
 // TestTimeTravelServeRewind drives the named-snapshot registry over the real
 // admin HTTP surface: seed a bucket, save a named point, reset (wipe), then
-// rewind — the bucket comes back.
+// rewind; the bucket comes back.
 func TestTimeTravelServeRewind(t *testing.T) {
 	_, h := timeTravelApp(t)
 

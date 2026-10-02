@@ -49,7 +49,7 @@ func TestPurgeAccount(t *testing.T) {
 // purging "foo" must not touch "foobar", whose name merely starts with "foo".
 // The purge matches on the "{account}/" separator, so "foobar/…" tables never
 // fall inside "foo"'s namespace. A bare HasPrefix(name, "foo") would wrongly
-// reap foobar's data — this test is the CI guard against that regression class.
+// reap foobar's data: this test is the CI guard against that regression class.
 func TestPurgeAccountPrefixSubset(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
@@ -77,7 +77,7 @@ func TestPurgeAccountPrefixSubset(t *testing.T) {
 	_, err = m.DescribeTable(ctx, "foo/db1/coll1")
 	require.Error(t, err, "purged account's container table must be gone")
 
-	// foobar survives untouched — table, attributes and its item.
+	// foobar survives untouched: table, attributes and its item.
 	assert.Contains(t, m.AccountTables(), "foobar", "prefix-sharing account must survive")
 
 	_, err = m.DescribeTable(ctx, "foobar/db1/coll1")
@@ -91,7 +91,7 @@ func TestPurgeAccountPrefixSubset(t *testing.T) {
 // TestPurgeAccountEmpty verifies the empty-account guard: purging "" is a no-op
 // and never reaps unrelated tables. nsPrefix("")=="" makes HasPrefix(t,"")
 // always true, so without the guard an empty account would match and delete
-// every table — a latent match-all data-loss footgun.
+// every table, a latent match-all data-loss footgun.
 func TestPurgeAccountEmpty(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

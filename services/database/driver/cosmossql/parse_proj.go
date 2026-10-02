@@ -154,7 +154,7 @@ func (p *parser) finishBoolFunc(fn string) (expr.Node, error) {
 		return &expr.BeginsWith{Path: path, Prefix: arg}, nil
 	case "CONTAINS":
 		return &expr.Contains{Path: path, Operand: arg}, nil
-	default: // ARRAY_CONTAINS — gate on the field being an array (see isArray).
+	default: // ARRAY_CONTAINS: gate on the field being an array (see isArray).
 		return &expr.And{Left: isArray(path), Right: &expr.Contains{Path: path, Operand: arg}}, nil
 	}
 }

@@ -82,7 +82,7 @@ type CreateResolverEndpointInput struct {
 }
 
 // UpdateResolverEndpointInput carries the mutable fields; a nil pointer (or nil
-// slice) means "absent from the request, leave unchanged" — distinct from an
+// slice) means "absent from the request, leave unchanged", distinct from an
 // explicit empty value.
 type UpdateResolverEndpointInput struct {
 	Name                 *string

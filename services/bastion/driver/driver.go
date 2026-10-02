@@ -3,8 +3,8 @@
 //
 // Azure Bastion is an Azure-only ARM "echo-class" control-plane resource: a
 // single PUT carries the whole host and ARM CreateOrUpdate replaces it
-// wholesale. There is no cross-cloud equivalent, so — like AzureFirewalls and
-// AzureLoadBalancers — the Azure provider stores the ARM body natively and
+// wholesale. There is no cross-cloud equivalent, so, like AzureFirewalls and
+// AzureLoadBalancers, the Azure provider stores the ARM body natively and
 // exposes it through this dedicated, single-provider interface. AWS and GCP have
 // no counterpart.
 //
@@ -25,7 +25,7 @@ import "context"
 // BastionHostIPConfig is one item of a Bastion host's ipConfigurations
 // collection. SubnetID and PublicIPAddressID are the ARM references supplied in
 // the request (the subnet must be the reserved AzureBastionSubnet). Azure always
-// allocates the private IP dynamically, so no allocation method is stored — the
+// allocates the private IP dynamically, so no allocation method is stored; the
 // wire layer stamps the computed privateIPAllocationMethod=Dynamic on read.
 type BastionHostIPConfig struct {
 	Name              string
@@ -63,7 +63,7 @@ type BastionHost struct {
 
 // BastionHosts is the Azure-only Bastion host store, keyed by (resourceGroup,
 // name) to match ARM addressing. CreateOrUpdate is a full replace: a property
-// absent from the payload is dropped, matching ARM's PUT semantics — except the
+// absent from the payload is dropped, matching ARM's PUT semantics, except the
 // computed dnsName, which is generated once on create and preserved across
 // updates so it never drifts. An empty resourceGroup on List means
 // subscription-wide.

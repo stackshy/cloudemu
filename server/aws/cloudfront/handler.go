@@ -11,18 +11,18 @@
 //
 // Coverage (2020-05-31 REST):
 //
-//	POST   /2020-05-31/distribution[?WithTags]        — CreateDistribution[WithTags]
-//	GET    /2020-05-31/distribution                   — ListDistributions
-//	GET    /2020-05-31/distribution/{Id}              — GetDistribution
-//	DELETE /2020-05-31/distribution/{Id}              — DeleteDistribution (If-Match)
-//	GET    /2020-05-31/distribution/{Id}/config       — GetDistributionConfig
-//	PUT    /2020-05-31/distribution/{Id}/config       — UpdateDistribution (If-Match)
-//	POST   /2020-05-31/distribution/{Id}/invalidation — CreateInvalidation
-//	GET    /2020-05-31/distribution/{Id}/invalidation — ListInvalidations
-//	GET    /2020-05-31/distribution/{Id}/invalidation/{InvId} — GetInvalidation
-//	GET    /2020-05-31/tagging?Resource=<arn>         — ListTagsForResource
-//	POST   /2020-05-31/tagging?Operation=Tag&Resource=<arn>   — TagResource
-//	POST   /2020-05-31/tagging?Operation=Untag&Resource=<arn> — UntagResource
+//	POST   /2020-05-31/distribution[?WithTags]          CreateDistribution[WithTags]
+//	GET    /2020-05-31/distribution                     ListDistributions
+//	GET    /2020-05-31/distribution/{Id}                GetDistribution
+//	DELETE /2020-05-31/distribution/{Id}                DeleteDistribution (If-Match)
+//	GET    /2020-05-31/distribution/{Id}/config         GetDistributionConfig
+//	PUT    /2020-05-31/distribution/{Id}/config         UpdateDistribution (If-Match)
+//	POST   /2020-05-31/distribution/{Id}/invalidation   CreateInvalidation
+//	GET    /2020-05-31/distribution/{Id}/invalidation   ListInvalidations
+//	GET    /2020-05-31/distribution/{Id}/invalidation/{InvId}   GetInvalidation
+//	GET    /2020-05-31/tagging?Resource=<arn>           ListTagsForResource
+//	POST   /2020-05-31/tagging?Operation=Tag&Resource=<arn>     TagResource
+//	POST   /2020-05-31/tagging?Operation=Untag&Resource=<arn>   UntagResource
 package cloudfront
 
 import (
@@ -55,8 +55,8 @@ func New(d cfdriver.CloudFront) *Handler {
 	return &Handler{cf: d}
 }
 
-// Matches claims CloudFront's own REST path space — disjoint from every other
-// AWS handler. Registered before the S3 REST fallback so those paths aren't
+// Matches claims CloudFront's own REST path space, which is disjoint from every
+// other AWS handler. Registered before the S3 REST fallback so those paths aren't
 // swallowed by the catch-all.
 func (*Handler) Matches(r *http.Request) bool {
 	p := r.URL.Path

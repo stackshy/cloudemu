@@ -22,13 +22,13 @@ const StubToken = "cloudemu-anonymous"
 // apiServerBase is the URL of the SDK-compat httptest server (e.g. the value
 // of httptest.Server.URL); cluster's data-plane URL appends /k8s/<uid> to
 // that base. clusterName is what the kubeconfig surfaces in its clusters[],
-// users[], and contexts[] entries — typically the cloud's own cluster name.
+// users[], and contexts[] entries, typically the cloud's own cluster name.
 func RenderKubeconfig(apiServerBase, uid, clusterName string) []byte {
 	server := apiServerBase + pathPrefix + uid
 
 	// Advertise the real shared CA the data plane is served with (matching EKS
 	// and GKE). Over a plain-HTTP base URL client-go ignores it; over the
-	// HTTPS `serve` endpoint it validates the handshake — no skip-verify.
+	// HTTPS `serve` endpoint it validates the handshake, no skip-verify.
 	ca := k8spki.CertificatePEM()
 
 	yaml := fmt.Sprintf(`apiVersion: v1

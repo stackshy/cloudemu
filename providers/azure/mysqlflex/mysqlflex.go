@@ -1,4 +1,4 @@
-// Package mysqlflex provides an in-memory mock of Azure Database for MySQL —
+// Package mysqlflex provides an in-memory mock of Azure Database for MySQL,
 // Flexible Server. It implements relationaldb/driver.RelationalDB so the same
 // backend serves both the portable API (relationaldb.DB) and the SDK-compat
 // HTTP layer (server/azure/mysqlflex).
@@ -12,6 +12,7 @@ package mysqlflex
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 
@@ -431,6 +432,26 @@ func (m *Mock) DeleteInstanceInScope(ctx context.Context, id string, filter scop
 	return m.deleteInstanceScoped(ctx, id, filter)
 }
 
+// PurgeResourceGroup deletes every server recorded under the resource group,
+// with its databases, firewall rules and configurations. It backs the ARM
+// resource-group delete cascade. An unscoped server is never selected.
+func (m *Mock) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	var errs []error
+
+	for _, id := range m.instances.Keys() {
+		inst, ok := m.instances.Get(id)
+		if !ok || !inst.Scope.InResourceGroup(subscription, resourceGroup) {
+			continue
+		}
+
+		if err := m.deleteInstanceScoped(ctx, id, inst.Scope); err != nil && !cerrors.IsNotFound(err) {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
 // deleteInstanceScoped performs the get-check-delete under a single lock
 // acquisition so the scope check and the delete are atomic. A zero filter
 // matches any scope (see scope.Scope.Matches), so DeleteInstance's unscoped
@@ -558,7 +579,7 @@ func (*Mock) CreateCluster(_ context.Context, _ rdsdriver.ClusterConfig) (*rdsdr
 		"MySQL Flexible Server does not support Aurora-style clusters; use replicas instead")
 }
 
-// DescribeClusters returns an empty list — Flex MySQL has no clusters.
+// DescribeClusters returns an empty list: Flex MySQL has no clusters.
 func (*Mock) DescribeClusters(_ context.Context, _ []string) ([]rdsdriver.Cluster, error) {
 	return []rdsdriver.Cluster{}, nil
 }
@@ -588,7 +609,7 @@ func (*Mock) StopCluster(_ context.Context, _ string) error {
 }
 
 // CreateSnapshot creates a portable-only synthetic backup. Azure exposes MySQL
-// Flex backups via Microsoft.DataProtection — not flexibleServers itself — so
+// Flex backups via Microsoft.DataProtection, not flexibleServers itself, so
 // the SDK-compat handler does not surface this op. Portable callers can still
 // drive backups through relationaldb.DB.
 func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (*rdsdriver.Snapshot, error) {
@@ -744,7 +765,7 @@ func (*Mock) CreateClusterSnapshot(
 	return nil, cerrors.New(cerrors.InvalidArgument, "MySQL Flexible Server does not support cluster snapshots")
 }
 
-// DescribeClusterSnapshots returns an empty list — Flex MySQL has no clusters.
+// DescribeClusterSnapshots returns an empty list: Flex MySQL has no clusters.
 func (*Mock) DescribeClusterSnapshots(
 	_ context.Context, _ []string, _ string,
 ) ([]rdsdriver.ClusterSnapshot, error) {

@@ -1,6 +1,6 @@
 package kubernetes
 
-// rbac.go implements the authorization.k8s.io/v1 SubjectAccessReview API — a
+// rbac.go implements the authorization.k8s.io/v1 SubjectAccessReview API, a
 // POST-only, non-persisted, cluster-scoped "review" resource. Real clusters
 // use it (via `kubectl auth can-i` and client-go's SelfSubjectAccessReview
 // helpers) to ask "would this request be allowed?" without actually issuing
@@ -11,8 +11,8 @@ package kubernetes
 // Evaluation follows real RBAC semantics: a request is allowed if ANY
 // binding that binds the reviewed subject (user, group, or service account)
 // to a (Cluster)Role has a rule whose verb/apiGroup/resource (with "*"
-// wildcards) — and, if the rule restricts resourceNames, the resource name —
-// match the request. RBAC has no explicit deny, so the answer is a plain
+// wildcards) matches the request, and, if the rule restricts resourceNames,
+// the resource name too. RBAC has no explicit deny, so the answer is a plain
 // allow/no-opinion, not allow/deny.
 
 import (
@@ -27,7 +27,7 @@ import (
 
 // apiGroupAuthorization is the API group SubjectAccessReview is served
 // under. It has no persisted store (registeredResources() doesn't list it),
-// so it isn't a registry group — it's dispatched directly in ServeHTTP.
+// so it isn't a registry group; it's dispatched directly in ServeHTTP.
 const apiGroupAuthorization = "authorization.k8s.io"
 
 // pathSubjectAccessReviews is the one path this file answers.
@@ -37,7 +37,7 @@ const pathSubjectAccessReviews = "/apis/authorization.k8s.io/v1/subjectaccessrev
 // and resources (rbacv1.VerbAll / APIGroupAll / ResourceAll all equal "*").
 const wildcardAll = "*"
 
-// authorizationResources is the discovery entry for the review API — a
+// authorizationResources is the discovery entry for the review API, a
 // create-only, non-namespaced virtual resource. Referenced from
 // discovery.go's groupVersionDiscovery.
 func authorizationResources() []apiResource {
@@ -67,7 +67,7 @@ func (s *ClusterState) serveSubjectAccessReview(w http.ResponseWriter, r *http.R
 // against every RoleBinding in the request's namespace and every
 // ClusterRoleBinding. A NonResourceAttributes-only review (no
 // ResourceAttributes) has nothing RBAC-Role-shaped to match, so it's a
-// no-opinion "not allowed" — the emulator has no non-resource-URL rules to
+// no-opinion "not allowed"; the emulator has no non-resource-URL rules to
 // evaluate.
 func (s *ClusterState) checkAccess(spec *authorizationv1.SubjectAccessReviewSpec) (allowed bool, reason string) {
 	if spec.ResourceAttributes == nil {
@@ -251,7 +251,7 @@ func subjectMatches(subj rbacv1.Subject, bindingNamespace, user string, groups [
 }
 
 // ruleMatches reports whether a PolicyRule authorizes verb/group/resource
-// (with "*" wildcards), and — when the rule restricts resourceNames — that
+// (with "*" wildcards), and, when the rule restricts resourceNames, that
 // name is among them.
 func ruleMatches(rule *rbacv1.PolicyRule, verb, group, resource, name string) bool {
 	if !matchesWildcard(rule.Verbs, verb) {

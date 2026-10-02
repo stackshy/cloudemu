@@ -18,7 +18,7 @@ var _ interface {
 } = (*Mock)(nil)
 
 // SetBucketRetentionPolicyGCS sets or updates the bucket retention period (in
-// seconds). A locked policy can only be increased — attempting to shorten or
+// seconds). A locked policy can only be increased: attempting to shorten or
 // remove it returns a *driver.GCSImmutableError. A period of 0 on an unlocked
 // bucket removes the policy. effectiveTime is stamped once, when the policy is
 // first established, and preserved across later increases.

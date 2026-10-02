@@ -11,7 +11,7 @@ import (
 )
 
 // keyPairSummaryXML is one <item> in DescribeKeyPairs responses. It omits
-// private-key material — that only comes back on CreateKeyPair.
+// private-key material, which only comes back on CreateKeyPair.
 type keyPairSummaryXML struct {
 	KeyPairID      string    `xml:"keyPairId"`
 	KeyName        string    `xml:"keyName"`
@@ -21,7 +21,7 @@ type keyPairSummaryXML struct {
 	Tags           []tagItem `xml:"tagSet>item,omitempty"`
 }
 
-// createKeyPairResponseXML inlines private-key material — AWS only returns it
+// createKeyPairResponseXML inlines private-key material. AWS only returns it
 // on create, never on describe.
 type createKeyPairResponseXML struct {
 	XMLName        xml.Name `xml:"CreateKeyPairResponse"`
@@ -73,7 +73,7 @@ func (h *Handler) createKeyPair(w http.ResponseWriter, r *http.Request) {
 }
 
 // importKeyPairResponseXML is the ImportKeyPair response. Unlike CreateKeyPair
-// it carries NO keyMaterial — the caller already holds the private key.
+// it carries NO keyMaterial; the caller already holds the private key.
 type importKeyPairResponseXML struct {
 	XMLName        xml.Name  `xml:"ImportKeyPairResponse"`
 	Xmlns          string    `xml:"xmlns,attr"`

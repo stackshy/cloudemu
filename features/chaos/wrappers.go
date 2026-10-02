@@ -34,7 +34,7 @@ func applyChaos(ctx context.Context, e *Engine, service, op string) error {
 }
 
 // chaosBucket embeds the inner driver so methods we don't override fall
-// through automatically — keeps the wrapper short.
+// through automatically, which keeps the wrapper short.
 type chaosBucket struct {
 	storagedriver.Bucket
 	engine *Engine
@@ -43,7 +43,7 @@ type chaosBucket struct {
 // WrapBucket returns a storage driver that consults engine on the most-used
 // data-plane operations. Less-used ops (lifecycle, multipart, tagging,
 // versioning, CORS, encryption, policies, presigned URLs) delegate through
-// without chaos for now — Phase 2 can broaden coverage.
+// without chaos for now; Phase 2 can broaden coverage.
 func WrapBucket(inner storagedriver.Bucket, engine *Engine) storagedriver.Bucket {
 	return &chaosBucket{Bucket: inner, engine: engine}
 }

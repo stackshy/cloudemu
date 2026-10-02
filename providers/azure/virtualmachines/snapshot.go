@@ -7,6 +7,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
+	"github.com/stackshy/cloudemu/v2/services/compute"
 	"github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
@@ -71,7 +72,7 @@ type asgSnapshot struct {
 	Policies json.RawMessage         `json:"policies,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // the VM service holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := vmSnapshot{Instances: m.snapshotInstances()}
@@ -191,6 +192,12 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 //nolint:dupl // inverse field map of snapshotInstances; mirrored lists are inherent.
 func (m *Mock) restoreInstances(instances map[string]*instanceSnapshot) {
 	for id, s := range instances {
+		// Azure has no terminated state: a terminated row in an older snapshot
+		// is a VM that was deleted, so it is not restored.
+		if s.State == compute.StateTerminated {
+			continue
+		}
+
 		m.instances.Set(id, &instanceData{
 			ID: s.ID, ImageID: s.ImageID, InstanceType: s.InstanceType, State: s.State,
 			PrivateIP: s.PrivateIP, PublicIP: s.PublicIP, SubnetID: s.SubnetID, VPCID: s.VPCID,

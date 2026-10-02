@@ -85,7 +85,7 @@ func TestSDKModifyCacheCluster(t *testing.T) {
 
 // TestSDKCreateCacheClusterNumCacheNodes guards that a multi-node Memcached
 // cluster is created and echoed back with the requested node count and one
-// CacheNode per node — real ElastiCache defines a Memcached cluster by its node
+// CacheNode per node. Real ElastiCache defines a Memcached cluster by its node
 // count, and reporting a 3-node request as a 1-node cluster is wrong.
 func TestSDKCreateCacheClusterNumCacheNodes(t *testing.T) {
 	client := newSDKClient(t)
@@ -202,7 +202,7 @@ func TestSDKElastiCacheLifecycle(t *testing.T) {
 
 // TestSDKCreateCacheClusterRejectsMultiNodeRedis proves the per-engine
 // NumCacheNodes limits: Redis/Valkey clusters must have exactly one node, and a
-// Memcached cluster cannot exceed 40 — both surface as InvalidParameterValue.
+// Memcached cluster cannot exceed 40. Both surface as InvalidParameterValue.
 func TestSDKCreateCacheClusterRejectsMultiNodeRedis(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()
@@ -242,7 +242,7 @@ func TestSDKElastiCacheNotFound(t *testing.T) {
 }
 
 // Sanity check: when both ElastiCache and EC2 handlers are wired, an EC2
-// request still reaches the EC2 handler — the ElastiCache handler's Matches
+// request still reaches the EC2 handler. The ElastiCache handler's Matches
 // must reject non-ElastiCache actions despite parsing the form first.
 func TestSDKElastiCacheDoesNotShadowEC2(t *testing.T) {
 	cloud := cloudemu.NewAWS()

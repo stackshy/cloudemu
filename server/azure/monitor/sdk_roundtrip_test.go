@@ -53,7 +53,7 @@ func armClientOptions(ts *httptest.Server) *arm.ClientOptions {
 // TestSDKMetricAlertCreateOrUpdateReturns200 is the load-bearing regression
 // for the BLOCKER finding: the generated armmonitor MetricAlertsClient only
 // accepts a 200 response from CreateOrUpdate (see runtime.HasStatusCode(...,
-// http.StatusOK) in metricalerts_client.go — 201 is not in the accepted set),
+// http.StatusOK) in metricalerts_client.go (201 is not in the accepted set),
 // so a first-time create returning 201 makes every real client error out.
 // This test fails with a ResponseError before the fix and passes after.
 func TestSDKMetricAlertCreateOrUpdateReturns200(t *testing.T) {

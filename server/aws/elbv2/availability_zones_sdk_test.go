@@ -78,7 +78,7 @@ func mkVPCAndSubnetsInZones(t *testing.T, ec2Client *awsec2.Client, zones ...str
 // AvailabilityZones reflects each member subnet's actual zone, resolved via
 // EC2, rather than the same placeholder zone repeated for every subnet. Real
 // ELBv2 reports the true per-subnet AZ, and Terraform's aws_lb resource reads
-// this back — a multi-AZ load balancer reporting one zone for every subnet is
+// this back. A multi-AZ load balancer reporting one zone for every subnet is
 // a perpetual plan diff.
 func TestDescribeLoadBalancersReportsRealSubnetAZs(t *testing.T) {
 	elbClient, ec2Client := newSDKClientsWithEC2(t)

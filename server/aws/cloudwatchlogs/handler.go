@@ -5,7 +5,7 @@
 //
 // CloudWatch Logs uses the AWS JSON 1.1 wire shape (POST + JSON body,
 // dispatched on the X-Amz-Target header), the same family as DynamoDB, SQS, and
-// Secrets Manager. Its target prefix is "Logs_20140328." — disjoint from every
+// Secrets Manager. Its target prefix "Logs_20140328." is disjoint from every
 // other JSON-RPC AWS handler, so registration order relative to them is
 // unconstrained.
 //

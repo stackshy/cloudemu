@@ -115,7 +115,7 @@ func TestSDKCosmosRoundTrip(t *testing.T) {
 		t.Errorf("DeleteItem: %v", err)
 	}
 
-	// Read deleted item — should 404.
+	// Read deleted item: should 404.
 	if _, err := contClient.ReadItem(ctx, pk, "u1", nil); err == nil {
 		t.Error("expected error reading deleted item")
 	} else {

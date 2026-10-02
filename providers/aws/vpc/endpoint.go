@@ -12,6 +12,10 @@ import (
 // each specified subnet. Gateway-type endpoints hold no interfaces.
 const vpcEndpointTypeInterface = "Interface"
 
+// vpcEndpointTypeGateway is the endpoint type that routes to the service
+// through a prefix-list route in each of its route tables.
+const vpcEndpointTypeGateway = "Gateway"
+
 // endpointENIDescription is the description stamped on the ENIs an Interface
 // endpoint occupies, so DeleteVpcEndpoint can release exactly this endpoint's set.
 func endpointENIDescription(endpointID string) string {
@@ -64,9 +68,18 @@ func (m *Mock) CreateVPCEndpoint(
 		State:            "available",
 		SubnetIDs:        copyStringSlice(cfg.SubnetIDs),
 		SecurityGroupIDs: copyStringSlice(cfg.SecurityGroupIDs),
-		RouteTableIDs:    copyStringSlice(cfg.RouteTableIDs),
 		Tags:             copyTags(cfg.Tags),
 		CreatedAt:        m.opts.Clock.Now().Format(timeFormat),
+	}
+
+	// The route-table check, the store write and the route sync run under one
+	// lock hold, so a concurrent Delete or a second endpoint for the same
+	// service cannot slip in between.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err := m.setEndpointRouteTables(ep, cfg.RouteTableIDs); err != nil {
+		return nil, err
 	}
 
 	// An Interface endpoint provisions one requester-managed ENI per subnet, which
@@ -80,16 +93,22 @@ func (m *Mock) CreateVPCEndpoint(
 	}
 
 	m.endpoints.Set(id, ep)
+	m.syncEndpointRoutes(ep)
 
 	return copyEndpoint(ep), nil
 }
 
 // DeleteVPCEndpoint deletes the VPC endpoint with the given ID, releasing any
-// backing ENIs an Interface endpoint provisioned.
+// backing ENIs an Interface endpoint provisioned and the prefix-list routes a
+// Gateway endpoint added.
 func (m *Mock) DeleteVPCEndpoint(
 	_ context.Context, id string,
 ) error {
-	if !m.endpoints.Has(id) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	ep, ok := m.endpoints.Get(id)
+	if !ok {
 		return errors.Newf(
 			errors.NotFound,
 			"vpc endpoint %q not found", id,
@@ -98,6 +117,10 @@ func (m *Mock) DeleteVPCEndpoint(
 
 	m.endpoints.Delete(id)
 	m.releaseManagedENIs(endpointENIDescription(id))
+
+	gone := *ep
+	gone.RouteTableIDs = nil
+	m.syncEndpointRoutes(&gone)
 
 	return nil
 }
@@ -110,6 +133,9 @@ func (m *Mock) DeleteVPCEndpoint(
 func (m *Mock) DescribeVPCEndpoints(
 	_ context.Context, ids []string,
 ) ([]driver.VPCEndpoint, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	for _, id := range ids {
 		if !m.endpoints.Has(id) {
 			return nil, errors.Newf(
@@ -123,12 +149,18 @@ func (m *Mock) DescribeVPCEndpoints(
 	), nil
 }
 
-// ModifyVPCEndpoint updates a VPC endpoint configuration.
+// ModifyVPCEndpoint replaces an endpoint's id sets and tags. A nil set leaves
+// that set unchanged. The AWS wire layer uses ModifyVPCEndpointSets instead.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) ModifyVPCEndpoint(
 	_ context.Context, id string, cfg driver.VPCEndpointConfig,
 ) (*driver.VPCEndpoint, error) {
+	// The field writes below go through the stored pointer, so they need m.mu:
+	// DescribeVPCEndpoints and the EC2 tag writer touch the same record under it.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	ep, ok := m.endpoints.Get(id)
 	if !ok {
 		return nil, errors.Newf(
@@ -137,16 +169,20 @@ func (m *Mock) ModifyVPCEndpoint(
 		)
 	}
 
+	if cfg.RouteTableIDs != nil {
+		if err := m.setEndpointRouteTables(ep, cfg.RouteTableIDs); err != nil {
+			return nil, err
+		}
+
+		m.syncEndpointRoutes(ep)
+	}
+
 	if len(cfg.SubnetIDs) > 0 {
 		ep.SubnetIDs = copyStringSlice(cfg.SubnetIDs)
 	}
 
 	if len(cfg.SecurityGroupIDs) > 0 {
 		ep.SecurityGroupIDs = copyStringSlice(cfg.SecurityGroupIDs)
-	}
-
-	if len(cfg.RouteTableIDs) > 0 {
-		ep.RouteTableIDs = copyStringSlice(cfg.RouteTableIDs)
 	}
 
 	if len(cfg.Tags) > 0 {

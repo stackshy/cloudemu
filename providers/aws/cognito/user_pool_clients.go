@@ -134,7 +134,7 @@ func (m *Mock) ListUserPoolClients(
 
 // buildClient materializes a client's full settings from the input, applying the
 // Cognito defaults for the omitted fields. It does not set id, secret, or
-// timestamps — the create/update callers own those.
+// timestamps. The create/update callers own those.
 //
 //nolint:gocritic // hugeParam: input taken by value to match the driver call sites
 func buildClient(in driver.CreateUserPoolClientInput) driver.UserPoolClient {

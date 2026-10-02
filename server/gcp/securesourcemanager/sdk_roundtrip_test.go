@@ -41,7 +41,7 @@ func newSSMClient(t *testing.T, url string) *ssm.Service {
 // create (LRO) -> poll -> get -> list, then a repository referencing it
 // create -> get -> list -> patch (description) -> delete -> 404. It asserts the
 // emulator mints the computed output-only blocks (instance state + hostConfig,
-// repository uid + uris, timestamps) and reports them byte-stably across reads —
+// repository uid + uris, timestamps) and reports them byte-stably across reads,
 // the exact behavior a Terraform refresh needs to converge without drift.
 func TestSDKFullLifecycle(t *testing.T) {
 	ts, project := newServer(t)
@@ -217,7 +217,7 @@ func TestRepositoryRequiresInstance(t *testing.T) {
 // TestCoexistWithMemorystore is the integration guard for the /instances path
 // collision: a Secure Source Manager instance and a Memorystore Redis instance
 // created against the SAME assembled server must both round-trip to their own
-// service — neither handler steals the other's traffic despite the identical
+// service. Neither handler steals the other's traffic despite the identical
 // path grammar.
 func TestCoexistWithMemorystore(t *testing.T) {
 	ts, project := newServer(t)

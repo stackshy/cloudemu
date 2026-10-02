@@ -11,7 +11,7 @@ type alertPolicy struct {
 	Combiner      string            `json:"combiner,omitempty"`
 	// Enabled is a pointer so an explicit false round-trips on read (a plain bool
 	// with omitempty drops enabled:false) and a create that omits it can be
-	// defaulted to true — Cloud Monitoring always returns enabled and treats an
+	// defaulted to true. Cloud Monitoring always returns enabled and treats an
 	// unset value on write as enabled.
 	Enabled              *bool    `json:"enabled,omitempty"`
 	NotificationChannels []string `json:"notificationChannels,omitempty"`
@@ -20,7 +20,7 @@ type alertPolicy struct {
 }
 
 // alertCondition round-trips every Cloud Monitoring condition variant, not just
-// conditionThreshold — conditionAbsent / MQL / PromQL / matchedLog are carried
+// conditionThreshold: conditionAbsent / MQL / PromQL / matchedLog are carried
 // verbatim so they survive a create→read cycle instead of being silently dropped.
 type alertCondition struct {
 	Name                             string `json:"name,omitempty"`

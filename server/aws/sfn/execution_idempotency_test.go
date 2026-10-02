@@ -77,8 +77,8 @@ func TestSDKStartExecutionIdempotent(t *testing.T) {
 		t.Fatalf("StartExecution(same name, diff input) = %v, want ExecutionAlreadyExists", err)
 	}
 
-	// Once the execution has closed (settle window elapsed), reusing the name —
-	// even with the same input — is rejected.
+	// Once the execution has closed (settle window elapsed), reusing the name is
+	// rejected, even with the same input.
 	fc.Advance(2 * time.Second)
 
 	_, err = c.StartExecution(ctx, &awssfn.StartExecutionInput{

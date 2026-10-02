@@ -19,7 +19,7 @@ func wrap(h http.Handler, provider string, logReqs bool) http.Handler {
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		h.ServeHTTP(sw, r)
 		// The request method/path are the intended content of a local dev access
-		// log, not an untrusted sink — this is opt-in via --log-requests.
+		// log, not an untrusted sink; this is opt-in via --log-requests.
 		//nolint:gosec // G706: local dev request log of the request line
 		log.Printf("[%s] %s %s → %d (%s)", provider, r.Method, r.URL.Path, sw.status, time.Since(start).Round(time.Microsecond))
 	})
@@ -27,15 +27,15 @@ func wrap(h http.Handler, provider string, logReqs bool) http.Handler {
 
 // wrapDirty marks the emulator state dirty after a request returns, so the
 // flusher persists it. It is applied to the four cloud provider handlers
-// (aws/azure/gcp/oci) AND — since #868 made the shared Kubernetes data plane part
-// of the persisted surface — the Kubernetes data-plane handler, so a pure-kubectl
+// (aws/azure/gcp/oci) and, since #868 made the shared Kubernetes data plane part
+// of the persisted surface, the Kubernetes data-plane handler, so a pure-kubectl
 // mutation that never touches a provider port is still saved. It is applied at
 // backend-swap time (swapFresh), BEFORE the admin Control fronts the backend, so
 // the admin/health plane never reaches it and liveness probes don't keep an idle
 // emulator perpetually dirty. When persistence is off the handler is returned
 // unchanged (zero overhead). Marking after the handler runs (rather than
 // classifying reads vs writes) is deliberately coarse: a pure read triggers at
-// most one extra save per interval/cap, which is bounded and acceptable — the
+// most one extra save per interval/cap, which is bounded and acceptable. The
 // Kubernetes port's chatty reflector list/watch traffic makes this coarseness
 // more visible under on-request, but it stays bounded by the debounce cap.
 func (a *App) wrapDirty(h http.Handler) http.Handler {
@@ -57,10 +57,10 @@ func (a *App) wrapDirty(h http.Handler) http.Handler {
 // simulation the typed library's portable layer applies per op. It is applied
 // inside the backend swap chain (like wrapDirty), BEFORE the admin Control fronts
 // the backend, so the /_cloudemu control plane (health/reset/snapshot/...) is
-// never delayed — latency simulation is for the emulated cloud APIs, not the
+// never delayed. Latency simulation is for the emulated cloud APIs, not the
 // control plane. When latency is unset (0) the handler is returned unchanged, so
 // there is zero overhead on the hot path. The sleep is a real per-request
-// time.Sleep — that is the point of latency simulation — and honors request
+// time.Sleep, the point of latency simulation, and it honors request
 // cancellation so a client that gives up doesn't pin the goroutine for the full
 // delay.
 func (a *App) wrapLatency(h http.Handler) http.Handler {
@@ -80,7 +80,7 @@ func (a *App) wrapLatency(h http.Handler) http.Handler {
 }
 
 // statusWriter captures the first response status for logging while remaining a
-// transparent http.ResponseWriter. Write is not overridden — it promotes from
+// transparent http.ResponseWriter. Write is not overridden; it promotes from
 // the embedded writer, so a handler that writes a body without an explicit
 // WriteHeader is logged as the default 200.
 type statusWriter struct {

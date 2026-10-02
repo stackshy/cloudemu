@@ -63,7 +63,7 @@ func TestCosmosDBdatabaseCompat(t *testing.T) {
 		t.Fatalf("NewDatabase: %v", err)
 	}
 
-	// CreateTable — CreateContainer maps to the driver's CreateTable.
+	// CreateTable: CreateContainer maps to the driver's CreateTable.
 	sess.Op("database", "CreateTable", func() error {
 		props := azcosmos.ContainerProperties{
 			ID:                     collName,
@@ -79,7 +79,7 @@ func TestCosmosDBdatabaseCompat(t *testing.T) {
 		t.Fatalf("NewContainer: %v", err)
 	}
 
-	// DescribeTable — reading container properties maps to DescribeTable.
+	// DescribeTable: reading container properties maps to DescribeTable.
 	sess.Op("database", "DescribeTable", func() error {
 		_, cerr := contClient.Read(ctx, nil)
 
@@ -89,7 +89,7 @@ func TestCosmosDBdatabaseCompat(t *testing.T) {
 	pk := azcosmos.NewPartitionKeyString(pkValue)
 	doc := map[string]any{"id": itemID, "pk": pkValue, "name": "Alice"}
 
-	// PutItem — CreateItem maps to the driver's PutItem.
+	// PutItem: CreateItem maps to the driver's PutItem.
 	sess.Op("database", "PutItem", func() error {
 		docBytes, merr := json.Marshal(doc)
 		if merr != nil {
@@ -100,7 +100,7 @@ func TestCosmosDBdatabaseCompat(t *testing.T) {
 		return cerr
 	})
 
-	// GetItem — ReadItem maps to the driver's GetItem; verify the round-trip.
+	// GetItem: ReadItem maps to the driver's GetItem; verify the round-trip.
 	sess.Op("database", "GetItem", func() error {
 		resp, cerr := contClient.ReadItem(ctx, pk, itemID, nil)
 		if cerr != nil {
@@ -119,7 +119,7 @@ func TestCosmosDBdatabaseCompat(t *testing.T) {
 		return nil
 	})
 
-	// Scan — a query over the container maps to the driver's Scan.
+	// Scan: a query over the container maps to the driver's Scan.
 	sess.Op("database", "Scan", func() error {
 		pager := contClient.NewQueryItemsPager("SELECT * FROM c", pk, nil)
 		seen := 0
@@ -140,14 +140,14 @@ func TestCosmosDBdatabaseCompat(t *testing.T) {
 		return nil
 	})
 
-	// DeleteItem — maps to the driver's DeleteItem.
+	// DeleteItem: maps to the driver's DeleteItem.
 	sess.Op("database", "DeleteItem", func() error {
 		_, cerr := contClient.DeleteItem(ctx, pk, itemID, nil)
 
 		return cerr
 	})
 
-	// DeleteTable — DeleteContainer maps to the driver's DeleteTable.
+	// DeleteTable: DeleteContainer maps to the driver's DeleteTable.
 	sess.Op("database", "DeleteTable", func() error {
 		_, cerr := contClient.Delete(ctx, nil)
 

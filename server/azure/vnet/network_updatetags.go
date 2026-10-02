@@ -12,7 +12,7 @@ import (
 // (virtualNetworks, networkSecurityGroups, routeTables, publicIPAddresses,
 // natGateways, networkInterfaces). Each armnetwork *Client.UpdateTags is a
 // synchronous PATCH that answers 200 with the full resource, and REPLACES the
-// tag collection wholesale — it does not merge (tags:{} wipes every tag). The
+// tag collection wholesale; it does not merge (tags:{} wipes every tag). The
 // resource's other properties are left intact. subnets are NOT independently
 // taggable in Azure (their tags live on the parent virtual network), so they get
 // no UpdateTags handler.
@@ -46,7 +46,7 @@ func preserveInternalTags(existing, replacement map[string]string) map[string]st
 		out[k] = v
 	}
 
-	// Re-assert the stored anchors last so they always win — identity survives.
+	// Re-assert the stored anchors last so they always win: identity survives.
 	for k, v := range existing {
 		if strings.HasPrefix(k, internalTagPrefix) {
 			out[k] = v

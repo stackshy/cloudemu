@@ -21,7 +21,7 @@ import (
 
 // TestElastiCacheRedisE2E runs the real-user flow: create an ElastiCache Redis
 // cluster with the AWS SDK, read the node endpoint, connect to it with a real
-// Redis client, run real commands, then delete the cluster — all against
+// Redis client, run real commands, then delete the cluster, all against
 // CloudEmu backed by a real in-process Redis (no Docker, no cloud account).
 func TestElastiCacheRedisE2E(t *testing.T) {
 	eng := redisengine.New()
@@ -44,7 +44,7 @@ func TestElastiCacheRedisE2E(t *testing.T) {
 
 	const clusterID = "app-cache"
 
-	// 1. Create the cluster — like `aws elasticache create-cache-cluster`.
+	// 1. Create the cluster, like `aws elasticache create-cache-cluster`.
 	if _, err := client.CreateCacheCluster(ctx, &elasticache.CreateCacheClusterInput{
 		CacheClusterId: aws.String(clusterID),
 		Engine:         aws.String("redis"),
@@ -54,7 +54,7 @@ func TestElastiCacheRedisE2E(t *testing.T) {
 		t.Fatalf("CreateCacheCluster: %v", err)
 	}
 
-	// 2. Read the node endpoint the SDK reports — the real Redis address.
+	// 2. Read the node endpoint the SDK reports, the real Redis address.
 	desc, err := client.DescribeCacheClusters(ctx, &elasticache.DescribeCacheClustersInput{
 		CacheClusterId:    aws.String(clusterID),
 		ShowCacheNodeInfo: aws.Bool(true),
@@ -96,7 +96,7 @@ func TestElastiCacheRedisE2E(t *testing.T) {
 
 	_ = rdb.Close()
 
-	// 4. Delete the cluster — the real Redis server is torn down.
+	// 4. Delete the cluster, the real Redis server is torn down.
 	if _, err := client.DeleteCacheCluster(ctx, &elasticache.DeleteCacheClusterInput{
 		CacheClusterId: aws.String(clusterID),
 	}); err != nil {

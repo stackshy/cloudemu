@@ -8,16 +8,18 @@
 //
 // Coverage:
 //
-//	PUT    .../providers/Microsoft.ContainerInstance/containerGroups/{name}   — ContainerGroups.BeginCreateOrUpdate (LRO, completes inline)
-//	GET    .../providers/Microsoft.ContainerInstance/containerGroups/{name}   — ContainerGroups.Get
-//	DELETE .../providers/Microsoft.ContainerInstance/containerGroups/{name}   — ContainerGroups.BeginDelete (LRO, completes inline)
-//	GET    .../providers/Microsoft.ContainerInstance/containerGroups          — ContainerGroups.ListByResourceGroup / List
-//	GET    .../containerGroups/{cg}/containers/{c}/logs                        — Containers.ListLogs
+//	PUT    .../providers/Microsoft.ContainerInstance/containerGroups/{name}   : ContainerGroups.BeginCreateOrUpdate (LRO, completes inline)
+//	GET    .../providers/Microsoft.ContainerInstance/containerGroups/{name}   : ContainerGroups.Get
+//	DELETE .../providers/Microsoft.ContainerInstance/containerGroups/{name}   : ContainerGroups.BeginDelete (LRO, completes inline)
+//	GET    .../providers/Microsoft.ContainerInstance/containerGroups          : ContainerGroups.ListByResourceGroup / List
+//	GET    .../containerGroups/{cg}/containers/{c}/logs                        : Containers.ListLogs
 package containerinstances
 
 import (
+	"context"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	"github.com/stackshy/cloudemu/v2/services/containerinstances/driver"
 )
@@ -48,6 +50,25 @@ type Handler struct {
 // New returns an Azure Container Instances handler backed by aci.
 func New(aci driver.ContainerInstances) *Handler {
 	return &Handler{aci: aci}
+}
+
+// rgPurger is the optional capability the Azure containerinstances.Mock
+// exposes for the resource-group delete cascade. The shared driver interface
+// has no such method, so the handler reaches it by type assertion.
+type rgPurger interface {
+	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+}
+
+// PurgeResourceGroup deletes every container group in the resource group,
+// backing the resource-group cascade delete. A driver without the capability
+// is reported as an error rather than silently skipped.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	p, ok := h.aci.(rgPurger)
+	if !ok {
+		return cerrors.Newf(cerrors.Unimplemented, "container instances driver %T cannot purge a resource group", h.aci)
+	}
+
+	return p.PurgeResourceGroup(ctx, subscription, resourceGroup)
 }
 
 // Matches claims ARM URLs targeting Microsoft.ContainerInstance/containerGroups.

@@ -17,8 +17,8 @@ type MetricStreamStatisticsMetric struct {
 	MetricName string
 }
 
-// MetricStreamStatisticsConfig requests extra statistics — beyond the stream's
-// always-sent MAX/MIN/SUM/SAMPLECOUNT — for a set of metrics.
+// MetricStreamStatisticsConfig requests extra statistics, beyond the stream's
+// always-sent MAX/MIN/SUM/SAMPLECOUNT, for a set of metrics.
 type MetricStreamStatisticsConfig struct {
 	IncludeMetrics       []MetricStreamStatisticsMetric
 	AdditionalStatistics []string
@@ -58,7 +58,7 @@ type MetricStreamInfo struct {
 	LastUpdateDate               time.Time
 }
 
-// MetricStreamEntry is a ListMetricStreams summary row — a metric stream's
+// MetricStreamEntry is a ListMetricStreams summary row: a metric stream's
 // identity and state, without its filters or statistics configuration.
 type MetricStreamEntry struct {
 	Name           string

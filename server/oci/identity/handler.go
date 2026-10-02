@@ -4,30 +4,30 @@
 //
 // Coverage:
 //
-//	POST   /20160918/users                                — CreateUser
-//	GET    /20160918/users?compartmentId=…                — ListUsers
-//	GET    /20160918/users/{userId}                       — GetUser
-//	PUT    /20160918/users/{userId}                       — UpdateUser
-//	DELETE /20160918/users/{userId}                       — DeleteUser
-//	POST   /20160918/groups                               — CreateGroup
-//	GET    /20160918/groups?compartmentId=…               — ListGroups
-//	GET/PUT/DELETE /20160918/groups/{groupId}             — Get/Update/DeleteGroup
-//	POST   /20160918/userGroupMemberships                 — AddUserToGroup
-//	GET    /20160918/userGroupMemberships?compartmentId=… — ListUserGroupMemberships
-//	GET    /20160918/userGroupMemberships/{id}            — GetUserGroupMembership
-//	DELETE /20160918/userGroupMemberships/{id}            — RemoveUserFromGroup
-//	POST   /20160918/policies                             — CreatePolicy
-//	GET    /20160918/policies?compartmentId=…             — ListPolicies
-//	GET/PUT/DELETE /20160918/policies/{policyId}          — Get/Update/DeletePolicy
-//	POST   /20160918/compartments                         — CreateCompartment
-//	GET    /20160918/compartments?compartmentId=…         — ListCompartments
-//	GET/PUT/DELETE /20160918/compartments/{id}            — Get/Update/DeleteCompartment
+//	POST   /20160918/users                                  CreateUser
+//	GET    /20160918/users?compartmentId=…                  ListUsers
+//	GET    /20160918/users/{userId}                         GetUser
+//	PUT    /20160918/users/{userId}                         UpdateUser
+//	DELETE /20160918/users/{userId}                         DeleteUser
+//	POST   /20160918/groups                                 CreateGroup
+//	GET    /20160918/groups?compartmentId=…                 ListGroups
+//	GET/PUT/DELETE /20160918/groups/{groupId}               Get/Update/DeleteGroup
+//	POST   /20160918/userGroupMemberships                   AddUserToGroup
+//	GET    /20160918/userGroupMemberships?compartmentId=…   ListUserGroupMemberships
+//	GET    /20160918/userGroupMemberships/{id}              GetUserGroupMembership
+//	DELETE /20160918/userGroupMemberships/{id}              RemoveUserFromGroup
+//	POST   /20160918/policies                               CreatePolicy
+//	GET    /20160918/policies?compartmentId=…               ListPolicies
+//	GET/PUT/DELETE /20160918/policies/{policyId}            Get/Update/DeletePolicy
+//	POST   /20160918/compartments                           CreateCompartment
+//	GET    /20160918/compartments?compartmentId=…           ListCompartments
+//	GET/PUT/DELETE /20160918/compartments/{id}              Get/Update/DeleteCompartment
 //
 // Two operations are claimed only to disclose themselves, answering 501 rather
 // than the misleading 404 an unclaimed path would get:
 //
-//	POST /20160918/compartments/{id}/actions/moveCompartment — MoveCompartment
-//	ANY  /20181025/quotas…                                   — the Quotas API
+//	POST /20160918/compartments/{id}/actions/moveCompartment   MoveCompartment
+//	ANY  /20181025/quotas…                                     the Quotas API
 //
 // The Identity API shares the 20160918 version prefix with OCI Core, so
 // Matches claims only the five identity collections and leaves the rest of

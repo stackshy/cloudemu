@@ -115,7 +115,7 @@ func TestSDKPubSubTopicIAMPolicyStaleEtagRejected(t *testing.T) {
 		t.Fatalf("expected 409 Conflict, got %d: %v", gErr.Code, gErr)
 	}
 
-	// The winning writer's binding must be intact — the stale write must not
+	// The winning writer's binding must be intact. The stale write must not
 	// have partially applied.
 	final, err := svc.Projects.Topics.GetIamPolicy(res).Context(ctx).Do()
 	if err != nil {

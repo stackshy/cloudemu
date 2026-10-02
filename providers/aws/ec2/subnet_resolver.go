@@ -9,7 +9,7 @@ import (
 // SubnetResolver is the slice of the networking mock EC2 needs to derive an
 // instance's VPC from its subnet at launch. Real EC2 infers VpcId from the
 // subnet rather than taking it as input, and connectivity analysis / VPC
-// teardown match on that field — so it has to be resolved, not left blank.
+// teardown match on that field, so it has to be resolved, not left blank.
 type SubnetResolver interface {
 	DescribeSubnets(ctx context.Context, ids []string) ([]netdriver.SubnetInfo, error)
 }
@@ -20,7 +20,7 @@ func (m *Mock) SetSubnetResolver(r SubnetResolver) {
 	m.subnetResolver = r
 }
 
-// defaultSubnet returns the account/region's default subnet — the one a
+// defaultSubnet returns the account/region's default subnet, the one a
 // RunInstances call with no SubnetId lands in, matching real EC2. Real EC2
 // picks a default subnet deterministically (its own internal ordering); this
 // picks the lowest subnet id among the default VPC's default subnets, which is

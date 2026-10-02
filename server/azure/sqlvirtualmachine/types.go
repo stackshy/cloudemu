@@ -4,8 +4,8 @@ import "github.com/stackshy/cloudemu/v2/providers/azure/sqlvirtualmachine"
 
 // armResource is the ARM wire representation of a SQL virtual machine, shared by
 // the PUT request body and every response. The properties block is the provider
-// record's Properties type verbatim — it already carries the exact ARM JSON tags
-// — so the writable request shape and the read-back response shape stay in sync.
+// record's Properties type verbatim; it already carries the exact ARM JSON tags,
+// so the writable request shape and the read-back response shape stay in sync.
 type armResource struct {
 	ID         string                        `json:"id,omitempty"`
 	Name       string                        `json:"name,omitempty"`
@@ -22,7 +22,7 @@ type updateRequest struct {
 }
 
 // listResponse is the ARM list envelope for ListByResourceGroup / List.
-// nextLink is omitted — the emulator returns a single page.
+// nextLink is omitted: the emulator returns a single page.
 type listResponse struct {
 	Value []armResource `json:"value"`
 }

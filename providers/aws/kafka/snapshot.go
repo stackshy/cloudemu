@@ -44,8 +44,8 @@ type replicatorSnapshot struct {
 	Version    string            `json:"version,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// MSK holds resource metadata, not bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. MSK holds resource
+// metadata, not bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := kafkaSnapshot{}
 

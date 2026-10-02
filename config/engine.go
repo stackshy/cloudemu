@@ -8,7 +8,7 @@ import (
 // EngineClosers returns the engines wired into these Options that implement
 // io.Closer, so a provider's Close can cascade teardown to them (stopping any
 // real Docker containers or subprocesses they own). Engines left at their nil
-// default, or that don't implement io.Closer, are skipped — so the result is
+// default, or that don't implement io.Closer, are skipped, so the result is
 // empty for the in-memory default. Engine Close implementations are idempotent,
 // so an engine wired into more than one slot closing twice is harmless.
 func (o *Options) EngineClosers() []io.Closer {
@@ -27,7 +27,7 @@ func (o *Options) EngineClosers() []io.Closer {
 
 // DatabaseEngine optionally backs relational-database instances with a real
 // engine (e.g. a real Postgres) so that clients can run actual SQL against the
-// emulator. When nil — the default — instances use synthetic endpoints and no
+// emulator. When nil (the default), instances use synthetic endpoints and no
 // real database runs, keeping the emulator in-memory and dependency-free.
 //
 // Implementations live outside the core module (contrib/) so the core carries
@@ -59,8 +59,8 @@ type ProvisionResult struct {
 }
 
 // CacheEngine optionally backs cache instances with a real cache server (e.g. a
-// real Redis) so clients can run real commands against the emulator. When nil —
-// the default — caches keep a synthetic endpoint and no real server runs.
+// real Redis) so clients can run real commands against the emulator. When nil
+// (the default), caches keep a synthetic endpoint and no real server runs.
 //
 // Like DatabaseEngine, implementations live outside the core module (contrib/).
 type CacheEngine interface {
@@ -81,8 +81,8 @@ type CacheProvisionRequest struct {
 
 // FunctionEngine optionally executes real function code (e.g. a real Python or
 // Node runtime) so clients can Invoke a function and get the result of the
-// uploaded handler actually running — not a stubbed echo. When nil — the
-// default — functions return a successful stub payload and no code runs,
+// uploaded handler actually running, not a stubbed echo. When nil (the
+// default), functions return a successful stub payload and no code runs,
 // keeping the emulator in-memory and dependency-free.
 //
 // Unlike DatabaseEngine/CacheEngine (which hand back a host:port a client
@@ -131,8 +131,8 @@ type FunctionResult struct {
 
 // ComputeEngine optionally backs virtual-machine instances with a real backing
 // (e.g. a real container acting as the guest) so clients can boot an instance
-// that actually runs its boot script and exposes console output. When nil — the
-// default — instances use synthetic state and no real backing runs, keeping the
+// that actually runs its boot script and exposes console output. When nil (the
+// default), instances use synthetic state and no real backing runs, keeping the
 // emulator in-memory and dependency-free.
 //
 // Like DatabaseEngine, implementations live outside the core module (contrib/)
@@ -145,7 +145,7 @@ type ComputeEngine interface {
 	Provision(ctx context.Context, req ComputeProvisionRequest) (ComputeProvisionResult, error)
 
 	// ConsoleOutput returns the accumulated stdout/stderr the boot script
-	// produced — the console-output analog. It is empty for an instance that was
+	// produced (the console-output analog). It is empty for an instance that was
 	// never provisioned.
 	ConsoleOutput(ctx context.Context, instanceID string) ([]byte, error)
 
@@ -170,7 +170,7 @@ type ComputeProvisionResult struct {
 
 // ContainerEngine optionally backs container workloads (ECS tasks, Kubernetes
 // pods, Azure Container Instances) with real containers so clients can observe
-// real logs, exit codes, and exec results. When nil — the default — workloads
+// real logs, exit codes, and exec results. When nil (the default), workloads
 // use synthetic state and no real container runs, keeping the emulator
 // in-memory and dependency-free.
 //
@@ -233,14 +233,14 @@ type ExecResult struct {
 
 // StorageEngine optionally persists object-storage bytes to a real backing
 // (e.g. a real filesystem or a MinIO server) so objects survive process
-// restart and can be inspected by external tools. When nil — the default —
+// restart and can be inspected by external tools. When nil (the default),
 // object bytes live only in-memory. Unlike DatabaseEngine/CacheEngine (which
 // hand back a host:port a client dials), objects are always served through the
 // emulator itself, so the engine is a byte store: Put on write, Get on read,
 // Delete/Copy to mirror the object lifecycle. The in-memory Mock keeps the
 // object's metadata (ETag, versioning, tags, multipart state); the engine holds
 // only the bytes. Implementations live outside the core module (contrib/) so
-// the core carries no storage-backing dependency — a pluggable capability.
+// the core carries no storage-backing dependency, a pluggable capability.
 type StorageEngine interface {
 	// Put stores the object's bytes. Called on write (PutObject, CopyObject,
 	// CompleteMultipartUpload, and each stored version).

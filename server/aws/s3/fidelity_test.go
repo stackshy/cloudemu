@@ -20,7 +20,7 @@ import (
 )
 
 // TestDefaultContentType verifies an object uploaded with no Content-Type header
-// is stored and returned as "binary/octet-stream" — the default real S3 assigns
+// is stored and returned as "binary/octet-stream", the default real S3 assigns
 // (not "application/octet-stream"). aws-cli and other clients send no
 // Content-Type on PutObject, so the server default is what a real user reads
 // back on GetObject/HeadObject.

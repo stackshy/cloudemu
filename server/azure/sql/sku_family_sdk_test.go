@@ -10,7 +10,7 @@ import (
 
 // TestSDKAzureSQLDatabaseSKUFamilyAndTier verifies that a database create which
 // supplies only the service-objective (SKU) name reads back the tier, hardware
-// family and vCore capacity real Azure derives from it — so armsql / az CLI /
+// family and vCore capacity real Azure derives from it, so armsql / az CLI /
 // Resource Graph see a vCore GP_Gen5_2 as GeneralPurpose/Gen5/2 and a DTU S0 as
 // Standard (not the old hardcoded GeneralPurpose for every database).
 func TestSDKAzureSQLDatabaseSKUFamilyAndTier(t *testing.T) {

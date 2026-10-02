@@ -64,11 +64,11 @@ const guarddutyARNPrefix = "arn:aws:guardduty:"
 // Consequently an S3 bucket literally named one of the GuardDuty roots
 // ("detector", "admin", "invitation", "malware-scan", "malware-scans",
 // "malware-protection-plan", "object-malware-scan", "organization") would be
-// shadowed by this handler. That collision is accepted and documented — these
+// shadowed by this handler. That collision is accepted and documented: these
 // are unusual bucket names and full GuardDuty parity requires owning these
 // paths.
 //
-// The /tags/{ResourceArn} endpoint is shared with other services — VPCLattice
+// The /tags/{ResourceArn} endpoint is shared with other services. VPCLattice
 // (registered before GuardDuty) and EKS (the greedy handler, registered last)
 // both serve bare /tags. For the "tags" root this handler only claims requests
 // whose ARN is a GuardDuty ARN, so VPCLattice/EKS/other tag requests fall

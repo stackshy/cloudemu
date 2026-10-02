@@ -3,29 +3,29 @@
 // google.golang.org/api/privateca/v1 clients, gcloud, and the Terraform google
 // provider's google_privateca_ca_pool, google_privateca_certificate_authority,
 // google_privateca_certificate_template, and google_privateca_certificate
-// resources — all GA in the stable hashicorp/google provider at the /v1/ base
-// path — hit this handler unchanged.
+// resources, all GA in the stable hashicorp/google provider at the /v1/ base
+// path, hit this handler unchanged.
 //
 // Coverage (CA-pool + certificate-authority + certificate-template + certificate
 // control plane):
 //
-//	POST   /v1/…/caPools?caPoolId=                                   — CreateCaPool (LRO)
-//	GET/PATCH/DELETE /v1/…/caPools/{id}                              — Get/Patch/Delete (LRO)
-//	POST   /v1/…/caPools/{p}/certificateAuthorities?…AuthorityId=    — Create (LRO)
-//	…/certificateAuthorities/{ca}:enable|:disable|:undelete|:activate — CA state machine (LRO)
-//	…/certificateAuthorities/{ca}:fetch                             — FetchCsr (synchronous)
-//	POST   /v1/…/certificateTemplates?certificateTemplateId=        — Create (LRO)
-//	POST   /v1/…/caPools/{p}/certificates?certificateId=            — Create (synchronous)
-//	…/certificates/{c}:revoke                                       — Revoke (synchronous)
-//	GET    /v1/…/operations/{op}                                    — Operations.Get (shared poller)
+//	POST   /v1/…/caPools?caPoolId=                                   : CreateCaPool (LRO)
+//	GET/PATCH/DELETE /v1/…/caPools/{id}                              : Get/Patch/Delete (LRO)
+//	POST   /v1/…/caPools/{p}/certificateAuthorities?…AuthorityId=    : Create (LRO)
+//	…/certificateAuthorities/{ca}:enable|:disable|:undelete|:activate : CA state machine (LRO)
+//	…/certificateAuthorities/{ca}:fetch                             : FetchCsr (synchronous)
+//	POST   /v1/…/certificateTemplates?certificateTemplateId=        : Create (LRO)
+//	POST   /v1/…/caPools/{p}/certificates?certificateId=            : Create (synchronous)
+//	…/certificates/{c}:revoke                                       : Revoke (synchronous)
+//	GET    /v1/…/operations/{op}                                    : Operations.Get (shared poller)
 //
 // Every mutating caPool / certificateAuthority / certificateTemplate RPC returns a
 // google.longrunning.Operation with done=true and the resulting resource embedded
 // in `response`; certificate create/patch/revoke and CA :fetch complete
 // synchronously and return the resource directly, matching the real API.
 //
-// Location-scoped operations live under /v1/projects/{p}/locations/{l}/operations
-// — the SAME space the shared GCP LRO poller owns. Matches returns false for
+// Location-scoped operations live under /v1/projects/{p}/locations/{l}/operations,
+// the same space the shared GCP LRO poller owns. Matches returns false for
 // operation paths when a shared registry is wired, letting that poller win; a
 // standalone package server (no registry) serves its own polls. The
 // caPools/certificateTemplates/operations resource-type guard keeps this handler

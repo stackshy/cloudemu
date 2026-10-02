@@ -203,12 +203,12 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 
 // DeleteVPC deletes the virtual network with the given ID, cascade-deleting its
 // child subnets. Real Azure removes a VNet's subnets along with it (they are
-// child resources of the VNet), so a caller that reaches the driver directly —
-// the typed Go API or the in-process library — gets the same cascade the ARM
+// child resources of the VNet), so a caller that reaches the driver directly
+// (the typed Go API or the in-process library) gets the same cascade the ARM
 // wire performs, rather than leaving globally-addressable subnet rows orphaned.
 //
 // The subnet scan reads the subnets store while the delete writes the vnets
-// store — two independent memstores whose per-store locks cannot span both, so a
+// store: two independent memstores whose per-store locks cannot span both, so a
 // subnet created against this vnet in the same instant may survive the cascade.
 // Real Azure has the same eventual-consistency window; the emulator does not
 // model a cross-store lock, so the narrow gap is accepted.
@@ -359,6 +359,10 @@ func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.Secu
 //
 //nolint:gocritic // hugeParam: rule mirrors the driver method signature.
 func (m *Mock) addSecurityGroupRule(groupID string, rule driver.SecurityRule, egress bool) error {
+	if err := driver.ValidateSecurityRule(&rule); err != nil {
+		return err
+	}
+
 	if !m.securityGroups.Update(groupID, func(sg *sgData) *sgData {
 		cp := *sg
 		if egress {

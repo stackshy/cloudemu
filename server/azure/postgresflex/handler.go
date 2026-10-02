@@ -7,20 +7,21 @@
 //
 // MVP coverage:
 //
-//	PUT    .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            — Create
-//	GET    .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            — Get
-//	PATCH  .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            — Update
-//	DELETE .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            — Delete
-//	GET    .../providers/Microsoft.DBforPostgreSQL/flexibleServers                   — List by RG
-//	POST   .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}/start      — Start
-//	POST   .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}/stop       — Stop
-//	POST   .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}/restart    — Restart
+//	PUT    .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            : Create
+//	GET    .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            : Get
+//	PATCH  .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            : Update
+//	DELETE .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            : Delete
+//	GET    .../providers/Microsoft.DBforPostgreSQL/flexibleServers                   : List by RG
+//	POST   .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}/start      : Start
+//	POST   .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}/stop       : Stop
+//	POST   .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}/restart    : Restart
 //
 // Mutating ops return 200 OK with the resource body inline so the SDK's LRO
 // poller terminates on the first response.
 package postgresflex
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -38,6 +39,9 @@ const (
 	subDatabases      = "databases"
 	subFirewallRules  = "firewallRules"
 	subConfigurations = "configurations"
+
+	// childMaxDepth is the deepest child route: flexibleServers/{s}/{child}/{name}.
+	childMaxDepth = 3
 )
 
 // Handler serves Microsoft.DBforPostgreSQL ARM requests against a
@@ -49,6 +53,12 @@ type Handler struct {
 // New returns a Postgres Flex handler backed by db.
 func New(db rdsdriver.RelationalDB) *Handler {
 	return &Handler{db: db}
+}
+
+// PurgeResourceGroup deletes every flexible server in the resource group, with
+// its child resources, backing the resource-group cascade.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	return azurearm.PurgeVia(ctx, h.db, subscription, resourceGroup)
 }
 
 // Matches returns true for ARM Microsoft.DBforPostgreSQL/flexibleServers paths.
@@ -71,6 +81,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Child resources and lifecycle actions live under a server name.
 	if rp.SubResource != "" {
+		if azurearm.TooDeep(w, r, &rp, childMaxDepth) {
+			return
+		}
+
 		switch rp.SubResource {
 		case subDatabases:
 			h.serveDatabase(w, r, &rp)
@@ -81,7 +95,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case subResourceStart, subResourceStop, subResourceRestart:
 			h.serveLifecycleAction(w, r, &rp)
 		default:
-			azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported sub-resource: "+rp.SubResource)
+			azurearm.WriteUnknownType(w, r, &rp)
 		}
 
 		return

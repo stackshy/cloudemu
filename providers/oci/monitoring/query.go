@@ -123,8 +123,8 @@ func splitSelector(query string) (sel selector, rest string, err error) {
 	}, tail[end+1:], nil
 }
 
-// splitDimensions reads MQL's optional dimension predicate — the
-// {k = "v", ...} that scopes a selector to one series — and the rest after it.
+// splitDimensions reads MQL's optional dimension predicate (the
+// {k = "v", ...} that scopes a selector to one series) and the rest after it.
 func splitDimensions(tail, query string) (dimensions []dimensionPredicate, rest string, err error) {
 	if !strings.HasPrefix(tail, "{") {
 		return nil, tail, nil

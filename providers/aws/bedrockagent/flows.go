@@ -12,14 +12,15 @@ import (
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (m *Mock) CreateFlow(_ context.Context, cfg driver.FlowConfig) (*driver.Flow, error) {
-	switch {
-	case cfg.Name == "":
-		return nil, errors.New(errors.InvalidArgument, "name is required")
-	case cfg.ExecutionRoleArn == "":
-		return nil, errors.New(errors.InvalidArgument, "executionRoleArn is required")
+	if err := validateFlow(cfg); err != nil {
+		return nil, err
 	}
 
-	id := idgen.GenerateID("FLOW")
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
+	id := newID(m.flows)
 	now := m.now()
 	flow := &driver.Flow{
 		ID:                       id,
@@ -35,6 +36,7 @@ func (m *Mock) CreateFlow(_ context.Context, cfg driver.FlowConfig) (*driver.Flo
 		UpdatedAt:                now,
 	}
 	m.flows.Set(id, flow)
+	m.putTags(flow.ARN, cfg.Tags)
 
 	result := cloneFlow(flow)
 
@@ -53,8 +55,8 @@ func (m *Mock) GetFlow(_ context.Context, id string) (*driver.Flow, error) {
 	return &result, nil
 }
 
-// ListFlows lists all flows.
-func (m *Mock) ListFlows(_ context.Context) ([]driver.Flow, error) {
+// ListFlows lists one page of flows.
+func (m *Mock) ListFlows(_ context.Context, page driver.Page) ([]driver.Flow, string, error) {
 	all := m.flows.SortedValues()
 	out := make([]driver.Flow, 0, len(all))
 
@@ -62,21 +64,25 @@ func (m *Mock) ListFlows(_ context.Context) ([]driver.Flow, error) {
 		out = append(out, cloneFlow(f))
 	}
 
-	return out, nil
+	return paginate(out, page)
 }
 
 // UpdateFlow updates a flow's mutable fields, resetting it to NotPrepared.
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (m *Mock) UpdateFlow(_ context.Context, id string, cfg driver.FlowConfig) (*driver.Flow, error) {
+	if err := validateFlow(cfg); err != nil {
+		return nil, err
+	}
+
 	flow, ok := m.flows.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "flow %q not found", id)
 	}
 
 	updated := *flow
-	updated.Name = orDefault(cfg.Name, flow.Name)
-	updated.ExecutionRoleArn = orDefault(cfg.ExecutionRoleArn, flow.ExecutionRoleArn)
+	updated.Name = cfg.Name
+	updated.ExecutionRoleArn = cfg.ExecutionRoleArn
 	updated.Description = cfg.Description
 	updated.Status = driver.FlowNotPrepared
 	updated.UpdatedAt = m.now()
@@ -92,13 +98,15 @@ func (m *Mock) UpdateFlow(_ context.Context, id string, cfg driver.FlowConfig) (
 	return &result, nil
 }
 
-// DeleteFlow deletes a flow and returns its identifier.
+// DeleteFlow deletes a flow and its tags and returns its identifier.
 func (m *Mock) DeleteFlow(_ context.Context, id string) (string, error) {
-	if !m.flows.Has(id) {
+	flow, ok := m.flows.Get(id)
+	if !ok {
 		return "", errors.Newf(errors.NotFound, "flow %q not found", id)
 	}
 
 	m.flows.Delete(id)
+	m.dropTags(flow.ARN)
 
 	return id, nil
 }
@@ -118,6 +126,18 @@ func (m *Mock) PrepareFlow(_ context.Context, id string) (*driver.Flow, error) {
 	result := cloneFlow(&updated)
 
 	return &result, nil
+}
+
+// validateFlow checks the members CreateFlow and UpdateFlow require.
+//
+//nolint:gocritic // cfg matches the driver interface signature.
+func validateFlow(cfg driver.FlowConfig) error {
+	var v violations
+
+	v.required("name", cfg.Name == "")
+	v.required("executionRoleArn", cfg.ExecutionRoleArn == "")
+
+	return v.err()
 }
 
 // cloneFlow returns a value copy whose Definition does not alias the stored

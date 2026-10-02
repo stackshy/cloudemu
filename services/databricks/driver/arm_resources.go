@@ -10,7 +10,7 @@ import "context"
 // These are modeled store-and-echo: the ARM wire shapes round-trip faithfully
 // over the real armdatabricks SDK, but the underlying networking side effects
 // (private-endpoint approval on the platform side, actual VNet peering, live
-// outbound reachability) are not simulated — see docs/services.md.
+// outbound reachability) are not simulated (see docs/services.md).
 
 // Peering provisioning/state values.
 const (

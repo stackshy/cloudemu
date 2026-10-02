@@ -16,11 +16,11 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // driver value (webACLData/ipSetData/ruleGroupData/regexSetData) or a
 // scope+raw-JSON pair (loggingConfigData), all behind a per-record mutex and
 // invisible to json.Marshal, so each store is promoted to an exported snapshot
-// form keyed by its composite "scope/id" (or, for logging, the ResourceArn) — the
+// form keyed by its composite "scope/id" (or, for logging, the ResourceArn), the
 // keys that keep the REGIONAL and CLOUDFRONT namespaces from colliding after a
-// restore. The three mutex-guarded side maps — assoc (protected-resource ARN ->
+// restore. The three mutex-guarded side maps: assoc (protected-resource ARN ->
 // web-ACL ARN), policies (rule-group ARN -> permission policy), and apiKeys
-// (composite key -> summary) — are captured beside the stores. The per-record and
+// (composite key -> summary), are captured beside the stores. The per-record and
 // create mutexes and the wired opts are intentionally not serialized.
 type wafv2Snapshot struct {
 	WebACLs  map[string]*webACLSnapshot    `json:"webACLs,omitempty"`
@@ -59,8 +59,8 @@ type loggingSnapshot struct {
 	Cfg   json.RawMessage `json:"cfg,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// WAFv2 is control-plane only and holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. WAFv2 is
+// control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := wafv2Snapshot{
 		WebACLs:  m.snapshotWebACLs(),

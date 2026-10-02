@@ -138,7 +138,7 @@ func (m *Mock) CreateType(_ context.Context, keyspace, name string, fields []ksd
 }
 
 // nestingDepth is 1 plus the number of frozen-collection frozen<> wrappers seen
-// in the field types — a simple approximation for the mock.
+// in the field types, a simple approximation for the mock.
 func nestingDepth(fields []ksdriver.FieldDefinition) int {
 	depth := 1
 

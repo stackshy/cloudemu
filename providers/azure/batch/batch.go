@@ -1,12 +1,12 @@
 // Package batch provides an in-memory mock of Azure Batch
-// (Microsoft.Batch/batchAccounts) — the ARM control plane only. It manages the
+// (Microsoft.Batch/batchAccounts), the ARM control plane only. It manages the
 // batchAccount lifecycle (create/update/get/delete/list) plus the account-key
 // actions (listKeys/regenerateKey/syncAutoStorageKeys), and the nested
 // Microsoft.Batch/batchAccounts/pools child resource (create/update/get/delete/
 // list plus the resize/stopResize actions and their allocationState state
 // machine).
 //
-// The Batch data plane — job scheduling, task execution, running compute nodes —
+// The Batch data plane (job scheduling, task execution, running compute nodes)
 // is out of scope; this surface is the management-plane resource provider only.
 //
 // Every service-minted field stays stable for the lifetime of the resource so
@@ -17,7 +17,7 @@
 //   - account provisioningState ("Succeeded"), poolAllocationMode and the
 //     dedicated/low-priority core quotas real Azure defaults to.
 //   - account primary/secondary keys, minted once at create and stable across
-//     every get/listKeys — and across a regenerateKey of the *other* key.
+//     every get/listKeys, and across a regenerateKey of the *other* key.
 //   - pool allocationState, provisioningState and current/target node counts.
 //
 // Keys are never echoed on a GET account; they surface only via listKeys /

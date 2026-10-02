@@ -37,7 +37,7 @@ import (
 //     resulting rest.Config is used to drive a full Phase-2 workload stack
 //     (Namespace + ServiceAccount + Secret + ConfigMap + Deployment +
 //     Service + Pod) via real client-go.
-//   - Deleting the cluster tears the K8s state down — subsequent client-go
+//   - Deleting the cluster tears the K8s state down; subsequent client-go
 //     calls against the orphaned endpoint fail.
 //
 //nolint:funlen // single end-to-end scenario across many resource kinds.
@@ -53,7 +53,7 @@ func TestSDKAKSDataPlane_FullWorkloadStack(t *testing.T) {
 	})
 
 	// Serve the data plane with the shared k8spki serving certificate so the CA
-	// the AKS kubeconfig advertises actually validates the endpoint — the real
+	// the AKS kubeconfig advertises actually validates the endpoint: the real
 	// end-to-end TLS path, no skip-verify.
 	ts := httptest.NewUnstartedServer(srv)
 	tlsCfg, err := k8spki.ServingTLSConfig([]string{"127.0.0.1", "localhost"})
@@ -106,7 +106,7 @@ func TestSDKAKSDataPlane_FullWorkloadStack(t *testing.T) {
 
 	cs := mustClientsetFromKubeconfig(t, kubeconfig)
 
-	// Drive a Phase-2 workload stack — same surface the EKS test exercises.
+	// Drive a Phase-2 workload stack: same surface the EKS test exercises.
 	if _, err := cs.CoreV1().Namespaces().Create(ctx,
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "shop"}},
 		metav1.CreateOptions{}); err != nil {
@@ -189,7 +189,7 @@ func TestSDKAKSDataPlane_FullWorkloadStack(t *testing.T) {
 		t.Fatalf("Pod phase: got %q, want Running", pod.Status.Phase)
 	}
 
-	// Delete the cluster — the K8s state must go with it.
+	// Delete the cluster; the K8s state must go with it.
 	dPoller, err := clusters.BeginDelete(ctx, rg, name, nil)
 	if err != nil {
 		t.Fatalf("BeginDelete: %v", err)

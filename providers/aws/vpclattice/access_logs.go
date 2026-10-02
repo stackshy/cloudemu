@@ -20,7 +20,7 @@ func (m *Mock) CreateAccessLogSubscription(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	id := idgen.GenerateID("als-")
+	id := idgen.GenerateLongID("als-")
 	a := &driver.AccessLogSubscription{
 		ID:                    id,
 		ARN:                   m.arn("accesslogsubscription/" + id),

@@ -6,10 +6,10 @@
 //
 // Coverage (api-version 2016-09-01 / 2020-05-01):
 //
-//	PUT    /{scope}/providers/Microsoft.Authorization/locks/{lockName}  — CreateOrUpdate
-//	GET    /{scope}/providers/Microsoft.Authorization/locks/{lockName}  — Get
-//	DELETE /{scope}/providers/Microsoft.Authorization/locks/{lockName}  — Delete
-//	GET    /{scope}/providers/Microsoft.Authorization/locks             — List at scope
+//	PUT    /{scope}/providers/Microsoft.Authorization/locks/{lockName}  : CreateOrUpdate
+//	GET    /{scope}/providers/Microsoft.Authorization/locks/{lockName}  : Get
+//	DELETE /{scope}/providers/Microsoft.Authorization/locks/{lockName}  : Delete
+//	GET    /{scope}/providers/Microsoft.Authorization/locks             : List at scope
 //
 // {scope} can be a subscription (/subscriptions/{sub}), a resource group
 // (/subscriptions/{sub}/resourceGroups/{rg}) or an individual resource
@@ -22,7 +22,7 @@
 // gate (server/azure/lockgate.go). A CanNotDelete lock blocks DELETE on its
 // scope and everything under it; a ReadOnly lock additionally blocks
 // PUT/PATCH/POST (writes and actions). GET/HEAD are always allowed. The gate is
-// the single chokepoint applying this to every Azure resource type — no
+// the single chokepoint applying this to every Azure resource type: no
 // per-handler edits. Keeping the method→level policy here (not in the gate)
 // keeps all lock semantics cohesive and unit-testable without a server.
 //
@@ -92,7 +92,7 @@ func (h *Handler) Enforce(resourcePath, method string) (lockedScope, level strin
 		}
 
 		// A delete of a container (RG/subscription/parent resource) is blocked
-		// if any lock sits at or below the target — reuse the downward list.
+		// if any lock sits at or below the target; reuse the downward list.
 		if l, ok := mostSpecificBlocking(h.store.list(path), blocksDelete); ok {
 			return l.scope, l.level, true
 		}
@@ -159,7 +159,7 @@ func moreSpecific(a, b storedLock) bool {
 // Matches claims any path carrying the /providers/Microsoft.Authorization/locks
 // segment (case-insensitive), whether a collection URL or a named lock. It does
 // not claim sibling Microsoft.Authorization resources such as roleAssignments or
-// roleDefinitions — those keep their own handler.
+// roleDefinitions; those keep their own handler.
 func (*Handler) Matches(r *http.Request) bool {
 	_, _, ok := parseLockPath(r.URL.Path)
 
@@ -269,7 +269,7 @@ func parseLockPath(urlPath string) (scope, name string, ok bool) {
 	}
 
 	if rest[0] != '/' {
-		// e.g. a hypothetical ".../locksomething" resource type — not ours.
+		// e.g. a hypothetical ".../locksomething" resource type: not ours.
 		return "", "", false
 	}
 

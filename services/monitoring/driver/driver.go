@@ -50,7 +50,8 @@ type GetMetricInput struct {
 	StartTime  time.Time
 	EndTime    time.Time
 	Period     int    // seconds
-	Stat       string // "Average", "Sum", "Minimum", "Maximum", "SampleCount"
+	Stat       string // "Average", "Sum", "Minimum", "Maximum", "SampleCount", or an extended statistic such as "p99"
+	Unit       string // only data stored with this unit; "" means any unit
 }
 
 // MetricDataResult is a set of metric data points.
@@ -58,6 +59,32 @@ type MetricDataResult struct {
 	Timestamps []time.Time
 	Values     []float64
 	Unit       string // the unit stored with the underlying datapoints, if any
+}
+
+// MetricStat names one metric and how to aggregate it: the statistic over
+// each Period, optionally only for data stored with Unit.
+type MetricStat struct {
+	Namespace  string
+	MetricName string
+	Dimensions map[string]string
+	Period     int
+	Stat       string
+	Unit       string
+}
+
+// MetricDataQuery is one entry of a metric-math query list. It has either a
+// MetricStat or an Expression that combines other entries by ID. A nil
+// ReturnData means true.
+type MetricDataQuery struct {
+	ID         string
+	Expression string
+	Label      string
+	ReturnData *bool
+	// Period is the granularity of an Expression entry's points. Zero means
+	// the entries it references use their own periods.
+	Period     int
+	AccountID  string
+	MetricStat *MetricStat
 }
 
 // AlarmConfig describes an alarm to create.
@@ -81,6 +108,27 @@ type AlarmConfig struct {
 	AlarmDescription        string
 	ActionsEnabled          *bool // nil defaults to true (AWS semantics)
 	Tags                    map[string]string
+	// Metrics makes this a metric-math alarm. It replaces Namespace,
+	// MetricName, Dimensions, Period, Stat and Unit. The one entry that
+	// returns data is the series the alarm watches.
+	Metrics []MetricDataQuery
+	// ThresholdMetricID names the Metrics entry that supplies the threshold
+	// band of an anomaly detection alarm.
+	ThresholdMetricID string
+	// EvaluateLowSampleCountPercentile is "evaluate" (the default when empty)
+	// or "ignore" for a percentile alarm.
+	EvaluateLowSampleCountPercentile string
+	// EvaluationWindow selects a sliding or wall clock window. Nil means the
+	// default sliding window.
+	EvaluationWindow *EvaluationWindow
+}
+
+// EvaluationWindow is the PutMetricAlarm EvaluationWindow union.
+type EvaluationWindow struct {
+	// WallClock is true for a WallClockWindow and false for a SlidingWindow.
+	WallClock bool
+	// Timezone is the WallClockWindow time zone. Empty means UTC.
+	Timezone string
 }
 
 // AlarmInfo describes an alarm.
@@ -92,6 +140,7 @@ type AlarmInfo struct {
 	ComparisonOperator      string
 	Threshold               float64
 	StateReason             string
+	StateReasonData         string // JSON; set by AWS CloudWatch, empty for the others
 	StateUpdatedTimestamp   time.Time
 	Period                  int
 	EvaluationPeriods       int
@@ -110,6 +159,45 @@ type AlarmInfo struct {
 	// Tags are the alarm's resource tags. Populated by providers that store
 	// them (AWS CloudWatch alarm tags); empty for the others.
 	Tags map[string]string
+	// StateTransitionedTimestamp is when State last changed.
+	StateTransitionedTimestamp time.Time
+	// AlarmConfigurationUpdatedTimestamp is when the configuration was last
+	// put. Populated by AWS CloudWatch; zero for the others.
+	AlarmConfigurationUpdatedTimestamp time.Time
+	// Metrics and ThresholdMetricID echo a metric-math alarm's query list.
+	Metrics           []MetricDataQuery
+	ThresholdMetricID string
+	// EvaluateLowSampleCountPercentile and EvaluationWindow echo the alarm's
+	// configuration.
+	EvaluateLowSampleCountPercentile string
+	EvaluationWindow                 *EvaluationWindow
+}
+
+// TimeRange is a closed span of time, such as an anomaly detector's
+// excluded training range.
+type TimeRange struct {
+	StartTime time.Time
+	EndTime   time.Time
+}
+
+// AnomalyDetector is an anomaly detection model. The single-metric form
+// names one metric and statistic. The metric-math form sets Metrics instead.
+type AnomalyDetector struct {
+	AccountID  string
+	Namespace  string
+	MetricName string
+	Dimensions map[string]string
+	Stat       string
+	// Metrics makes this a metric-math detector. The entry that returns data
+	// is the series the model is trained on.
+	Metrics []MetricDataQuery
+	// ExcludedTimeRanges are left out of training.
+	ExcludedTimeRanges []TimeRange
+	MetricTimezone     string
+	PeriodicSpikes     *bool
+	// StateValue is output only: PENDING_TRAINING, TRAINED_INSUFFICIENT_DATA
+	// or TRAINED.
+	StateValue string
 }
 
 // NotificationChannelConfig describes a notification channel.
@@ -139,6 +227,10 @@ type AlarmHistoryEntry struct {
 	// "ConfigurationUpdate", "Action"); empty is treated as "StateUpdate".
 	HistoryItemType string
 	Reason          string
+	// OldStateReasonData and NewStateReasonData are the JSON reason data on
+	// each side of a state change. Empty when the provider does not set it.
+	OldStateReasonData string
+	NewStateReasonData string
 }
 
 // Monitoring is the interface that monitoring provider implementations must satisfy.

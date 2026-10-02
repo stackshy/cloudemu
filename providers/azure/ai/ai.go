@@ -1,7 +1,7 @@
 // Package ai provides an in-memory mock implementation of Azure AI across
-// both ARM providers — Microsoft.CognitiveServices (AI Foundry / AI Studio /
+// both ARM providers, Microsoft.CognitiveServices (AI Foundry / AI Studio /
 // the AI Services resource / Azure OpenAI) and Microsoft.MachineLearningServices
-// (Azure Machine Learning) — plus the Azure OpenAI inference, AI Foundry
+// (Azure Machine Learning), plus the Azure OpenAI inference, AI Foundry
 // Agents/Assistants, and AML scoring data planes.
 package ai
 

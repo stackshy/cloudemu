@@ -8,7 +8,7 @@ import (
 
 // TestFirestoreCollectionGroupQuery proves a collection-group query
 // (from.allDescendants=true) matches documents in every collection sharing the
-// group's id at any depth — not just a top-level collection of that name. The
+// group's id at any depth, not just a top-level collection of that name. The
 // audit finding: runQuery/runAggregationQuery ignored allDescendants and scanned
 // only the single collection directly under the request parent, so a real
 // CollectionGroup query silently returned an empty (or wrong) result set.

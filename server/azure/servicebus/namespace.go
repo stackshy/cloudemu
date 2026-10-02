@@ -1,6 +1,7 @@
 package servicebus
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"maps"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 func (h *Handler) serveNamespace(w http.ResponseWriter, r *http.Request, sp sbPath) {
@@ -145,8 +147,49 @@ func (h *Handler) deleteNamespace(w http.ResponseWriter, sp sbPath) {
 		return
 	}
 
-	// Cascade: drop the message store (and paired dead-letter store) for every
-	// child queue and subscription.
+	urls := h.dropNamespaceLocked(nsKey(sp.namespace), ns)
+	h.mu.Unlock()
+
+	for _, u := range urls {
+		h.deleteBackingQueue(u)
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// PurgeResourceGroup deletes every namespace recorded under the resource
+// group, with its queues, topics, subscriptions, rules and authorization rules
+// and their message stores, backing the resource-group cascade.
+func (h *Handler) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	h.mu.Lock()
+
+	var urls []string
+
+	for _, key := range h.namespaces.Keys() {
+		ns, ok := h.namespaces.Get(key)
+		if !ok {
+			continue
+		}
+
+		sc := scope.Scope{Subscription: ns.Subscription, ResourceGroup: ns.ResourceGroup}
+		if sc.InResourceGroup(subscription, resourceGroup) {
+			urls = append(urls, h.dropNamespaceLocked(key, ns)...)
+		}
+	}
+
+	h.mu.Unlock()
+
+	for _, u := range urls {
+		h.deleteBackingQueue(u)
+	}
+
+	return nil
+}
+
+// dropNamespaceLocked removes a namespace and returns the message stores (and
+// paired dead-letter stores) of every child queue and subscription, for the
+// caller to drop once the lock is released. The caller holds h.mu.
+func (h *Handler) dropNamespaceLocked(key string, ns *namespaceState) []string {
 	urls := make([]string, 0, len(ns.Queues))
 	for _, q := range ns.Queues {
 		urls = append(urls, q.DriverURL, q.DLQURL)
@@ -158,14 +201,9 @@ func (h *Handler) deleteNamespace(w http.ResponseWriter, sp sbPath) {
 		}
 	}
 
-	h.namespaces.Delete(nsKey(sp.namespace))
-	h.mu.Unlock()
+	h.namespaces.Delete(key)
 
-	for _, u := range urls {
-		h.deleteBackingQueue(u)
-	}
-
-	w.WriteHeader(http.StatusOK)
+	return urls
 }
 
 func (h *Handler) listNamespaces(w http.ResponseWriter, r *http.Request, sp sbPath) {
@@ -275,8 +313,8 @@ func writeNSNotFound(w http.ResponseWriter, name string) {
 }
 
 // paginate returns the listPageSize-sized window of resources that starts at the
-// request's $skip offset. When more items remain it emits a nextLink — an
-// absolute URL that repeats the request with $skip advanced — that armservicebus
+// request's $skip offset. When more items remain it emits a nextLink (an
+// absolute URL that repeats the request with $skip advanced) that armservicebus
 // pagers follow until the collection is exhausted. A collection that fits a
 // single page (skip 0, len <= listPageSize) returns no nextLink.
 func paginate(r *http.Request, resources []any) listResponse {
@@ -307,7 +345,7 @@ func paginationSkip(r *http.Request) int {
 // nextPageLink builds the absolute URL that continues a listing at offset skip,
 // preserving the request path and query (api-version included) and overriding
 // $skip. armservicebus pagers GET this URL verbatim, so it must carry scheme and
-// host — a server request URL has neither.
+// host: a server request URL has neither.
 func nextPageLink(r *http.Request, skip int) string {
 	next := *r.URL
 	next.Host = r.Host

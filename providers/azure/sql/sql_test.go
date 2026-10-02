@@ -217,7 +217,7 @@ func TestStartStopClusterIsNoop(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	// Both pass on a non-existent server — Azure SQL doesn't have explicit
+	// Both pass on a non-existent server: Azure SQL doesn't have explicit
 	// server-level start/stop, so we keep these calls inert.
 	requireNoError(t, m.StartCluster(ctx, "nonexistent"))
 	requireNoError(t, m.StopCluster(ctx, "nonexistent"))
@@ -282,7 +282,7 @@ func TestFailoverGroupWithoutPartnerRejected(t *testing.T) {
 		t.Fatalf("CreateCluster: %v", err)
 	}
 
-	// A group with no partner server can't fail over — otherwise it would
+	// A group with no partner server can't fail over: otherwise it would
 	// ping-pong its role and leave a Secondary with no Primary.
 	if _, err := m.CreateFailoverGroup(ctx, rdsdriver.FailoverGroupConfig{Server: "srv", Name: "fg"}); err != nil {
 		t.Fatalf("CreateFailoverGroup: %v", err)

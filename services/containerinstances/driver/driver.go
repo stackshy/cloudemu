@@ -1,7 +1,7 @@
 // Package driver defines the interface for Azure Container Instances (ACI)
-// implementations. ACI is an Azure-only service — it models
+// implementations. ACI is an Azure-only service: it models
 // Microsoft.ContainerInstance/containerGroups, a group of one or more
-// containers scheduled together — so, unlike the portable multi-cloud services,
+// containers scheduled together. So, unlike the portable multi-cloud services,
 // it has a single provider implementation.
 package driver
 
@@ -117,7 +117,7 @@ type ContainerInstances interface {
 
 	// GetContainerGroup returns the recorded group scoped to subscription and
 	// resourceGroup, or a NotFound error. A container group's ARM identity is
-	// {subscription, resourceGroup, name} — the same name in a different
+	// {subscription, resourceGroup, name}: the same name in a different
 	// resource group (or subscription) is a different resource.
 	GetContainerGroup(ctx context.Context, subscription, resourceGroup, name string) (*ContainerGroup, error)
 

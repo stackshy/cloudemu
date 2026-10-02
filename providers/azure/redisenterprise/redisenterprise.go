@@ -1,5 +1,5 @@
 // Package redisenterprise provides an in-memory mock of Azure Redis Enterprise
-// (Microsoft.Cache/redisEnterprise) — the ARM control plane only. It manages the
+// (Microsoft.Cache/redisEnterprise), the ARM control plane only. It manages the
 // redisEnterprise cluster lifecycle (create/update/get/delete/list) and the
 // nested redisEnterprise/{cluster}/databases child resource (create/update/get/
 // delete/list plus the listKeys/regenerateKey actions). The Redis data plane (a
@@ -7,7 +7,7 @@
 // geo-replication linking are out of scope.
 //
 // This is distinct from the standard Azure Cache for Redis
-// (Microsoft.Cache/redis) served by the azurecache service — redisEnterprise is a
+// (Microsoft.Cache/redis) served by the azurecache service: redisEnterprise is a
 // separate resource-provider surface under the same Microsoft.Cache namespace.
 //
 // Both resources carry computed, service-minted fields that MUST stay stable for
@@ -17,14 +17,14 @@
 //   - cluster hostName: "<name>.<region>.redisenterprise.cache.azure.net",
 //     deterministic from the name and location.
 //   - cluster provisioningState ("Succeeded") and resourceState ("Running").
-//   - cluster redisVersion — the running engine version real Azure reports.
+//   - cluster redisVersion, the running engine version real Azure reports.
 //   - database provisioningState ("Succeeded") and resourceState ("Running").
 //   - database primaryKey / secondaryKey, minted once at create and stable across
 //     every get/patch/listKeys/regenerateKey.
-//   - database module version — the version real Azure stamps on each module.
+//   - database module version, the version real Azure stamps on each module.
 //
 // Every computed field is derived deterministically from the resource identity,
-// so the same resource always reports the same values — across gets, patches,
+// so the same resource always reports the same values, across gets, patches,
 // listKeys and a snapshot/restore.
 package redisenterprise
 
@@ -451,7 +451,7 @@ func validateCluster(sub, rg, name, location string) error {
 }
 
 // CreateOrUpdateDatabase creates a new database or updates an existing one under
-// its parent cluster. The parent cluster must exist — otherwise it returns a
+// its parent cluster. The parent cluster must exist: otherwise it returns a
 // NotFound error (the wire layer maps it to ParentResourceNotFound). The computed
 // keys, provisioningState and resourceState are minted once at create and
 // preserved across updates. It returns the stored database and whether it was

@@ -66,7 +66,7 @@ func TestDeadLetterOnStaleSQSTarget(t *testing.T) {
 		t.Fatalf("PutTargets: %v", err)
 	}
 
-	// The target queue goes stale after PutTargets — a real-world drift EventBridge
+	// The target queue goes stale after PutTargets, a real-world drift EventBridge
 	// tolerates by DLQ'ing rather than dropping.
 	if err := sqs.DeleteQueue(ctx, target.URL); err != nil {
 		t.Fatalf("DeleteQueue: %v", err)
@@ -98,7 +98,7 @@ func TestDeadLetterOnStaleSQSTarget(t *testing.T) {
 }
 
 // TestNoDeadLetterConfigDropsFailedDelivery: without a DeadLetterConfig, a
-// failed dispatch is dropped and PutEvents still succeeds — EventBridge
+// failed dispatch is dropped and PutEvents still succeeds. EventBridge
 // publishing is fire-and-forget from the publisher's point of view.
 func TestNoDeadLetterConfigDropsFailedDelivery(t *testing.T) {
 	ctx := context.Background()
@@ -141,7 +141,7 @@ func TestNoDeadLetterConfigDropsFailedDelivery(t *testing.T) {
 
 // TestDeadLetterOnFailingLambdaTarget: a Lambda target whose handler raises is
 // a genuine EventBridge invocation failure, distinct from a merely-unwired
-// target — it must also be DLQ'd.
+// target. It must also be DLQ'd.
 func TestDeadLetterOnFailingLambdaTarget(t *testing.T) {
 	ctx := context.Background()
 	opts := config.NewOptions()
@@ -246,7 +246,7 @@ func TestSuccessfulDeliveryLeavesDLQEmpty(t *testing.T) {
 
 // TestDeadLetterOnStaleLambdaTarget: a Lambda target whose function is deleted
 // after PutTargets (distinct from a raising handler) is also a genuine
-// dispatch failure — InvokeExternal alone can't see it, since it treats an
+// dispatch failure. InvokeExternal alone can't see it, since it treats an
 // unknown function as a no-op for its other callers, so dispatchTarget must
 // check FunctionExists itself.
 func TestDeadLetterOnStaleLambdaTarget(t *testing.T) {
@@ -316,7 +316,7 @@ func TestDeadLetterOnStaleLambdaTarget(t *testing.T) {
 // TestUnwiredDeliverersDoNotFalselyDeadLetter pins the deliberate distinction
 // between "backend never wired" (an emulator-coverage gap, not a real
 // EventBridge failure) and a genuine dispatch failure: with no SQS/Lambda
-// deliverer configured at all, dispatch must report success — no
+// deliverer configured at all, dispatch must report success: no
 // FailedInvocations metric, and (implicitly, since there is nowhere to
 // deliver a DLQ message without a wired SQS deliverer) no DLQ write. A future
 // refactor that makes dispatchTarget/dispatchLambda treat "unwired" the same

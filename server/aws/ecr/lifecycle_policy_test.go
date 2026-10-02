@@ -71,7 +71,7 @@ func TestSDKECRLifecyclePolicyRegistryID(t *testing.T) {
 
 // TestSDKECRLifecyclePolicyRoundTrip guards fidelity of a multi-rule policy with
 // a multi-element tagPrefixList. GetLifecyclePolicy must return the document
-// exactly as PutLifecyclePolicy stored it — both rules and both prefix entries —
+// as PutLifecyclePolicy stored it (both rules and both prefix entries),
 // so Terraform's aws_ecr_lifecycle_policy refresh sees no drift.
 func TestSDKECRLifecyclePolicyRoundTrip(t *testing.T) {
 	client := newECRClient(t)

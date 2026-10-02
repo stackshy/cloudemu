@@ -16,7 +16,7 @@ import (
 )
 
 // TestNoShadowing registers Blob, Queue and Table on the same server and
-// confirms each service's SDK routes to its own handler — i.e. the permissive
+// confirms each service's SDK routes to its own handler: the permissive
 // Blob fallback does not swallow Queue or Table requests, and Queue and Table
 // do not claim each other's or Blob's paths.
 func TestNoShadowing(t *testing.T) {
@@ -44,7 +44,7 @@ func TestNoShadowing(t *testing.T) {
 	}
 
 	// Note: the root GET /?comp=list shape (list-containers vs list-queues) is
-	// byte-for-byte identical on the wire — Azure disambiguates it only by the
+	// byte-for-byte identical on the wire; Azure disambiguates it only by the
 	// {account}.blob vs {account}.queue hostname, which a single test server
 	// can't see. When Blob and Queue coexist behind one endpoint, that one
 	// shape is inherently ambiguous; the Queue handler owns it (registered
@@ -52,14 +52,14 @@ func TestNoShadowing(t *testing.T) {
 	// container/blob paths, /{queue}/messages, and OData table paths never
 	// collide.
 
-	// Blob: put+get a blob (a two-segment /{container}/{blob} path) — must
+	// Blob: put+get a blob (a two-segment /{container}/{blob} path): must
 	// reach the Blob handler, not Queue or Table.
 	if _, err := blobClient.UploadBuffer(ctx, "cont", "obj", []byte("data"), nil); err != nil {
 		t.Fatalf("Blob UploadBuffer routed wrong: %v", err)
 	}
 
 	// Queue: create a queue named "cont" (same name as the container) and
-	// enqueue — must hit the queue handler, not blob.
+	// enqueue: must hit the queue handler, not blob.
 	qSvc, err := azqueue.NewServiceClientWithNoCredential(ts.URL+"/", &azqueue.ClientOptions{ClientOptions: transport})
 	if err != nil {
 		t.Fatalf("azqueue client: %v", err)
@@ -78,7 +78,7 @@ func TestNoShadowing(t *testing.T) {
 		t.Fatalf("Queue EnqueueMessage routed wrong: %v", err)
 	}
 
-	// Table: create a table named "cont" and insert — must hit the table
+	// Table: create a table named "cont" and insert: must hit the table
 	// handler.
 	tSvc, err := aztables.NewServiceClientWithNoCredential(ts.URL+"/", &aztables.ClientOptions{ClientOptions: transport})
 	if err != nil {

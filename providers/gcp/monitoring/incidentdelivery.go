@@ -22,7 +22,7 @@ const webhookDeliveryTimeout = 10 * time.Second
 // WebhookDeliverer delivers an incident notification to a webhook channel's URL.
 // New() defaults it to a real-HTTP implementation (httpWebhookDeliverer), so a
 // breach that targets a webhook notification channel performs the real POST in
-// production — mirroring azure/monitor's WebhookDeliverer. SetWebhookDeliverer
+// production, mirroring azure/monitor's WebhookDeliverer. SetWebhookDeliverer
 // is a test seam that swaps in a fake so a test can assert delivery without a
 // live receiver.
 type WebhookDeliverer interface {
@@ -41,7 +41,7 @@ type PubSubPublisher interface {
 
 // httpWebhookDeliverer is the production WebhookDeliverer: a best-effort real
 // HTTP POST of the incident payload to a webhook channel's URL. It mirrors
-// azure/monitor's httpWebhookDeliverer — a bounded http.Client, and errors are
+// azure/monitor's httpWebhookDeliverer, a bounded http.Client, and errors are
 // surfaced to the caller (deliverWebhook), which swallows them so a breach /
 // PutMetricData never fails because a receiver is unreachable.
 type httpWebhookDeliverer struct {
@@ -119,7 +119,7 @@ type incidentBody struct {
 
 // fireNotificationChannels delivers an alert policy's incident to each of its
 // referenced notification channels on an incident open (ALARM) or close (OK)
-// transition — real Cloud Monitoring notifies on both by default. Webhook
+// transition: real Cloud Monitoring notifies on both by default. Webhook
 // channels are POSTed; pubsub channels are published to their topic; email /
 // SMS / other channels are record-only (the emulator cannot send them). All
 // delivery is best-effort so a breach never fails on an unreachable channel.
@@ -176,8 +176,8 @@ func isWebhookChannel(channelType string) bool {
 	return strings.Contains(channelType, "webhook")
 }
 
-// lookupChannel resolves an AlarmActions reference — a channel resource name
-// (projects/P/notificationChannels/ID) or a bare channel ID — to its stored
+// lookupChannel resolves an AlarmActions reference (a channel resource name
+// (projects/P/notificationChannels/ID) or a bare channel ID) to its stored
 // channel, or nil when it names no known channel.
 func (m *Mock) lookupChannel(ref string) *driver.NotificationChannelInfo {
 	ch, ok := m.channels.Get(lastSegment(ref))

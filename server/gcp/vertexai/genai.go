@@ -106,6 +106,45 @@ func (h *Handler) servePublishers(w http.ResponseWriter, r *http.Request) {
 	h.runGenAI(w, r, model, action)
 }
 
+// projectPublisherModel parses the project-scoped publisher model path,
+// /{v1|v1beta1}/projects/{p}/locations/{l}/publishers/{pub}/models/{m}:{action},
+// into the "publishers/{pub}/models/{m}" model name and the action.
+func projectPublisherModel(urlPath string) (model, action string, ok bool) {
+	rest, found := strings.CutPrefix(urlPath, pathPrefix)
+	if !found {
+		if rest, found = strings.CutPrefix(urlPath, v1beta1Prefix); !found {
+			return "", "", false
+		}
+	}
+
+	parts := strings.SplitN(rest, "/", 4) //nolint:mnd // {p}/locations/{l}/{publishers/...}
+	if len(parts) < 4 || parts[1] != locationsSeg || !strings.HasPrefix(parts[3], publishersColl+"/") {
+		return "", "", false
+	}
+
+	model, action = splitActionPair(parts[3])
+
+	return model, action, true
+}
+
+// servePublisherModel handles the project-scoped publisher model path the
+// Vertex SDKs call.
+func (h *Handler) servePublisherModel(w http.ResponseWriter, r *http.Request, model, action string) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+
+		return
+	}
+
+	if action == "" {
+		writeError(w, http.StatusNotFound, "notFound", "missing action on publishers path")
+
+		return
+	}
+
+	h.runGenAI(w, r, model, action)
+}
+
 // runGenAI dispatches generateContent / countTokens for either a publisher
 // model path or an endpoint resource name.
 func (h *Handler) runGenAI(w http.ResponseWriter, r *http.Request, model, action string) {

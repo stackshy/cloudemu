@@ -47,7 +47,7 @@ type sbMessage struct {
 	SentAt        time.Time
 	ReceiveCount  int
 	// ExpiresAt is the message's absolute expiration time. The zero value
-	// means the message never expires — the default for Service Bus queues
+	// means the message never expires, the default for Service Bus queues
 	// (which never set SendMessageInput.MessageTTLSeconds) and for Azure
 	// Queue Storage messages sent with messagettl=-1. See isMessageExpired.
 	ExpiresAt time.Time
@@ -150,13 +150,23 @@ func (m *Mock) emitMetric(queueName string, metrics map[string]float64) {
 			Namespace:  "Microsoft.ServiceBus/namespaces",
 			MetricName: name,
 			Value:      value,
-			Unit:       "None",
+			Unit:       metricUnit(name),
 			Dimensions: map[string]string{"queueName": queueName},
 			Timestamp:  now,
 		})
 	}
 
 	_ = m.monitoring.PutMetricData(context.Background(), data)
+}
+
+// metricUnit is the Azure Monitor unit of a Service Bus metric. Size is Bytes.
+// The message metrics are Counts.
+func metricUnit(name string) string {
+	if name == "Size" {
+		return "Bytes"
+	}
+
+	return "Count"
 }
 
 // New creates a new Service Bus mock with the given configuration options.
@@ -186,8 +196,8 @@ func (m *Mock) RemoveTrigger(queueURL string) {
 
 // SetFunctionTriggerSink wires the Azure Functions provider as the destination
 // for this queue surface's automatic trigger deliveries. bindingType is the
-// function.json trigger type this surface fires — "queueTrigger" for Queue
-// Storage, "serviceBusTrigger" for Service Bus — so only functions bound with
+// function.json trigger type this surface fires ("queueTrigger" for Queue
+// Storage, "serviceBusTrigger" for Service Bus) so only functions bound with
 // the matching trigger are invoked. A nil sink disables trigger delivery (the
 // default). This is the cross-service seam, analogous to Event Grid's
 // SetFunctionInvoker.
@@ -681,7 +691,7 @@ func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInp
 }
 
 // plainReceiveAccept is the predicate for a plain (non-session) receive. On a
-// session entity it accepts nothing — Service Bus sessions are consumed only via
+// session entity it accepts nothing: Service Bus sessions are consumed only via
 // the session receiver, so a plain REST receive against a session queue returns
 // empty, matching real Azure (where session receive is not available over REST).
 // On a non-session entity it returns nil, accepting every message unchanged.

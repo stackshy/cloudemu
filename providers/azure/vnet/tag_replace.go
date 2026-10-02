@@ -9,9 +9,9 @@ import (
 // This file implements driver.AzureNetworkTagReplacer: the wholesale tag
 // replacement the ARM resource-level UpdateTags PATCH needs (it SETS tags, it
 // does not merge). Each method swaps in a FRESH struct with a fresh copy of the
-// supplied map under the store's lock (copy-on-write) — the shared stored
+// supplied map under the store's lock (copy-on-write): the shared stored
 // pointer is never mutated in place, so a reader holding a prior snapshot is
-// unaffected — and returns NotFound when the resource is absent. The wire
+// unaffected. It returns NotFound when the resource is absent. The wire
 // handler folds any wire-internal cloudemu: anchor tags into the map it passes,
 // so those survive.
 

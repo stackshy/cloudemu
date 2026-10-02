@@ -55,7 +55,7 @@ func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64,
 			Namespace:  "fcm.googleapis.com",
 			MetricName: metricName,
 			Value:      value,
-			Unit:       "None",
+			Unit:       "1", // every metric here is a count, unit "1" in Cloud Monitoring
 			Dimensions: dims,
 			Timestamp:  m.opts.Clock.Now(),
 		},
@@ -150,7 +150,7 @@ func (m *Mock) ListTopics(_ context.Context, filter scope.Scope) ([]driver.Topic
 	return topics, nil
 }
 
-// UpdateTopic replaces the mutable fields of an existing topic — ARM
+// UpdateTopic replaces the mutable fields of an existing topic, using ARM
 // CreateOrUpdate-on-existing semantics (display name and tags come from the
 // request; identity is preserved).
 func (m *Mock) UpdateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.TopicInfo, error) {

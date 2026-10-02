@@ -9,6 +9,7 @@ package secretsmanager
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -123,6 +124,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // AWS-specific secretMutator surface. Real deployments always do.
 var errNotSupported = cerrors.New(cerrors.Unimplemented, "operation not supported by this backend")
 
+// Real Secrets Manager's fixed messages for KMS seal/unseal failures.
+const (
+	msgDecryptionFailure = "Secrets Manager can't decrypt the protected secret text using the provided KMS key."
+	msgEncryptionFailure = "Secrets Manager can't encrypt the protected secret text using the provided KMS key. " +
+		"Check that the KMS key is available, enabled, and not in an invalid state."
+)
+
 // writeErr maps canonical cloudemu errors to Secrets Manager JSON error
 // responses. Secrets Manager returns errors as HTTP 400 with a "__type" body
 // the SDK maps to a typed exception.
@@ -130,6 +138,13 @@ func writeErr(w http.ResponseWriter, err error) {
 	msg := cerrors.Message(err)
 
 	switch {
+	case errors.Is(err, secretsdriver.ErrDecryptionFailure):
+		// A secret whose KMS key is disabled/pending deletion can't be read;
+		// real Secrets Manager answers the dedicated DecryptionFailure
+		// exception, not the generic FailedPrecondition mapping below.
+		wire.WriteJSONError(w, http.StatusBadRequest, "DecryptionFailure", msgDecryptionFailure)
+	case errors.Is(err, secretsdriver.ErrEncryptionFailure):
+		wire.WriteJSONError(w, http.StatusBadRequest, "EncryptionFailure", msgEncryptionFailure)
 	case cerrors.IsNotFound(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):

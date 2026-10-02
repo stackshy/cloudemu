@@ -57,8 +57,8 @@ func (m *Mock) CreateNetworkACL(_ context.Context, vpcID string, tags map[string
 }
 
 // denyAllRules returns the two unmodifiable catch-all '*' DENY entries (rule
-// 32767, one ingress and one egress) that every network ACL — default and
-// custom — carries. They are the last entries EC2 evaluates and deny anything
+// 32767, one ingress and one egress) that every network ACL, default and
+// custom, carries. They are the last entries EC2 evaluates and deny anything
 // that matched no lower-numbered rule.
 func denyAllRules() []driver.NetworkACLRule {
 	return []driver.NetworkACLRule{
@@ -81,7 +81,7 @@ func denyAllRules() []driver.NetworkACLRule {
 
 // customACLRules returns the entries a freshly created custom ACL carries: only
 // the two '*' deny rules. A custom ACL has no numbered allow rule until the
-// caller adds one, so it denies all inbound and outbound traffic — matching
+// caller adds one, so it denies all inbound and outbound traffic, matching
 // real EC2, where a fresh custom ACL is deny-by-default (not allow-all).
 func customACLRules() []driver.NetworkACLRule {
 	return denyAllRules()

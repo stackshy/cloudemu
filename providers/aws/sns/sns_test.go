@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/notification/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
 	"github.com/stretchr/testify/assert"
@@ -162,7 +163,7 @@ func TestUpdateTopicFIFOAndDeliveryAttributes(t *testing.T) {
 	assert.Equal(t, "alias/my-key", info.KmsMasterKeyID)
 	assert.True(t, info.ContentBasedDeduplication)
 
-	// An explicit false must also stick — this is exactly the bug: a plain
+	// An explicit false must also stick. This is the bug: a plain
 	// zero-value bool couldn't previously be distinguished from "not set".
 	_, err = m.UpdateTopic(ctx, driver.TopicConfig{
 		Name: "t.fifo", ContentBasedDeduplication: false, ContentBasedDeduplicationSet: true,
@@ -703,7 +704,7 @@ func TestPublishReturnsUniqueMessageIDs(t *testing.T) {
 // TestPublishFIFOValidation guards the two real-SNS FIFO Publish requirements:
 // every message needs a MessageGroupId, and needs a MessageDeduplicationId
 // unless the topic has ContentBasedDeduplication enabled. Standard topics are
-// unaffected — MessageGroupId there is optional (forwarded to SQS standard
+// unaffected. MessageGroupId there is optional (forwarded to SQS standard
 // subscriptions for fair-queue routing), never required or rejected.
 func TestPublishFIFOValidation(t *testing.T) {
 	tests := []struct {
@@ -788,5 +789,19 @@ func TestPublishFIFOValidation(t *testing.T) {
 
 			require.NoError(t, err)
 		})
+	}
+}
+
+func TestPublishRejectsInvalidUTF8(t *testing.T) {
+	m := newTestMock()
+	topic := createTopicHelper(m, "t")
+
+	_, err := m.Publish(context.Background(), driver.PublishInput{TopicID: topic.Name, Message: "bad\xff"})
+	if !errors.IsInvalidArgument(err) {
+		t.Fatalf("Publish with invalid UTF-8: err = %v, want InvalidArgument", err)
+	}
+
+	if _, err = m.Publish(context.Background(), driver.PublishInput{TopicID: topic.Name, Message: "ok"}); err != nil {
+		t.Fatalf("valid Publish: %v", err)
 	}
 }

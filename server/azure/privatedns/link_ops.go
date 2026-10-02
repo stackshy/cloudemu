@@ -10,7 +10,7 @@ import (
 // createOrUpdateLink handles PUT .../privateDnsZones/{zone}/virtualNetworkLinks/
 // {link}. The whole link arrives in one body and fully REPLACES the stored
 // state. VirtualNetworkLinks.CreateOrUpdate is an LRO; returning the
-// fully-provisioned body completes the poller — 201 on create, 200 on update.
+// fully-provisioned body completes the poller: 201 on create, 200 on update.
 func (h *Handler) createOrUpdateLink(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body linkJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -44,7 +44,7 @@ func (h *Handler) getLink(w http.ResponseWriter, r *http.Request, rp *azurearm.R
 	azurearm.WriteJSON(w, http.StatusOK, toLinkJSON(rp, stored))
 }
 
-// updateLinkTags handles PATCH on a link — VirtualNetworkLinks.Update. Tags are
+// updateLinkTags handles PATCH on a link (VirtualNetworkLinks.Update). Tags are
 // REPLACED wholesale; registrationEnabled and the virtualNetwork reference are
 // left untouched. A request with tags omitted is a no-op on tags.
 func (h *Handler) updateLinkTags(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

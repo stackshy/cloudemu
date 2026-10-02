@@ -18,8 +18,8 @@ import (
 // the same pair the compute walker's cloudemu:sqlvm tag overlay emits, so both a
 // real CRUD resource and a tag-opted-in VM map to the identical Resource Graph
 // type (microsoft.sqlvirtualmachine/sqlvirtualmachines). The two paths use
-// disjoint id namespaces — the overlay is keyed by the paired VM's name, this by
-// the caller-chosen SQL-virtual-machine name — so a real resource and a tag
+// disjoint id namespaces: the overlay is keyed by the paired VM's name, this by
+// the caller-chosen SQL-virtual-machine name, so a real resource and a tag
 // overlay never collide unless a caller deliberately opts a VM into both.
 type sqlVirtualMachineDiscovery struct{ m *sqlvirtualmachine.Mock }
 

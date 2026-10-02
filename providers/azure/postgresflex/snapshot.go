@@ -12,7 +12,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // pgFlexSnapshot is the full serialized state of the Postgres Flexible Server
 // mock. Every store holds a fully-exported rdsdriver value, so each round-trips
-// through the generic memstore helper keyed by its resource id — cross-references
+// through the generic memstore helper keyed by its resource id: cross-references
 // (a database/firewall rule's server key) survive. The mutex and the wired
 // options/monitoring are intentionally not serialized.
 type pgFlexSnapshot struct {
@@ -23,7 +23,7 @@ type pgFlexSnapshot struct {
 	Configurations json.RawMessage `json:"configurations,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // Postgres Flex holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap pgFlexSnapshot

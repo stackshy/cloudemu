@@ -16,7 +16,7 @@ const maxBodyBytes = 8 << 20
 // outputKeys are the computed / output-only body keys CloudEmu populates itself.
 // They are stripped from an incoming request body so a caller cannot pin them,
 // and re-injected from the stored resource on every read. A stream's `state` is
-// deliberately absent — it round-trips as a caller-writable passthrough value
+// deliberately absent. It round-trips as a caller-writable passthrough value
 // (seeded to a default at create, mutated by a state-masked patch).
 //
 //nolint:gochecknoglobals // immutable lookup set

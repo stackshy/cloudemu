@@ -8,7 +8,7 @@ import (
 
 // int64Wire is a BigQuery int64 wire field. BigQuery emits int64 values as
 // quoted decimal STRINGS, but clients (the Terraform google provider included)
-// send them as bare JSON NUMBERS on write — so it marshals to a string and
+// send them as bare JSON NUMBERS on write, so it marshals to a string and
 // unmarshals from either a number or a quoted string. A zero value with
 // omitempty is dropped from the response, matching an unset field.
 type int64Wire int64
@@ -45,7 +45,7 @@ const (
 
 	// modeNullable is the default TableFieldSchema mode. BigQuery echoes it on
 	// every field that omits a mode, so a client that sent no mode reads back
-	// NULLABLE — omitting it drifts Terraform.
+	// NULLABLE. Omitting it drifts Terraform.
 	modeNullable = "NULLABLE"
 )
 

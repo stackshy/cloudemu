@@ -18,8 +18,8 @@ type runResult struct {
 
 // TestRunToCompletionWithSidecarDoesNotHang proves a run-to-completion workload
 // whose main container exits while a sidecar keeps running returns as soon as the
-// main container exits — instead of blocking on the never-exiting sidecar forever
-// — and that both containers stay observable afterwards (main exited, sidecar
+// main container exits, instead of blocking on the never-exiting sidecar forever,
+// and that both containers stay observable afterwards (main exited, sidecar
 // still running).
 func TestRunToCompletionWithSidecarDoesNotHang(t *testing.T) {
 	if !dtest.DockerUp() {

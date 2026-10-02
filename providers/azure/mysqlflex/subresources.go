@@ -348,7 +348,7 @@ func (m *Mock) BatchSetConfigurations(
 	return out, nil
 }
 
-// GetConfiguration returns a server parameter — the user override if one was
+// GetConfiguration returns a server parameter, the user override if one was
 // set, otherwise the catalog default for a known parameter (real Azure returns
 // the system default for an unset-but-valid parameter). Unknown parameters 404.
 func (m *Mock) GetConfiguration(_ context.Context, server, name string) (*rdsdriver.Configuration, error) {
@@ -426,7 +426,7 @@ func (m *Mock) ListConfigurations(_ context.Context, server string) ([]rdsdriver
 // ---- Failover ----
 
 // FailoverInstance triggers a server failover to its standby. The server must
-// be running and have an active standby (HighAvailability enabled) — real
+// be running and have an active standby (HighAvailability enabled): real
 // Azure rejects a forced failover on a server with no standby to fail over to.
 // It stays available afterwards.
 func (m *Mock) FailoverInstance(_ context.Context, id string) error {

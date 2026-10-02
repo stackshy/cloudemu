@@ -11,8 +11,8 @@ import (
 // TestSDKDataDiskUnmodeledFieldRoundTrips is the load-bearing test for the echo
 // overlay's array recursion on VMs: a data disk attached with a sub-field the
 // handler does not model (writeAcceleratorEnabled) must reflect that sub-field
-// on the VM's storageProfile.dataDisks entry at GET — before the fix it was
-// dropped because the overlay only recursed into maps, never array elements —
+// on the VM's storageProfile.dataDisks entry at GET. Before the fix it was
+// dropped because the overlay only recursed into maps, never array elements,
 // while the modeled fields the handler rebuilds from real attachment state
 // (lun, diskSizeGB, managedDisk.id) stay authoritative and no phantom disk is
 // injected.

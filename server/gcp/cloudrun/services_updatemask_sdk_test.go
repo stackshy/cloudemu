@@ -214,7 +214,7 @@ func TestSDKServiceTemplateLabelsAnnotationsRoundTrip(t *testing.T) {
 }
 
 // TestSDKServiceFullPutStillReplaces covers the regression: a maskless PUT
-// (Terraform-style) still full-replaces — a field omitted from the new body is
+// (Terraform-style) still full-replaces. A field omitted from the new body is
 // cleared, not preserved.
 func TestSDKServiceFullPutStillReplaces(t *testing.T) {
 	svc, _ := newRunWithURL(t)

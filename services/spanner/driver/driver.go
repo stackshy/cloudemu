@@ -1,7 +1,7 @@
 // Package driver defines the portable interface for the Google Cloud Spanner
-// admin control plane (spanner.googleapis.com/v1). It is control-plane only —
+// admin control plane (spanner.googleapis.com/v1). It is control-plane only:
 // instances and databases, plus the long-running operations their mutating RPCs
-// return — so it is independent of the other database drivers. The SQL data
+// return, so it is independent of the other database drivers. The SQL data
 // plane (sessions/read/executeSql/commit), backups, custom instance configs,
 // IAM, and database roles are deliberately out of scope.
 //

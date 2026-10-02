@@ -3,9 +3,13 @@ package aws
 import (
 	"context"
 	"encoding/json"
+	"slices"
+	"strconv"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	cfnprovider "github.com/stackshy/cloudemu/v2/providers/aws/cloudformation"
 	cfn "github.com/stackshy/cloudemu/v2/services/cloudformation"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
@@ -35,6 +39,78 @@ func cloudformationRegistry(p *Provider) cfn.Registry {
 	}
 }
 
+// cfnReplacementProperties lists, per resource type, the properties whose
+// change needs a new physical resource ("Update requires: Replacement" in the
+// CloudFormation resource reference). Any other property changes in place.
+func cfnReplacementProperties() map[string][]string {
+	return map[string][]string{
+		"AWS::S3::Bucket":             {"BucketName", "ObjectLockEnabled"},
+		"AWS::DynamoDB::Table":        {"TableName", "KeySchema", "LocalSecondaryIndexes"},
+		"AWS::SQS::Queue":             {"QueueName", "FifoQueue"},
+		"AWS::SNS::Topic":             {"TopicName", "FifoTopic"},
+		"AWS::Lambda::Function":       {"FunctionName", "PackageType"},
+		"AWS::IAM::Role":              {"RoleName", "Path"},
+		"AWS::SecretsManager::Secret": {"Name"},
+		"AWS::SSM::Parameter":         {"Name"},
+	}
+}
+
+// cfnNameProperties maps each resource type to the property that gives it a
+// custom physical name.
+func cfnNameProperties() map[string]string {
+	return map[string]string{
+		"AWS::S3::Bucket":             "BucketName",
+		"AWS::DynamoDB::Table":        "TableName",
+		"AWS::SQS::Queue":             "QueueName",
+		"AWS::SNS::Topic":             "TopicName",
+		"AWS::Lambda::Function":       "FunctionName",
+		"AWS::IAM::Role":              "RoleName",
+		"AWS::SecretsManager::Secret": "Name",
+		"AWS::SSM::Parameter":         "Name",
+	}
+}
+
+// requiresReplacement reports whether changing property replaces a resource
+// of type rtype.
+func requiresReplacement(rtype, property string) bool {
+	return slices.Contains(cfnReplacementProperties()[rtype], property)
+}
+
+// cloudformationTemplateFetcher reads a TemplateURL object from the emulated S3.
+func cloudformationTemplateFetcher(p *Provider) cfnprovider.TemplateFetcher {
+	return func(ctx context.Context, bucket, key, versionID string) ([]byte, error) {
+		var (
+			obj *storagedriver.Object
+			err error
+		)
+
+		if versionID != "" {
+			obj, err = p.S3.GetObjectVersion(ctx, bucket, key, versionID)
+		} else {
+			obj, err = p.S3.GetObject(ctx, bucket, key)
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		return obj.Data, nil
+	}
+}
+
+// cloudformationParameterReader reads Parameter Store for the
+// AWS::SSM::Parameter::Value<T> parameter types.
+func cloudformationParameterReader(p *Provider) cfnprovider.ParameterReader {
+	return func(ctx context.Context, name string) (value, paramType string, err error) {
+		param, err := p.SSM.GetParameter(ctx, name, false)
+		if err != nil {
+			return "", "", err
+		}
+
+		return param.Value, param.Type, nil
+	}
+}
+
 // physicalName returns an explicit name property when set, otherwise a
 // CloudFormation-style generated name (StackName-LogicalId-<random>).
 func physicalName(req *cfn.ResourceRequest, key string, lower bool) string {
@@ -50,6 +126,67 @@ func physicalName(req *cfn.ResourceRequest, key string, lower bool) string {
 	return name
 }
 
+// SQS name limits that shape a CloudFormation-generated queue name.
+const (
+	sqsMaxQueueName     = 80
+	sqsMaxFIFOQueueBase = 75
+	cfnNameSuffixLen    = 12
+	cfnNameSeparators   = 2 // the two "-" between stack, logical ID and suffix
+)
+
+// generatedQueueName builds the name CloudFormation gives a queue with no
+// QueueName: {stack}-{logicalId}-{suffix}. SQS caps names at 80 characters,
+// so CloudFormation shortens the stack name and logical ID to fit and keeps
+// the random suffix whole. A FIFO queue keeps 75 for the base and ends in
+// ".fifo", because SQS requires the suffix.
+func generatedQueueName(stack, logicalID string, fifo bool) string {
+	limit := sqsMaxQueueName
+	if fifo {
+		limit = sqsMaxFIFOQueueBase
+	}
+
+	suffix := strings.ReplaceAll(idgen.UUID(), "-", "")[:cfnNameSuffixLen]
+	stack, logicalID = fitNameParts(stack, logicalID, limit-len(suffix)-cfnNameSeparators)
+
+	name := stack + "-" + logicalID + "-" + suffix
+	if fifo {
+		name += ".fifo"
+	}
+
+	return name
+}
+
+// fitNameParts shortens a and b so their combined length is at most budget.
+// Each part gets half the budget, and a part shorter than its half gives the
+// unused room to the other.
+func fitNameParts(a, b string, budget int) (fitA, fitB string) {
+	if len(a)+len(b) <= budget {
+		return a, b
+	}
+
+	half := budget / 2
+
+	switch {
+	case len(a) < half:
+		return a, b[:budget-len(a)]
+	case len(b) < half:
+		return a[:budget-len(b)], b
+	default:
+		return a[:half], b[:budget-half]
+	}
+}
+
+// nameTaken reports a create that failed because the physical name is in
+// use the way CloudFormation does, "<name> already exists". Other errors
+// pass through.
+func nameTaken(name string, err error) error {
+	if cerrors.IsAlreadyExists(err) {
+		return cerrors.Newf(cerrors.AlreadyExists, "%s already exists", name)
+	}
+
+	return err
+}
+
 // --- AWS::S3::Bucket ---
 
 type s3BucketProvisioner struct{ s3 storagedriver.Bucket }
@@ -58,7 +195,7 @@ type s3BucketProvisioner struct{ s3 storagedriver.Bucket }
 func (p s3BucketProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) (*cfn.ProvisionedResource, error) {
 	name := physicalName(&req, "BucketName", true)
 	if err := p.s3.CreateBucket(ctx, name); err != nil {
-		return nil, err
+		return nil, nameTaken(name, err)
 	}
 
 	return &cfn.ProvisionedResource{
@@ -70,6 +207,17 @@ func (p s3BucketProvisioner) Create(ctx context.Context, req cfn.ResourceRequest
 			"WebsiteURL":         "http://" + name + ".s3-website-" + req.Region + ".amazonaws.com",
 		},
 	}, nil
+}
+
+// RequiresReplacement reports the properties that replace the resource. Other
+// changes are recorded without touching the backend.
+func (s3BucketProvisioner) RequiresReplacement(property string) bool {
+	return requiresReplacement("AWS::S3::Bucket", property)
+}
+
+// NameProperty names the property that sets a custom physical name.
+func (s3BucketProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::S3::Bucket"]
 }
 
 func (p s3BucketProvisioner) Delete(ctx context.Context, physicalID string, _ map[string]any) error {
@@ -86,7 +234,7 @@ func (p dynamoTableProvisioner) Create(ctx context.Context, req cfn.ResourceRequ
 
 	cfg := dynamoTableConfig(name, req.Properties)
 	if err := p.db.CreateTable(ctx, cfg); err != nil {
-		return nil, err
+		return nil, nameTaken(name, err)
 	}
 
 	attrs := map[string]string{"Arn": ""}
@@ -99,6 +247,17 @@ func (p dynamoTableProvisioner) Create(ctx context.Context, req cfn.ResourceRequ
 	}
 
 	return &cfn.ProvisionedResource{PhysicalID: name, Attributes: attrs}, nil
+}
+
+// RequiresReplacement reports the properties that replace the resource. Other
+// changes are recorded without touching the backend.
+func (dynamoTableProvisioner) RequiresReplacement(property string) bool {
+	return requiresReplacement("AWS::DynamoDB::Table", property)
+}
+
+// NameProperty names the property that sets a custom physical name.
+func (dynamoTableProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::DynamoDB::Table"]
 }
 
 func (p dynamoTableProvisioner) Delete(ctx context.Context, physicalID string, _ map[string]any) error {
@@ -143,15 +302,26 @@ type sqsQueueProvisioner struct{ sqs mqdriver.MessageQueue }
 
 //nolint:gocritic // hugeParam: interface method signature is fixed.
 func (p sqsQueueProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) (*cfn.ProvisionedResource, error) {
-	name := physicalName(&req, "QueueName", false)
+	fifo := propBool(req.Properties, "FifoQueue")
+	name := cfn.PropString(req.Properties, "QueueName")
+
+	if name == "" {
+		name = generatedQueueName(req.StackName, req.LogicalID, fifo)
+	}
 
 	cfg := mqdriver.QueueConfig{
 		Name:              name,
-		FIFO:              propBool(req.Properties, "FifoQueue") || strings.HasSuffix(name, ".fifo"),
+		FIFO:              fifo || strings.HasSuffix(name, ".fifo"),
 		DelaySeconds:      propInt(req.Properties, "DelaySeconds"),
 		VisibilityTimeout: propInt(req.Properties, "VisibilityTimeout"),
 		MaxMessageSize:    propInt(req.Properties, "MaximumMessageSize"),
 		MessageRetention:  propInt(req.Properties, "MessageRetentionPeriod"),
+	}
+
+	// SQS CreateQueue returns an existing queue of the same name, but
+	// CloudFormation never adopts one.
+	if err := p.checkFree(ctx, name); err != nil {
+		return nil, err
 	}
 
 	info, err := p.sqs.CreateQueue(ctx, cfg)
@@ -169,6 +339,82 @@ func (p sqsQueueProvisioner) Delete(ctx context.Context, physicalID string, _ ma
 	return p.sqs.DeleteQueue(ctx, physicalID)
 }
 
+// sqsAttributeDefaults are the values SQS restores when a template drops the
+// property, keyed by the CloudFormation property name, which is also the
+// SQS attribute name.
+func sqsAttributeDefaults() map[string]int {
+	return map[string]int{
+		"DelaySeconds":           0,
+		"VisibilityTimeout":      sqsDefaultVisibilityTimeout,
+		"MaximumMessageSize":     sqsDefaultMaxMessageSize,
+		"MessageRetentionPeriod": sqsDefaultRetention,
+	}
+}
+
+// checkFree fails when a queue with the name already exists.
+func (p sqsQueueProvisioner) checkFree(ctx context.Context, name string) error {
+	queues, err := p.sqs.ListQueues(ctx, name)
+	if err != nil {
+		return err
+	}
+
+	for i := range queues {
+		if queues[i].Name == name {
+			return cerrors.Newf(cerrors.AlreadyExists, "%s already exists", name)
+		}
+	}
+
+	return nil
+}
+
+// SQS attribute defaults.
+const (
+	sqsDefaultVisibilityTimeout = 30
+	sqsDefaultMaxMessageSize    = 262144
+	sqsDefaultRetention         = 345600
+)
+
+// RequiresReplacement reports the queue properties CloudFormation cannot
+// change in place.
+func (sqsQueueProvisioner) RequiresReplacement(property string) bool {
+	return requiresReplacement("AWS::SQS::Queue", property)
+}
+
+// NameProperty names the property that sets a custom physical name.
+func (sqsQueueProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::SQS::Queue"]
+}
+
+// Update sets the changed queue attributes. A dropped attribute goes back to
+// its SQS default. Other properties are not modeled by the queue backend.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
+func (p sqsQueueProvisioner) Update(
+	ctx context.Context, physicalID string, previous map[string]any, req cfn.ResourceRequest,
+) (*cfn.ProvisionedResource, error) {
+	attrs := map[string]int{}
+
+	for name, def := range sqsAttributeDefaults() {
+		_, had := previous[name]
+		_, has := req.Properties[name]
+
+		switch {
+		case has:
+			attrs[name] = propInt(req.Properties, name)
+		case had:
+			attrs[name] = def
+		}
+	}
+
+	if len(attrs) > 0 {
+		if err := p.sqs.SetQueueAttributes(ctx, physicalID, attrs); err != nil {
+			return nil, err
+		}
+	}
+
+	return &cfn.ProvisionedResource{PhysicalID: physicalID}, nil
+}
+
 // --- AWS::SNS::Topic ---
 
 type snsTopicProvisioner struct{ sns notifdriver.Notification }
@@ -183,7 +429,7 @@ func (p snsTopicProvisioner) Create(ctx context.Context, req cfn.ResourceRequest
 		FifoTopic:   propBool(req.Properties, "FifoTopic") || strings.HasSuffix(name, ".fifo"),
 	})
 	if err != nil {
-		return nil, err
+		return nil, nameTaken(name, err)
 	}
 
 	// SNS Ref returns the topic ARN (ResourceID); the driver deletes by name.
@@ -192,6 +438,17 @@ func (p snsTopicProvisioner) Create(ctx context.Context, req cfn.ResourceRequest
 		DeleteID:   info.Name,
 		Attributes: map[string]string{"TopicArn": info.ResourceID, "TopicName": info.Name},
 	}, nil
+}
+
+// RequiresReplacement reports the properties that replace the resource. Other
+// changes are recorded without touching the backend.
+func (snsTopicProvisioner) RequiresReplacement(property string) bool {
+	return requiresReplacement("AWS::SNS::Topic", property)
+}
+
+// NameProperty names the property that sets a custom physical name.
+func (snsTopicProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::SNS::Topic"]
 }
 
 func (p snsTopicProvisioner) Delete(ctx context.Context, deleteID string, _ map[string]any) error {
@@ -220,13 +477,24 @@ func (p lambdaFunctionProvisioner) Create(ctx context.Context, req cfn.ResourceR
 
 	info, err := p.lambda.CreateFunction(ctx, cfg)
 	if err != nil {
-		return nil, err
+		return nil, nameTaken(name, err)
 	}
 
 	return &cfn.ProvisionedResource{
 		PhysicalID: info.Name,
 		Attributes: map[string]string{"Arn": info.ARN},
 	}, nil
+}
+
+// RequiresReplacement reports the properties that replace the resource. Other
+// changes are recorded without touching the backend.
+func (lambdaFunctionProvisioner) RequiresReplacement(property string) bool {
+	return requiresReplacement("AWS::Lambda::Function", property)
+}
+
+// NameProperty names the property that sets a custom physical name.
+func (lambdaFunctionProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::Lambda::Function"]
 }
 
 func (p lambdaFunctionProvisioner) Delete(ctx context.Context, physicalID string, _ map[string]any) error {
@@ -272,13 +540,24 @@ func (p iamRoleProvisioner) Create(ctx context.Context, req cfn.ResourceRequest)
 		MaxSessionDuration:  propInt(req.Properties, "MaxSessionDuration"),
 	})
 	if err != nil {
-		return nil, err
+		return nil, nameTaken(name, err)
 	}
 
 	return &cfn.ProvisionedResource{
 		PhysicalID: info.Name,
 		Attributes: map[string]string{"Arn": info.ARN, "RoleId": info.ID},
 	}, nil
+}
+
+// RequiresReplacement reports the properties that replace the resource. Other
+// changes are recorded without touching the backend.
+func (iamRoleProvisioner) RequiresReplacement(property string) bool {
+	return requiresReplacement("AWS::IAM::Role", property)
+}
+
+// NameProperty names the property that sets a custom physical name.
+func (iamRoleProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::IAM::Role"]
 }
 
 func (p iamRoleProvisioner) Delete(ctx context.Context, physicalID string, _ map[string]any) error {
@@ -299,7 +578,7 @@ func (p secretProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) 
 		KMSKeyID:    cfn.PropString(req.Properties, "KmsKeyId"),
 	}, []byte(cfn.PropString(req.Properties, "SecretString")))
 	if err != nil {
-		return nil, err
+		return nil, nameTaken(name, err)
 	}
 
 	// Secrets Manager Ref returns the secret ARN; the driver deletes by name.
@@ -308,6 +587,17 @@ func (p secretProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) 
 		DeleteID:   info.Name,
 		Attributes: map[string]string{"Arn": info.ResourceID, "Id": info.ResourceID},
 	}, nil
+}
+
+// RequiresReplacement reports the properties that replace the resource. Other
+// changes are recorded without touching the backend.
+func (secretProvisioner) RequiresReplacement(property string) bool {
+	return requiresReplacement("AWS::SecretsManager::Secret", property)
+}
+
+// NameProperty names the property that sets a custom physical name.
+func (secretProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::SecretsManager::Secret"]
 }
 
 func (p secretProvisioner) Delete(ctx context.Context, deleteID string, _ map[string]any) error {
@@ -336,7 +626,7 @@ func (p ssmParameterProvisioner) Create(ctx context.Context, req cfn.ResourceReq
 		Description: cfn.PropString(req.Properties, "Description"),
 		Tier:        cfn.PropString(req.Properties, "Tier"),
 	}); err != nil {
-		return nil, err
+		return nil, nameTaken(name, err)
 	}
 
 	return &cfn.ProvisionedResource{
@@ -347,6 +637,48 @@ func (p ssmParameterProvisioner) Create(ctx context.Context, req cfn.ResourceReq
 
 func (p ssmParameterProvisioner) Delete(ctx context.Context, physicalID string, _ map[string]any) error {
 	return p.ssm.DeleteParameter(ctx, physicalID)
+}
+
+// RequiresReplacement reports that only a new Name replaces a parameter.
+func (ssmParameterProvisioner) RequiresReplacement(property string) bool {
+	return requiresReplacement("AWS::SSM::Parameter", property)
+}
+
+// NameProperty names the property that sets a custom physical name.
+func (ssmParameterProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::SSM::Parameter"]
+}
+
+// Update overwrites the parameter with the new value, type, description and
+// tier. A dropped Description is cleared.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
+func (p ssmParameterProvisioner) Update(
+	ctx context.Context, physicalID string, _ map[string]any, req cfn.ResourceRequest,
+) (*cfn.ProvisionedResource, error) {
+	ptype := cfn.PropString(req.Properties, "Type")
+	if ptype == "" {
+		ptype = "String"
+	}
+
+	value := cfn.PropString(req.Properties, "Value")
+
+	if _, _, err := p.ssm.PutParameter(ctx, psdriver.PutConfig{
+		Name:           physicalID,
+		Value:          value,
+		Type:           ptype,
+		Description:    cfn.PropString(req.Properties, "Description"),
+		DescriptionSet: true,
+		Overwrite:      true,
+		Tier:           cfn.PropString(req.Properties, "Tier"),
+	}); err != nil {
+		return nil, err
+	}
+
+	return &cfn.ProvisionedResource{
+		PhysicalID: physicalID,
+		Attributes: map[string]string{"Type": ptype, "Value": value, "Arn": ssmParameterARN(&req, physicalID)},
+	}, nil
 }
 
 func ssmParameterARN(req *cfn.ResourceRequest, name string) string {
@@ -380,7 +712,9 @@ func propInt(props map[string]any, key string) int {
 		n, _ := v.Int64()
 		return int(n)
 	case string:
-		return 0
+		// CloudFormation accepts numbers written as strings, such as "60".
+		n, _ := strconv.Atoi(strings.TrimSpace(v))
+		return n
 	default:
 		return 0
 	}
@@ -391,7 +725,7 @@ func propBool(props map[string]any, key string) bool {
 	case bool:
 		return v
 	case string:
-		return v == "true"
+		return strings.EqualFold(v, "true")
 	default:
 		return false
 	}

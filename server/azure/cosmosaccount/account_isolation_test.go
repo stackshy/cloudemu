@@ -73,7 +73,7 @@ func newCosmosStack(t *testing.T) *cosmosStack {
 }
 
 // createAccountEndpoint provisions an account via ARM and returns the
-// documentEndpoint the control plane hands back — exactly what a real user feeds
+// documentEndpoint the control plane hands back: what a real user feeds
 // to azcosmos.NewClientWithKey.
 func (s *cosmosStack) createAccountEndpoint(t *testing.T, rg, name string) string {
 	t.Helper()
@@ -184,7 +184,7 @@ func TestSDKCosmosAccountEndpointResolvesAndIsolates(t *testing.T) {
 	require.NoError(t, json.Unmarshal(readA.Value, &gotA))
 	assert.Equal(t, "account-a", gotA["who"])
 
-	// N2: account B sees NONE of account A's appdb/users — the database and
+	// N2: account B sees NONE of account A's appdb/users: the database and
 	// container are absent in account B's namespace.
 	dbB, err := clientB.NewDatabase("appdb")
 	require.NoError(t, err)

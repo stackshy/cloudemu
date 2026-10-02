@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	stderrors "errors"
 	"fmt"
 	"maps"
 	"path"
@@ -27,7 +28,7 @@ const defaultRedisSSLPort = 6380
 // that reads them back (or an SDK caller dereferencing the pointer) sees the
 // same values it would against the real service rather than a null.
 const (
-	// defaultEnableNonSSLPort is the enableNonSslPort default (false — the
+	// defaultEnableNonSSLPort is the enableNonSslPort default (false: the
 	// non-SSL 6379 port is disabled unless explicitly enabled).
 	defaultEnableNonSSLPort = false
 	// defaultPublicNetworkAccess is the publicNetworkAccess default (Enabled).
@@ -81,7 +82,7 @@ func (m *Mock) emitMetric(cacheName string, metrics map[string]float64) {
 			Namespace:  "Microsoft.Cache/redis",
 			MetricName: name,
 			Value:      value,
-			Unit:       "None",
+			Unit:       "Count", // every metric here is a Count in Azure Monitor
 			Dimensions: map[string]string{"cacheName": cacheName},
 			Timestamp:  now,
 		})
@@ -197,6 +198,23 @@ func (m *Mock) DeleteCache(ctx context.Context, name string) error {
 	return nil
 }
 
+// PurgeResourceGroup deletes every cache recorded under the resource group,
+// tearing down any engine backing it. It backs the ARM resource-group delete
+// cascade. An unscoped cache is never selected.
+func (m *Mock) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	var errs []error
+
+	for _, name := range m.caches.Keys() {
+		if cd, ok := m.caches.Get(name); ok && cd.info.Scope.InResourceGroup(subscription, resourceGroup) {
+			if err := m.DeleteCache(ctx, name); err != nil && !errors.IsNotFound(err) {
+				errs = append(errs, err)
+			}
+		}
+	}
+
+	return stderrors.Join(errs...)
+}
+
 // GetCache retrieves information about an Azure Cache for Redis instance.
 func (m *Mock) GetCache(_ context.Context, name string) (*driver.CacheInfo, error) {
 	cd, ok := m.caches.Get(name)
@@ -224,7 +242,7 @@ func (m *Mock) ListCaches(_ context.Context, filter scope.Scope) ([]driver.Cache
 	return caches, nil
 }
 
-// UpdateCache replaces the mutable fields of an existing cache — ARM
+// UpdateCache replaces the mutable fields of an existing cache, using ARM
 // CreateOrUpdate-on-existing semantics (node type and tags come from the
 // request; identity, endpoint, and CreatedAt are preserved).
 func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.CacheInfo, error) {
@@ -245,7 +263,7 @@ func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 
 	// The ARM SKU is atomic: a request carries name+family+capacity together. A
 	// wire update records the family whenever it supplies a SKU, so treat family
-	// presence as "a SKU was supplied" and apply the capacity alongside it —
+	// presence as "a SKU was supplied" and apply the capacity alongside it,
 	// including capacity 0, so a scale down to the Basic/Standard C0 tier is not
 	// silently dropped. A family-less update (no SKU supplied) leaves both fields
 	// unchanged.

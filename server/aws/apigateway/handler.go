@@ -29,6 +29,9 @@ import (
 
 const (
 	controlPrefix    = "/restapis"
+	certsPrefix      = "/clientcertificates"
+	accountPath      = "/account"
+	tagsPrefix       = "/tags/"
 	userRequestMark  = "_user_request_"
 	executeAPIMarker = ".execute-api."
 	contentTypeJSON  = "application/json"
@@ -40,6 +43,7 @@ const (
 	subResources   = "resources"
 	subDeployments = "deployments"
 	subStages      = "stages"
+	subDocs        = "documentation"
 )
 
 // Control-plane path segment counts (after the /restapis prefix is stripped).
@@ -47,6 +51,7 @@ const (
 	segsAPI         = 1 // {id}
 	segsAPISub      = 2 // {id}/{resources|deployments|stages}
 	segsAPISubItem  = 3 // {id}/{resources|stages}/{item}
+	segsDocItem     = 4 // {id}/documentation/{parts|versions}/{item}
 	segsMethod      = 5 // {id}/resources/{rid}/methods/{httpMethod}
 	segsIntegration = 6 // {id}/resources/{rid}/methods/{httpMethod}/integration
 )
@@ -66,23 +71,46 @@ func New(d driver.APIGateway) *Handler {
 // an S3 bucket literally named "restapis" would be shadowed (documented, and not
 // a real bucket name).
 func (*Handler) Matches(r *http.Request) bool {
-	return strings.HasPrefix(r.URL.Path, controlPrefix) || strings.Contains(r.Host, executeAPIMarker)
+	p := r.URL.Path
+
+	return strings.HasPrefix(p, controlPrefix) || strings.Contains(r.Host, executeAPIMarker) ||
+		p == certsPrefix || strings.HasPrefix(p, certsPrefix+"/") || p == accountPath || ownsTagsPath(p)
 }
 
 // ServeHTTP dispatches to the data plane (execute-api host or a _user_request_
 // path) or the control plane.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.Contains(r.Host, executeAPIMarker) {
+	switch {
+	case isHostDataPlane(r):
 		h.serveHostDataPlane(w, r)
-		return
-	}
-
-	if strings.Contains(r.URL.Path, "/"+userRequestMark) {
+	case isPathDataPlane(r):
 		h.servePathDataPlane(w, r)
-		return
+	case r.URL.Path == accountPath:
+		h.serveAccount(w, r)
+	case r.URL.Path == certsPrefix || strings.HasPrefix(r.URL.Path, certsPrefix+"/"):
+		h.serveClientCertificates(w, r, strings.Trim(strings.TrimPrefix(r.URL.Path, certsPrefix), "/"))
+	case strings.HasPrefix(r.URL.Path, tagsPrefix):
+		h.serveTags(w, r, strings.TrimPrefix(r.URL.Path, tagsPrefix))
+	default:
+		h.serveControlPlane(w, r)
 	}
+}
 
-	h.serveControlPlane(w, r)
+// PublicRequest reports whether r is an API invocation (either data-plane
+// form), which real API Gateway accepts without SigV4 unless the method uses
+// AWS_IAM authorization. Control-plane requests always need SigV4.
+func (*Handler) PublicRequest(r *http.Request) bool {
+	return isHostDataPlane(r) || isPathDataPlane(r)
+}
+
+// isHostDataPlane reports a request addressed to an execute-api host.
+func isHostDataPlane(r *http.Request) bool {
+	return strings.Contains(r.Host, executeAPIMarker)
+}
+
+// isPathDataPlane reports a /restapis/{apiId}/{stage}/_user_request_/ invoke.
+func isPathDataPlane(r *http.Request) bool {
+	return strings.Contains(r.URL.Path, "/"+userRequestMark)
 }
 
 // serveControlPlane routes the restJson1 management API under /restapis.
@@ -103,6 +131,8 @@ func (h *Handler) serveControlPlane(w http.ResponseWriter, r *http.Request) {
 		h.serveAPISub(w, r, segs[0], segs[1])
 	case segsAPISubItem:
 		h.serveAPISubItem(w, r, segs)
+	case segsDocItem:
+		h.serveDocItem(w, r, segs)
 	case segsMethod:
 		h.serveMethod(w, r, segs)
 	case segsIntegration:
@@ -272,6 +302,8 @@ func (h *Handler) serveAPISubItem(w http.ResponseWriter, r *http.Request, segs [
 		h.serveDeploymentItem(w, r, id, item)
 	case subStages:
 		h.serveStageItem(w, r, id, item)
+	case subDocs:
+		h.serveDocCollection(w, r, id, item)
 	default:
 		writeError(w, http.StatusNotFound, "NotFoundException", "unsupported API Gateway path")
 	}
@@ -289,9 +321,11 @@ func (h *Handler) getResources(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
+	render := resourceRenderer(r)
+
 	out := listResourcesResponse{Item: make([]resourceResponse, 0, len(resources))}
 	for i := range resources {
-		out.Item = append(out.Item, toResourceResponse(&resources[i]))
+		out.Item = append(out.Item, render(&resources[i]))
 	}
 
 	writeJSON(w, http.StatusOK, out)
@@ -318,7 +352,7 @@ func (h *Handler) serveResourceItem(w http.ResponseWriter, r *http.Request, id, 
 			return
 		}
 
-		writeJSON(w, http.StatusOK, toResourceResponse(res))
+		writeJSON(w, http.StatusOK, resourceRenderer(r)(res))
 	case http.MethodPost:
 		var req createResourceRequest
 		if !decodeJSON(w, r, &req) {
@@ -472,14 +506,43 @@ func (h *Handler) getDeployments(w http.ResponseWriter, r *http.Request, id stri
 //
 //nolint:dupl // parallel item router for deployments vs stages; the shared serveItem shape is intentional
 func (h *Handler) serveDeploymentItem(w http.ResponseWriter, r *http.Request, id, deploymentID string) {
+	render := toDeploymentResponse
+	if r.Method == http.MethodGet && hasEmbed(r, "apisummary") {
+		render = toDeploymentSummaryResponse
+	}
+
 	serveItem(w, r,
 		func(ops []driver.PatchOperation) (*driver.Deployment, error) {
 			return h.ag.UpdateDeployment(r.Context(), id, deploymentID, ops)
 		},
 		func() (*driver.Deployment, error) { return h.ag.GetDeployment(r.Context(), id, deploymentID) },
 		func() error { return h.ag.DeleteDeployment(r.Context(), id, deploymentID) },
-		toDeploymentResponse,
+		render,
 	)
+}
+
+// resourceRenderer picks the resource rendering a GetResource(s) request asks
+// for: full methods under embed=methods, method names only otherwise.
+func resourceRenderer(r *http.Request) func(*driver.Resource) resourceResponse {
+	if hasEmbed(r, "methods") {
+		return toEmbeddedResourceResponse
+	}
+
+	return toResourceResponse
+}
+
+// hasEmbed reports whether the request's embed query parameter (repeated or
+// comma-separated) names want.
+func hasEmbed(r *http.Request, want string) bool {
+	for _, v := range r.URL.Query()["embed"] {
+		for _, e := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(e), want) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func (h *Handler) createDeployment(w http.ResponseWriter, r *http.Request, id string) {
@@ -494,7 +557,8 @@ func (h *Handler) createDeployment(w http.ResponseWriter, r *http.Request, id st
 	}
 
 	dep, err := h.ag.CreateDeployment(r.Context(), id, driver.CreateDeploymentInput{
-		StageName: req.StageName, Description: req.Description,
+		StageName: req.StageName, StageDescription: req.StageDescription,
+		Description: req.Description, Variables: req.Variables,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -518,6 +582,7 @@ func (h *Handler) createStage(w http.ResponseWriter, r *http.Request, id string)
 	st, err := h.ag.CreateStage(r.Context(), id, driver.CreateStageInput{
 		StageName: req.StageName, DeploymentID: req.DeploymentID,
 		Description: req.Description, Variables: req.Variables,
+		DocumentationVersion: req.DocumentationVersion,
 	})
 	if err != nil {
 		writeErr(w, err)

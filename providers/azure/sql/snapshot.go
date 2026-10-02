@@ -13,7 +13,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // sqlSnapshot is the full serialized state of the Azure SQL mock. Every store
 // holds a fully-exported rdsdriver value, so each round-trips through the
 // generic memstore helper keyed by its resource id (server name, "server/db",
-// snapshot id, …) — cross-references survive because the keys are preserved. The
+// snapshot id, …), cross-references survive because the keys are preserved. The
 // mutex and the wired options/monitoring are intentionally not serialized.
 type sqlSnapshot struct {
 	Clusters         json.RawMessage `json:"clusters,omitempty"`
@@ -28,9 +28,12 @@ type sqlSnapshot struct {
 	ManagedDatabases json.RawMessage `json:"managedDatabases,omitempty"`
 	Databases        json.RawMessage `json:"databases,omitempty"`
 	TDE              json.RawMessage `json:"tde,omitempty"`
+	ShortTermRet     json.RawMessage `json:"shortTermRetention,omitempty"`
+	LongTermRet      json.RawMessage `json:"longTermRetention,omitempty"`
+	ConnPolicies     json.RawMessage `json:"connectionPolicies,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // Azure SQL holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap sqlSnapshot
@@ -58,6 +61,9 @@ func (m *Mock) snapshotStores(snap *sqlSnapshot) error {
 		{&snap.ManagedDatabases, m.managedDatabases.Snapshot},
 		{&snap.Databases, m.databases.Snapshot},
 		{&snap.TDE, m.tde.Snapshot},
+		{&snap.ShortTermRet, m.str.Snapshot},
+		{&snap.LongTermRet, m.ltr.Snapshot},
+		{&snap.ConnPolicies, m.connPolicies.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -96,6 +102,9 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		{snap.ManagedDatabases, m.managedDatabases.LoadSnapshot},
 		{snap.Databases, m.databases.LoadSnapshot},
 		{snap.TDE, m.tde.LoadSnapshot},
+		{snap.ShortTermRet, m.str.LoadSnapshot},
+		{snap.LongTermRet, m.ltr.LoadSnapshot},
+		{snap.ConnPolicies, m.connPolicies.LoadSnapshot},
 	}
 
 	for _, l := range loads {

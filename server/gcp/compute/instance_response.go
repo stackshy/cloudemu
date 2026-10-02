@@ -16,7 +16,7 @@ const defaultCPUPlatform = "Intel Broadwell"
 // network tags, metadata, network self-link) and filling realistic defaults.
 // ctx/h are used to resolve each attached disk's CURRENT size from the disk
 // store (see resolveDisks), so a read reflects a disks.resize that happened
-// after the instance was created — matching real GCP, where instances.get's
+// after the instance was created, matching real GCP, where instances.get's
 // disks[].diskSizeGb is the disk's live size, not a snapshot from attach time.
 func (h *Handler) toInstanceResponse(ctx context.Context, inst *computedriver.Instance, project, host string) instanceResponse {
 	name := tagOr(inst.Tags, gcpNameTag, "")
@@ -69,7 +69,7 @@ func zoneLink(host, project, zone, resourceType, name string) string {
 // resolveDisks turns the stored inbound disk descriptors into the full GCP
 // attachedDisk read shape (resolved source self-link, diskSizeGb, type, mode).
 // diskSizeGb is refreshed from the backing Disk resource's CURRENT size when
-// one can be resolved (every wire-materialized disk has one — see
+// one can be resolved (every wire-materialized disk has one; see
 // materializeInsertDisks), so a disks.resize after instance creation is
 // reflected on the next instances.get rather than the stale insert-time value.
 func (h *Handler) resolveDisks(ctx context.Context, inst *computedriver.Instance, host, project, zone, instanceName string) []attachedDisk {

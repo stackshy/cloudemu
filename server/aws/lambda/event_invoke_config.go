@@ -11,7 +11,7 @@ import (
 
 // eventInvokeConfigPrefix is the Lambda asynchronous-invocation-config API
 // version prefix (PutFunctionEventInvokeConfig et al), a function sub-resource
-// (.../{name}/event-invoke-config) versioned under 2019-09-25 — its own prefix,
+// (.../{name}/event-invoke-config) versioned under 2019-09-25. It has its own prefix,
 // so it needs a Matches clause.
 const eventInvokeConfigPrefix = "/2019-09-25/functions"
 

@@ -141,8 +141,8 @@ func TestSDKAzureDNSEditApexSOA(t *testing.T) {
 }
 
 // TestSDKAzureDNSPatchSOATimingPreservesHost is the residue regression: a PATCH
-// (RecordSets.Update) that supplies ONLY a timing field on the apex SOA — with
-// host and email omitted — must keep the system-managed host and email stable
+// (RecordSets.Update) that supplies ONLY a timing field on the apex SOA, with
+// host and email omitted, must keep the system-managed host and email stable
 // (recordValues would otherwise yield ["",""] and wipe them) while applying the
 // new timing value.
 func TestSDKAzureDNSPatchSOATimingPreservesHost(t *testing.T) {

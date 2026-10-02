@@ -21,7 +21,7 @@ const (
 )
 
 // skuJSON mirrors the armredis SKU. Name is the tier (Basic/Standard/Premium),
-// Family is C (Basic/Standard) or P (Premium), and Capacity is the size unit —
+// Family is C (Basic/Standard) or P (Premium), and Capacity is the size unit;
 // all recorded on the driver so the SDK round-trips the exact SKU it sent.
 type skuJSON struct {
 	Name   string `json:"name,omitempty"`
@@ -46,7 +46,7 @@ type redisProperties struct {
 	ShardCount         int      `json:"shardCount,omitempty"`
 	ReplicasPerPrimary int      `json:"replicasPerPrimary,omitempty"`
 	// ReplicasPerMaster is the legacy alias for ReplicasPerPrimary. It is
-	// accepted on input (older SDKs still send it) but not emitted — the
+	// accepted on input (older SDKs still send it) but not emitted: the
 	// response carries the current replicasPerPrimary field.
 	ReplicasPerMaster int `json:"replicasPerMaster,omitempty"`
 
@@ -185,7 +185,7 @@ func toRedisJSON(rp *azurearm.ResourcePath, info *cachedriver.CacheInfo) redisJS
 
 // skuFromInfo builds the ARM SKU from the recorded driver fields. A wire
 // create/update records the SKU family the request supplied, so when a family
-// is present the recorded capacity is authoritative and round-trips verbatim —
+// is present the recorded capacity is authoritative and round-trips verbatim,
 // including capacity 0, the Basic/Standard C0 tier. Only a cache created
 // through the portable API records no SKU family; that case falls back to a
 // plausible C1 SKU so its Get still returns a well-formed sku.

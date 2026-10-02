@@ -533,7 +533,7 @@ func TestGCEInstanceListFilterLabelsAndUnknownField(t *testing.T) {
 }
 
 // TestGCEInstanceFingerprintPrecondition covers BUG1: setLabels/setMetadata/
-// setTags enforce the incoming fingerprint — a stale one is rejected 412
+// setTags enforce the incoming fingerprint: a stale one is rejected 412
 // conditionNotMet, the current one succeeds.
 func TestGCEInstanceFingerprintPrecondition(t *testing.T) {
 	client, _, ctx := newInstancesEnv(t)

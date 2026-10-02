@@ -76,7 +76,7 @@ type clusterPropertiesResponse struct {
 	MinimumTLSVersion string `json:"minimumTlsVersion,omitempty"`
 }
 
-// databaseRequest is the ARM database PUT/PATCH body — all writable fields live
+// databaseRequest is the ARM database PUT/PATCH body: all writable fields live
 // under properties.
 type databaseRequest struct {
 	Properties *databasePropertiesRequest `json:"properties,omitempty"`
@@ -135,7 +135,7 @@ type keysResponse struct {
 	SecondaryKey string `json:"secondaryKey"`
 }
 
-// clusterListResponse is the ARM cluster list envelope. nextLink is omitted — the
+// clusterListResponse is the ARM cluster list envelope. nextLink is omitted: the
 // emulator returns a single page.
 type clusterListResponse struct {
 	Value []clusterResponse `json:"value"`

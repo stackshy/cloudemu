@@ -110,7 +110,7 @@ func TestPager_NoSkipOnDeleteBeforeBoundary(t *testing.T) {
 
 	page2, _ := listConfigMapPage(t, base, 3, cont)
 
-	// Resume is anchored to cm-02, so page2 begins at cm-03 — no skip of cm-03
+	// Resume is anchored to cm-02, so page2 begins at cm-03: no skip of cm-03
 	// (the old offset bug) and no duplicate of cm-02.
 	if want := []string{"cm-03", "cm-04", "cm-05"}; !equalStrings(page2, want) {
 		t.Fatalf("page2 after delete-before-boundary: got %v, want %v", page2, want)

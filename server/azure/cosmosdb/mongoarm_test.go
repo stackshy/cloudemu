@@ -248,7 +248,7 @@ func TestSDKMongoUnshardedCollection(t *testing.T) {
 }
 
 // TestSDKMongoDatabaseNoChildLinks pins that a Mongo database response omits the
-// _colls/_users child links that a SQL database carries — the Cosmos
+// _colls/_users child links that a SQL database carries: the Cosmos
 // MongoDBDatabaseGetPropertiesResource has neither field (unlike its SQL
 // counterpart; see TestSDKSQLDatabaseChildLinks). Asserted on the raw JSON since
 // the SDK type has no fields to inspect.

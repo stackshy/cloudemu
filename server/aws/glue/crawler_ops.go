@@ -25,6 +25,12 @@ type crawlerJSON struct {
 	CreationTime                 *float64       `json:"CreationTime,omitempty"`
 	LastUpdated                  *float64       `json:"LastUpdated,omitempty"`
 	Version                      int64          `json:"Version,omitempty"`
+	LastCrawl                    *lastCrawlJSON `json:"LastCrawl,omitempty"`
+}
+
+// lastCrawlJSON is the status of the crawler's most recent run.
+type lastCrawlJSON struct {
+	Status string `json:"Status"`
 }
 
 func crawlerToWire(c *driver.Crawler) crawlerJSON {
@@ -33,13 +39,18 @@ func crawlerToWire(c *driver.Crawler) crawlerJSON {
 		sched = map[string]any{"ScheduleExpression": c.Schedule, "State": "SCHEDULED"}
 	}
 
+	var last *lastCrawlJSON
+	if c.LastCrawlStatus != "" {
+		last = &lastCrawlJSON{Status: c.LastCrawlStatus}
+	}
+
 	return crawlerJSON{
 		Name: c.Name, Role: c.Role, DatabaseName: c.DatabaseName, Description: c.Description,
 		Targets: c.Targets, Classifiers: c.Classifiers, TablePrefix: c.TablePrefix, State: c.State,
 		Schedule: sched, Configuration: c.Configuration, SchemaChangePolicy: c.SchemaChangePolicy,
 		RecrawlPolicy: c.RecrawlPolicy, LineageConfiguration: c.LineageConfiguration,
 		CrawlerSecurityConfiguration: c.SecurityConfiguration, CreationTime: epochOrNil(c.CreationTime),
-		LastUpdated: epochOrNil(c.LastUpdated), Version: c.Version,
+		LastUpdated: epochOrNil(c.LastUpdated), Version: c.Version, LastCrawl: last,
 	}
 }
 

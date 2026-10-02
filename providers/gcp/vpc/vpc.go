@@ -3,6 +3,7 @@ package vpc
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -62,7 +63,11 @@ type Mock struct {
 	eips           *memstore.Store[*eipData]
 	rtAssocs       *memstore.Store[*rtAssocData]
 	endpoints      *memstore.Store[*driver.VPCEndpoint]
-	opts           *config.Options
+	// addresses holds compute reserved addresses (driver.GCPAddressStore),
+	// keyed project/scope/name; addressIPSeq is the synthetic IP allocator.
+	addresses    *memstore.Store[*driver.GCPAddress]
+	addressIPSeq atomic.Uint32
+	opts         *config.Options
 }
 
 // New creates a new GCP VPC mock.
@@ -80,6 +85,7 @@ func New(opts *config.Options) *Mock {
 		eips:           memstore.New[*eipData](),
 		rtAssocs:       memstore.New[*rtAssocData](),
 		endpoints:      memstore.New[*driver.VPCEndpoint](),
+		addresses:      memstore.New[*driver.GCPAddress](),
 		opts:           opts,
 	}
 }
@@ -107,14 +113,14 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 }
 
 // DeleteVPC deletes the VPC network with the given ID. Real GCP refuses to
-// delete a network that still has child resources — subnetworks or firewall
-// rules — answering resourceInUseByAnotherResource; the children must be removed
+// delete a network that still has child resources (subnetworks or firewall
+// rules) answering resourceInUseByAnotherResource; the children must be removed
 // first. Enforcing this in the driver (not only in the wire handler) means the
 // typed Go API and the in-process library get the same protection an SDK/CLI
 // caller does, matching how the AWS VPC provider guards DeleteVPC.
 //
 // The dependency scan reads the subnets and firewall (security-group) stores
-// while the delete writes the networks store — independent memstores whose
+// while the delete writes the networks store: independent memstores whose
 // per-store locks cannot span all three, so a child inserted in the same instant
 // may slip past the check. Real GCP has the same eventual-consistency window;
 // the emulator does not model a cross-store lock, so the narrow gap is accepted.
@@ -134,7 +140,7 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 }
 
 // networkDependency reports the first child resource that blocks deleting the
-// network — a subnetwork or a firewall rule — or ("", false) when none remains.
+// network (a subnetwork or a firewall rule) or ("", false) when none remains.
 // Both persist their parent as the driver VPC id (CreateSubnet / CreateSecurity-
 // Group set VPCID), so a direct id match is sufficient.
 func (m *Mock) networkDependency(id string) (string, bool) {
@@ -302,6 +308,10 @@ func describeResources[T any, R any](store *memstore.Store[T], ids []string, toI
 
 // AddIngressRule adds an ingress rule to the specified firewall rule group.
 func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
+	if err := driver.ValidateSecurityRule(&rule); err != nil {
+		return err
+	}
+
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "firewall rule %q not found", groupID)
@@ -314,6 +324,10 @@ func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.Sec
 
 // AddEgressRule adds an egress rule to the specified firewall rule group.
 func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
+	if err := driver.ValidateSecurityRule(&rule); err != nil {
+		return err
+	}
+
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "firewall rule %q not found", groupID)

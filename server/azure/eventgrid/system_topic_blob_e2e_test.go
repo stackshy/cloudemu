@@ -2,7 +2,7 @@
 // system-topic path: a system topic and its event subscription are created over
 // the real armeventgrid ARM SDK, a blob is written over the real azblob SDK, and
 // the subscription's destination (WebHook / ServiceBusQueue) actually receives
-// the Microsoft.Storage.BlobCreated/BlobDeleted event — proving wire-created
+// the Microsoft.Storage.BlobCreated/BlobDeleted event, proving wire-created
 // system-topic subscriptions are bridged to the delivery path.
 package eventgrid_test
 
@@ -31,7 +31,7 @@ import (
 
 // blobSource is a Microsoft.Storage system-topic source whose leaf is the
 // emulator's fixed storage account name ("cloudemu"), which is the key the Blob
-// Storage producer stamps on the events it emits — so a subscription registered
+// Storage producer stamps on the events it emits, so a subscription registered
 // against this source's delivery bus receives them.
 const blobSource = "/subscriptions/" + testSub +
 	"/resourceGroups/" + testRG + "/providers/Microsoft.Storage/storageAccounts/cloudemu"
@@ -202,7 +202,7 @@ func (s *blobEGServer) createCustomWebhookSub(ctx context.Context, t *testing.T,
 // publishCustomEvent posts one EventGridEvent to a custom topic's data-plane
 // endpoint over HTTP, addressed by Host (matching how a real publisher reaches a
 // topic). Custom-topic events carry no Topic override, so they route to the
-// user-facing bus store — never the system delivery store.
+// user-facing bus store, never the system delivery store.
 func (s *blobEGServer) publishCustomEvent(ctx context.Context, t *testing.T, topic string) {
 	t.Helper()
 
@@ -492,7 +492,7 @@ func TestSDKSystemTopicBlobCollisionForward(t *testing.T) {
 		t.Fatalf("custom topic list count = %d, want 1", n)
 	}
 
-	// A blob write reaches the system subscriber only — never the custom one.
+	// A blob write reaches the system subscriber only, never the custom one.
 	s.uploadBlob(ctx, t, "images", "cat.png", []byte("hello"))
 
 	sysGot := eventuallyEvents(systemRC, 1)
@@ -504,7 +504,7 @@ func TestSDKSystemTopicBlobCollisionForward(t *testing.T) {
 		t.Fatalf("blob event leaked to the custom topic subscriber: %+v", got)
 	}
 
-	// A custom-topic publish reaches the custom subscriber only — never the
+	// A custom-topic publish reaches the custom subscriber only, never the
 	// system one.
 	s.publishCustomEvent(ctx, t, "cloudemu")
 
@@ -519,7 +519,7 @@ func TestSDKSystemTopicBlobCollisionForward(t *testing.T) {
 }
 
 // TestSDKSystemTopicBlobCollisionReverse is the reverse collision case: the
-// system topic exists first, then a user creates — and deletes — a custom topic
+// system topic exists first, then a user creates, and deletes, a custom topic
 // named "cloudemu". Neither operation disturbs system-topic Blob delivery.
 func TestSDKSystemTopicBlobCollisionReverse(t *testing.T) {
 	ctx := context.Background()

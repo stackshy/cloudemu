@@ -127,7 +127,7 @@ func TestMapAzureType(t *testing.T) {
 
 // TestParseKQL_ForceEmpty pins the AND-semantics fix: contradictory
 // chained where-clauses must surface ForceEmpty so the handler can return
-// zero rows. Real KQL would also yield zero — a resource cannot
+// zero rows. Real KQL would also yield zero: a resource cannot
 // simultaneously have two distinct types or two different tag values for
 // the same key.
 func TestParseKQL_ForceEmpty(t *testing.T) {

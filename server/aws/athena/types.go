@@ -105,9 +105,13 @@ type queryExecutionStatusJSON struct {
 }
 
 type queryExecutionStatisticsJSON struct {
-	EngineExecutionTimeInMillis int64 `json:"EngineExecutionTimeInMillis"`
-	DataScannedInBytes          int64 `json:"DataScannedInBytes"`
-	TotalExecutionTimeInMillis  int64 `json:"TotalExecutionTimeInMillis"`
+	EngineExecutionTimeInMillis      int64 `json:"EngineExecutionTimeInMillis"`
+	DataScannedInBytes               int64 `json:"DataScannedInBytes"`
+	TotalExecutionTimeInMillis       int64 `json:"TotalExecutionTimeInMillis"`
+	QueryQueueTimeInMillis           int64 `json:"QueryQueueTimeInMillis"`
+	QueryPlanningTimeInMillis        int64 `json:"QueryPlanningTimeInMillis"`
+	ServicePreProcessingTimeInMillis int64 `json:"ServicePreProcessingTimeInMillis"`
+	ServiceProcessingTimeInMillis    int64 `json:"ServiceProcessingTimeInMillis"`
 }
 
 type queryExecutionJSON struct {
@@ -128,14 +132,21 @@ type databaseJSON struct {
 	Parameters  map[string]string `json:"Parameters,omitempty"`
 }
 
+// dataCatalogJSON always carries Parameters, as {} when there are none.
 type dataCatalogJSON struct {
-	Name        string            `json:"Name"`
-	Description string            `json:"Description,omitempty"`
-	Type        string            `json:"Type,omitempty"`
-	Parameters  map[string]string `json:"Parameters,omitempty"`
+	Name           string            `json:"Name"`
+	Description    string            `json:"Description,omitempty"`
+	Type           string            `json:"Type,omitempty"`
+	Parameters     map[string]string `json:"Parameters"`
+	Status         string            `json:"Status,omitempty"`
+	ConnectionType string            `json:"ConnectionType,omitempty"`
+	Error          string            `json:"Error,omitempty"`
 }
 
 type dataCatalogSummaryJSON struct {
-	CatalogName string `json:"CatalogName,omitempty"`
-	Type        string `json:"Type,omitempty"`
+	CatalogName    string `json:"CatalogName,omitempty"`
+	Type           string `json:"Type,omitempty"`
+	Status         string `json:"Status,omitempty"`
+	ConnectionType string `json:"ConnectionType,omitempty"`
+	Error          string `json:"Error,omitempty"`
 }

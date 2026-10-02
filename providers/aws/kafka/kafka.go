@@ -10,7 +10,7 @@
 // secrets, policy, operations) live on clusterData under its lock so a mutation
 // is atomic with its reads.
 //
-// Clusters are provisioned immediately Active (deterministic — no wall-clock
+// Clusters are provisioned immediately Active (deterministic, no wall-clock
 // wait), with a server-minted ARN. Cluster names are unique per account
 // (ConflictException on a duplicate). All reads deep-copy maps, slices, and
 // json.RawMessage so a caller can never mutate stored state through a result.

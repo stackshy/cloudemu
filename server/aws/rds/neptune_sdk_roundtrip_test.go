@@ -15,7 +15,7 @@ import (
 )
 
 // Neptune ships its own aws-sdk-go-v2 client but speaks the exact same
-// query-protocol wire shape as RDS — only the Engine value ("neptune") and
+// query-protocol wire shape as RDS. Only the Engine value ("neptune") and
 // default port (8182) differ. The tests below drive the real Neptune client
 // against the cloudemu RDS handler to prove the shared surface holds.
 
@@ -125,7 +125,7 @@ func TestSDKNeptuneInstanceLifecycle(t *testing.T) {
 	client := newNeptuneSDKClient(t)
 	ctx := context.Background()
 
-	// Neptune instances must be created inside a cluster — the SDK enforces
+	// Neptune instances must be created inside a cluster; the SDK enforces
 	// DBClusterIdentifier as a required field for CreateDBInstance.
 	if _, err := client.CreateDBCluster(ctx, &awsneptune.CreateDBClusterInput{
 		DBClusterIdentifier: aws.String("nep-host"),

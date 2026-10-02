@@ -14,7 +14,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // btSnapshot is the full serialized state of the Bigtable Admin mock. Every store
 // holds a fully-exported btdriver value type keyed by its full GCP resource name
 // (projects/{p}/instances/{i}/...), so each round-trips through the generic
-// memstore helper — no promotion is needed. policies is a plain mu-guarded map of
+// memstore helper: no promotion is needed. policies is a plain mu-guarded map of
 // resource -> IAM Policy (a fully-exported type), and opSeq is the operation-name
 // counter, both captured beside the stores so restored operation ids do not
 // collide with fresh ones. The wired deps (m.opts) and the RWMutex are
@@ -31,7 +31,7 @@ type btSnapshot struct {
 }
 
 // Snapshot captures every instance and its children as JSON. includeAssets is
-// unused — Bigtable Admin is control-plane only and holds no bulk object bodies.
+// unused: Bigtable Admin is control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

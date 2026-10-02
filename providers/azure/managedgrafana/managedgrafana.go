@@ -1,5 +1,5 @@
 // Package managedgrafana provides an in-memory mock of Azure Managed Grafana
-// (Microsoft.Dashboard/grafana) — the ARM control plane only. It manages the
+// (Microsoft.Dashboard/grafana), the ARM control plane only. It manages the
 // grafana workspace lifecycle (create/update/get/delete/list); the data plane
 // (dashboards, data sources, the Grafana HTTP API served from the instance
 // endpoint) is out of scope.
@@ -16,7 +16,7 @@
 //   - identity.principalId / identity.tenantId for a system-assigned identity.
 //
 // Every computed field is derived deterministically from the resource identity,
-// so the same resource always reports the same values — across gets, patches and
+// so the same resource always reports the same values, across gets, patches and
 // a snapshot/restore.
 package managedgrafana
 
@@ -350,7 +350,7 @@ func endpointFor(name, location string) string {
 
 // regionCode normalizes an ARM location into the host label real Azure uses in
 // the endpoint (lowercased, whitespace removed). The exact value only has to be
-// stable — Terraform reads the endpoint back verbatim.
+// stable: Terraform reads the endpoint back verbatim.
 func regionCode(location string) string {
 	if location == "" {
 		return "global"

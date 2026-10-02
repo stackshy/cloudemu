@@ -1,6 +1,7 @@
 package elasticache
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 	"strconv"
@@ -13,7 +14,7 @@ import (
 // formTrue is the query-protocol encoding of a boolean-true flag.
 const formTrue = "true"
 
-// nodeGroupMemberXML mirrors AWS's NodeGroupMember — the per-node membership
+// nodeGroupMemberXML mirrors AWS's NodeGroupMember, the per-node membership
 // record a caller reads to enumerate the primary and replicas of a shard.
 type nodeGroupMemberXML struct {
 	CacheClusterID string `xml:"CacheClusterId"`
@@ -103,7 +104,7 @@ func (h *Handler) createReplicationGroup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	nodes, err := parseNodeCount("NumCacheClusters", r.Form.Get("NumCacheClusters"))
+	nodes, err := parsePositiveCount("NumCacheClusters", r.Form.Get("NumCacheClusters"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -118,6 +119,7 @@ func (h *Handler) createReplicationGroup(w http.ResponseWriter, r *http.Request)
 		NumCacheNodes:            nodes,
 		SubnetGroupName:          r.Form.Get("CacheSubnetGroupName"),
 		SecurityGroupIDs:         awsquery.ListStrings(r.Form, "SecurityGroupIds.SecurityGroupId"),
+		ParameterGroupName:       r.Form.Get("CacheParameterGroupName"),
 		AutomaticFailoverEnabled: r.Form.Get("AutomaticFailoverEnabled") == formTrue,
 		SnapshotName:             r.Form.Get("SnapshotName"),
 		SnapshotArns:             awsquery.ListStrings(r.Form, "SnapshotArns.SnapshotArn"),
@@ -165,6 +167,29 @@ func (h *Handler) describeReplicationGroups(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// rgParameterGroupModifier is the AWS-only call that changes a replication
+// group's parameter group. The portable driver doesn't carry it.
+type rgParameterGroupModifier interface {
+	ModifyReplicationGroupParameterGroup(ctx context.Context, id, name string) (*cachedriver.ReplicationGroup, error)
+}
+
+// modifyRGParameterGroup applies a CacheParameterGroupName change. It writes
+// the error and returns false when the change fails.
+func (h *Handler) modifyRGParameterGroup(w http.ResponseWriter, r *http.Request, id, name string) bool {
+	mod, ok := h.cache.(rgParameterGroupModifier)
+	if !ok {
+		writeUnsupported(w, "replication group parameter groups")
+		return false
+	}
+
+	if _, err := mod.ModifyReplicationGroupParameterGroup(r.Context(), id, name); err != nil {
+		writeErr(w, err)
+		return false
+	}
+
+	return true
+}
+
 func (h *Handler) modifyReplicationGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.replicationGroups()
 	if !ok {
@@ -172,13 +197,21 @@ func (h *Handler) modifyReplicationGroup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	nodes, err := parseNodeCount("NumCacheClusters", r.Form.Get("NumCacheClusters"))
+	nodes, err := parsePositiveCount("NumCacheClusters", r.Form.Get("NumCacheClusters"))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	rg, err := store.ModifyReplicationGroup(r.Context(), r.Form.Get("ReplicationGroupId"), nodes)
+	id := r.Form.Get("ReplicationGroupId")
+
+	if pg := r.Form.Get("CacheParameterGroupName"); pg != "" {
+		if !h.modifyRGParameterGroup(w, r, id, pg) {
+			return
+		}
+	}
+
+	rg, err := store.ModifyReplicationGroup(r.Context(), id, nodes)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -192,7 +225,7 @@ func (h *Handler) modifyReplicationGroup(w http.ResponseWriter, r *http.Request)
 }
 
 // applyReplicaCount is the shared core of Increase/DecreaseReplicaCount. Both
-// carry NewReplicaCount — the desired number of read replicas per node group.
+// carry NewReplicaCount, the desired number of read replicas per node group.
 // The emulator models a single (cluster-mode-disabled) node group, so the total
 // member-cluster count is the primary plus NewReplicaCount. This is the path the
 // Terraform AWS provider uses to scale a replication group's num_cache_clusters
@@ -256,7 +289,7 @@ func (h *Handler) decreaseReplicaCount(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteReplicationGroup echoes the group back in the response, as real
-// ElastiCache does — the delete is asynchronous there and the caller is handed
+// ElastiCache does. The delete is asynchronous there and the caller is handed
 // the record it just asked to remove.
 func (h *Handler) deleteReplicationGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.replicationGroups()
@@ -313,6 +346,21 @@ func parseNodeCount(field, raw string) (int, error) {
 	return n, nil
 }
 
+// parsePositiveCount is parseNodeCount for fields that must be at least 1 when
+// sent. An explicit 0 is an error, not a request for the default.
+func parsePositiveCount(field, raw string) (int, error) {
+	n, err := parseNodeCount(field, raw)
+	if err != nil {
+		return 0, err
+	}
+
+	if raw != "" && n < 1 {
+		return 0, cerrors.Newf(cerrors.InvalidArgument, "%s must be at least 1, got %d", field, n)
+	}
+
+	return n, nil
+}
+
 func toReplicationGroupXML(rg *cachedriver.ReplicationGroup) replicationGroupXML {
 	x := replicationGroupXML{
 		ReplicationGroupID: rg.ID,
@@ -324,7 +372,7 @@ func toReplicationGroupXML(rg *cachedriver.ReplicationGroup) replicationGroupXML
 		ARN:                rg.ARN,
 	}
 
-	// The primary endpoint is how a caller reaches the cache at all — it reads
+	// The primary endpoint is how a caller reaches the cache at all. It reads
 	// NodeGroups[0].PrimaryEndpoint.Address to build the connection string, so
 	// the node group has to be present even for a single-node group. The reader
 	// endpoint and per-node membership let clients scale reads and enumerate the
@@ -348,7 +396,7 @@ func toReplicationGroupXML(rg *cachedriver.ReplicationGroup) replicationGroupXML
 }
 
 // nodeGroupMembers builds the per-node membership list from the group's member
-// cluster ids: the first is the primary, the rest are replicas.
+// cluster ids: the first is the primary and the rest are replicas.
 func nodeGroupMembers(members []string) []nodeGroupMemberXML {
 	out := make([]nodeGroupMemberXML, 0, len(members))
 

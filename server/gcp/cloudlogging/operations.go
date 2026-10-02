@@ -101,7 +101,7 @@ func mergeLabels(base, override map[string]string) map[string]string {
 }
 
 // ensureLog creates the log group and its default stream if they do not already
-// exist. Both AlreadyExists results are benign — a log accreting more entries.
+// exist. Both AlreadyExists results are benign, a log accreting more entries.
 func (h *Handler) ensureLog(ctx context.Context, logID string) error {
 	if _, err := h.logs.CreateLogGroup(ctx, logdriver.LogGroupConfig{Name: logID}); err != nil && !cerrors.IsAlreadyExists(err) {
 		return err
@@ -147,7 +147,7 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cloud Logging orders by timestamp — ascending by default, descending for
+	// Cloud Logging orders by timestamp: ascending by default, descending for
 	// "timestamp desc". Sort by the entry timestamp rather than assuming the
 	// driver's insertion order matches (out-of-order writes must still sort).
 	desc := strings.Contains(strings.ToLower(req.OrderBy), "desc")

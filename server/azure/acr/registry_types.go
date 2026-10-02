@@ -13,6 +13,9 @@ const (
 	registryTypeFull       = "Microsoft.ContainerRegistry/registries"
 	webhookTypeFull        = "Microsoft.ContainerRegistry/registries/webhooks"
 	replicationTypeFull    = "Microsoft.ContainerRegistry/registries/replications"
+
+	// replicationMaxDepth is the deepest replication route: replications/{name}.
+	replicationMaxDepth = 3
 )
 
 // armRegistry mirrors armcontainerregistry.Registry.
@@ -101,7 +104,7 @@ type armRegistryUsage struct {
 
 // armWebhook mirrors armcontainerregistry.Webhook. Properties on create carry
 // serviceUri and customHeaders (WebhookPropertiesCreateParameters); the plain
-// GET response omits them (WebhookProperties) — they are exposed only via
+// GET response omits them (WebhookProperties); they are exposed only via
 // getCallbackConfig. toARMWebhook builds the read shape (omitting them) and
 // toARMWebhookWithCallback the create/update shape (including them).
 type armWebhook struct {

@@ -63,13 +63,23 @@ func (m *Mock) emitMetric(logGroupName string, metrics map[string]float64) {
 			Namespace:  "Microsoft.OperationalInsights/workspaces",
 			MetricName: name,
 			Value:      value,
-			Unit:       "None",
+			Unit:       metricUnit(name),
 			Dimensions: map[string]string{"logGroupName": logGroupName},
 			Timestamp:  now,
 		})
 	}
 
 	_ = m.monitoring.PutMetricData(context.Background(), data)
+}
+
+// metricUnit is the Azure Monitor unit of a workspace metric. IngestedBytes is
+// Bytes. IngestedEvents is a Count.
+func metricUnit(name string) string {
+	if name == "IngestedBytes" {
+		return "Bytes"
+	}
+
+	return "Count"
 }
 
 // New creates a new Log Analytics mock with the given configuration options.
@@ -580,7 +590,7 @@ func (m *Mock) DescribeSubscriptionFilters(_ context.Context, logGroup string) (
 	return results, nil
 }
 
-// UpdateLogGroup replaces the mutable fields of an existing log group —
+// UpdateLogGroup replaces the mutable fields of an existing log group, using
 // ARM CreateOrUpdate-on-existing semantics (retention and tags come from
 // the request; identity and CreatedAt are preserved).
 func (m *Mock) UpdateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*driver.LogGroupInfo, error) {

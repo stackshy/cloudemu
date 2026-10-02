@@ -430,7 +430,7 @@ func TestEC2FullInstanceLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	id := aws.ToString(run.Instances[0].InstanceId)
 
-	// Describe — should show running.
+	// Describe: should show running.
 	desc, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		InstanceIds: []string{id},
 	})
@@ -629,7 +629,7 @@ func TestEC2DescribeInstancesFilterMultipleValues(t *testing.T) {
 	_, err = client.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{stopID}})
 	require.NoError(t, err)
 
-	// Filter state in [running, pending] — should find the second one.
+	// Filter state in [running, pending]: should find the second one.
 	out, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{{
 			Name:   aws.String("instance-state-name"),
@@ -652,7 +652,7 @@ func TestEC2DescribeInstancesFilterMultipleValues(t *testing.T) {
 
 func TestEC2DescribeInstancesMultipleFiltersAnded(t *testing.T) {
 	// All filters must match (AND). Launch with tag Role=api and filter on
-	// both instance-type and tag:Role — should only match our instance.
+	// both instance-type and tag:Role: should only match our instance.
 	client := newEC2Client(t)
 	ctx := context.Background()
 
@@ -868,7 +868,7 @@ func TestEC2DoesNotStealDynamoDBRequests(t *testing.T) {
 }
 
 func TestEC2AndS3AndDDBInterleaved(t *testing.T) {
-	// Drive all three SDK clients in a single sequence on one server —
+	// Drive all three SDK clients in a single sequence on one server: a
 	// realistic multi-service workflow.
 	ec2c, s3c, ddbc := newMultiClient(t)
 	ctx := context.Background()
@@ -1023,7 +1023,7 @@ func collectIDs(out *ec2.DescribeInstancesOutput) []string {
 	return ids
 }
 
-// Phase 2 — VPC, Subnet, Security Group, Internet Gateway, Route Table
+// Phase 2: VPC, Subnet, Security Group, Internet Gateway, Route Table
 func TestEC2CreateAndDescribeVpc(t *testing.T) {
 	client := newEC2Client(t)
 	ctx := context.Background()
@@ -2186,7 +2186,7 @@ func TestCloudWatchMetricsFlow(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	// Launch an EC2 instance — this auto-emits 5 metrics via the provider.
+	// Launch an EC2 instance: this auto-emits 5 metrics via the provider.
 	run, err := ec2c.RunInstances(ctx, &ec2.RunInstancesInput{
 		ImageId: aws.String("ami-cw"), InstanceType: ec2types.InstanceTypeT2Micro,
 		MinCount: aws.Int32(1), MaxCount: aws.Int32(1),
@@ -2320,7 +2320,7 @@ func TestEC2DescribeInstancesManagedResourceVisibility(t *testing.T) {
 	provider := cloudemu.NewAWS()
 
 	// Seed a managed instance (with the system launch tag) and a plain one,
-	// then hide managed resources — all on the provider before the SDK client
+	// then hide managed resources, all on the provider before the SDK client
 	// ever makes a request.
 	managed, err := provider.EC2.RunInstances(ctx, computedriver.InstanceConfig{
 		ImageID:      "ami-managed",
@@ -2393,7 +2393,7 @@ func TestEC2DescribeInstancesManagedResourceVisibility(t *testing.T) {
 // TestEC2DescribeInstancesHiddenExplicitIDNotFound verifies that naming a
 // hidden managed instance by explicit id (without IncludeManagedResources)
 // returns the real EC2 InvalidInstanceID.NotFound error over the SDK, rather
-// than an empty result — matching how AWS reports an id it won't reveal.
+// than an empty result, matching how AWS reports an id it won't reveal.
 func TestEC2DescribeInstancesHiddenExplicitIDNotFound(t *testing.T) {
 	ctx := context.Background()
 	provider := cloudemu.NewAWS()

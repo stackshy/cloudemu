@@ -1,10 +1,10 @@
 # Contributing to CloudEmu
 
-Thank you for your interest in contributing to CloudEmu! This guide will help you get started.
+Thanks for helping out. This page covers the dev setup and how changes get merged.
 
-## Getting Started
+## Getting started
 
-1. Fork the repository
+1. Fork the repository.
 2. Clone your fork:
    ```bash
    git clone https://github.com/<your-username>/cloudemu.git
@@ -16,9 +16,9 @@ Thank you for your interest in contributing to CloudEmu! This guide will help yo
    git checkout -b feature/your-feature-name
    ```
 
-## Development Setup
+## Development setup
 
-**Requirements:**
+Requirements:
 - Go 1.25.0+
 - golangci-lint v2
 
@@ -28,81 +28,81 @@ go test ./...      # run all tests
 go vet ./...       # static analysis
 ```
 
-## Code Standards
+## Code standards
 
-- **Max line length:** 140 characters
-- **Max cyclomatic complexity:** 10
-- **Max function length:** 100 lines / 50 statements
-- **No magic numbers** — use named constants
-- **Import ordering:** stdlib, third-party, local module (enforced by `gci`)
-- **Thread safety:** all mock implementations must use `sync.RWMutex`
+- Max line length: 140 characters
+- Max cyclomatic complexity: 10
+- Max function length: 100 lines / 50 statements
+- No magic numbers. Use named constants.
+- Import order: stdlib, third-party, local module (enforced by `gci`)
+- Thread safety: all mock implementations must use `sync.RWMutex`
 
 ### Linting
 
-Run the linter before submitting:
+Run the linter before you open a PR:
 
 ```bash
 golangci-lint run --timeout=9m ./...
 ```
 
-Fix all issues. If a `//nolint` directive is needed, always include an explanation.
+Fix every issue. If you need a `//nolint` directive, add a comment explaining why.
 
-## Making Changes
+## Making changes
 
-### Adding a New Feature to an Existing Service
+### Adding a feature to an existing service
 
-1. Add types and methods to the driver interface (`<service>/driver/driver.go`)
-2. Implement in **all 3 providers** (AWS, Azure, GCP)
-3. Wire through the portable API layer (`<service>/<service>.go`)
-4. Add integration tests to `cloudemu_test.go`
-5. Add unit tests to each provider test file
-6. Run linter and full test suite
+1. Add types and methods to the driver interface (`services/<service>/driver/driver.go`).
+2. Implement them in all 3 providers (AWS, Azure, GCP).
+3. Wire them through the portable API layer (`services/<service>/<service>.go`).
+4. Add integration tests to `cloudemu_test.go`.
+5. Add unit tests to each provider's test file.
+6. Run the linter and the full test suite.
 
-### Adding a New Service
+### Adding a new service
 
-1. Create driver interface in `<service>/driver/driver.go`
-2. Create provider implementations in `providers/{aws,azure,gcp}/<service>/`
-3. Add field to each Provider struct
-4. Initialize in each `New()` factory
-5. Add portable API wrapper
-6. Add tests
+1. Create the driver interface in `services/<service>/driver/driver.go`.
+2. Create provider implementations in `providers/{aws,azure,gcp}/<service>/`.
+3. Add a field to each Provider struct.
+4. Initialize it in each `New()` factory.
+5. Add the portable API wrapper.
+6. Add tests.
 
-### Important Rules
+### Rules
 
-- All 3 providers (AWS, Azure, GCP) must implement the same behaviors
-- Use `cerrors.New()` / `cerrors.Newf()` for error codes
-- Use `config.FakeClock` for deterministic time in tests
-- Use `memstore.Store[V]` for in-memory storage
-- Use `idgen` for cloud-native ID generation
+- All 3 providers (AWS, Azure, GCP) must implement the same behavior.
+- Use `cerrors.New()` / `cerrors.Newf()` for error codes.
+- Use `config.FakeClock` for deterministic time in tests.
+- Use `memstore.Store[V]` for in-memory storage.
+- Use `idgen` for cloud-native IDs.
 
-## Submitting Changes
+## Submitting changes
 
-1. Ensure all tests pass: `go test ./...`
-2. Ensure linter passes: `golangci-lint run --timeout=9m ./...`
-3. Push your branch and create a PR against `development`
-4. Include a summary of what changed and why in the PR description
+1. Make sure the tests pass: `go test ./...`
+2. Make sure the linter passes: `golangci-lint run --timeout=9m ./...`
+3. Push your branch and open a PR against `development`.
+4. In the PR description, say what changed and why.
 
-## Reporting Issues
+## Reporting issues
 
-- Use GitHub Issues to report bugs or request features
-- Include steps to reproduce for bug reports
-- Tag issues with appropriate labels (aws, azure, gcp, enhancement, bug)
+- Use GitHub Issues for bugs and feature requests.
+- For bugs, include steps to reproduce.
+- Add the labels that apply (aws, azure, gcp, enhancement, bug).
 
 ## Releases (maintainers)
 
-Pushing a `v*` tag triggers `.github/workflows/release.yml`, which runs
-GoReleaser to build cross-platform binaries, publish a GitHub Release with
-`checksums.txt`, and push a Homebrew cask to `github.com/stackshy/homebrew-tap`
-(so users can `brew install stackshy/tap/cloudemu`).
+Pushing a `v*` tag triggers `.github/workflows/release.yml`. It runs
+GoReleaser, which builds cross-platform binaries, publishes a GitHub Release with
+`checksums.txt`, and pushes a Homebrew cask to `github.com/stackshy/homebrew-tap`
+(this is what makes `brew install stackshy/tap/cloudemu` work).
 
-One-time prerequisites for the Homebrew push:
+One-time setup for the Homebrew push:
 
 1. The public tap repo `github.com/stackshy/homebrew-tap` must exist.
-2. Add a repository secret named `HOMEBREW_TAP_TOKEN` — a Personal Access Token
-   with **write** access to the tap repo. GoReleaser uses it to commit the cask.
-   Without it, the release still publishes; only the Homebrew push is skipped.
+2. Add a repository secret named `HOMEBREW_TAP_TOKEN`: a Personal Access Token
+   with write access to the tap repo. GoReleaser uses it to commit the cask.
+   Without it, the release still publishes and only the Homebrew push is skipped.
 
-Validate config changes locally before tagging:
+Check config changes locally before tagging:
 
 ```sh
 go run github.com/goreleaser/goreleaser/v2@latest check

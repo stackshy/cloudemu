@@ -135,7 +135,7 @@ func TestLineItems_CommitmentCoversSpend(t *testing.T) {
 // old whole-line-first-fit logic got wrong: two identical priced lines and a
 // commitment budget that lands between one and two of them. The boundary line
 // must SPLIT, and Coverage (which reads the tags) must agree with the
-// continuous dollar coverage — the two algorithms can no longer diverge.
+// continuous dollar coverage: the two algorithms can no longer diverge.
 func TestLineItems_FractionalCoverageDivergenceCase(t *testing.T) {
 	start := day(2026, time.January, 1)
 	end := start.Add(24 * time.Hour)
@@ -154,7 +154,7 @@ func TestLineItems_FractionalCoverageDivergenceCase(t *testing.T) {
 	require.NoError(t, err)
 
 	// vm-a: one covered line. vm-b: split into covered + on-demand. Old logic
-	// would have left vm-b entirely on-demand (2 lines) — this asserts 3.
+	// would have left vm-b entirely on-demand (2 lines); this asserts 3.
 	require.Len(t, lines, 3)
 
 	assert.Equal(t, "vm-a", lines[0].ID)

@@ -135,10 +135,15 @@ func (h *Handler) describeExecution(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 
+		redriveCount := exec.RedriveCount
+		redriveStatus, reason := sfndriver.ExecutionRedriveStatus(exec.Status)
+
 		return describeExecutionResponse{
 			ExecutionArn: exec.ARN, StateMachineArn: exec.StateMachineArn, Name: exec.Name,
 			Status: exec.Status, StartDate: epoch(exec.StartDate), StopDate: epoch(exec.StopDate),
 			Input: exec.Input, Output: exec.Output, Error: exec.Error, Cause: exec.Cause,
+			RedriveCount: &redriveCount, RedriveDate: epoch(exec.RedriveDate),
+			RedriveStatus: redriveStatus, RedriveStatusReason: reason,
 		}, nil
 	})
 }

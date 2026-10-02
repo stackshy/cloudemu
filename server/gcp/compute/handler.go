@@ -5,17 +5,17 @@
 //
 // Supported operations (instance lifecycle parity with AWS EC2):
 //
-//	POST   /compute/v1/projects/{p}/zones/{z}/instances              — insert
-//	GET    /compute/v1/projects/{p}/zones/{z}/instances/{name}       — get
-//	GET    /compute/v1/projects/{p}/zones/{z}/instances              — list
-//	DELETE /compute/v1/projects/{p}/zones/{z}/instances/{name}       — delete
-//	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/start — start
-//	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/stop  — stop
-//	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/reset — reset
-//	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/{verb} — setLabels/setMetadata/setTags/
+//	POST   /compute/v1/projects/{p}/zones/{z}/instances              : insert
+//	GET    /compute/v1/projects/{p}/zones/{z}/instances/{name}       : get
+//	GET    /compute/v1/projects/{p}/zones/{z}/instances              : list
+//	DELETE /compute/v1/projects/{p}/zones/{z}/instances/{name}       : delete
+//	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/start : start
+//	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/stop  : stop
+//	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/reset : reset
+//	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/{verb} : setLabels/setMetadata/setTags/
 //	  setMachineType/attachDisk/detachDisk/addAccessConfig/deleteAccessConfig/setDeletionProtection
-//	GET    /compute/v1/projects/{p}/aggregated/instances             — aggregatedList (grouped by zone)
-//	GET    /compute/v1/projects/{p}/zones/{z}/operations/{name}      — get operation (always DONE)
+//	GET    /compute/v1/projects/{p}/aggregated/instances             : aggregatedList (grouped by zone)
+//	GET    /compute/v1/projects/{p}/zones/{z}/operations/{name}      : get operation (always DONE)
 package compute
 
 import (
@@ -91,7 +91,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	// A bare zone/region path (.../zones/{z} or .../regions/{r}, no resource
-	// type) is the zones.get / regions.get endpoint — Terraform resolves the
+	// type) is the zones.get / regions.get endpoint. Terraform resolves the
 	// zone via zones.get before creating an instance.
 	if isScopeResource(&rp) {
 		return true
@@ -400,7 +400,7 @@ func (h *Handler) dispatchInstanceMutationVerb(w http.ResponseWriter, r *http.Re
 // support `gcloud compute instances stop/start` (and every other mutation)
 // reports a failure even though the state changed. An operation name that was
 // never minted (a bogus poll, `gcloud compute operations describe <bogus>`) is
-// 404, matching real GCP, rather than a fabricated DONE — provided a shared
+// 404, matching real GCP, rather than a fabricated DONE, provided a shared
 // registry is wired (a nil registry keeps the legacy allow-all).
 //
 //nolint:gocritic // rp is a request-scoped value

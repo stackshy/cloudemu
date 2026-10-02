@@ -16,9 +16,9 @@ import (
 // Update issues an HTTP PATCH, which the handler used to reject with 405, and
 // must apply supplied properties while preserving omitted ones) and the
 // tags-replace fix (real ARM resource-level PATCH SETS the tag collection
-// wholesale when the request carries a tags key — the same convention already
+// wholesale when the request carries a tags key, the same convention already
 // fixed for compute/network/loadbalancer Update and UpdateTags operations
-// elsewhere in this codebase — so a patch naming only "env" must drop the
+// elsewhere in this codebase, so a patch naming only "env" must drop the
 // pre-existing "team" tag, not merge alongside it).
 func TestSDKMetricAlertPatchPreservesPropertiesReplacesTags(t *testing.T) {
 	client := newInsightsServer(t).metricAlerts(t)
@@ -34,7 +34,7 @@ func TestSDKMetricAlertPatchPreservesPropertiesReplacesTags(t *testing.T) {
 
 	// PATCH severity and a tag set naming only "env"; description, scopes and
 	// criteria (properties the patch omits) must survive, but the tag set must
-	// become exactly what the patch supplied — "team" must NOT survive.
+	// become exactly what the patch supplied: "team" must NOT survive.
 	patched, err := client.Update(ctx, "rg-1", "cpu", armmonitor.MetricAlertResourcePatch{
 		Tags:       map[string]*string{"env": to.Ptr("staging")},
 		Properties: &armmonitor.MetricAlertPropertiesPatch{Severity: to.Ptr[int32](1)},

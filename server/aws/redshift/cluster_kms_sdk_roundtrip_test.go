@@ -9,7 +9,7 @@ import (
 )
 
 // TestSDKRedshiftEncryptedClusterKmsKeyId proves an encrypted cluster round-trips
-// its KmsKeyId on create and DescribeClusters — without it a Terraform
+// its KmsKeyId on create and DescribeClusters. Without it a Terraform
 // aws_redshift_cluster.kms_key_id reads back empty and drifts.
 func TestSDKRedshiftEncryptedClusterKmsKeyId(t *testing.T) {
 	client := newSDKClient(t)

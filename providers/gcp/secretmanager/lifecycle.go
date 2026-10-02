@@ -30,7 +30,7 @@ func findVersion(sd *secretData, versionID string) (*driver.SecretVersion, bool)
 }
 
 // mutateVersion loads a live secret, locates a version, checks its etag
-// precondition, and applies fn to it — all under the secret's write lock, so
+// precondition, and applies fn to it, all under the secret's write lock, so
 // the etag comparison and the mutation happen in one atomic step (a separate
 // check-then-write pair would let two concurrent callers starting from the
 // same etag both pass the check before either wrote). It centralizes the

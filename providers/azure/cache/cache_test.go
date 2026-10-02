@@ -502,7 +502,7 @@ func TestCreateCacheAppliesAzureDefaults(t *testing.T) {
 	ctx := context.Background()
 
 	// A create that omits enableNonSslPort and publicNetworkAccess must persist
-	// the Azure schema defaults (false / "Enabled"), not leave them unset — real
+	// the Azure schema defaults (false / "Enabled"), not leave them unset: real
 	// Azure returns them on every cache.
 	info, err := m.CreateCache(ctx, driver.CacheConfig{Name: "defaults"})
 	require.NoError(t, err)

@@ -10,8 +10,8 @@
 // Location routes by HTTP verb + path under versioned roots (POST
 // /maps/v0/maps, GET /maps/v0/maps/{MapName}, POST /places/v0/indexes,
 // POST /geofencing/v0/collections, POST /tracking/v0/trackers, …); there is no
-// X-Amz-Target header. Matches claims those versioned roots — which are
-// distinctive to Location — and the shared /tags/{ResourceArn} path only when
+// X-Amz-Target header. Matches claims those versioned roots (distinctive to
+// Location) and the shared /tags/{ResourceArn} path only when
 // the ARN is a Location (:geo:) ARN, so it runs before the S3 catch-all and
 // never shadows another service's tag operations.
 //

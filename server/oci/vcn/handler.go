@@ -5,13 +5,13 @@
 // The /20160918 prefix is the Core Services API version, shared with Compute
 // and Block Volume, so Matches claims only the networking collections:
 //
-//	POST/GET             /20160918/vcns                    — create, list
-//	GET/PUT/DELETE       /20160918/vcns/{id}               — get, update, delete
+//	POST/GET             /20160918/vcns                      create, list
+//	GET/PUT/DELETE       /20160918/vcns/{id}                 get, update, delete
 //	POST                 /20160918/vcns/{id}/actions/{addVcnCidr,removeVcnCidr}
 //	POST                 /20160918/{collection}/{id}/actions/changeCompartment
-//	POST/GET             /20160918/subnets                 — create, list (by vcnId)
+//	POST/GET             /20160918/subnets                   create, list (by vcnId)
 //	GET/PUT/DELETE       /20160918/subnets/{id}
-//	POST/GET             /20160918/networkSecurityGroups   — create, list
+//	POST/GET             /20160918/networkSecurityGroups     create, list
 //	GET/PUT/DELETE       /20160918/networkSecurityGroups/{id}
 //	GET                  /20160918/networkSecurityGroups/{id}/securityRules
 //	POST                 /20160918/networkSecurityGroups/{id}/securityRules/actions/{add,remove}SecurityRules
@@ -29,8 +29,8 @@
 //	POST                 /20160918/localPeeringGateways/{id}/actions/connect
 //
 // Not emulated: /drgs, /drgAttachments and /remotePeeringConnections, which
-// the networking driver has no shape for — the handler claims them anyway so a
-// caller gets a 501 naming the gap rather than a bare 404 — and
+// the networking driver has no shape for (the handler claims them anyway so a
+// caller gets a 501 naming the gap rather than a bare 404), and
 // /vcns/{id}/actions/modifyVcnCidr, which addVcnCidr and removeVcnCidr cover
 // between them. Resources report AVAILABLE from the moment they are created:
 // every CloudEmu mutation is synchronous, so the PROVISIONING and TERMINATING

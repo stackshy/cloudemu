@@ -21,7 +21,7 @@ import "time"
 // API returns (a VM size, a disk tier + size, a DB compute SKU, …). Every
 // walker fills the same slots from its driver's fields, and every row-builder
 // renders them the same way, so no layer branches on a specific resource or
-// provider type. All slots are optional — an empty slot is omitted downstream.
+// provider type. All slots are optional; an empty slot is omitted downstream.
 type Resource struct {
 	Provider  string
 	Service   string
@@ -45,8 +45,8 @@ type Resource struct {
 	// ManagedBy is the id of an owning/parent resource (e.g. a disk's VM).
 	ManagedBy string
 	// State is the run/lifecycle state of a stateful resource (a compute
-	// instance's "running"/"stopped"/"terminated"). It is a cost input — a
-	// terminated or stopped instance bills $0 for compute — carried separately
+	// instance's "running"/"stopped"/"terminated"). It is a cost input (a
+	// terminated or stopped instance bills $0 for compute), carried separately
 	// from Properties so it never leaks into the properties bag a passthrough
 	// renderer (Azure Resource Graph) echoes. Empty for resources with no run
 	// state, which cost treats as billable (unchanged).
@@ -63,13 +63,13 @@ type Resource struct {
 //
 // Services is an any-of set: a resource matches if its Service is in the
 // slice. An empty/nil slice means "no service filter". This shape supports
-// cases like AWS's "ec2" which spans both compute and networking — the
+// cases like AWS's "ec2" which spans both compute and networking: the
 // caller can pass Services: []string{"compute", "networking"}.
 //
 // Type is a single exact-match type filter. Types is an any-of set on the
 // resource Type, for callers that select several types at once (e.g. a KQL
 // `where type in~ ('a', 'b')`); an empty/nil slice means "no type-set filter".
-// Type and Types are independent — both must pass when both are set.
+// Type and Types are independent: both must pass when both are set.
 type Query struct {
 	Services []string
 	Type     string

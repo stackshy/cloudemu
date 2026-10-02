@@ -111,7 +111,7 @@ func mrRunInstance(t *testing.T, c *awsec2.Client) {
 }
 
 // TestMultiRegionSnapshotResetRestore proves the whole cycle: state in two
-// regions is captured, reset wipes every region, and restore brings both back —
+// regions is captured, reset wipes every region, and restore brings both back,
 // including a region (us-west-2) that has NO live provider at restore time and
 // must be recreated from the snapshot.
 func TestMultiRegionSnapshotResetRestore(t *testing.T) {
@@ -151,7 +151,7 @@ func TestMultiRegionSnapshotResetRestore(t *testing.T) {
 		t.Fatalf("after reset east ListTables = %v, want empty", got)
 	}
 
-	// Restore brings both regions back — us-west-2 has no live provider yet.
+	// Restore brings both regions back; us-west-2 has no live provider yet.
 	if err := app.restore(snap); err != nil {
 		t.Fatalf("restore: %v", err)
 	}

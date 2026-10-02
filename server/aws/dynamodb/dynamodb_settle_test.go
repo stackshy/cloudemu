@@ -1,4 +1,4 @@
-// dynamodb_settle_test.go — real-user tests for asynchronous DynamoDB
+// dynamodb_settle_test.go: real-user tests for asynchronous DynamoDB
 // table/GSI lifecycle status (CREATING/UPDATING -> ACTIVE). They drive the
 // genuine aws-sdk-go-v2 client against the emulator with async settling enabled
 // and a FakeClock, so an immediate DescribeTable observes the transient status

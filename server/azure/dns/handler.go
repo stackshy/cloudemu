@@ -5,9 +5,9 @@
 // management.azure.com, driving the shared dns driver.
 //
 // Azure DNS shares the Microsoft.Network ARM provider with the VNet handler
-// (server/azure/network), but on a disjoint resource type — this handler
+// (server/azure/network), but on a disjoint resource type: this handler
 // claims dnsZones while the network handler claims virtualNetworks /
-// networkSecurityGroups / locations — so registration order between the two is
+// networkSecurityGroups / locations, so registration order between the two is
 // unconstrained. Both must register before the permissive BlobStorage
 // fallback.
 //
@@ -18,17 +18,17 @@
 //
 // Coverage:
 //
-//	PUT    .../dnsZones/{z}                              — Zones.CreateOrUpdate
-//	PATCH  .../dnsZones/{z}                              — Zones.Update (tags merge)
-//	GET    .../dnsZones/{z}                              — Zones.Get
-//	DELETE .../dnsZones/{z}                              — Zones.Delete (LRO, completes inline)
-//	GET    .../providers/Microsoft.Network/dnsZones      — Zones.List (subscription scope)
-//	GET    .../resourceGroups/{rg}/…/dnsZones            — Zones.ListByResourceGroup
-//	PUT    .../dnsZones/{z}/{type}/{name}                — RecordSets.CreateOrUpdate
-//	PATCH  .../dnsZones/{z}/{type}/{name}                — RecordSets.Update (merge supplied)
-//	GET    .../dnsZones/{z}/{type}/{name}                — RecordSets.Get
-//	DELETE .../dnsZones/{z}/{type}/{name}                — RecordSets.Delete
-//	GET    .../dnsZones/{z}/recordsets|all               — RecordSets.ListByDnsZone / ListAllByDnsZone
+//	PUT    .../dnsZones/{z}                              : Zones.CreateOrUpdate
+//	PATCH  .../dnsZones/{z}                              : Zones.Update (tags merge)
+//	GET    .../dnsZones/{z}                              : Zones.Get
+//	DELETE .../dnsZones/{z}                              : Zones.Delete (LRO, completes inline)
+//	GET    .../providers/Microsoft.Network/dnsZones      : Zones.List (subscription scope)
+//	GET    .../resourceGroups/{rg}/…/dnsZones            : Zones.ListByResourceGroup
+//	PUT    .../dnsZones/{z}/{type}/{name}                : RecordSets.CreateOrUpdate
+//	PATCH  .../dnsZones/{z}/{type}/{name}                : RecordSets.Update (merge supplied)
+//	GET    .../dnsZones/{z}/{type}/{name}                : RecordSets.Get
+//	DELETE .../dnsZones/{z}/{type}/{name}                : RecordSets.Delete
+//	GET    .../dnsZones/{z}/recordsets|all               : RecordSets.ListByDnsZone / ListAllByDnsZone
 package dns
 
 import (
@@ -36,6 +36,7 @@ import (
 	"net/http"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 )
@@ -50,6 +51,9 @@ const (
 	// subRecordSets and subAll are the record-set list sub-paths.
 	subRecordSets = "recordsets"
 	subAll        = "all"
+
+	// childMaxDepth is the deepest child route: dnsZones/{z}/{type}/{name}.
+	childMaxDepth = 3
 )
 
 // Handler serves Microsoft.Network/dnsZones ARM requests against a dns driver.
@@ -60,7 +64,7 @@ type Handler struct {
 // atomicRecordUpserter is the optional capability the Azure dns.Mock exposes
 // for a single-lock CreateOrUpdate that atomically evaluates a record set's
 // If-Match/If-None-Match preconditions against its current ETag before minting
-// a fresh one and writing — closing the TOCTOU a separate GetRecord followed by
+// a fresh one and writing, closing the TOCTOU a separate GetRecord followed by
 // a Create-or-Update call would leave open between two concurrent PUTs. The
 // production Azure dns.Mock always implements it; createOrUpdateRecordSet falls
 // back to the plain (non-atomic, precondition-less) two-call upsert for any
@@ -79,9 +83,28 @@ type conditionalRecordDeleter interface {
 	DeleteRecordAtomic(ctx context.Context, zoneID, name, recordType, ifMatch string) error
 }
 
+// rgPurger is the optional capability the Azure dns.Mock exposes for the
+// resource-group delete cascade. The shared dns driver interface has no such
+// method, so the handler reaches it by type assertion.
+type rgPurger interface {
+	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+}
+
 // New returns an Azure DNS handler backed by d.
 func New(d dnsdriver.DNS) *Handler {
 	return &Handler{dns: d}
+}
+
+// PurgeResourceGroup deletes every DNS zone, and its record sets, in the
+// resource group, backing the resource-group cascade delete. A driver without
+// the capability is reported as an error rather than silently skipped.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	p, ok := h.dns.(rgPurger)
+	if !ok {
+		return cerrors.Newf(cerrors.Unimplemented, "dns driver %T cannot purge a resource group", h.dns)
+	}
+
+	return p.PurgeResourceGroup(ctx, subscription, resourceGroup)
 }
 
 // isZonesType reports whether the ARM resource type is dnsZones, case-
@@ -117,14 +140,35 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if azurearm.TooDeep(w, r, &rp, childMaxDepth) {
+		return
+	}
+
 	switch rp.SubResource {
 	case "":
 		h.serveZone(w, r, &rp)
 	case subRecordSets, subAll:
 		h.serveRecordSetCollection(w, r, &rp)
 	default:
-		// .../dnsZones/{zone}/{recordType}/{name}
+		// .../dnsZones/{zone}/{recordType}/{name}. The record type is itself
+		// an ARM nested type, so an unknown one is InvalidResourceType.
+		if !isRecordType(rp.SubResource) {
+			azurearm.WriteUnknownType(w, r, &rp)
+			return
+		}
+
 		h.serveRecordSet(w, r, &rp)
+	}
+}
+
+// isRecordType reports whether seg names a public DNS record-set type
+// (case-insensitive), including DS, NAPTR and TLSA from api 2023-07-01-preview.
+func isRecordType(seg string) bool {
+	switch strings.ToUpper(seg) {
+	case "A", "AAAA", "CAA", "CNAME", "DS", "MX", "NAPTR", "NS", "PTR", "SOA", "SRV", "TLSA", "TXT":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -163,7 +207,7 @@ func (h *Handler) serveRecordSetCollection(w http.ResponseWriter, r *http.Reques
 
 func (h *Handler) serveRecordSet(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	// A type-only path (…/dnsZones/{zone}/{type} with no record name) is
-	// RecordSets.ListByType — a type-filtered list of the zone's record sets,
+	// RecordSets.ListByType: a type-filtered list of the zone's record sets,
 	// not a single-record Get.
 	if rp.SubResourceName == "" && r.Method == http.MethodGet {
 		h.listRecordSetsByType(w, r, rp)

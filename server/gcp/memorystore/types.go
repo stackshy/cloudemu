@@ -365,7 +365,7 @@ func (m fieldMask) has(field string) bool {
 }
 
 // explicit reports whether field is named in a non-nil mask. Unlike has, a nil
-// mask is NOT treated as selecting the field — used where a nil mask must
+// mask is not treated as selecting the field: used where a nil mask must
 // preserve the existing value (map whole-replace, clearing a scalar to its zero)
 // rather than overwrite it from an omitted body field.
 func (m fieldMask) explicit(field string) bool {
@@ -381,7 +381,7 @@ const (
 	// the field).
 	mapModePreserve mapFieldMode = iota
 	// mapModeMerge overlays the request value onto the existing one so unspecified
-	// entries survive (nil mask — no updateMask).
+	// entries survive (nil mask: no updateMask).
 	mapModeMerge
 	// mapModeReplace whole-replaces the field with the request value so a removed
 	// entry is cleared (field explicitly named in the mask).
@@ -616,6 +616,24 @@ func stateOrReady(status string) string {
 	}
 
 	return status
+}
+
+// emptyResponse is google.protobuf.Empty wrapped as an Any, a delete
+// operation's response.
+//
+//nolint:gochecknoglobals // immutable wire constant
+var emptyResponse = json.RawMessage(`{"@type":"type.googleapis.com/google.protobuf.Empty"}`)
+
+// instanceResponseAny encodes inst as the google.protobuf.Any a create or
+// update operation's response carries. The gapic Wait unpacks the response by
+// its "@type", so without it the call fails with a mismatched message type.
+//
+//nolint:gocritic // instanceJSON is the response value, encoded once per operation.
+func instanceResponseAny(inst instanceJSON) (json.RawMessage, error) {
+	return json.Marshal(struct {
+		Type string `json:"@type"`
+		instanceJSON
+	}{Type: "type.googleapis.com/google.cloud.redis.v1.Instance", instanceJSON: inst})
 }
 
 // doneOperation builds a completed google.longrunning.Operation for the given

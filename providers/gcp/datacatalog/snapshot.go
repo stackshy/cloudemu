@@ -12,7 +12,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // dataCatalogSnapshot is the full serialized state of the Data Catalog mock.
 // Each store holds fully-exported driver value types keyed by their full GCP
-// resource name, so each round-trips through the generic memstore helper — no
+// resource name, so each round-trips through the generic memstore helper: no
 // field promotion is needed. The wired deps (m.opts) and the RWMutex are
 // intentionally not serialized.
 type dataCatalogSnapshot struct {
@@ -23,7 +23,7 @@ type dataCatalogSnapshot struct {
 }
 
 // Snapshot captures every entry group, entry, tag template, and tag as JSON.
-// includeAssets is unused — Data Catalog is control-plane only and holds no bulk
+// includeAssets is unused: Data Catalog is control-plane only and holds no bulk
 // object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()

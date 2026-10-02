@@ -84,7 +84,7 @@ func TestSDKPostgresFlexScopedGetNotFound(t *testing.T) {
 }
 
 // TestSDKPostgresFlexScopedDeleteNotFound asserts a DELETE issued under the
-// wrong resource group cannot remove another resource group's server — the
+// wrong resource group cannot remove another resource group's server: the
 // cross-tenant leak this behavior guards against.
 func TestSDKPostgresFlexScopedDeleteNotFound(t *testing.T) {
 	servers := newSDKClient(t)
@@ -117,7 +117,7 @@ func skuName(s *armpostgresqlflexibleservers.Server) string {
 
 // TestSDKPostgresFlexScopedUpdateNotFound asserts a PATCH issued under the wrong
 // resource group cannot mutate another resource group's server (the SKU/storage
-// cross-tenant write) — it must 404 and leave the real server untouched.
+// cross-tenant write); it must 404 and leave the real server untouched.
 func TestSDKPostgresFlexScopedUpdateNotFound(t *testing.T) {
 	servers := newSDKClient(t)
 	mustCreateServerInRG(t, servers, "rg-team-a", "srv-a1")

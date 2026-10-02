@@ -172,7 +172,14 @@ func TestDeleteTemplate(t *testing.T) {
 func TestListTemplates(t *testing.T) {
 	m := newMock()
 	mustTemplate(t, m)
-	mustTemplate(t, m)
+
+	// A second template needs its own clientToken; reusing tok-1 would replay
+	// the first one.
+	second := sampleCreateInput()
+	second.ClientToken = "tok-list-2"
+
+	_, err := m.CreateExperimentTemplate(context.Background(), second)
+	requireNoError(t, err)
 
 	templates, next, err := m.ListExperimentTemplates(context.Background(), driver.Page{})
 	requireNoError(t, err)

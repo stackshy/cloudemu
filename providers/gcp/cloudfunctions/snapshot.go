@@ -14,8 +14,8 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // funcsSnapshot is the full serialized state of the Cloud Functions mock. The
 // funcs and layers stores hold unexported value types (funcData/layerData) whose
-// fields — the function info, its published versions, its aliases (a nested store
-// of unexported aliasData), and its layer versions — are all unexported and
+// fields (the function info, its published versions, its aliases (a nested store
+// of unexported aliasData), and its layer versions) are all unexported and
 // invisible to json.Marshal, so both are promoted to exported forms keyed by
 // their resource name. The mappings store holds a fully-exported
 // *EventSourceMappingInfo and round-trips through the generic memstore helper.
@@ -65,7 +65,7 @@ type layerSnapshot struct {
 }
 
 // Snapshot captures every function, layer, and mapping as JSON. includeAssets is
-// unused — see the funcsSnapshot note on deployment bytes.
+// unused: see the funcsSnapshot note on deployment bytes.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

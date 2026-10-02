@@ -8,34 +8,34 @@
 //
 // Coverage:
 //
-//	POST   /v2/projects/{p}/locations/{l}/jobs?jobId={id}                — Jobs.Create (LRO)
-//	GET    /v2/projects/{p}/locations/{l}/jobs/{job}                     — Jobs.Get
-//	GET    /v2/projects/{p}/locations/{l}/jobs                           — Jobs.List
-//	PATCH  /v2/projects/{p}/locations/{l}/jobs/{job}                     — Jobs.Patch (LRO)
-//	DELETE /v2/projects/{p}/locations/{l}/jobs/{job}                     — Jobs.Delete (LRO)
-//	POST   /v2/projects/{p}/locations/{l}/jobs/{job}:run                 — Jobs.Run (LRO)
-//	GET    /v2/projects/{p}/locations/{l}/jobs/{job}/executions          — Executions.List
-//	GET    /v2/projects/{p}/locations/{l}/jobs/{job}/executions/{exec}   — Executions.Get
-//	POST   /v2/projects/{p}/locations/{l}/jobs/{job}:{get,set}IamPolicy  — Jobs IAM
-//	POST   /v2/projects/{p}/locations/{l}/services?serviceId={id}        — Services.Create (LRO)
-//	GET    /v2/projects/{p}/locations/{l}/services/{svc}                 — Services.Get
-//	GET    /v2/projects/{p}/locations/{l}/services                       — Services.List
-//	PATCH  /v2/projects/{p}/locations/{l}/services/{svc}                 — Services.Patch (LRO)
-//	DELETE /v2/projects/{p}/locations/{l}/services/{svc}                 — Services.Delete (LRO)
-//	GET    /v2/projects/{p}/locations/{l}/services/{svc}/revisions[/{r}] — Revisions.{List,Get}
-//	DELETE /v2/projects/{p}/locations/{l}/services/{svc}/revisions/{r}   — Revisions.Delete (LRO)
-//	POST   /v2/projects/{p}/locations/{l}/services/{svc}:{get,set}IamPolicy — Services IAM
-//	GET    /v2/projects/{p}/locations/{l}/operations/{op}                — Poll an LRO
+//	POST   /v2/projects/{p}/locations/{l}/jobs?jobId={id}                : Jobs.Create (LRO)
+//	GET    /v2/projects/{p}/locations/{l}/jobs/{job}                     : Jobs.Get
+//	GET    /v2/projects/{p}/locations/{l}/jobs                           : Jobs.List
+//	PATCH  /v2/projects/{p}/locations/{l}/jobs/{job}                     : Jobs.Patch (LRO)
+//	DELETE /v2/projects/{p}/locations/{l}/jobs/{job}                     : Jobs.Delete (LRO)
+//	POST   /v2/projects/{p}/locations/{l}/jobs/{job}:run                 : Jobs.Run (LRO)
+//	GET    /v2/projects/{p}/locations/{l}/jobs/{job}/executions          : Executions.List
+//	GET    /v2/projects/{p}/locations/{l}/jobs/{job}/executions/{exec}   : Executions.Get
+//	POST   /v2/projects/{p}/locations/{l}/jobs/{job}:{get,set}IamPolicy  : Jobs IAM
+//	POST   /v2/projects/{p}/locations/{l}/services?serviceId={id}        : Services.Create (LRO)
+//	GET    /v2/projects/{p}/locations/{l}/services/{svc}                 : Services.Get
+//	GET    /v2/projects/{p}/locations/{l}/services                       : Services.List
+//	PATCH  /v2/projects/{p}/locations/{l}/services/{svc}                 : Services.Patch (LRO)
+//	DELETE /v2/projects/{p}/locations/{l}/services/{svc}                 : Services.Delete (LRO)
+//	GET    /v2/projects/{p}/locations/{l}/services/{svc}/revisions[/{r}] : Revisions.{List,Get}
+//	DELETE /v2/projects/{p}/locations/{l}/services/{svc}/revisions/{r}   : Revisions.Delete (LRO)
+//	POST   /v2/projects/{p}/locations/{l}/services/{svc}:{get,set}IamPolicy : Services IAM
+//	GET    /v2/projects/{p}/locations/{l}/operations/{op}                : Poll an LRO
 //
 // All mutating endpoints return google.longrunning.Operation envelopes with
 // done=true so SDK pollers terminate on the first response.
 //
 // A deployed service is also invocable directly: a request addressed to its
-// generated *.run.app host (any path, any method — see invoke.go) is routed
+// generated *.run.app host (any path, any method; see invoke.go) is routed
 // to the service and executed, independent of the Admin API path above. Real
 // Cloud Run enforces IAM run.invoker on the serving path for a non-public
 // service; CloudEmu accepts any credentials (SigV4/OAuth tokens are parsed,
-// never verified — see server/gcp/gcp.go), so every service is invocable
+// never verified; see server/gcp/gcp.go), so every service is invocable
 // unauthenticated here regardless of its real ingress/IAM configuration.
 package cloudrun
 
@@ -568,7 +568,7 @@ func writeError(w http.ResponseWriter, status int, reason, msg string) {
 }
 
 // writeErr maps a driver error to its wire envelope. The message is always
-// cerrors.Message(err), never err.Error() — the latter would bake cloudemu's
+// cerrors.Message(err), never err.Error(). The latter would bake cloudemu's
 // internal code-name prefix (e.g. "NotFound: ") into the message a real
 // client sees, which no real Cloud Run response ever does.
 func writeErr(w http.ResponseWriter, err error) {

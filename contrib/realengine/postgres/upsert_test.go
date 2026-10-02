@@ -15,7 +15,7 @@ import (
 // TestPostgresRolePasswordUpsert proves the ensureRole password upsert: two
 // instances that pin the same master username (as Cloud SQL does with
 // "postgres") share one role on the shared server, and the most recently
-// provisioned password must actually authenticate — the earlier "create IF NOT
+// provisioned password must actually authenticate: the earlier "create IF NOT
 // EXISTS" only ever honoured the first instance's password.
 func TestPostgresRolePasswordUpsert(t *testing.T) {
 	eng := postgres.New(55441)
@@ -38,7 +38,7 @@ func TestPostgresRolePasswordUpsert(t *testing.T) {
 		t.Fatalf("provision inst-b: %v", err)
 	}
 
-	// The role now carries inst-b's password (last writer wins) — connect with it.
+	// The role now carries inst-b's password (last writer wins); connect with it.
 	dsn := fmt.Sprintf("host=%s port=%d user=postgres password=%s dbname=inst-b sslmode=disable",
 		res.Host, res.Port, "second-password")
 

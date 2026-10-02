@@ -95,7 +95,7 @@ func TestUpdatePreservesComputedAndLocation(t *testing.T) {
 	m := newMock()
 	created := createStd(t, m)
 
-	// PATCH only tags — everything else preserved, computed unchanged.
+	// PATCH only tags: everything else preserved, computed unchanged.
 	patched, isNew, err := m.CreateOrUpdate(context.Background(), "sub", "rg", "fs1", "westus",
 		&managedlustre.Input{Tags: map[string]string{"env": "prod"}})
 	if err != nil || isNew {

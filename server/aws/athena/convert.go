@@ -204,9 +204,13 @@ func queryExecutionToWire(qe *driver.QueryExecution) queryExecutionJSON {
 			CompletionDateTime: epochOrNil(qe.Status.CompletionDateTime),
 		},
 		Statistics: &queryExecutionStatisticsJSON{
-			EngineExecutionTimeInMillis: qe.Statistics.EngineExecutionTimeInMillis,
-			DataScannedInBytes:          qe.Statistics.DataScannedInBytes,
-			TotalExecutionTimeInMillis:  qe.Statistics.TotalExecutionTimeInMillis,
+			EngineExecutionTimeInMillis:      qe.Statistics.EngineExecutionTimeInMillis,
+			DataScannedInBytes:               qe.Statistics.DataScannedInBytes,
+			TotalExecutionTimeInMillis:       qe.Statistics.TotalExecutionTimeInMillis,
+			QueryQueueTimeInMillis:           qe.Statistics.QueryQueueTimeInMillis,
+			QueryPlanningTimeInMillis:        qe.Statistics.QueryPlanningTimeInMillis,
+			ServicePreProcessingTimeInMillis: qe.Statistics.ServicePreProcessingTimeInMillis,
+			ServiceProcessingTimeInMillis:    qe.Statistics.ServiceProcessingTimeInMillis,
 		},
 		WorkGroup:     qe.WorkGroup,
 		EngineVersion: engineVersionToWire(qe.EngineVersion),
@@ -218,5 +222,18 @@ func databaseToWire(db *driver.Database) databaseJSON {
 }
 
 func dataCatalogToWire(dc *driver.DataCatalog) dataCatalogJSON {
-	return dataCatalogJSON{Name: dc.Name, Description: dc.Description, Type: dc.Type, Parameters: dc.Parameters}
+	params := dc.Parameters
+	if params == nil {
+		params = map[string]string{}
+	}
+
+	return dataCatalogJSON{
+		Name:           dc.Name,
+		Description:    dc.Description,
+		Type:           dc.Type,
+		Parameters:     params,
+		Status:         dc.Status,
+		ConnectionType: dc.ConnectionType,
+		Error:          dc.Error,
+	}
 }

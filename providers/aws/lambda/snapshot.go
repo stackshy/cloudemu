@@ -22,7 +22,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // unexported *layerData with a nested version store, also promoted; mappings
 // holds a fully-exported *driver type and round-trips through the generic
 // memstore helper. The live in-process handler funcs (funcData.handler and the
-// handlers registry) and the wired opts/monitoring are NOT serialized — they are
+// handlers registry) and the wired opts/monitoring are NOT serialized. They are
 // re-registered by the host process, not persistable state. On restore a
 // function's handler is re-linked from the handlers registry if one is present.
 type lambdaSnapshot struct {
@@ -32,8 +32,8 @@ type lambdaSnapshot struct {
 }
 
 // funcSnapshot mirrors funcData. Versions carry each published version's config
-// and code identity (CodeSHA256) — not the raw deployment-package bytes, which
-// the mock does not retain — so republished code is still identified after a
+// and code identity (CodeSHA256), not the raw deployment-package bytes, which
+// the mock does not retain, so republished code is still identified after a
 // restore; aliases are captured by name.
 type funcSnapshot struct {
 	Info         driver.FunctionInfo                              `json:"info"`
@@ -48,7 +48,7 @@ type funcSnapshot struct {
 	// URLConfig is the legacy single-URL shape a snapshot taken before Function
 	// URLs gained qualifier scoping used ("urlConfig", singular). Never written
 	// (snapshotFunc only populates URLConfigs), but still read on restore so an
-	// old on-disk snapshot's Function URL config isn't silently dropped — see
+	// old on-disk snapshot's Function URL config isn't silently dropped. See
 	// restoreFunc.
 	URLConfig *driver.FunctionURLConfig `json:"urlConfig,omitempty"`
 	AWSConfig driver.AWSFunctionConfig  `json:"awsConfig"`
@@ -87,9 +87,9 @@ type layerVersionPolicySnapshot struct {
 	RevisionID string                                     `json:"revisionId,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// published versions retain only their code identity (CodeSHA256) and config,
-// not raw deployment-package bytes, so there are no bulk object bodies to gate.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Published versions
+// retain only their code identity (CodeSHA256) and config, not raw deployment-package bytes, so
+// there are no bulk object bodies to gate.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := lambdaSnapshot{}
 
@@ -210,7 +210,7 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 
 // restoreLayerData rebuilds one layer's *layerData from its snapshot: the
 // version store, the monotonic version counter, and any per-version resource
-// policies (skipping a policy entry whose key isn't a valid version number —
+// policies (skipping a policy entry whose key isn't a valid version number,
 // snapshot JSON tampered with out of band, never produced by Snapshot itself).
 func restoreLayerData(ls *layerSnapshot) (*layerData, error) {
 	ld := &layerData{versions: memstore.New[*driver.LayerVersion](), nextVer: ls.NextVer}
@@ -270,9 +270,9 @@ func (m *Mock) restoreFunc(name string, fs *funcSnapshot) funcData {
 
 // legacyURLConfigs returns fs.URLConfigs, migrating a pre-qualifier-scoping
 // snapshot's legacy singular "urlConfig" field (fs.URLConfig) into the new
-// per-qualifier map when the snapshot predates it — otherwise a Function URL
+// per-qualifier map when the snapshot predates it; otherwise a Function URL
 // config in an old on-disk snapshot would silently vanish on restore, since
-// the new map field simply isn't present in that JSON.
+// the new map field isn't present in that JSON.
 func legacyURLConfigs(fs *funcSnapshot) map[string]*driver.FunctionURLConfig {
 	if len(fs.URLConfigs) > 0 || fs.URLConfig == nil {
 		return fs.URLConfigs

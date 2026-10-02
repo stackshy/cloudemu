@@ -58,7 +58,7 @@ type asgSnapshot struct {
 	Policies json.RawMessage         `json:"policies,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // GCE holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := gceSnapshot{Instances: m.snapshotInstances()}

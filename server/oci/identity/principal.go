@@ -8,7 +8,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/wire/ocirest"
 )
 
-// principalOps binds one of the two identical collections — users and groups —
+// principalOps binds one of the two identical collections (users and groups)
 // so both are routed and served by the same code.
 type principalOps struct {
 	kind   string

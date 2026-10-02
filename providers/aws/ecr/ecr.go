@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"path"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
@@ -55,6 +57,9 @@ type Mock struct {
 	repos      *memstore.Store[*repoData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+	// events publishes image push/delete actions to the EventBridge default
+	// bus; inactive until wired by the provider.
+	events awsevents.Emitter
 
 	// Registry-level (not per-repository) state. These back the AWS ECR
 	// registry-scoped operations (replication, pull-through cache, registry
@@ -73,14 +78,17 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
 }
 
-func (m *Mock) emitMetric(metricName string, value float64, dims map[string]string) {
+// emitPull records one image pull as the AWS/ECR RepositoryPullCount metric,
+// the only metric real ECR publishes (dimension RepositoryName). Real ECR has no
+// push-count metric, so pushes emit nothing.
+func (m *Mock) emitPull(repository string) {
 	if m.monitoring == nil {
 		return
 	}
 
 	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{{
-		Namespace: "AWS/ECR", MetricName: metricName, Value: value, Unit: "Count",
-		Dimensions: dims, Timestamp: m.opts.Clock.Now(),
+		Namespace: "AWS/ECR", MetricName: "RepositoryPullCount", Value: 1, Unit: "Count",
+		Dimensions: map[string]string{"RepositoryName": repository}, Timestamp: m.opts.Clock.Now(),
 	}})
 }
 
@@ -96,8 +104,8 @@ func New(opts *config.Options) *Mock {
 
 // CreateRepository creates a new ECR repository.
 func (m *Mock) CreateRepository(ctx context.Context, cfg driver.RepositoryConfig) (*driver.Repository, error) {
-	if cfg.Name == "" {
-		return nil, errors.New(errors.InvalidArgument, "repository name is required")
+	if err := validateRepositoryName(cfg.Name); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
@@ -325,8 +333,21 @@ func (m *Mock) ListRepositories(_ context.Context) ([]driver.Repository, error) 
 	return repos, nil
 }
 
-// PutImage pushes an image manifest to an ECR repository.
-func (m *Mock) PutImage(_ context.Context, manifest *driver.ImageManifest) (*driver.ImageDetail, error) {
+// PutImage pushes an image manifest to an ECR repository and publishes an
+// "ECR Image Action" PUSH event once the registry lock is released.
+func (m *Mock) PutImage(ctx context.Context, manifest *driver.ImageManifest) (*driver.ImageDetail, error) {
+	img, err := m.putImage(manifest)
+	if err != nil {
+		return nil, err
+	}
+
+	m.emitImageAction(ctx, actionPush, manifest.Repository, img.Digest, manifest.Tag, img.MediaType)
+
+	return img, nil
+}
+
+// putImage is PutImage's locked core.
+func (m *Mock) putImage(manifest *driver.ImageManifest) (*driver.ImageDetail, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -337,7 +358,10 @@ func (m *Mock) PutImage(_ context.Context, manifest *driver.ImageManifest) (*dri
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", manifest.Repository)
 	}
 
-	digest := resolveDigest(manifest)
+	digest, err := resolveDigest(manifest)
+	if err != nil {
+		return nil, err
+	}
 
 	if err := checkTagMutability(rd, manifest.Tag, digest); err != nil {
 		return nil, err
@@ -350,8 +374,6 @@ func (m *Mock) PutImage(_ context.Context, manifest *driver.ImageManifest) (*dri
 	if rd.scanOnPush {
 		autoScan(rd, digest, manifest.Repository, m.opts.Clock.Now())
 	}
-
-	m.emitMetric("ImagePushCount", 1, map[string]string{"RepositoryName": manifest.Repository})
 
 	result := img.detail
 
@@ -388,8 +410,23 @@ func (m *Mock) storeImage(rd *repoData, manifest *driver.ImageManifest, digest s
 	return img
 }
 
-// GetImage retrieves image details by repository and reference.
+// GetImage retrieves image details by repository and reference. It is the
+// image-pull read, so it records one RepositoryPullCount, published after m.mu
+// is released, because a CloudWatch alarm on the metric can fan out (SNS ->
+// Lambda) into code that calls back into ECR.
 func (m *Mock) GetImage(_ context.Context, repository, reference string) (*driver.ImageDetail, error) {
+	result, err := m.lookupImage(repository, reference)
+	if err != nil {
+		return nil, err
+	}
+
+	m.emitPull(repository)
+
+	return result, nil
+}
+
+// lookupImage snapshots an image's details under m.mu.
+func (m *Mock) lookupImage(repository, reference string) (*driver.ImageDetail, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -402,8 +439,6 @@ func (m *Mock) GetImage(_ context.Context, repository, reference string) (*drive
 	if img == nil {
 		return nil, errors.Newf(errors.NotFound, "image %q not found in repository %q", reference, repository)
 	}
-
-	m.emitMetric("ImagePullCount", 1, map[string]string{"RepositoryName": repository})
 
 	result := img.detail
 
@@ -430,20 +465,42 @@ func (m *Mock) ListImages(_ context.Context, repository string) ([]driver.ImageD
 	return images, nil
 }
 
-// DeleteImage deletes an image from an ECR repository by reference.
-func (m *Mock) DeleteImage(_ context.Context, repository, reference string) error {
+// DeleteImage deletes an image from an ECR repository by reference and
+// publishes an "ECR Image Action" DELETE event once the registry lock is
+// released.
+func (m *Mock) DeleteImage(ctx context.Context, repository, reference string) error {
+	deleted, err := m.deleteImage(repository, reference)
+	if err != nil {
+		return err
+	}
+
+	tag := ""
+	if reference != deleted.Digest {
+		tag = reference
+	}
+
+	m.emitImageAction(ctx, actionDelete, repository, deleted.Digest, tag, deleted.MediaType)
+
+	return nil
+}
+
+// deleteImage is DeleteImage's locked core. It returns the image the reference
+// resolved to, as it stood before the delete.
+func (m *Mock) deleteImage(repository, reference string) (driver.ImageDetail, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	rd, ok := m.repos.Get(repository)
 	if !ok {
-		return errors.Newf(errors.NotFound, "repository %q not found", repository)
+		return driver.ImageDetail{}, errors.Newf(errors.NotFound, "repository %q not found", repository)
 	}
 
 	img := findImage(rd, reference)
 	if img == nil {
-		return errors.Newf(errors.NotFound, "image %q not found in repository %q", reference, repository)
+		return driver.ImageDetail{}, errors.Newf(errors.NotFound, "image %q not found in repository %q", reference, repository)
 	}
+
+	resolved := img.detail
 
 	// A reference that resolves to the manifest digest deletes the whole image
 	// and all of its tags. A tag reference removes only that tag; the manifest
@@ -454,7 +511,7 @@ func (m *Mock) DeleteImage(_ context.Context, repository, reference string) erro
 			img.detail.Tags = remaining
 			rd.images.Set(img.detail.Digest, img)
 
-			return nil
+			return resolved, nil
 		}
 	}
 
@@ -462,7 +519,7 @@ func (m *Mock) DeleteImage(_ context.Context, repository, reference string) erro
 	rd.scans.Delete(img.detail.Digest)
 	rd.info.ImageCount = rd.images.Len()
 
-	return nil
+	return resolved, nil
 }
 
 // TagImage adds a new tag to an existing image in an ECR repository.
@@ -576,7 +633,7 @@ func (m *Mock) EvaluateLifecyclePolicy(_ context.Context, repository string) ([]
 
 // PreviewLifecyclePolicy evaluates a lifecycle policy against the
 // repository's current images and returns full per-image detail (digest,
-// tags, push time, and the priority of the rule that matched) — the data
+// tags, push time, and the priority of the rule that matched), the data
 // ECR's GetLifecyclePolicyPreview needs. When override is non-nil it is
 // evaluated instead of (without replacing) the repository's stored policy,
 // matching StartLifecyclePolicyPreview's optional lifecyclePolicyText
@@ -584,7 +641,7 @@ func (m *Mock) EvaluateLifecyclePolicy(_ context.Context, repository string) ([]
 //
 // AWS-specific: StartLifecyclePolicyPreview/GetLifecyclePolicyPreview have no
 // equivalent in Azure ACR or GCP Artifact Registry, so this is not part of the
-// shared ContainerRegistry driver interface — the ECR wire handler reaches it
+// shared ContainerRegistry driver interface. The ECR wire handler reaches it
 // via type assertion, the same pattern used for PutImageTagMutability and
 // PutImageScanningConfiguration above.
 func (m *Mock) PreviewLifecyclePolicy(
@@ -685,9 +742,9 @@ func findImage(rd *repoData, reference string) *imageData {
 //
 // Real ECR distinguishes two cases when a tag is already in use:
 //   - the tag already points at this EXACT digest (a byte-identical re-push,
-//     or a redundant re-tag) — this is ImageAlreadyExistsException regardless
+//     or a redundant re-tag): this is ImageAlreadyExistsException regardless
 //     of the repository's tag mutability setting, since nothing would change.
-//   - the tag points at a DIFFERENT digest — this only fails, with
+//   - the tag points at a DIFFERENT digest: this only fails, with
 //     ImageTagAlreadyExistsException, on an IMMUTABLE repository; a MUTABLE
 //     repository allows the tag to move.
 func checkTagMutability(rd *repoData, tag, digest string) error {
@@ -733,14 +790,21 @@ func digestForTag(rd *repoData, tag string) string {
 // imageDigest it is respected; otherwise the digest is content-addressed as the
 // full sha256 of the manifest bytes, so identical manifest content yields the
 // same 64-hex digest regardless of tag or push time (matching real ECR).
-func resolveDigest(manifest *driver.ImageManifest) string {
-	if manifest.Digest != "" {
-		return manifest.Digest
+// When both a manifest and a digest are sent, the digest must match the
+// manifest's sha256.
+func resolveDigest(manifest *driver.ImageManifest) (string, error) {
+	hash := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(manifest.Manifest)))
+
+	if manifest.Digest == "" {
+		return hash, nil
 	}
 
-	hash := sha256.Sum256([]byte(manifest.Manifest))
+	if manifest.Manifest != "" && manifest.Digest != hash {
+		return "", apiErrInvalidf(excImageDigestDoesNotMatch,
+			"The image digest %s does not match the digest %s calculated for the manifest", manifest.Digest, hash)
+	}
 
-	return fmt.Sprintf("sha256:%x", hash)
+	return manifest.Digest, nil
 }
 
 // updateTagIndex removes a tag from any existing image and adds it to the target digest.
@@ -799,7 +863,7 @@ func generateScanResult(repository, digest string, now time.Time) *driver.ScanRe
 // and returns full detail for every image an "expire" action would remove.
 // Once an image matches a rule it is excluded from the pool considered by
 // lower-priority rules, matching real ECR: each image is expired by at most
-// one rule — the one with the lowest rulePriority that matches it — so a
+// one rule (the one with the lowest rulePriority that matches it), so a
 // broad low-priority rule never re-claims an image a narrower high-priority
 // rule already spared or expired.
 func previewRules(rd *repoData, policy *driver.LifecyclePolicy, now time.Time) []driver.LifecyclePreviewResult {
@@ -877,10 +941,39 @@ func matchesTagRule(img *imageData, rule *driver.LifecycleRule) bool {
 	case "untagged":
 		return len(img.detail.Tags) == 0
 	case "tagged":
-		return len(img.detail.Tags) > 0 && matchTagPattern(img.detail.Tags, rule.TagPattern)
+		return len(img.detail.Tags) > 0 && matchesTagSelection(img.detail.Tags, rule)
 	default: // "any"
 		return true
 	}
+}
+
+// matchesTagSelection reports whether any of the image's tags satisfies the
+// rule's tag selection: real ECR's selection.tagPatternList (glob patterns)
+// and selection.tagPrefixList (literal prefixes) are matched against ANY tag
+// on the image, and an image matches the rule if it satisfies ANY entry in
+// EITHER list. Using only the first entry of either list, as an earlier
+// version of this function did, would silently ignore the remaining
+// prefixes/patterns a caller configured. TagPattern is the legacy single-glob
+// field still used by Azure ACR/GCP Artifact Registry, kept as a fallback for
+// a rule with no list populated.
+func matchesTagSelection(tags []string, rule *driver.LifecycleRule) bool {
+	if len(rule.TagPatternList) == 0 && len(rule.TagPrefixList) == 0 {
+		return matchTagPattern(tags, rule.TagPattern)
+	}
+
+	for _, pattern := range rule.TagPatternList {
+		if matchTagPattern(tags, pattern) {
+			return true
+		}
+	}
+
+	for _, prefix := range rule.TagPrefixList {
+		if matchTagPrefix(tags, prefix) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // matchTagPattern checks if any tag matches the given glob pattern.
@@ -891,6 +984,22 @@ func matchTagPattern(tags []string, pattern string) bool {
 
 	for _, tag := range tags {
 		if matched, err := path.Match(pattern, tag); err == nil && matched {
+			return true
+		}
+	}
+
+	return false
+}
+
+// matchTagPrefix checks if any tag begins with the given literal prefix,
+// matching ECR's tagPrefixList semantics (a plain string prefix, not a glob).
+func matchTagPrefix(tags []string, prefix string) bool {
+	if prefix == "" {
+		return true
+	}
+
+	for _, tag := range tags {
+		if strings.HasPrefix(tag, prefix) {
 			return true
 		}
 	}
@@ -953,7 +1062,12 @@ func copyTags(src map[string]string) map[string]string {
 
 func copyLifecyclePolicy(p driver.LifecyclePolicy) driver.LifecyclePolicy {
 	rules := make([]driver.LifecycleRule, len(p.Rules))
-	copy(rules, p.Rules)
+
+	for i := range p.Rules {
+		rules[i] = p.Rules[i]
+		rules[i].TagPatternList = append([]string(nil), p.Rules[i].TagPatternList...)
+		rules[i].TagPrefixList = append([]string(nil), p.Rules[i].TagPrefixList...)
+	}
 
 	return driver.LifecyclePolicy{Rules: rules, Document: p.Document}
 }

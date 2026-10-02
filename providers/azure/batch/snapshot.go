@@ -17,7 +17,7 @@ type snapshotState struct {
 	Pools    json.RawMessage `json:"pools,omitempty"`
 }
 
-// Snapshot captures every batch account and pool. includeAssets is unused —
+// Snapshot captures every batch account and pool. includeAssets is unused:
 // these resources hold no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()

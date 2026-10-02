@@ -57,6 +57,10 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request) {
 		h.queryListMetrics(w, r)
 	case opGetMetricStatistics:
 		h.queryGetMetricStatistics(w, r)
+	case opGetMetricData:
+		h.queryGetMetricData(w, r)
+	case opDescribeAlarmsForMetric:
+		h.queryDescribeAlarmsForMetric(w, r)
 	case opPutMetricAlarm:
 		h.queryPutMetricAlarm(w, r)
 	case opPutCompositeAlarm:
@@ -99,15 +103,19 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request) {
 		h.queryUntagResource(w, r)
 	case opListTagsForResource:
 		h.queryListTagsForResource(w, r)
+	case opPutAnomalyDetector:
+		h.queryPutAnomalyDetector(w, r)
+	case opDescribeAnomalyDetectors:
+		h.queryDescribeAnomalyDetectors(w, r)
+	case opDeleteAnomalyDetector:
+		h.queryDeleteAnomalyDetector(w, r)
 	default:
 		writeQueryError(w, http.StatusBadRequest, "InvalidAction", "unsupported CloudWatch action: "+r.Form.Get("Action"))
 	}
 }
 
 func (h *Handler) queryPutMetricData(w http.ResponseWriter, r *http.Request) {
-	ns := r.Form.Get("Namespace")
-
-	var data []mondriver.MetricDatum
+	in := putMetricDataInput{Namespace: r.Form.Get("Namespace")}
 
 	for i := 1; ; i++ {
 		p := "MetricData.member." + strconv.Itoa(i) + "."
@@ -116,27 +124,25 @@ func (h *Handler) queryPutMetricData(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		val, _ := strconv.ParseFloat(r.Form.Get(p+"Value"), 64)
-
-		ts := time.Now().UTC()
-		if raw := r.Form.Get(p + "Timestamp"); raw != "" {
-			if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
-				ts = parsed
-			}
-		}
-
-		datum := mondriver.MetricDatum{
-			Namespace: ns, MetricName: name, Value: val, Unit: r.Form.Get(p + "Unit"),
-			Dimensions: queryDimensions(r, p+"Dimensions.member."), Timestamp: ts,
+		d := putMetricDatumCBR{
+			MetricName:      name,
+			Unit:            r.Form.Get(p + "Unit"),
+			Dimensions:      dimsToCBR(queryDimensions(r, p+"Dimensions.member.")),
 			StatisticValues: queryStatisticValues(r, p+"StatisticValues."),
 			Values:          queryFloatList(r, p+"Values.member."),
 			Counts:          queryFloatList(r, p+"Counts.member."),
 		}
 
-		data = append(data, datum)
+		d.Value, _ = strconv.ParseFloat(r.Form.Get(p+"Value"), 64)
+
+		if parsed, err := time.Parse(time.RFC3339, r.Form.Get(p+"Timestamp")); err == nil {
+			d.Timestamp = &parsed
+		}
+
+		in.MetricData = append(in.MetricData, d)
 	}
 
-	if err := h.monitoring.PutMetricData(r.Context(), data); err != nil {
+	if err := h.putMetricDataCore(r.Context(), &in); err != nil {
 		writeQueryDriverErr(w, err)
 		return
 	}
@@ -145,131 +151,100 @@ func (h *Handler) queryPutMetricData(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) queryListMetrics(w http.ResponseWriter, r *http.Request) {
-	names, err := h.monitoring.ListMetrics(r.Context(), r.Form.Get("Namespace"))
+	res, err := h.listMetricsCore(r.Context(), queryListMetricsInput(r))
 	if err != nil {
 		writeQueryDriverErr(w, err)
 		return
 	}
 
-	sort.Strings(names)
-
-	ns := r.Form.Get("Namespace")
-	from, to, next := pageWindow(len(names), decodeOffsetToken(r.Form.Get("NextToken")), listMetricsPageSize)
-
-	members := make([]metricMemberXML, 0, to-from)
-	for _, n := range names[from:to] {
-		members = append(members, metricMemberXML{Namespace: ns, MetricName: n})
+	members := make([]metricMemberXML, 0, len(res.Metrics))
+	for _, m := range res.Metrics {
+		members = append(members, metricMemberXML{
+			Namespace: m.Namespace, MetricName: m.MetricName, Dimensions: dimsToXML(m.Dimensions),
+		})
 	}
 
-	result := listMetricsResultXML{Metrics: members}
-	if next > 0 {
-		result.NextToken = encodeOffsetToken(next)
+	writeQueryResponse(w, "ListMetricsResponse", listMetricsResultXML{Metrics: members, NextToken: res.NextToken})
+}
+
+func queryListMetricsInput(r *http.Request) listMetricsInput {
+	in := listMetricsInput{
+		Namespace:      r.Form.Get("Namespace"),
+		MetricName:     r.Form.Get("MetricName"),
+		NextToken:      r.Form.Get("NextToken"),
+		RecentlyActive: r.Form.Get("RecentlyActive"),
 	}
 
-	writeQueryResponse(w, "ListMetricsResponse", result)
+	// Value is optional on a DimensionFilter, so the list ends at the first
+	// missing Name, not the first missing Value.
+	for i := 1; ; i++ {
+		p := "Dimensions.member." + strconv.Itoa(i) + "."
+
+		name := r.Form.Get(p + "Name")
+		if name == "" {
+			break
+		}
+
+		in.Dimensions = append(in.Dimensions, dimensionFilterCBR{Name: name, Value: r.Form.Get(p + "Value")})
+	}
+
+	return in
 }
 
 func (h *Handler) queryGetMetricStatistics(w http.ResponseWriter, r *http.Request) {
-	stats := queryStringList(r, "Statistics.member.")
-	if len(stats) == 0 {
-		stats = []string{statAverage}
-	}
+	in := queryGetMetricStatisticsInput(r)
 
-	start, _ := time.Parse(time.RFC3339, r.Form.Get("StartTime"))
-	end, _ := time.Parse(time.RFC3339, r.Form.Get("EndTime"))
-	period, _ := strconv.Atoi(r.Form.Get("Period"))
-	dims := queryDimensions(r, "Dimensions.member.")
-
-	acc := newQueryDatapointAcc()
-
-	for _, stat := range stats {
-		res, err := h.monitoring.GetMetricData(r.Context(), mondriver.GetMetricInput{
-			Namespace: r.Form.Get("Namespace"), MetricName: r.Form.Get("MetricName"),
-			Dimensions: dims, StartTime: start, EndTime: end, Period: period, Stat: stat,
-		})
-		if err != nil {
-			writeQueryDriverErr(w, err)
-			return
-		}
-
-		acc.add(res, stat)
-	}
-
-	writeQueryResponse(w, "GetMetricStatisticsResponse",
-		getStatsResultXML{Label: r.Form.Get("MetricName"), Datapoints: acc.datapoints()})
-}
-
-// queryDatapointAcc merges per-statistic results into one XML datapoint per
-// timestamp so a multi-statistic GetMetricStatistics returns every requested
-// statistic on each datapoint.
-type queryDatapointAcc struct {
-	byTS  map[int64]*datapointXML
-	order []int64
-	unit  string
-}
-
-func newQueryDatapointAcc() *queryDatapointAcc {
-	return &queryDatapointAcc{byTS: map[int64]*datapointXML{}}
-}
-
-func (a *queryDatapointAcc) add(res *mondriver.MetricDataResult, stat string) {
-	if res == nil {
+	res, err := h.getMetricStatisticsCore(r.Context(), &in)
+	if err != nil {
+		writeQueryDriverErr(w, err)
 		return
 	}
 
-	if a.unit == "" {
-		a.unit = res.Unit
+	points := make([]datapointXML, 0, len(res.Datapoints))
+	for _, dp := range res.Datapoints {
+		points = append(points, datapointXML{
+			Timestamp: dp.Timestamp.Format(time.RFC3339), SampleCount: dp.SampleCount, Average: dp.Average,
+			Sum: dp.Sum, Minimum: dp.Minimum, Maximum: dp.Maximum, Unit: dp.Unit,
+			ExtendedStatistics: extendedStatisticsXML(dp.ExtendedStatistics),
+		})
 	}
 
-	for i := range res.Timestamps {
-		ts := res.Timestamps[i].UTC()
-		key := ts.UnixNano()
-
-		dp, ok := a.byTS[key]
-		if !ok {
-			dp = &datapointXML{Timestamp: ts.Format(time.RFC3339)}
-			a.byTS[key] = dp
-			a.order = append(a.order, key)
-		}
-
-		setQueryStat(dp, stat, res.Values[i])
-	}
+	writeQueryResponse(w, "GetMetricStatisticsResponse", getStatsResultXML{Label: res.Label, Datapoints: points})
 }
 
-func (a *queryDatapointAcc) datapoints() []datapointXML {
-	unit := a.unit
-	if unit == "" {
-		unit = defaultMetricUnit
+func queryGetMetricStatisticsInput(r *http.Request) getMetricStatisticsInput {
+	in := getMetricStatisticsInput{
+		Namespace:  r.Form.Get("Namespace"),
+		MetricName: r.Form.Get("MetricName"),
+		Statistics: queryStringList(r, "Statistics.member."),
+		Dimensions: dimsToCBR(queryDimensions(r, "Dimensions.member.")),
+		Unit:       r.Form.Get("Unit"),
+
+		ExtendedStatistics: queryStringList(r, "ExtendedStatistics.member."),
 	}
 
-	sort.Slice(a.order, func(i, j int) bool { return a.order[i] < a.order[j] })
+	in.Period, _ = strconv.Atoi(r.Form.Get("Period"))
 
-	out := make([]datapointXML, 0, len(a.order))
-
-	for _, key := range a.order {
-		dp := a.byTS[key]
-		dp.Unit = unit
-		out = append(out, *dp)
+	if t, err := time.Parse(time.RFC3339, r.Form.Get("StartTime")); err == nil {
+		in.StartTime = &t
 	}
 
-	return out
+	if t, err := time.Parse(time.RFC3339, r.Form.Get("EndTime")); err == nil {
+		in.EndTime = &t
+	}
+
+	return in
 }
 
 func (h *Handler) queryPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
-	comparisonOperator := r.Form.Get("ComparisonOperator")
-	if !comparisonOperatorValid(comparisonOperator) {
-		writeQueryError(w, http.StatusBadRequest, "ValidationError", "Invalid ComparisonOperator: "+comparisonOperator)
-		return
-	}
-
 	threshold, _ := strconv.ParseFloat(r.Form.Get("Threshold"), 64)
 	period, _ := strconv.Atoi(r.Form.Get("Period"))
 	evalPeriods, _ := strconv.Atoi(r.Form.Get("EvaluationPeriods"))
 	datapointsToAlarm, _ := strconv.Atoi(r.Form.Get("DatapointsToAlarm"))
 
-	err := h.monitoring.CreateAlarm(r.Context(), mondriver.AlarmConfig{
+	err := h.putMetricAlarmCore(r.Context(), &mondriver.AlarmConfig{
 		Name: r.Form.Get("AlarmName"), Namespace: r.Form.Get("Namespace"), MetricName: r.Form.Get("MetricName"),
-		Dimensions: queryDimensions(r, "Dimensions.member."), ComparisonOperator: comparisonOperator,
+		Dimensions: queryDimensions(r, "Dimensions.member."), ComparisonOperator: r.Form.Get("ComparisonOperator"),
 		Threshold: threshold, Period: period, EvaluationPeriods: evalPeriods, DatapointsToAlarm: datapointsToAlarm,
 		Stat: r.Form.Get("Statistic"), ExtendedStatistic: r.Form.Get("ExtendedStatistic"),
 		Unit: r.Form.Get("Unit"), TreatMissingData: r.Form.Get("TreatMissingData"),
@@ -278,13 +253,54 @@ func (h *Handler) queryPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		OKActions:               queryStringList(r, "OKActions.member."),
 		InsufficientDataActions: queryStringList(r, "InsufficientDataActions.member."),
 		Tags:                    queryTagPairs(r, "Tags.member."),
-	})
+		Metrics:                 toDriverQueries(queryMetricDataQueries(r, "Metrics")),
+		ThresholdMetricID:       r.Form.Get("ThresholdMetricId"),
+
+		EvaluateLowSampleCountPercentile: r.Form.Get("EvaluateLowSampleCountPercentile"),
+	}, r.Form.Has("Threshold"), queryEvaluationWindow(r))
 	if err != nil {
 		writeQueryDriverErr(w, err)
 		return
 	}
 
 	writeQueryResponse(w, "PutMetricAlarmResponse", nil)
+}
+
+// Form keys of the EvaluationWindow union.
+const (
+	evaluationWindowKey = "EvaluationWindow"
+	slidingWindowKey    = evaluationWindowKey + ".SlidingWindow"
+	wallClockWindowKey  = evaluationWindowKey + ".WallClockWindow"
+)
+
+// queryEvaluationWindow decodes EvaluationWindow from the form. An empty
+// structure member sends no key of its own, so a member counts as set when any
+// key starts with its name. Nil means no EvaluationWindow key was sent.
+func queryEvaluationWindow(r *http.Request) *evaluationWindowInput {
+	var in *evaluationWindowInput
+
+	for key := range r.Form {
+		if key != evaluationWindowKey && !strings.HasPrefix(key, evaluationWindowKey+".") {
+			continue
+		}
+
+		if in == nil {
+			in = &evaluationWindowInput{}
+		}
+
+		switch {
+		case key == slidingWindowKey || strings.HasPrefix(key, slidingWindowKey+"."):
+			in.sliding = true
+		case key == wallClockWindowKey || strings.HasPrefix(key, wallClockWindowKey+"."):
+			in.wall = true
+		}
+	}
+
+	if in != nil {
+		in.timezone = r.Form.Get(wallClockWindowKey + ".Timezone")
+	}
+
+	return in
 }
 
 // queryDescribeAlarms mirrors the rpc-v2-cbor describeAlarms: it renders the
@@ -300,52 +316,37 @@ func (h *Handler) queryDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 		AlarmTypes:      queryStringList(r, "AlarmTypes.member."),
 		StateValue:      r.Form.Get("StateValue"),
 		ActionPrefix:    r.Form.Get("ActionPrefix"),
+
+		ChildrenOfAlarmName: r.Form.Get("ChildrenOfAlarmName"),
+		ParentsOfAlarmName:  r.Form.Get("ParentsOfAlarmName"),
+		NextToken:           r.Form.Get("NextToken"),
 	}
 
-	members := make([]alarmMemberXML, 0)
-
-	if wantsAlarmType(in.AlarmTypes, alarmTypeMetric) {
-		alarms, err := h.monitoring.DescribeAlarms(r.Context(), in.AlarmNames)
-		if err != nil {
-			writeQueryDriverErr(w, err)
-			return
-		}
-
-		for i := range alarms {
-			if !alarmMatchesFilters(&alarms[i], &in) {
-				continue
-			}
-
-			members = append(members, toAlarmMemberXML(&alarms[i]))
-		}
+	if v, err := strconv.Atoi(r.Form.Get("MaxRecords")); err == nil {
+		in.MaxRecords = v
 	}
 
-	sort.SliceStable(members, func(i, j int) bool { return members[i].AlarmName < members[j].AlarmName })
-
-	size := maxAlarmPageSize
-	if v, _ := strconv.Atoi(r.Form.Get("MaxRecords")); v > 0 {
-		size = v
+	page, err := h.describeAlarmsPage(r.Context(), &in)
+	if err != nil {
+		writeQueryDriverErr(w, err)
+		return
 	}
 
-	offset := decodeOffsetToken(r.Form.Get("NextToken"))
-	from, to, next := pageWindow(len(members), offset, size)
+	if familyQuery(&in) {
+		metric, composite := familyRows(page)
+		writeQueryResponse(w, "DescribeAlarmsResponse", describeFamilyResultXML{
+			MetricAlarms: familyXML(metric), CompositeAlarms: familyXML(composite), NextToken: page.next,
+		})
 
-	result := describeAlarmsResultXML{MetricAlarms: members[from:to]}
-	if next > 0 {
-		result.NextToken = encodeOffsetToken(next)
+		return
 	}
 
-	// Composite alarms are a small, separate collection returned in full on the
-	// first page so they aren't duplicated across metric-alarm pages.
-	if offset == 0 && wantsAlarmType(in.AlarmTypes, alarmTypeComposite) {
-		composites, err := h.compositeAlarmRows(r, &in)
-		if err != nil {
-			writeQueryDriverErr(w, err)
-			return
-		}
-
-		result.CompositeAlarms = toCompositeAlarmMemberXMLs(composites)
+	result := describeAlarmsResultXML{MetricAlarms: make([]alarmMemberXML, 0, len(page.metric)), NextToken: page.next}
+	for i := range page.metric {
+		result.MetricAlarms = append(result.MetricAlarms, toAlarmMemberXML(&page.metric[i]))
 	}
+
+	result.CompositeAlarms = toCompositeAlarmMemberXMLs(compositeRows(page.composite))
 
 	writeQueryResponse(w, "DescribeAlarmsResponse", result)
 }
@@ -365,8 +366,9 @@ func toAlarmMemberXML(a *mondriver.AlarmInfo) alarmMemberXML {
 		Dimensions:              dimsToXML(a.Dimensions),
 		StateValue:              a.State,
 		StateReason:             a.StateReason,
+		StateReasonData:         a.StateReasonData,
 		ComparisonOperator:      a.ComparisonOperator,
-		Threshold:               a.Threshold,
+		Threshold:               alarmThreshold(a),
 		Period:                  a.Period,
 		EvaluationPeriods:       a.EvaluationPeriods,
 		DatapointsToAlarm:       a.DatapointsToAlarm,
@@ -378,11 +380,22 @@ func toAlarmMemberXML(a *mondriver.AlarmInfo) alarmMemberXML {
 		AlarmActions:            a.AlarmActions,
 		OKActions:               a.OKActions,
 		InsufficientDataActions: a.InsufficientDataActions,
+		Metrics:                 toQueriesXML(a.Metrics),
+		ThresholdMetricID:       a.ThresholdMetricID,
+
+		EvaluateLowSampleCountPercentile: a.EvaluateLowSampleCountPercentile,
+		EvaluationWindow:                 toEvaluationWindowXML(a.EvaluationWindow),
 	}
 
 	if !a.StateUpdatedTimestamp.IsZero() {
 		m.StateUpdatedTimestamp = a.StateUpdatedTimestamp.UTC().Format(time.RFC3339)
 	}
+
+	if !a.StateTransitionedTimestamp.IsZero() {
+		m.StateTransitionedTimestamp = a.StateTransitionedTimestamp.UTC().Format(time.RFC3339)
+	}
+
+	m.AlarmConfigurationUpdatedTimestamp = xmlTime(optTime(a.AlarmConfigurationUpdatedTimestamp))
 
 	return m
 }
@@ -426,10 +439,16 @@ func toCompositeAlarmMemberXMLs(rows []compositeAlarmCBR) []compositeAlarmMember
 			AlarmActions:            row.AlarmActions,
 			OKActions:               row.OKActions,
 			InsufficientDataActions: row.InsufficientDataActions,
-		}
 
-		if row.StateUpdatedTimestamp != nil {
-			m.StateUpdatedTimestamp = row.StateUpdatedTimestamp.UTC().Format(time.RFC3339)
+			StateReasonData:                    row.StateReasonData,
+			StateUpdatedTimestamp:              xmlTime(row.StateUpdatedTimestamp),
+			StateTransitionedTimestamp:         xmlTime(row.StateTransitionedTimestamp),
+			AlarmConfigurationUpdatedTimestamp: xmlTime(row.AlarmConfigurationUpdatedTimestamp),
+			ActionsSuppressor:                  row.ActionsSuppressor,
+			ActionsSuppressorWaitPeriod:        row.ActionsSuppressorWaitPeriod,
+			ActionsSuppressorExtensionPeriod:   row.ActionsSuppressorExtensionPeriod,
+			ActionsSuppressedBy:                row.ActionsSuppressedBy,
+			ActionsSuppressedReason:            row.ActionsSuppressedReason,
 		}
 
 		out = append(out, m)
@@ -441,22 +460,9 @@ func toCompositeAlarmMemberXMLs(rows []compositeAlarmCBR) []compositeAlarmMember
 func (h *Handler) queryDeleteAlarms(w http.ResponseWriter, r *http.Request) {
 	names := queryStringList(r, "AlarmNames.member.")
 
-	// AWS tolerates incorrect alarm names: valid ones are still deleted and no
-	// ResourceNotFound is returned.
-	for _, name := range names {
-		if err := h.monitoring.DeleteAlarm(r.Context(), name); err != nil && !cerrors.IsNotFound(err) {
-			writeQueryDriverErr(w, err)
-			return
-		}
-	}
-
-	// DeleteAlarms accepts both metric and composite alarm names in one call; a
-	// name that isn't a metric alarm (tolerated above) may be a composite alarm.
-	if store, ok := h.monitoring.(compositeAlarmStore); ok {
-		if err := store.DeleteCompositeAlarms(r.Context(), names); err != nil {
-			writeQueryDriverErr(w, err)
-			return
-		}
+	if err := h.deleteAlarmsCore(r.Context(), names); err != nil {
+		writeQueryDriverErr(w, err)
+		return
 	}
 
 	writeQueryResponse(w, "DeleteAlarmsResponse", nil)
@@ -481,9 +487,13 @@ func (h *Handler) queryPutCompositeAlarm(w http.ResponseWriter, r *http.Request)
 		OKActions:               queryStringList(r, "OKActions.member."),
 		InsufficientDataActions: queryStringList(r, "InsufficientDataActions.member."),
 		Tags:                    queryTagPairs(r, "Tags.member."),
+
+		ActionsSuppressor:                r.Form.Get("ActionsSuppressor"),
+		ActionsSuppressorWaitPeriod:      queryOptInt(r, "ActionsSuppressorWaitPeriod"),
+		ActionsSuppressorExtensionPeriod: queryOptInt(r, "ActionsSuppressorExtensionPeriod"),
 	})
 	if err != nil {
-		writeQueryDriverErr(w, err)
+		writeQueryDriverErr(w, compositeErr(err))
 		return
 	}
 
@@ -514,13 +524,30 @@ func (h *Handler) querySetAlarmActionsEnabled(w http.ResponseWriter, r *http.Req
 }
 
 func (h *Handler) querySetAlarmState(w http.ResponseWriter, r *http.Request) {
-	err := h.monitoring.SetAlarmState(r.Context(), r.Form.Get("AlarmName"), r.Form.Get("StateValue"), r.Form.Get("StateReason"))
-	if err != nil {
+	in := setAlarmStateInput{
+		AlarmName:       formValue(r, "AlarmName"),
+		StateValue:      formValue(r, "StateValue"),
+		StateReason:     formValue(r, "StateReason"),
+		StateReasonData: formValue(r, "StateReasonData"),
+	}
+
+	if err := h.setAlarmStateCore(r.Context(), &in); err != nil {
 		writeQueryDriverErr(w, err)
 		return
 	}
 
 	writeQueryResponse(w, "SetAlarmStateResponse", nil)
+}
+
+// formValue returns a form field, or nil when the field is absent.
+func formValue(r *http.Request, key string) *string {
+	if _, ok := r.Form[key]; !ok {
+		return nil
+	}
+
+	v := r.Form.Get(key)
+
+	return &v
 }
 
 // ---- form list helpers ----
@@ -546,7 +573,7 @@ func queryDimensions(r *http.Request, prefix string) map[string]string {
 
 // queryStatisticValues parses a StatisticSet (SampleCount/Sum/Minimum/Maximum)
 // from the query-protocol form, returning nil when no SampleCount is present.
-func queryStatisticValues(r *http.Request, prefix string) *mondriver.StatisticSet {
+func queryStatisticValues(r *http.Request, prefix string) *statisticSetCBR {
 	raw := r.Form.Get(prefix + "SampleCount")
 	if raw == "" {
 		return nil
@@ -557,7 +584,7 @@ func queryStatisticValues(r *http.Request, prefix string) *mondriver.StatisticSe
 	minimum, _ := strconv.ParseFloat(r.Form.Get(prefix+"Minimum"), 64)
 	maximum, _ := strconv.ParseFloat(r.Form.Get(prefix+"Maximum"), 64)
 
-	return &mondriver.StatisticSet{SampleCount: sampleCount, Sum: sum, Minimum: minimum, Maximum: maximum}
+	return &statisticSetCBR{SampleCount: sampleCount, Sum: sum, Minimum: minimum, Maximum: maximum}
 }
 
 // queryFloatList parses a 1-indexed list of floats (Values.member.N /
@@ -595,6 +622,21 @@ func queryOptBool(r *http.Request, field string) *bool {
 	return &v
 }
 
+// queryOptInt reads an optional integer field. A missing or bad value is nil.
+func queryOptInt(r *http.Request, field string) *int {
+	raw := r.Form.Get(field)
+	if raw == "" {
+		return nil
+	}
+
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil
+	}
+
+	return &v
+}
+
 func queryStringList(r *http.Request, prefix string) []string {
 	var out []string
 
@@ -610,26 +652,12 @@ func queryStringList(r *http.Request, prefix string) []string {
 	return out
 }
 
-func setQueryStat(dp *datapointXML, stat string, v float64) {
-	switch stat {
-	case "Sum":
-		dp.Sum = v
-	case "Minimum":
-		dp.Minimum = v
-	case "Maximum":
-		dp.Maximum = v
-	case "SampleCount":
-		dp.SampleCount = v
-	default:
-		dp.Average = v
-	}
-}
-
 // ---- XML response shapes (query protocol, 2010-08-01) ----
 
 type metricMemberXML struct {
-	Namespace  string `xml:"Namespace"`
-	MetricName string `xml:"MetricName"`
+	Namespace  string         `xml:"Namespace"`
+	MetricName string         `xml:"MetricName"`
+	Dimensions []dimensionXML `xml:"Dimensions>member,omitempty"`
 }
 
 type listMetricsResultXML struct {
@@ -638,14 +666,45 @@ type listMetricsResultXML struct {
 	NextToken string            `xml:"NextToken,omitempty"`
 }
 
+// datapointXML uses pointers so a requested statistic of 0 is still sent.
+// A nil pointer means the statistic was not requested.
 type datapointXML struct {
-	Timestamp   string  `xml:"Timestamp"`
-	SampleCount float64 `xml:"SampleCount,omitempty"`
-	Average     float64 `xml:"Average,omitempty"`
-	Sum         float64 `xml:"Sum,omitempty"`
-	Minimum     float64 `xml:"Minimum,omitempty"`
-	Maximum     float64 `xml:"Maximum,omitempty"`
-	Unit        string  `xml:"Unit,omitempty"`
+	Timestamp   string   `xml:"Timestamp"`
+	SampleCount *float64 `xml:"SampleCount,omitempty"`
+	Average     *float64 `xml:"Average,omitempty"`
+	Sum         *float64 `xml:"Sum,omitempty"`
+	Minimum     *float64 `xml:"Minimum,omitempty"`
+	Maximum     *float64 `xml:"Maximum,omitempty"`
+	Unit        string   `xml:"Unit,omitempty"`
+
+	ExtendedStatistics []extendedStatisticXML `xml:"ExtendedStatistics>entry,omitempty"`
+}
+
+// extendedStatisticXML is one entry of the Datapoint ExtendedStatistics map.
+type extendedStatisticXML struct {
+	Key   string  `xml:"key"`
+	Value float64 `xml:"value"`
+}
+
+// extendedStatisticsXML renders the map sorted by key for stable output.
+func extendedStatisticsXML(m map[string]float64) []extendedStatisticXML {
+	if len(m) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	out := make([]extendedStatisticXML, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, extendedStatisticXML{Key: k, Value: m[k]})
+	}
+
+	return out
 }
 
 type getStatsResultXML struct {
@@ -660,28 +719,36 @@ type dimensionXML struct {
 }
 
 type alarmMemberXML struct {
-	AlarmName               string         `xml:"AlarmName"`
-	AlarmArn                string         `xml:"AlarmArn,omitempty"`
-	AlarmDescription        string         `xml:"AlarmDescription,omitempty"`
-	Namespace               string         `xml:"Namespace,omitempty"`
-	MetricName              string         `xml:"MetricName,omitempty"`
-	Dimensions              []dimensionXML `xml:"Dimensions>member,omitempty"`
-	StateValue              string         `xml:"StateValue"`
-	StateReason             string         `xml:"StateReason,omitempty"`
-	StateUpdatedTimestamp   string         `xml:"StateUpdatedTimestamp,omitempty"`
-	ComparisonOperator      string         `xml:"ComparisonOperator"`
-	Threshold               float64        `xml:"Threshold"`
-	Period                  int            `xml:"Period,omitempty"`
-	EvaluationPeriods       int            `xml:"EvaluationPeriods,omitempty"`
-	DatapointsToAlarm       int            `xml:"DatapointsToAlarm,omitempty"`
-	Statistic               string         `xml:"Statistic,omitempty"`
-	ExtendedStatistic       string         `xml:"ExtendedStatistic,omitempty"`
-	Unit                    string         `xml:"Unit,omitempty"`
-	TreatMissingData        string         `xml:"TreatMissingData,omitempty"`
-	ActionsEnabled          bool           `xml:"ActionsEnabled"`
-	AlarmActions            []string       `xml:"AlarmActions>member,omitempty"`
-	OKActions               []string       `xml:"OKActions>member,omitempty"`
-	InsufficientDataActions []string       `xml:"InsufficientDataActions>member,omitempty"`
+	AlarmName                  string               `xml:"AlarmName"`
+	AlarmArn                   string               `xml:"AlarmArn,omitempty"`
+	AlarmDescription           string               `xml:"AlarmDescription,omitempty"`
+	Namespace                  string               `xml:"Namespace,omitempty"`
+	MetricName                 string               `xml:"MetricName,omitempty"`
+	Dimensions                 []dimensionXML       `xml:"Dimensions>member,omitempty"`
+	StateValue                 string               `xml:"StateValue"`
+	StateReason                string               `xml:"StateReason,omitempty"`
+	StateReasonData            string               `xml:"StateReasonData,omitempty"`
+	StateUpdatedTimestamp      string               `xml:"StateUpdatedTimestamp,omitempty"`
+	StateTransitionedTimestamp string               `xml:"StateTransitionedTimestamp,omitempty"`
+	ComparisonOperator         string               `xml:"ComparisonOperator"`
+	Threshold                  *float64             `xml:"Threshold,omitempty"`
+	Period                     int                  `xml:"Period,omitempty"`
+	EvaluationPeriods          int                  `xml:"EvaluationPeriods,omitempty"`
+	DatapointsToAlarm          int                  `xml:"DatapointsToAlarm,omitempty"`
+	Statistic                  string               `xml:"Statistic,omitempty"`
+	ExtendedStatistic          string               `xml:"ExtendedStatistic,omitempty"`
+	Unit                       string               `xml:"Unit,omitempty"`
+	TreatMissingData           string               `xml:"TreatMissingData,omitempty"`
+	ActionsEnabled             bool                 `xml:"ActionsEnabled"`
+	AlarmActions               []string             `xml:"AlarmActions>member,omitempty"`
+	OKActions                  []string             `xml:"OKActions>member,omitempty"`
+	InsufficientDataActions    []string             `xml:"InsufficientDataActions>member,omitempty"`
+	Metrics                    []metricDataQueryXML `xml:"Metrics>member,omitempty"`
+	ThresholdMetricID          string               `xml:"ThresholdMetricId,omitempty"`
+
+	EvaluateLowSampleCountPercentile   string               `xml:"EvaluateLowSampleCountPercentile,omitempty"`
+	EvaluationWindow                   *evaluationWindowXML `xml:"EvaluationWindow,omitempty"`
+	AlarmConfigurationUpdatedTimestamp string               `xml:"AlarmConfigurationUpdatedTimestamp,omitempty"`
 }
 
 type compositeAlarmMemberXML struct {
@@ -696,6 +763,48 @@ type compositeAlarmMemberXML struct {
 	AlarmActions            []string `xml:"AlarmActions>member,omitempty"`
 	OKActions               []string `xml:"OKActions>member,omitempty"`
 	InsufficientDataActions []string `xml:"InsufficientDataActions>member,omitempty"`
+
+	StateReasonData                    string `xml:"StateReasonData,omitempty"`
+	StateTransitionedTimestamp         string `xml:"StateTransitionedTimestamp,omitempty"`
+	AlarmConfigurationUpdatedTimestamp string `xml:"AlarmConfigurationUpdatedTimestamp,omitempty"`
+	ActionsSuppressor                  string `xml:"ActionsSuppressor,omitempty"`
+	ActionsSuppressorWaitPeriod        *int   `xml:"ActionsSuppressorWaitPeriod,omitempty"`
+	ActionsSuppressorExtensionPeriod   *int   `xml:"ActionsSuppressorExtensionPeriod,omitempty"`
+	ActionsSuppressedBy                string `xml:"ActionsSuppressedBy,omitempty"`
+	ActionsSuppressedReason            string `xml:"ActionsSuppressedReason,omitempty"`
+}
+
+// xmlTime renders an optional timestamp for the query protocol.
+func xmlTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+
+	return t.UTC().Format(time.RFC3339)
+}
+
+// familyAlarmXML is an alarm row of a children or parents query.
+type familyAlarmXML struct {
+	AlarmName             string `xml:"AlarmName"`
+	AlarmArn              string `xml:"AlarmArn,omitempty"`
+	StateValue            string `xml:"StateValue,omitempty"`
+	StateUpdatedTimestamp string `xml:"StateUpdatedTimestamp,omitempty"`
+}
+
+type describeFamilyResultXML struct {
+	XMLName         xml.Name         `xml:"DescribeAlarmsResult"`
+	MetricAlarms    []familyAlarmXML `xml:"MetricAlarms>member"`
+	CompositeAlarms []familyAlarmXML `xml:"CompositeAlarms>member"`
+	NextToken       string           `xml:"NextToken,omitempty"`
+}
+
+func familyXML(rows []familyAlarmCBR) []familyAlarmXML {
+	out := make([]familyAlarmXML, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, familyAlarmXML{r.AlarmName, r.AlarmArn, r.StateValue, xmlTime(r.StateUpdatedTimestamp)})
+	}
+
+	return out
 }
 
 type describeAlarmsResultXML struct {
@@ -748,6 +857,11 @@ func writeQueryError(w http.ResponseWriter, status int, code, msg string) {
 }
 
 func writeQueryDriverErr(w http.ResponseWriter, err error) {
+	if we, ok := asWireError(err); ok {
+		writeQueryError(w, we.status, we.code, we.msg)
+		return
+	}
+
 	code, status := "InternalFailure", http.StatusInternalServerError
 
 	switch {

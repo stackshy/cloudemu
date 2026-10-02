@@ -218,7 +218,7 @@ func (*Engine) buildPath(
 // Taking whichever table was listed first was only ever right while a VPC had
 // exactly one. Once a main route table exists alongside caller-created ones,
 // the arbitrary choice can land on a table whose routes do not govern the
-// subnet, and every answer derived from it is then wrong — a reachable
+// subnet, and every answer derived from it is then wrong: a reachable
 // destination reads as blocked.
 func (e *Engine) findRouteTableForSubnet(
 	ctx context.Context,

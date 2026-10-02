@@ -30,7 +30,7 @@ func batchErr(msg string) error {
 	return cerrors.New(cerrors.InvalidArgument, msg)
 }
 
-// batch handles POST /$batch — an OData entity group transaction. It parses the
+// batch handles POST /$batch: an OData entity group transaction. It parses the
 // multipart/mixed batch + change set, applies the operations atomically, and
 // returns the multipart/mixed batch response the aztables client expects.
 func (h *Handler) batch(w http.ResponseWriter, r *http.Request) {
@@ -70,8 +70,8 @@ func (h *Handler) batch(w http.ResponseWriter, r *http.Request) {
 }
 
 // validateBatchPartitions enforces Azure's entity-group-transaction rules: every
-// operation must target the same PartitionKey, and an entity — identified by its
-// (PartitionKey, RowKey) — may appear at most once. It returns the Azure error
+// operation must target the same PartitionKey, and an entity, identified by its
+// (PartitionKey, RowKey), may appear at most once. It returns the Azure error
 // code and message when a rule is violated. ops must be non-empty.
 func validateBatchPartitions(ops []driver.BatchOp) (code, msg string, ok bool) {
 	partition := ops[0].PartitionKey

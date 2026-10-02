@@ -28,7 +28,7 @@ func TestSDKMySQLFlexWireErrorMapping(t *testing.T) {
 	cf, _ := newFactory(t)
 	ctx := context.Background()
 
-	// 404 — server that doesn't exist.
+	// 404: server that doesn't exist.
 	if _, err := cf.NewServersClient().Get(ctx, "rg-1", "ghost", nil); err == nil {
 		t.Error("Get missing server: expected error")
 	} else if got := statusOf(t, err); got != http.StatusNotFound {
@@ -37,7 +37,7 @@ func TestSDKMySQLFlexWireErrorMapping(t *testing.T) {
 
 	mustCreateServer(t, cf)
 
-	// 400 — firewall rule with start > end.
+	// 400: firewall rule with start > end.
 	fw := cf.NewFirewallRulesClient()
 
 	poller, err := fw.BeginCreateOrUpdate(ctx, "rg-1", "srv1", "bad", armmysqlflexibleservers.FirewallRule{
@@ -56,7 +56,7 @@ func TestSDKMySQLFlexWireErrorMapping(t *testing.T) {
 		t.Errorf("firewall start > end: status %d, want 400", got)
 	}
 
-	// 404 — unknown server parameter.
+	// 404: unknown server parameter.
 	if _, err := cf.NewConfigurationsClient().Get(ctx, "rg-1", "srv1", "not_a_real_param", nil); err == nil {
 		t.Error("Get unknown parameter: expected error")
 	} else if got := statusOf(t, err); got != http.StatusNotFound {

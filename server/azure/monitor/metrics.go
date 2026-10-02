@@ -18,7 +18,7 @@ const (
 )
 
 // MetricsHandler serves the microsoft.insights data plane
-// (Microsoft.Insights/metrics and metricDefinitions) — an extension resource
+// (Microsoft.Insights/metrics and metricDefinitions): an extension resource
 // hanging off any resource URI. It reads the timeseries the compute/storage
 // mocks pushed into the monitoring driver.
 type MetricsHandler struct {
@@ -127,13 +127,13 @@ func (h *MetricsHandler) listMetrics(w http.ResponseWriter, r *http.Request) {
 // metricEntry builds one Metric object with a single timeseries whose datapoints
 // carry each requested aggregation.
 func (h *MetricsHandler) metricEntry(ctx context.Context, resourceID, uri, namespace, name string, aggs []string) map[string]any {
-	data := h.timeseriesData(ctx, resourceID, namespace, name, aggs)
+	data, unit := h.timeseriesData(ctx, resourceID, namespace, name, aggs)
 
 	return map[string]any{
 		"id":         uri + metricsSuffix + "/" + name,
 		"type":       "Microsoft.Insights/metrics",
 		"name":       localizable(name),
-		"unit":       "Count",
+		"unit":       unit,
 		"timeseries": []map[string]any{{"metadatavalues": []any{}, "data": data}},
 		"errorCode":  "Success",
 	}

@@ -49,8 +49,8 @@ func TestMatchesScopeGatesSharedTagActions(t *testing.T) {
 }
 
 // TestElastiCacheClaimsScopedSnapshotActions verifies CreateSnapshot /
-// DescribeSnapshots — Action names shared with EC2's EBS snapshots — are only
-// claimed when the SigV4 credential scope names "elasticache". Critically, an
+// DescribeSnapshots (Action names shared with EC2's EBS snapshots) are only
+// claimed when the SigV4 credential scope names "elasticache". An
 // EC2-scoped CreateSnapshot must NOT be claimed so it still routes to the EC2
 // EBS handler; ElastiCache registers before EC2, so a missing gate here would
 // steal every EBS snapshot call.

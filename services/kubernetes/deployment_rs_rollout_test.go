@@ -1,12 +1,12 @@
 // Test for Finding 10: docs/services.md §18 claims a Deployment pod-template
 // change "creates a new ReplicaSet (a real rolling update) and retires the
-// old one" — but no test asserted a second ReplicaSet actually gets created
+// old one", but no test asserted a second ReplicaSet actually gets created
 // on a template change (only single-revision creation, in
 // phase3_controllers_test.go's TestDeployment_InterposesReplicaSet, was
 // covered). This exercises the roll-to-new-RS path end to end and records
 // what "retires" actually means in the implementation (services/kubernetes/
 // deployment_rs.go: pruneStaleDeploymentRSLocked deletes the old ReplicaSet
-// outright — it does not scale it to zero and keep it around for rollback).
+// outright; it does not scale it to zero and keep it around for rollback).
 
 package kubernetes_test
 
@@ -95,7 +95,7 @@ func TestDeployment_TemplateChangeRollsToNewReplicaSet(t *testing.T) {
 
 	resp.Body.Close()
 
-	// A second, new-revision ReplicaSet must now exist — and only it: the
+	// A second, new-revision ReplicaSet must now exist, and only it: the
 	// old RS is retired by deletion (pruneStaleDeploymentRSLocked), not by
 	// scaling to zero, so there is exactly one RS again, but it is NOT the
 	// same object as before.

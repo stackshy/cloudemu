@@ -155,7 +155,7 @@ func applyGen1PatchFields(m *gen1Meta, body *cloudFunction, mask updateMask) {
 }
 
 // gen1MetaFor returns a copy of the stored metadata for name, or freshly
-// defaulted metadata (versionId 1) when none is stored — the case for a function
+// defaulted metadata (versionId 1) when none is stored, the case for a function
 // created directly through the portable API rather than the wire handler.
 func (h *Handler) gen1MetaFor(name, project string) gen1Meta {
 	h.mu.RLock()

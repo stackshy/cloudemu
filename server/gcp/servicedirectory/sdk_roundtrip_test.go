@@ -100,7 +100,7 @@ func TestSDKHierarchyLifecycle(t *testing.T) {
 }
 
 // assertComputedStable re-Gets every resource and asserts the computed name/uid
-// fields did not drift — a per-read regeneration would perpetually drift a
+// fields did not drift. A per-read regeneration would perpetually drift a
 // Terraform refresh.
 func assertComputedStable(t *testing.T, ctx context.Context, svc *servicedirectory.APIService, nsUID, svcUID, epUID string) {
 	t.Helper()

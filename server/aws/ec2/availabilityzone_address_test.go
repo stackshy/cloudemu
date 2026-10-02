@@ -8,7 +8,7 @@ import (
 )
 
 // Callers place subnets one per zone, so a single-zone answer silently
-// collapses a multi-AZ network into one — and the resources that require two
+// collapses a multi-AZ network into one, and the resources that require two
 // (managed-database subnet groups, cluster control planes) fail much later with
 // an error that says nothing about zones.
 func TestDescribeAvailabilityZonesReturnsSeveral(t *testing.T) {

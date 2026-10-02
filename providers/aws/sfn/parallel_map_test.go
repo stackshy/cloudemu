@@ -136,7 +136,7 @@ func TestMapResultSelectorAndResultPath(t *testing.T) {
 }
 
 // TestTaskResultPathFailureIsCaught is the Medium PR2-review fix: a Task whose
-// ResultPath uses unsupported syntax fails with States.ResultPathMatchFailure —
+// ResultPath uses unsupported syntax fails with States.ResultPathMatchFailure,
 // a state-internal I/O error that must now be CAUGHT by a matching Catcher rather
 // than bypassing Catch and going straight to ExecutionFailed.
 func TestTaskResultPathFailureIsCaught(t *testing.T) {

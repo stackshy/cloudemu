@@ -23,7 +23,7 @@ func newGCPLBServer(t *testing.T) *httptest.Server {
 
 	cloudP := cloudemu.NewGCP()
 	// Register Compute too so the shared /global/operations polling endpoint is
-	// wired up — LB mutating ops return Operation envelopes the SDK polls there.
+	// wired up. LB mutating ops return Operation envelopes the SDK polls there.
 	// This also proves the backendServices / forwardingRules resource types
 	// aren't shadowed by the compute (instances/operations/…) handler.
 	srv := gcpserver.New(gcpserver.Drivers{LB: cloudP.LB, Compute: cloudP.GCE})

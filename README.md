@@ -1,11 +1,11 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/stackshy/cloudemu/development/.github/logo-dark.png" />
-    <img src="https://raw.githubusercontent.com/stackshy/cloudemu/development/.github/logo-light.png" alt="cloudemu — the cloud, in memory" width="440" />
+    <img src="https://raw.githubusercontent.com/stackshy/cloudemu/development/.github/logo-light.png" alt="cloudemu logo" width="440" />
   </picture>
 </p>
 
-<p align="center"><b>In-memory AWS, Azure &amp; GCP — run it as a local cloud, or mock in-process.</b><br/>Any language. $0. Deterministic. Resettable.</p>
+<p align="center">In-memory emulator for the AWS, Azure and GCP APIs. Run it as a local server or embed it in Go tests.</p>
 
 <p align="center">
   <a href="https://github.com/stackshy/cloudemu/pkgs/container/cloudemu"><img src="https://img.shields.io/badge/docker-ghcr.io%2Fstackshy%2Fcloudemu-2496ED?logo=docker&logoColor=white" alt="Docker Image"></a>
@@ -13,7 +13,6 @@
   <a href="https://goreportcard.com/report/github.com/stackshy/cloudemu/v2"><img src="https://goreportcard.com/badge/github.com/stackshy/cloudemu/v2" alt="Go Report Card"></a>
   <a href="https://github.com/stackshy/cloudemu/blob/development/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/providers-AWS_|_Azure_|_GCP-orange" alt="Providers">
-  <img src="https://img.shields.io/badge/cost-$0-brightgreen" alt="Zero Cost">
 </p>
 
 <p align="center">
@@ -22,40 +21,38 @@
 
 ---
 
-cloudemu emulates the **cloud APIs** of AWS, Azure, and GCP entirely in memory. Point the real SDKs or CLIs — in **any language** — at a local endpoint, and your unmodified code runs against an in-memory backend. No accounts, no network, no bill; instant, deterministic, and resettable.
+cloudemu serves the AWS, Azure and GCP APIs from memory. You point the normal SDK or CLI (any language) at a local endpoint and your code runs unchanged. You don't need a cloud account or network access, and nothing is billed. State is deterministic and can be reset between tests.
 
-It emulates the API **control surface** your code actually calls, not real infrastructure — which is exactly what removes cost, latency, and flakiness from the loop.
+It emulates the API surface your code calls. It does not create real infrastructure.
 
-## Three ways to run it
+## Ways to run it
 
-1. **Standalone server / Docker** — `cloudemu serve` (or `docker run … ghcr.io/stackshy/cloudemu`). A long-lived local cloud you point any app, CLI, or SDK at, LocalStack-style.
-2. **In-process SDK server** (Go) — a `httptest.NewServer` your tests point the real SDKs at. No container.
-3. **Typed Go API** — call the in-memory mocks directly: `cloud.EC2.RunInstances(ctx, …)`.
+1. Standalone server or Docker: `cloudemu serve` or `docker run … ghcr.io/stackshy/cloudemu`. A long-running local cloud that any app, CLI or SDK can use, similar to LocalStack.
+2. In-process SDK server (Go): an `httptest.NewServer` that your tests point the real SDKs at. No container needed.
+3. Typed Go API: call the in-memory backends directly, e.g. `cloud.EC2.RunInstances(ctx, …)`.
 
 ## Install
-
-Get the `cloudemu` CLI — pick whichever fits your setup:
 
 ```sh
 # Homebrew (macOS / Linux)
 brew install stackshy/tap/cloudemu
 
-# One-line install script (macOS / Linux) — downloads the release binary and verifies its checksum
+# Install script (macOS / Linux). Downloads the release binary and checks its SHA-256.
 curl -fsSL https://raw.githubusercontent.com/stackshy/cloudemu/HEAD/install.sh | sh
 
 # Go toolchain
 go install github.com/stackshy/cloudemu/v2/cmd/cloudemu@latest
 
-# Docker — no install, just run the server
+# Docker (nothing to install, runs the server)
 docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 \
   ghcr.io/stackshy/cloudemu:latest
 ```
 
-Prebuilt binaries for every OS/arch are on the [releases page](https://github.com/stackshy/cloudemu/releases). The install script honours a version arg and an `INSTALL_DIR` override, e.g. `... | sh -s -- v2.5.0` or `INSTALL_DIR="$HOME/bin" ... | sh`. To use cloudemu as a Go library instead, see [Quickstart](#quickstart) below.
+Prebuilt binaries are on the [releases page](https://github.com/stackshy/cloudemu/releases). The install script takes a version argument (`... | sh -s -- v2.5.0`) and an `INSTALL_DIR` override (`... | INSTALL_DIR="$HOME/bin" sh`). To use cloudemu as a Go library, see [Library mode](#library-mode-go-unit-tests) below.
 
 ## Quickstart
 
-**To integrate cloudemu with an existing application, run it in server mode and set your SDK's endpoint** (`AWS_ENDPOINT_URL` / `BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override), then point your already-running app or services at it. Do **not** write a `_test.go` file to spin it up in-process for integration — that's library mode, for unit tests inside cloudemu-aware Go code (shown last).
+To use cloudemu with an existing application, run it as a server and change your SDK's endpoint (`AWS_ENDPOINT_URL` / `BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override). You don't need a `_test.go` file for this. The in-process library mode shown further down is for Go unit tests.
 
 ```sh
 docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 \
@@ -64,7 +61,7 @@ docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 \
 # Apple Silicon: add --platform linux/amd64 if the amd64 image won't start natively.
 ```
 
-Point any existing SDK or CLI at it — nothing cloudemu-specific:
+Any SDK or CLI works against it:
 
 ```sh
 export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1
@@ -72,10 +69,10 @@ aws --endpoint-url http://127.0.0.1:4566 s3 mb s3://demo
 aws --endpoint-url http://127.0.0.1:4566 s3 ls
 ```
 
-The same override in code — your app builds its client exactly as in production, only the endpoint changes:
+In code, you build the client the same way as in production and only change the endpoint:
 
 ```go
-// AWS (aws-sdk-go-v2) — or just export AWS_ENDPOINT_URL=http://127.0.0.1:4566
+// AWS (aws-sdk-go-v2), or export AWS_ENDPOINT_URL=http://127.0.0.1:4566
 client := s3.NewFromConfig(cfg, func(o *s3.Options) {
     o.BaseEndpoint = aws.String("http://127.0.0.1:4566")
     o.UsePathStyle = true
@@ -86,13 +83,13 @@ gcs, _ := storage.NewClient(ctx,
     option.WithEndpoint("http://127.0.0.1:4569"),
     option.WithoutAuthentication())
 
-// Azure (azure-sdk-for-go) — ARM endpoint override (HTTPS, self-signed cert)
+// Azure (azure-sdk-for-go): ARM endpoint override (HTTPS, self-signed cert)
 cloudCfg := cloud.Configuration{Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
     cloud.ResourceManager: {Endpoint: "https://127.0.0.1:4568", Audience: "https://management.azure.com"},
 }}
 ```
 
-Now the live code path runs end-to-end — the real app writes an object and reads it straight back from the in-memory backend (no assertions, no test harness):
+The app then writes an object and reads it back from the in-memory backend:
 
 ```go
 _, _ = client.PutObject(ctx, &s3.PutObjectInput{
@@ -104,11 +101,11 @@ out, _ := client.GetObject(ctx, &s3.GetObjectInput{
 // out.Body streams "hi from my app"
 ```
 
-`kubectl apply -f deployment.yaml` round-trips against the in-memory cluster, and `curl -X POST http://127.0.0.1:4566/_cloudemu/reset` clears all state between tests. Full flags and per-SDK wiring: [docs/standalone-server.md](docs/standalone-server.md).
+`kubectl apply -f deployment.yaml` works against the in-memory cluster. `curl -X POST http://127.0.0.1:4566/_cloudemu/reset` clears all state between tests. Flags and per-SDK setup are in [docs/standalone-server.md](docs/standalone-server.md).
 
-### Library mode — for unit tests inside cloudemu-aware Go code only
+### Library mode (Go unit tests)
 
-For Go unit tests you own, skip the server and run it in-process:
+For Go unit tests, you can skip the server and run cloudemu in-process:
 
 ```go
 cloud := cloudemu.NewAWS()
@@ -123,60 +120,66 @@ client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 client.PutObject(ctx, &s3.PutObjectInput{ /* … */ }) // hits the in-memory backend
 ```
 
-`go get github.com/stackshy/cloudemu/v2` (Go 1.25+) · [docs/getting-started.md](docs/getting-started.md)
+`go get github.com/stackshy/cloudemu/v2` (Go 1.25+). See [docs/getting-started.md](docs/getting-started.md).
 
-## What you get
+## Coverage
 
-**76 AWS · 75 Azure · 55 GCP services** — 173 service interfaces, 3,700+ operations — plus a real in-memory **Kubernetes data plane**. The always-current, generated list is [docs/coverage](docs/coverage/README.md); the highlights:
+76 AWS, 75 Azure and 55 GCP services (173 service interfaces, 3,700+ operations), plus an in-memory Kubernetes data plane. The full list is generated from the code and lives in [docs/coverage](docs/coverage/README.md). Some of what's there:
 
-- **Storage · Compute · Databases** — S3/Blob/GCS, EC2/VMs/GCE, DynamoDB/Cosmos/Firestore, RDS/Aurora, Cloud SQL, Spanner, Bigtable
-- **Serverless & Containers** — Lambda/Functions, App Runner, Cloud Run, ECS, Container Apps, and EKS/AKS/GKE with a full Kubernetes API
-- **Messaging & Events** — SQS/SNS/EventBridge, Service Bus/Event Grid/Event Hubs, Pub/Sub/Eventarc
-- **Networking · DNS · Load Balancing** — VPC, security groups, route tables, Global Accelerator, Azure Firewall, Route 53/Cloud DNS, ELB
-- **Data & Analytics** — Athena, Glue, EMR, Kinesis, Synapse, Kusto, BigQuery, Dataproc
-- **Secrets · IAM · KMS · Monitoring · Logging** — Secrets Manager/Key Vault, KMS, managed identities, CloudWatch/Azure Monitor, structured logs
-- **AI/ML** — Bedrock, SageMaker, Vertex AI, Azure OpenAI
-- **Governance & FinOps** — Backup, Config, Chaos Studio, management locks, Cost Explorer / Cost Management / Cloud Billing
+- Storage, compute, databases: S3/Blob/GCS, EC2/VMs/GCE, DynamoDB/Cosmos/Firestore, RDS/Aurora, Cloud SQL, Spanner, Bigtable
+- Serverless and containers: Lambda/Functions, App Runner, Cloud Run, ECS, Container Apps, and EKS/AKS/GKE with a Kubernetes API
+- Messaging and events: SQS/SNS/EventBridge, Service Bus/Event Grid/Event Hubs, Pub/Sub/Eventarc
+- Networking, DNS, load balancing: VPC, security groups, route tables, Global Accelerator, Azure Firewall, Route 53/Cloud DNS, ELB
+- Data and analytics: Athena, Glue, EMR, Kinesis, Synapse, Kusto, BigQuery, Dataproc
+- Secrets, IAM, KMS, monitoring, logging: Secrets Manager/Key Vault, KMS, managed identities, CloudWatch/Azure Monitor, structured logs
+- AI/ML: Bedrock, SageMaker, Vertex AI, Azure OpenAI
+- Governance and FinOps: Backup, Config, Chaos Studio, management locks, Cost Explorer / Cost Management / Cloud Billing
 
-The **Kubernetes data plane** does real CRUD, server-side apply, and watch streaming — so `client-go` informers work — and converges controllers synchronously (a Deployment materializes Pods to Running on write). It runs a real scheduler (node & inter-pod affinity, topology spread, scoring), an opt-in multi-node cluster (`--k8s-nodes N`, taints/tolerations, dynamic node add/remove), and `exec`/`attach` over WebSocket. See [docs/services.md](docs/services.md).
+The Kubernetes data plane supports CRUD, server-side apply and watch streams, so `client-go` informers work. Controllers converge synchronously: writing a Deployment brings its Pods to Running. It has a scheduler (node and inter-pod affinity, topology spread, scoring), an optional multi-node cluster (`--k8s-nodes N`, taints/tolerations, adding and removing nodes at runtime), and `exec`/`attach` over WebSocket. See [docs/services.md](docs/services.md).
 
-## Works with your tools
+## Tooling
 
-- **Terraform / OpenTofu** — real `apply` / `plan` / `destroy` against cloudemu, proven idempotent in CI. Zero boilerplate with the [`cloudemu-tf`](contrib/terraform) wrapper. → [docs/terraform.md](docs/terraform.md)
-- **Testcontainers** (Go) — auto start/stop in your test suite. → [contrib/testcontainers](contrib/testcontainers)
-- **Any SDK or CLI**, any language — it speaks the real wire protocols.
+- Terraform / OpenTofu: `apply`, `plan` and `destroy` run against cloudemu, and CI checks that a second apply is a no-op. The [`cloudemu-tf`](contrib/terraform) wrapper handles the provider setup. See [docs/terraform.md](docs/terraform.md).
+- Testcontainers (Go): starts and stops cloudemu from your test suite. See [contrib/testcontainers](contrib/testcontainers).
+- Any SDK or CLI in any language, since cloudemu speaks the real wire protocols.
 
 ## Real engines (opt-in)
 
-By default everything is in memory — no real database, cache, or code runs. When you want a resource to do the **real thing** — actual SQL, real Redis, your uploaded function or container — opt in with `config.With<X>Engine(...)`. Two sibling modules keep the heavy dependencies out of the core:
+By default nothing real runs: no database, cache or user code. If you want a resource to run real SQL, real Redis, or your uploaded function or container, opt in with `config.With<X>Engine(...)`. The heavy dependencies live in two separate modules so the core stays small:
 
-- **[contrib/realengine](contrib/realengine)** — no Docker: embedded Postgres, miniredis, and `python3`/`node` for Lambda/Functions code.
-- **[contrib/dockerengine](contrib/dockerengine)** — real containers: MySQL, VM boot scripts, ECS/ACI/Cloud Run, the Azure Functions host.
+- [contrib/realengine](contrib/realengine): no Docker. Embedded Postgres, miniredis, and `python3`/`node` for Lambda/Functions code.
+- [contrib/dockerengine](contrib/dockerengine): real containers. MySQL, VM boot scripts, ECS/ACI/Cloud Run, the Azure Functions host.
 
-The in-memory default is unchanged; `Provider.Close()` tears down whatever you wired.
+The in-memory default doesn't change. `Provider.Close()` shuts down whatever engines you wired in.
 
 ## Persistence (opt-in)
 
-State is in memory and resettable, so it's ephemeral by default. When you want it to survive a restart, snapshot the **whole emulator** — every stateful service across all four providers, identity-preserving — to a single JSON file and restore it into a fresh instance. Run the background server with `--persist`, capture named states with `cloudemu snapshot save`/`load`, hit `GET`/`POST /_cloudemu/snapshot`, or drive it from Go with the `persist` package. Named states also support **time travel** — `POST /_cloudemu/snapshot/{name}/rewind` restores a checkpoint and `…/{from}/fork/{to}` branches off it. → [docs/persistence.md](docs/persistence.md)
+State lives in memory, so by default it is gone when the process exits. To keep it across restarts, you can snapshot the whole emulator to one JSON file and restore it into a fresh instance. This covers every stateful service in all four providers and keeps resource IDs intact. The options are:
 
-## More capabilities
+- run the background server with `--persist`
+- save and load named states with `cloudemu snapshot save` / `load`
+- call `GET` / `POST /_cloudemu/snapshot`
+- use the `persist` package from Go
 
-- **VCR record / replay** — `cloudemu serve --vcr record --vcr-cassette tape.json` tapes the wire traffic; `--vcr replay` serves it back with no backend, so a captured session reruns deterministically.
-- **Time travel** — save, rewind, and fork whole-emulator state over the admin plane for git-like state history (above).
-- **Preflight check** — `cloudemu doctor` verifies the default ports are free, prints the build version, and reports whether Docker is available.
+Named states can also be rewound and forked: `POST /_cloudemu/snapshot/{name}/rewind` restores a checkpoint, and `…/{from}/fork/{to}` copies one to a new name. See [docs/persistence.md](docs/persistence.md).
+
+## Other features
+
+- VCR record/replay: `cloudemu serve --vcr record --vcr-cassette tape.json` records the wire traffic. `--vcr replay` plays it back with no backend, so a recorded session reruns the same way each time.
+- `cloudemu doctor` checks that the default ports are free, prints the build version, and reports whether Docker is available.
 
 ## Docs
 
-- [Getting Started](docs/getting-started.md) — a working test in 5 minutes
-- [Standalone Server](docs/standalone-server.md) — the local dev cloud (Docker, flags, ports)
-- [Terraform / OpenTofu](docs/terraform.md) — run real IaC against cloudemu
-- [Persistence](docs/persistence.md) — snapshot & restore the whole emulator's state
+- [Getting Started](docs/getting-started.md): a working test in a few minutes
+- [Standalone Server](docs/standalone-server.md): Docker, flags, ports
+- [Terraform / OpenTofu](docs/terraform.md)
+- [Persistence](docs/persistence.md): snapshot and restore emulator state
 - [Architecture](docs/architecture.md) · [Features](docs/features.md) · [Chaos](docs/chaos.md) · [Topology](docs/topology.md)
-- [Capability coverage](docs/coverage/README.md) — every service and operation, generated
+- [Capability coverage](docs/coverage/README.md): every service and operation, generated from the code
 
 ## Contributing
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup and the branch-from-`development` flow, and the [Code of Conduct](CODE_OF_CONDUCT.md). Questions or bugs? Open a [GitHub issue](https://github.com/stackshy/cloudemu/issues); for security, follow [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup and the branch-from-`development` flow, and the [Code of Conduct](CODE_OF_CONDUCT.md). Report bugs or ask questions in [GitHub issues](https://github.com/stackshy/cloudemu/issues). For security issues, follow [SECURITY.md](SECURITY.md).
 
 ## License
 

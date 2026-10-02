@@ -120,7 +120,7 @@ func TestSDKRedshiftParameterAndSubnetGroups(t *testing.T) {
 		t.Fatalf("subnet group = %+v", sg.ClusterSubnetGroup)
 	}
 
-	// Read the groups back — you must be able to describe what you create.
+	// Read the groups back; you must be able to describe what you create.
 	dpg, err := client.DescribeClusterParameterGroups(ctx, &awsredshift.DescribeClusterParameterGroupsInput{
 		ParameterGroupName: aws.String("pg1"),
 	})
@@ -272,7 +272,7 @@ func TestSDKRedshiftSnapshotAndRestore(t *testing.T) {
 }
 
 // Sanity check: when Redshift, RDS and EC2 are wired together, requests still
-// route to the right handler — Redshift's Matches must reject non-Redshift
+// route to the right handler. Redshift's Matches must reject non-Redshift
 // actions despite parsing the form first, and RDS likewise must not shadow
 // Redshift cluster verbs.
 func TestSDKRedshiftRoutingDoesNotShadowOthers(t *testing.T) {
@@ -310,7 +310,7 @@ func TestSDKRedshiftRoutingDoesNotShadowOthers(t *testing.T) {
 		t.Fatalf("EC2 RunInstances through combined server: %v", err)
 	}
 
-	// RDS SDK against the same combined server — its CreateDBInstance must
+	// RDS SDK against the same combined server. Its CreateDBInstance must
 	// reach the RDS handler, not be claimed by Redshift.
 	rdsClient := awsrds.NewFromConfig(cfg, func(o *awsrds.Options) {
 		o.BaseEndpoint = aws.String(ts.URL)

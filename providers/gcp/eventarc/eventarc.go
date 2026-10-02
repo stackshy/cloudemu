@@ -79,7 +79,7 @@ func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64,
 			Namespace:  "eventarc.googleapis.com",
 			MetricName: metricName,
 			Value:      value,
-			Unit:       "None",
+			Unit:       "1", // every metric here is a count, unit "1" in Cloud Monitoring
 			Dimensions: dims,
 			Timestamp:  m.opts.Clock.Now(),
 		},
@@ -554,7 +554,7 @@ func matchesField(value string, allowed any) bool {
 	return false
 }
 
-// UpdateEventBus replaces the mutable fields of an existing channel — ARM
+// UpdateEventBus replaces the mutable fields of an existing channel, using ARM
 // CreateOrUpdate-on-existing semantics (tags come from the request; identity
 // and CreatedAt are preserved).
 func (m *Mock) UpdateEventBus(_ context.Context, cfg driver.EventBusConfig) (*driver.EventBusInfo, error) {

@@ -3,8 +3,8 @@ package applicationgateway
 // Azure ARM JSON wire structures for Microsoft.Network/applicationGateways. Only
 // the subset needed to model the gateway shell (location, zones, identity, sku,
 // tags) is typed; the nested collections and every other top-level property are
-// carried as generic JSON so their values — including explicit booleans and
-// cross-collection {id} references — round-trip verbatim.
+// carried as generic JSON so their values (including explicit booleans and
+// cross-collection {id} references) round-trip verbatim.
 
 const (
 	providerName = "Microsoft.Network"
@@ -21,7 +21,7 @@ const (
 )
 
 // modeledCollections lists the nested collection ARM segment names this handler
-// models — the seven required collections plus the two optional ones — in a
+// models (the seven required collections plus the two optional ones), in a
 // fixed order so responses are stable. Each modeled child gets an ARM id
 // self-link and a provisioningState on read. Every other top-level property
 // (WAF, urlPathMaps, rewriteRuleSets, redirectConfigurations,

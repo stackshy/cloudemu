@@ -60,6 +60,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, rp)
@@ -283,7 +287,7 @@ func sourceVolumeID(c *creationData) string {
 // path like /subscriptions/.../disks/{name}) to the internal driver volume
 // ID that CreateSnapshot expects. Returns NotFound if no disk matches.
 //
-// If src isn't an ARM disk path we pass it through unchanged — callers may
+// If src isn't an ARM disk path we pass it through unchanged: callers may
 // already be supplying a driver-internal ID.
 func (h *Handler) resolveSourceVolumeID(ctx context.Context, src string) (string, error) {
 	if src == "" {

@@ -117,7 +117,7 @@ const driverVolumeInUse = "in-use"
 
 // validateDiskSources pre-flights the source-referenced disks[] entries before
 // the instance is created: a source that names a missing disk fails with 404,
-// and one that names an already-attached disk fails with a precondition error —
+// and one that names an already-attached disk fails with a precondition error;
 // in both cases leaving no instance or disk behind, matching real GCP. Entries
 // with initializeParams create a fresh disk during materialization and need no
 // pre-flight. Skipped when the driver is not a GCE mock (materialization is a
@@ -595,7 +595,7 @@ const (
 // network interfaces (CloudEmu models a single nic0, so the first NIC that
 // carries them), filling GCP's server-side defaults. An accessConfig with no
 // natIP is given a synthesized ephemeral external IP (mirroring GCP assigning
-// one); an explicit natIP — a reserved google_compute_address — is preserved so
+// one); an explicit natIP (a reserved google_compute_address) is preserved so
 // that address reads back IN_USE while this instance holds it.
 func accessConfigsFor(nics []networkInterface, instanceName string) []accessConfig {
 	for i := range nics {
@@ -620,7 +620,7 @@ func accessConfigsFor(nics []networkInterface, instanceName string) []accessConf
 // network tier default to GCP's standard external-IP values, and a missing
 // natIP is synthesized as an ephemeral external IP (mirroring GCP auto-
 // assigning one) seeded on instanceName+index so repeated reads are stable.
-// An explicit natIP — a reserved google_compute_address — is preserved so that
+// An explicit natIP (a reserved google_compute_address) is preserved so that
 // address reads back IN_USE while this instance holds it. Shared by
 // instances.insert (accessConfigsFor) and instances.addAccessConfig. Takes ac
 // by pointer only to avoid copying the (small but not tiny) struct; it never

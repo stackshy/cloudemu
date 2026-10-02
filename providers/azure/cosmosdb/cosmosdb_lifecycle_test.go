@@ -182,7 +182,7 @@ func TestLifecycle(t *testing.T) {
 	assert.Equal(t, float64(2), rich["hits"])
 
 	// Conditional-write semantics in this driver: UpdateItem is the
-	// "must already exist" path — it fails with NotFound on a missing item
+	// "must already exist" path: it fails with NotFound on a missing item
 	// (PutItem never fails, so this is the only conditional-failure path).
 	_, err = m.UpdateItem(ctx, driver.UpdateItemInput{
 		Table:   "orders",
@@ -533,7 +533,7 @@ func TestTTL(t *testing.T) {
 	// Advance past s1's expiry but not s2's.
 	clk.Advance(61 * time.Second)
 
-	// BatchGetItems does NOT check TTL — expired s1 is still returned here
+	// BatchGetItems does NOT check TTL: expired s1 is still returned here
 	// (documented divergence); do this before GetItem lazily deletes it.
 	batch, err := m.BatchGetItems(ctx, "sessions", []map[string]any{{"pk": "s1"}})
 	require.NoError(t, err)

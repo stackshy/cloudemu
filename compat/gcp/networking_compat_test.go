@@ -32,7 +32,7 @@ func TestCompatGCPNetworkingVPC(t *testing.T) {
 
 	cloudP := cloudemu.NewGCP()
 	// Compute is registered too so the shared operations-polling endpoint is
-	// wired up — networking mutations return Operation envelopes the SDK polls.
+	// wired up: networking mutations return Operation envelopes the SDK polls.
 	sess := compat.BootGCP(t, gcpserver.Drivers{Networking: cloudP.VPC, Compute: cloudP.GCE})
 
 	opts := []option.ClientOption{
@@ -62,7 +62,7 @@ func TestCompatGCPNetworkingVPC(t *testing.T) {
 	proj := compat.GCPProject
 	falseVal := false
 
-	// CreateVPC — insert a network.
+	// CreateVPC: insert a network.
 	sess.Op(service, "CreateVPC", func() error {
 		op, oErr := nets.Insert(ctx, &computepb.InsertNetworkRequest{
 			Project: proj,
@@ -78,7 +78,7 @@ func TestCompatGCPNetworkingVPC(t *testing.T) {
 		return op.Wait(ctx)
 	})
 
-	// CreateSubnet — insert a regional subnetwork under the network.
+	// CreateSubnet: insert a regional subnetwork under the network.
 	sess.Op(service, "CreateSubnet", func() error {
 		op, oErr := subs.Insert(ctx, &computepb.InsertSubnetworkRequest{
 			Project: proj,
@@ -96,7 +96,7 @@ func TestCompatGCPNetworkingVPC(t *testing.T) {
 		return op.Wait(ctx)
 	})
 
-	// CreateSecurityGroup — insert a firewall (GCP firewalls map to SGs).
+	// CreateSecurityGroup: insert a firewall (GCP firewalls map to SGs).
 	sess.Op(service, "CreateSecurityGroup", func() error {
 		op, oErr := fws.Insert(ctx, &computepb.InsertFirewallRequest{
 			Project: proj,
@@ -117,7 +117,7 @@ func TestCompatGCPNetworkingVPC(t *testing.T) {
 		return op.Wait(ctx)
 	})
 
-	// DescribeVPCs — get then list the network.
+	// DescribeVPCs: get then list the network.
 	sess.Op(service, "DescribeVPCs", func() error {
 		if _, gErr := nets.Get(ctx, &computepb.GetNetworkRequest{Project: proj, Network: netName}); gErr != nil {
 			return gErr
@@ -129,7 +129,7 @@ func TestCompatGCPNetworkingVPC(t *testing.T) {
 		return skipIteratorDone(lErr)
 	})
 
-	// DescribeSubnets — get then list the subnetwork.
+	// DescribeSubnets: get then list the subnetwork.
 	sess.Op(service, "DescribeSubnets", func() error {
 		if _, gErr := subs.Get(ctx, &computepb.GetSubnetworkRequest{
 			Project: proj, Region: region, Subnetwork: subName,
@@ -143,7 +143,7 @@ func TestCompatGCPNetworkingVPC(t *testing.T) {
 		return skipIteratorDone(lErr)
 	})
 
-	// DescribeSecurityGroups — get then list the firewall.
+	// DescribeSecurityGroups: get then list the firewall.
 	sess.Op(service, "DescribeSecurityGroups", func() error {
 		if _, gErr := fws.Get(ctx, &computepb.GetFirewallRequest{Project: proj, Firewall: fwName}); gErr != nil {
 			return gErr
@@ -155,7 +155,7 @@ func TestCompatGCPNetworkingVPC(t *testing.T) {
 		return skipIteratorDone(lErr)
 	})
 
-	// DeleteSubnet — delete the subnetwork.
+	// DeleteSubnet: delete the subnetwork.
 	sess.Op(service, "DeleteSubnet", func() error {
 		op, oErr := subs.Delete(ctx, &computepb.DeleteSubnetworkRequest{
 			Project: proj, Region: region, Subnetwork: subName,
@@ -167,7 +167,7 @@ func TestCompatGCPNetworkingVPC(t *testing.T) {
 		return op.Wait(ctx)
 	})
 
-	// DeleteSecurityGroup — delete the firewall.
+	// DeleteSecurityGroup: delete the firewall.
 	sess.Op(service, "DeleteSecurityGroup", func() error {
 		op, oErr := fws.Delete(ctx, &computepb.DeleteFirewallRequest{Project: proj, Firewall: fwName})
 		if oErr != nil {
@@ -177,7 +177,7 @@ func TestCompatGCPNetworkingVPC(t *testing.T) {
 		return op.Wait(ctx)
 	})
 
-	// DeleteVPC — delete the network.
+	// DeleteVPC: delete the network.
 	sess.Op(service, "DeleteVPC", func() error {
 		op, oErr := nets.Delete(ctx, &computepb.DeleteNetworkRequest{Project: proj, Network: netName})
 		if oErr != nil {
@@ -188,7 +188,7 @@ func TestCompatGCPNetworkingVPC(t *testing.T) {
 	})
 }
 
-// skipIteratorDone treats the iterator's terminal sentinel as success — a List
+// skipIteratorDone treats the iterator's terminal sentinel as success. A List
 // that yields no error before exhaustion still proves the op is routed.
 func skipIteratorDone(err error) error {
 	if errors.Is(err, iterator.Done) {
@@ -252,7 +252,7 @@ func TestRouteNetworkSelfLink(t *testing.T) {
 		t.Fatalf("wait network: %v", werr)
 	}
 
-	// Insert a route referencing the network by a relative path — the shape
+	// Insert a route referencing the network by a relative path, the shape
 	// Terraform sends.
 	rtOp, err := routes.Insert(ctx, &computepb.InsertRouteRequest{
 		Project: project,

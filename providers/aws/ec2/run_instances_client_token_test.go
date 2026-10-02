@@ -9,7 +9,7 @@ import (
 )
 
 // TestRunInstancesClientTokenConcurrent pins that two concurrent RunInstances
-// carrying the same ClientToken provision exactly one instance set — the token
+// carrying the same ClientToken provision exactly one instance set. The token
 // check-and-reserve is atomic, so a race cannot double-provision. Run with -race.
 func TestRunInstancesClientTokenConcurrent(t *testing.T) {
 	m := newTestMock()

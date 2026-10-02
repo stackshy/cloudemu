@@ -64,8 +64,8 @@ func (h *Handler) untagResourceQuery(w http.ResponseWriter, r *http.Request, id 
 
 // serveLegacyTags routes the deprecated tag APIs:
 //
-//	POST /create-tags/{fsId}   (CreateTags — body {Tags:[...]})
-//	POST /delete-tags/{fsId}   (DeleteTags — body {TagKeys:[...]})
+//	POST /create-tags/{fsId}   (CreateTags, body {Tags:[...]})
+//	POST /delete-tags/{fsId}   (DeleteTags, body {TagKeys:[...]})
 //	GET  /tags/{fsId}          (DescribeTags)
 func (h *Handler) serveLegacyTags(w http.ResponseWriter, r *http.Request, root string, rest []string) {
 	if len(rest) != 1 {

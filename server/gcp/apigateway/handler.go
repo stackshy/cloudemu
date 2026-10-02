@@ -2,8 +2,8 @@
 // (apigateway.googleapis.com) as a server.Handler on BOTH the /v1beta/ and /v1/
 // version prefixes.
 //
-// API Gateway's Terraform resources — google_api_gateway_api,
-// google_api_gateway_api_config, google_api_gateway_gateway — exist ONLY in the
+// API Gateway's Terraform resources (google_api_gateway_api,
+// google_api_gateway_api_config, google_api_gateway_gateway) exist only in the
 // terraform-provider-google-beta provider, whose default base path is
 // apigateway.googleapis.com/v1beta/. A real google.golang.org/api/apigateway/v1
 // client and gcloud use /v1/. Both hit this handler unchanged; the version is
@@ -12,16 +12,16 @@
 //
 // Coverage (api + api-config + gateway control plane):
 //
-//	POST   /{v}/…/locations/global/apis?apiId=                 — CreateApi (LRO)
-//	GET    /{v}/…/locations/global/apis                        — ListApis
-//	GET    /{v}/…/locations/global/apis/{a}                    — GetApi
-//	PATCH  /{v}/…/locations/global/apis/{a}?updateMask=        — PatchApi (LRO)
-//	DELETE /{v}/…/locations/global/apis/{a}                    — DeleteApi (LRO, cascades to configs)
-//	POST   /{v}/…/apis/{a}/configs?apiConfigId=                — CreateApiConfig (LRO)
-//	…                                                          — Get/List/Patch/Delete
-//	POST   /{v}/…/locations/{r}/gateways?gatewayId=            — CreateGateway (LRO)
-//	…                                                          — Get/List/Patch/Delete
-//	GET    /{v}/…/locations/{l}/operations/{op}                — Operations.Get
+//	POST   /{v}/…/locations/global/apis?apiId=                 : CreateApi (LRO)
+//	GET    /{v}/…/locations/global/apis                        : ListApis
+//	GET    /{v}/…/locations/global/apis/{a}                    : GetApi
+//	PATCH  /{v}/…/locations/global/apis/{a}?updateMask=        : PatchApi (LRO)
+//	DELETE /{v}/…/locations/global/apis/{a}                    : DeleteApi (LRO, cascades to configs)
+//	POST   /{v}/…/apis/{a}/configs?apiConfigId=                : CreateApiConfig (LRO)
+//	…                                                          : Get/List/Patch/Delete
+//	POST   /{v}/…/locations/{r}/gateways?gatewayId=            : CreateGateway (LRO)
+//	…                                                          : Get/List/Patch/Delete
+//	GET    /{v}/…/locations/{l}/operations/{op}                : Operations.Get
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting resource embedded in `response`, so an SDK or Terraform LRO wait
@@ -29,8 +29,8 @@
 //
 // Location-scoped operations: the shared GCP LRO poller owns only the /v1/
 // operations space. The google-beta provider polls operations at its /v1beta/
-// base path, which the shared poller does NOT match — so this handler always
-// serves its own /v1beta/ operation polls, and yields the /v1/ ones to the
+// base path, which the shared poller does not match. This handler therefore
+// always serves its own /v1beta/ operation polls and yields the /v1/ ones to the
 // shared poller when one is wired (a standalone package server serves its own).
 // The apis/gateways/operations resource-type guard keeps this handler disjoint
 // from every other /v1/projects/ handler.

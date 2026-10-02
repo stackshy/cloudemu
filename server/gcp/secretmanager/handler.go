@@ -5,21 +5,21 @@
 //
 // Coverage (v1 REST):
 //
-//	POST   /v1/projects/{p}/secrets?secretId={id}                 — Create secret
-//	GET    /v1/projects/{p}/secrets/{id}                          — Get secret
-//	PATCH  /v1/projects/{p}/secrets/{id}?updateMask=labels        — Patch secret
-//	GET    /v1/projects/{p}/secrets                               — List secrets (paged)
-//	DELETE /v1/projects/{p}/secrets/{id}                          — Delete secret
-//	POST   /v1/projects/{p}/secrets/{id}:addVersion               — Add version
-//	GET    /v1/projects/{p}/secrets/{id}:getIamPolicy             — Get IAM policy
-//	POST   /v1/projects/{p}/secrets/{id}:setIamPolicy             — Set IAM policy
-//	POST   /v1/projects/{p}/secrets/{id}:testIamPermissions       — Test IAM perms
-//	GET    /v1/projects/{p}/secrets/{id}/versions                 — List versions (paged)
-//	GET    /v1/projects/{p}/secrets/{id}/versions/{v}             — Get version
-//	GET    /v1/projects/{p}/secrets/{id}/versions/{v}:access      — Access payload
-//	POST   /v1/projects/{p}/secrets/{id}/versions/{v}:enable      — Enable version
-//	POST   /v1/projects/{p}/secrets/{id}/versions/{v}:disable     — Disable version
-//	POST   /v1/projects/{p}/secrets/{id}/versions/{v}:destroy     — Destroy version
+//	POST   /v1/projects/{p}/secrets?secretId={id}                 : Create secret
+//	GET    /v1/projects/{p}/secrets/{id}                          : Get secret
+//	PATCH  /v1/projects/{p}/secrets/{id}?updateMask=labels        : Patch secret
+//	GET    /v1/projects/{p}/secrets                               : List secrets (paged)
+//	DELETE /v1/projects/{p}/secrets/{id}                          : Delete secret
+//	POST   /v1/projects/{p}/secrets/{id}:addVersion               : Add version
+//	GET    /v1/projects/{p}/secrets/{id}:getIamPolicy             : Get IAM policy
+//	POST   /v1/projects/{p}/secrets/{id}:setIamPolicy             : Set IAM policy
+//	POST   /v1/projects/{p}/secrets/{id}:testIamPermissions       : Test IAM perms
+//	GET    /v1/projects/{p}/secrets/{id}/versions                 : List versions (paged)
+//	GET    /v1/projects/{p}/secrets/{id}/versions/{v}             : Get version
+//	GET    /v1/projects/{p}/secrets/{id}/versions/{v}:access      : Access payload
+//	POST   /v1/projects/{p}/secrets/{id}/versions/{v}:enable      : Enable version
+//	POST   /v1/projects/{p}/secrets/{id}/versions/{v}:disable     : Disable version
+//	POST   /v1/projects/{p}/secrets/{id}/versions/{v}:destroy     : Destroy version
 //
 // Versions are numbered by monotonic integer (1, 2, 3…) and addressable by that
 // id; "latest" is accepted as a version alias, matching real Secret Manager. The
@@ -132,7 +132,7 @@ func parseRoute(urlPath string) (route, bool) {
 	return rt, true
 }
 
-// Matches claims /v1/projects/{p}/secrets[...] paths — disjoint from IAM
+// Matches claims /v1/projects/{p}/secrets[...] paths, disjoint from IAM
 // (serviceAccounts|roles), Artifact Registry (locations/...), and Cloud Asset
 // among the /v1/projects/ family. Registered before Firestore's permissive
 // fallback.

@@ -205,8 +205,8 @@ func TestSDKDescribeClusterEnhancedMonitoringDefault(t *testing.T) {
 
 // TestSDKClusterConfigurationInfoRoundTrip proves a cluster's applied
 // configuration surfaces on DescribeCluster under
-// CurrentBrokerSoftwareInfo.{ConfigurationArn,ConfigurationRevision} — where the
-// Terraform provider reads configuration_info — and that a cluster created
+// CurrentBrokerSoftwareInfo.{ConfigurationArn,ConfigurationRevision}, where the
+// Terraform provider reads configuration_info, and that a cluster created
 // without a configuration reports no ConfigurationArn (so it does not drift).
 func TestSDKClusterConfigurationInfoRoundTrip(t *testing.T) {
 	ctx := context.Background()
@@ -974,7 +974,7 @@ func TestSDKDescribeClusterZookeeperConnect(t *testing.T) {
 // ListClusterOperations (v1) return the SDK-typed BadRequestException for a
 // well-formed but missing cluster ARN. The aws-sdk-go-v2 smithy model does NOT
 // model NotFoundException for these two ops, so returning a 404 would only
-// deserialize as an untyped generic error — BadRequest is the correct,
+// deserialize as an untyped generic error. BadRequest is the correct,
 // typed-deserializable behavior. ListClusterOperationsV2 does model 404.
 func TestSDKMissingClusterBadRequest(t *testing.T) {
 	ctx := context.Background()

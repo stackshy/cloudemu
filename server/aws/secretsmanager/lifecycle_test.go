@@ -281,8 +281,8 @@ func TestSDKRotateSecretConfig(t *testing.T) {
 
 // TestSDKRotateSecretRequiresLambdaARN guards a real-user e2e finding:
 // RotateSecret on a secret that has never had a rotation Lambda configured,
-// and whose call doesn't supply one either, is rejected — real Secrets
-// Manager refuses to advance the version with nothing to actually generate a
+// and whose call doesn't supply one either, is rejected. Real Secrets
+// Manager refuses to advance the version with nothing to generate a
 // new value. Supplying the ARN in the same call (first-time configure) still
 // works.
 func TestSDKRotateSecretRequiresLambdaARN(t *testing.T) {

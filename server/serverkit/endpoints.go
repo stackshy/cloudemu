@@ -80,7 +80,7 @@ func (p persistInfo) line() string {
 // printBanner writes the startup summary: the live endpoints and copy-paste
 // snippets for pointing each SDK at them.
 func printBanner(w io.Writer, e *endpointSet, adminOn bool, persist persistInfo) {
-	fmt.Fprintln(w, "cloudemu — standalone server")
+	fmt.Fprintln(w, "cloudemu (standalone server)")
 	fmt.Fprintln(w, "────────────────────────────")
 
 	for _, row := range e.banner() {

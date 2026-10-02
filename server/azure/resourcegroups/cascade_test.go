@@ -1,7 +1,7 @@
 // Deep-audit regression (N1): deleting a resource group did not cascade to the
 // resources created under it. A teardown "succeeded" (the group vanished) while
 // every storage account, virtual network, etc. inside it stayed alive and
-// globally addressable — leaking resources and colliding on the next apply. A
+// globally addressable, leaking resources and colliding on the next apply. A
 // resource group is a pure container, so its delete must remove the resources
 // it holds.
 

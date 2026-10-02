@@ -8,7 +8,7 @@ import (
 )
 
 // TestPersistFlagDefaults pins the persist-strategy/persist-interval defaults to
-// the shared serverkit constants — the mirror of cmd/cloudemu's test, so the two
+// the shared serverkit constants. It mirrors cmd/cloudemu's test, so the two
 // entrypoints stay in lockstep even though they live in separate modules.
 func TestPersistFlagDefaults(t *testing.T) {
 	getenv := func(string) string { return "" }

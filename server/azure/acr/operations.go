@@ -48,7 +48,7 @@ func (h *Handler) getRepositoryProperties(w http.ResponseWriter, r *http.Request
 }
 
 // updateRepositoryProperties serves PATCH /acr/v1/{name} (changeableAttributes
-// only — repository metadata such as name/createdTime is immutable).
+// only; repository metadata such as name/createdTime is immutable).
 func (h *Handler) updateRepositoryProperties(w http.ResponseWriter, r *http.Request, repo string) {
 	writer, ok := h.registry.(crdriver.AzureRepositoryWriter)
 	if !ok {

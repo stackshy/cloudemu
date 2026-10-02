@@ -86,7 +86,7 @@ func (e *suiteEnv) download(ctx context.Context, t *testing.T, c, k string) []by
 	return got
 }
 
-// metaGet looks up a metadata key case-insensitively — the emulator
+// metaGet looks up a metadata key case-insensitively: the emulator
 // lowercases x-ms-meta-* names and the SDK re-canonicalizes header keys, so
 // casing round-trips are not stable.
 func metaGet(meta map[string]*string, key string) (string, bool) {

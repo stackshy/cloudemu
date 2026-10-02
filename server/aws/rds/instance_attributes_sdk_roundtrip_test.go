@@ -9,7 +9,7 @@ import (
 )
 
 // TestSDKRDSInstanceCreateAttributes asserts a freshly created DBInstance
-// reports the descriptive attributes real RDS defaults — DbiResourceId, the CA
+// reports the descriptive attributes real RDS defaults: DbiResourceId, the CA
 // certificate id, the backup-retention default, the endpoint hosted-zone id,
 // and the associated parameter group as an in-sync membership.
 func TestSDKRDSInstanceCreateAttributes(t *testing.T) {
@@ -58,8 +58,8 @@ func TestSDKRDSInstanceCreateAttributes(t *testing.T) {
 }
 
 // TestSDKRDSModifyInstanceAttributes asserts ModifyDBInstance honors the scalar
-// attributes real RDS applies — BackupRetentionPeriod, backup/maintenance
-// windows, StorageType, Iops and DeletionProtection — and reports them back.
+// attributes real RDS applies (BackupRetentionPeriod, backup/maintenance
+// windows, StorageType, Iops and DeletionProtection) and reports them back.
 func TestSDKRDSModifyInstanceAttributes(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()

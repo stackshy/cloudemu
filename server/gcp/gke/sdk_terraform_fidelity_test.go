@@ -62,7 +62,7 @@ func TestSDKGKEClusterAlwaysEmitsLegacyAbacAndNetworkConfig(t *testing.T) {
 // TestSDKGKEClusterAlwaysEmitsNodeConfig proves a cluster read carries a
 // cluster-level nodeConfig reflecting the default pool's config. Real GKE always
 // returns cluster.nodeConfig, and the Terraform google provider sources
-// google_container_cluster.node_config from it — a nil cluster.nodeConfig makes
+// google_container_cluster.node_config from it. A nil cluster.nodeConfig makes
 // the provider see the whole node_config block vanish and force-replace the
 // cluster (1 to add / 1 to destroy) on the very next plan, even with no config
 // change.
@@ -169,7 +169,7 @@ func assertNodeConfigExtras(t *testing.T, where string, cfg *container.NodeConfi
 
 // TestSDKGKEOperationTargetLinkUsesRequestProject proves an operation's
 // targetLink carries the project from the request URL, not the emulator's
-// configured default project — a user parsing targetLink to locate the resource
+// configured default project. A user parsing targetLink to locate the resource
 // must see their own project.
 func TestSDKGKEOperationTargetLinkUsesRequestProject(t *testing.T) {
 	svc, project := newSDKClient(t)

@@ -29,7 +29,7 @@ const cloudEventSpecVersion = "1.0"
 // FunctionInvoker invokes a Cloud Function by its (short) name with the
 // CloudEvent payload. The cloudfunctions.Mock satisfies this via Invoke, so a
 // trigger whose destination is a Cloud Function fires the function on a matching
-// event — mirroring the Pub/Sub -> Cloud Functions delivery wired in #803.
+// event, mirroring the Pub/Sub -> Cloud Functions delivery wired in #803.
 type FunctionInvoker interface {
 	Invoke(ctx context.Context, input sdrv.InvokeInput) (*sdrv.InvokeOutput, error)
 }
@@ -51,7 +51,7 @@ type cloudRunDestination struct {
 
 // triggerDestination is the parsed form of the Eventarc destination the server
 // handler serializes into the driver Target's Input. It intentionally mirrors
-// server/gcp/eventarc.destinationJSON — the two packages can't share a type
+// server/gcp/eventarc.destinationJSON: the two packages can't share a type
 // (provider must not import server), so the wire-compatible subset is redefined
 // here.
 type triggerDestination struct {

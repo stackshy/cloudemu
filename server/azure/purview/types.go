@@ -90,14 +90,14 @@ type managedResourcesWire struct {
 	EventHubNamespace string `json:"eventHubNamespace"`
 }
 
-// listKeysResponse is the ListKeys action body — the Atlas Kafka connection
+// listKeysResponse is the ListKeys action body: the Atlas Kafka connection
 // strings.
 type listKeysResponse struct {
 	AtlasKafkaPrimaryEndpoint   string `json:"atlasKafkaPrimaryEndpoint"`
 	AtlasKafkaSecondaryEndpoint string `json:"atlasKafkaSecondaryEndpoint"`
 }
 
-// listResponse is the ARM list envelope. nextLink is omitted — the emulator
+// listResponse is the ARM list envelope. nextLink is omitted: the emulator
 // returns a single page.
 type listResponse struct {
 	Value []accountResponse `json:"value"`
@@ -188,7 +188,7 @@ func toDriverIdentity(in *identityRequest) *purview.Identity {
 
 // inputFromRequest builds a create/update Input from a request body. Pointer
 // fields are carried through verbatim so an absent field falls back to the
-// stored (or default) value in the driver — which makes a PATCH body, where
+// stored (or default) value in the driver, which makes a PATCH body, where
 // every field is optional, merge correctly on its own.
 func inputFromRequest(req *accountRequest) purview.Input {
 	in := purview.Input{

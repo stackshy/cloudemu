@@ -26,7 +26,7 @@ func createSnapshotVolume(t *testing.T, ctx context.Context, client *ec2.Client)
 }
 
 // TestCreateSnapshotReportsOwnerAndProgress pins that a snapshot carries an
-// OwnerId and a Progress value — empty ownerId breaks owner queries and empty
+// OwnerId and a Progress value. An empty ownerId breaks owner queries and empty
 // progress breaks the SnapshotCompleted waiter.
 func TestCreateSnapshotReportsOwnerAndProgress(t *testing.T) {
 	ctx := context.Background()
@@ -213,7 +213,7 @@ func TestCopySnapshotMissingSourceIsNotFound(t *testing.T) {
 }
 
 // TestDeleteSnapshotInUseByImage pins that a snapshot referenced by a
-// registered AMI's block device mapping cannot be deleted — real EC2 answers
+// registered AMI's block device mapping cannot be deleted. Real EC2 answers
 // InvalidSnapshot.InUse until the AMI is deregistered.
 func TestDeleteSnapshotInUseByImage(t *testing.T) {
 	ctx := context.Background()

@@ -36,7 +36,7 @@ func newPersistTestApp(t *testing.T, providers []string, ports map[string]string
 
 // TestDirtySeamProviderRequestMarksDirty asserts a cloud-provider request flips
 // the dirty flag (the request-boundary seam that catches Get-then-mutate), while
-// a health probe on the admin plane does NOT — so liveness checks never keep an
+// a health probe on the admin plane does NOT, so liveness checks never keep an
 // idle emulator perpetually dirty.
 func TestDirtySeamProviderRequestMarksDirty(t *testing.T) {
 	app := newPersistTestApp(t, []string{"aws"}, map[string]string{"aws": "0"})
@@ -174,7 +174,7 @@ func TestWrapDirtyMarksDirtyOnPanic(t *testing.T) {
 	h := app.wrapDirty(panicky)
 
 	// Stand in for net/http's per-request recover, so the panic doesn't fail the
-	// test — the point is that the deferred markDirty still ran during the unwind.
+	// test: the point is that the deferred markDirty still ran during the unwind.
 	func() {
 		defer func() { _ = recover() }()
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))

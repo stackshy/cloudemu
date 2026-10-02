@@ -31,7 +31,7 @@ const (
 	bitsPerByte  = 8
 
 	// primaryDeviceIndex is the device index EC2 gives an instance's primary
-	// (eth0) network interface — always 0.
+	// (eth0) network interface, always 0.
 	primaryDeviceIndex = 0
 
 	// primaryENIDescription is the description real EC2 stamps on the eth0 ENI
@@ -149,7 +149,7 @@ func (m *Mock) CreatePrimaryNetworkInterface(_ context.Context, instanceID, subn
 //     lets a subsequent DeleteSubnet / DeleteSecurityGroup succeed.
 //   - other attached interfaces (secondary ENIs the user attached with
 //     AttachNetworkInterface, deleteOnTermination false) are detached back to
-//     `available` — not deleted — so they survive the instance and can be
+//     `available`, not deleted, so they survive the instance and can be
 //     reattached, and no longer wedge a DeleteSubnet on a dead instance.
 //
 // Standalone/managed interfaces not attached to this instance are untouched.
@@ -273,7 +273,7 @@ func (m *Mock) DetachNetworkInterface(_ context.Context, attachmentID string, _ 
 
 // DeleteNetworkInterface deletes the ENI with the given ID.
 //
-// An attached ENI cannot be deleted — real EC2 answers DependencyViolation,
+// An attached ENI cannot be deleted. Real EC2 answers DependencyViolation,
 // and callers rely on that to know a drain is still in progress rather than
 // complete.
 func (m *Mock) DeleteNetworkInterface(_ context.Context, id string) error {

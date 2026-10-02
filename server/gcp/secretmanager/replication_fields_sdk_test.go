@@ -98,7 +98,7 @@ func TestSDKReplicationRequiredOnCreate(t *testing.T) {
 
 // TestSDKReplicationEmptyOneofRejected proves a create with a replication object
 // present but neither automatic nor userManaged set is rejected 400
-// INVALID_ARGUMENT — real Secret Manager validates the required replication
+// INVALID_ARGUMENT. Real Secret Manager validates the required replication
 // oneof rather than silently defaulting an empty policy to automatic.
 func TestSDKReplicationEmptyOneofRejected(t *testing.T) {
 	svc := newSMService(t)

@@ -81,7 +81,7 @@ func TestScheduleRoundTrip(t *testing.T) {
 
 	assertScheduleStable(t, got)
 
-	// A second read returns identical computed fields — no drift.
+	// A second read returns identical computed fields (no drift).
 	got2, err := c.GetSchedule(ctx, &awssched.GetScheduleInput{Name: aws.String("s1"), GroupName: aws.String("g1")})
 	if err != nil {
 		t.Fatalf("GetSchedule (2): %v", err)

@@ -14,7 +14,7 @@ import (
 // serveEndpoints dispatches /api/v1/{namespaces/{ns}/endpoints|endpoints}
 // requests.
 //
-// Endpoints are read-only from the SDK consumer's perspective in Wave 2 —
+// Endpoints are read-only from the SDK consumer's perspective in Wave 2:
 // real apiserver lets you Create/Update them too, but the in-memory store
 // auto-creates one per Service and tears it down on Service delete. We
 // expose only Get / List / Watch so client-go Reflectors work.
@@ -159,7 +159,7 @@ func endpointsKey(namespace, name string) string {
 }
 
 // newEndpointsObject builds the Endpoints stub auto-created for a Service.
-// Subsets is left empty — there's no scheduler / Pod-IP allocation in Wave 2.
+// Subsets is left empty: there's no scheduler / Pod-IP allocation in Wave 2.
 // Real apiserver lets the endpoints controller fill Subsets in once Pods
 // match the Service selector and become Ready.
 func (s *ClusterState) newEndpointsObject(namespace, name string) *corev1.Endpoints {

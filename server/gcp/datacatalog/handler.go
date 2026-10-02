@@ -5,30 +5,30 @@
 // datacatalog.googleapis.com/v1/; real google.golang.org/api/datacatalog/v1
 // clients and gcloud use the same path.
 //
-// Coverage (metadata registration control plane only, synchronous REST — no
+// Coverage (metadata registration control plane only, synchronous REST, no
 // LRO):
 //
-//	POST   /v1/…/entryGroups?entryGroupId=                       — CreateEntryGroup
-//	GET    /v1/…/entryGroups                                     — ListEntryGroups
-//	GET    /v1/…/entryGroups/{eg}                                — GetEntryGroup
-//	PATCH  /v1/…/entryGroups/{eg}?updateMask=                    — PatchEntryGroup
-//	DELETE /v1/…/entryGroups/{eg}                                — DeleteEntryGroup
-//	POST   /v1/…/entryGroups/{eg}/entries?entryId=              — CreateEntry
-//	GET    /v1/…/entryGroups/{eg}/entries                        — ListEntries
-//	GET    /v1/…/entryGroups/{eg}/entries/{e}                    — GetEntry
-//	PATCH  /v1/…/entryGroups/{eg}/entries/{e}?updateMask=        — PatchEntry
-//	DELETE /v1/…/entryGroups/{eg}/entries/{e}                    — DeleteEntry
-//	POST   /v1/…/entries/{e}/tags                                — CreateTag (server-named)
-//	GET    /v1/…/entries/{e}/tags                                — ListTags
-//	PATCH  /v1/…/entries/{e}/tags/{t}?updateMask=               — PatchTag
-//	DELETE /v1/…/entries/{e}/tags/{t}                            — DeleteTag
-//	POST   /v1/…/tagTemplates?tagTemplateId=                     — CreateTagTemplate
-//	GET    /v1/…/tagTemplates/{tt}                               — GetTagTemplate
-//	PATCH  /v1/…/tagTemplates/{tt}?updateMask=                   — PatchTagTemplate
-//	DELETE /v1/…/tagTemplates/{tt}?force=                        — DeleteTagTemplate
-//	POST   /v1/…/tagTemplates/{tt}/fields?tagTemplateFieldId=    — CreateTagTemplateField
-//	PATCH  /v1/…/tagTemplates/{tt}/fields/{f}?updateMask=        — PatchTagTemplateField
-//	DELETE /v1/…/tagTemplates/{tt}/fields/{f}?force=             — DeleteTagTemplateField
+//	POST   /v1/…/entryGroups?entryGroupId=                       : CreateEntryGroup
+//	GET    /v1/…/entryGroups                                     : ListEntryGroups
+//	GET    /v1/…/entryGroups/{eg}                                : GetEntryGroup
+//	PATCH  /v1/…/entryGroups/{eg}?updateMask=                    : PatchEntryGroup
+//	DELETE /v1/…/entryGroups/{eg}                                : DeleteEntryGroup
+//	POST   /v1/…/entryGroups/{eg}/entries?entryId=              : CreateEntry
+//	GET    /v1/…/entryGroups/{eg}/entries                        : ListEntries
+//	GET    /v1/…/entryGroups/{eg}/entries/{e}                    : GetEntry
+//	PATCH  /v1/…/entryGroups/{eg}/entries/{e}?updateMask=        : PatchEntry
+//	DELETE /v1/…/entryGroups/{eg}/entries/{e}                    : DeleteEntry
+//	POST   /v1/…/entries/{e}/tags                                : CreateTag (server-named)
+//	GET    /v1/…/entries/{e}/tags                                : ListTags
+//	PATCH  /v1/…/entries/{e}/tags/{t}?updateMask=               : PatchTag
+//	DELETE /v1/…/entries/{e}/tags/{t}                            : DeleteTag
+//	POST   /v1/…/tagTemplates?tagTemplateId=                     : CreateTagTemplate
+//	GET    /v1/…/tagTemplates/{tt}                               : GetTagTemplate
+//	PATCH  /v1/…/tagTemplates/{tt}?updateMask=                   : PatchTagTemplate
+//	DELETE /v1/…/tagTemplates/{tt}?force=                        : DeleteTagTemplate
+//	POST   /v1/…/tagTemplates/{tt}/fields?tagTemplateFieldId=    : CreateTagTemplateField
+//	PATCH  /v1/…/tagTemplates/{tt}/fields/{f}?updateMask=        : PatchTagTemplateField
+//	DELETE /v1/…/tagTemplates/{tt}/fields/{f}?force=             : DeleteTagTemplateField
 //
 // Every RPC returns the resource (or an empty object for delete) directly with
 // no google.longrunning.Operation wrapper. Deleting a parent cascades to its

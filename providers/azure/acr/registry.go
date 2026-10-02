@@ -26,6 +26,9 @@ const (
 var (
 	_ driver.AzureRegistryManager  = (*Mock)(nil)
 	_ driver.AzureRepositoryWriter = (*Mock)(nil)
+	_ interface {
+		PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+	} = (*Mock)(nil)
 )
 
 // registryData is the stored ARM registry plus its admin credential pair.
@@ -212,6 +215,29 @@ func (m *Mock) DeleteRegistry(_ context.Context, rg, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	return m.deleteRegistryLocked(rg, name)
+}
+
+// PurgeResourceGroup deletes every registry, with its webhooks and
+// replications, in the resource group. It backs the ARM resource-group delete
+// cascade. Registries record only their resource group (the emulator is
+// single-estate), matched case-insensitively.
+func (m *Mock) PurgeResourceGroup(_ context.Context, _, resourceGroup string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, rd := range m.registries.All() {
+		if strings.EqualFold(rd.reg.ResourceGroup, resourceGroup) {
+			_ = m.deleteRegistryLocked(rd.reg.ResourceGroup, rd.reg.Name)
+		}
+	}
+
+	return nil
+}
+
+// deleteRegistryLocked removes a registry and its webhooks and replications.
+// The caller holds m.mu.
+func (m *Mock) deleteRegistryLocked(rg, name string) error {
 	if !m.registries.Delete(registryStoreKey(rg, name)) {
 		return errors.Newf(errors.NotFound, "registry %q not found in resource group %q", name, rg)
 	}

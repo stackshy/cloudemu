@@ -10,7 +10,7 @@ import (
 
 // TestSDKRedshiftRestorePreservesConfig proves a cluster restored from a snapshot
 // carries the snapshot's node config and the source cluster's admin user / DB
-// name — without it a restored cluster reads back with empty NodeType, zero
+// name. Without it a restored cluster reads back with empty NodeType, zero
 // NumberOfNodes and no MasterUsername/DBName, so IaC sees the wrong shape.
 func TestSDKRedshiftRestorePreservesConfig(t *testing.T) {
 	client := newSDKClient(t)

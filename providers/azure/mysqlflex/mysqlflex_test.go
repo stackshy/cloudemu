@@ -383,7 +383,7 @@ func TestFailoverRequiresRunning(t *testing.T) {
 }
 
 // TestFailoverRequiresHighAvailability confirms a forced failover is rejected
-// on a running server with no standby (HighAvailability Disabled/unset) —
+// on a running server with no standby (HighAvailability Disabled/unset):
 // there is nothing to fail over to.
 func TestFailoverRequiresHighAvailability(t *testing.T) {
 	m := newTestMock()

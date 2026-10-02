@@ -3,6 +3,7 @@ package glue
 import (
 	"context"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/glue/driver"
 )
 
@@ -106,7 +107,7 @@ func (m *Mock) BatchDeleteTableVersion(
 	for _, id := range ids {
 		if err := m.DeleteTableVersion(context.Background(), catalogID, dbName, tblName, id); err != nil {
 			errs = append(errs, driver.BatchError{
-				Values: []string{id}, ErrorCode: driver.ExEntityNotFound, ErrorMessage: err.Error(),
+				Values: []string{id}, ErrorCode: driver.ExEntityNotFound, ErrorMessage: cerrors.Message(err),
 			})
 		}
 	}

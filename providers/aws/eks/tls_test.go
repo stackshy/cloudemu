@@ -119,7 +119,7 @@ func TestServingTLSConfig_LeafCoversRequestedHosts(t *testing.T) {
 }
 
 // TestServingTLSConfig_RejectsUntrustedRoot guards against the test above
-// passing for the wrong reason — an empty or permissive pool would verify
+// passing for the wrong reason. An empty or permissive pool would verify
 // anything.
 func TestServingTLSConfig_RejectsUntrustedRoot(t *testing.T) {
 	t.Parallel()

@@ -10,12 +10,12 @@
 //
 // Coverage (2013-04-01 REST):
 //
-//	POST   /2013-04-01/hostedzone                    — CreateHostedZone
-//	GET    /2013-04-01/hostedzone/{id}               — GetHostedZone
-//	GET    /2013-04-01/hostedzone                    — ListHostedZones
-//	DELETE /2013-04-01/hostedzone/{id}               — DeleteHostedZone
-//	POST   /2013-04-01/hostedzone/{id}/rrset         — ChangeResourceRecordSets (CREATE/UPSERT/DELETE)
-//	GET    /2013-04-01/hostedzone/{id}/rrset         — ListResourceRecordSets
+//	POST   /2013-04-01/hostedzone                      CreateHostedZone
+//	GET    /2013-04-01/hostedzone/{id}                 GetHostedZone
+//	GET    /2013-04-01/hostedzone                      ListHostedZones
+//	DELETE /2013-04-01/hostedzone/{id}                 DeleteHostedZone
+//	POST   /2013-04-01/hostedzone/{id}/rrset           ChangeResourceRecordSets (CREATE/UPSERT/DELETE)
+//	GET    /2013-04-01/hostedzone/{id}/rrset           ListResourceRecordSets
 package route53
 
 import (
@@ -59,7 +59,7 @@ type Handler struct {
 	// DeleteHostedZone (check the zone holds only the apex SOA/NS, then delete
 	// it). The underlying memstore only guarantees each individual Get/Set/
 	// Delete call is atomic, not a read-then-act sequence spanning several
-	// calls — without this lock, two concurrent requests against the same zone
+	// calls. Without this lock, two concurrent requests against the same zone
 	// could interleave between the check and the mutation (e.g. a batch
 	// validated as safe gets partially applied around a concurrent DELETE, or
 	// DeleteHostedZone deletes a zone a concurrent ChangeResourceRecordSets just
@@ -74,7 +74,7 @@ func New(d dnsdriver.DNS) *Handler {
 	return &Handler{dns: d}
 }
 
-// Matches claims /2013-04-01/hostedzone[...] requests — Route 53's own REST
+// Matches claims /2013-04-01/hostedzone[...] requests, Route 53's own REST
 // path space, disjoint from every other AWS handler. Registered before the S3
 // REST fallback so those paths aren't swallowed by the catch-all.
 func (*Handler) Matches(r *http.Request) bool {

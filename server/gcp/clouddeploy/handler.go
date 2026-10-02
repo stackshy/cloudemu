@@ -6,24 +6,24 @@
 //
 // Coverage (delivery pipeline + target control plane only):
 //
-//	POST   /v1/…/deliveryPipelines?deliveryPipelineId=  — CreatePipeline (LRO)
-//	GET    /v1/…/deliveryPipelines                      — ListPipelines
-//	GET    /v1/…/deliveryPipelines/{id}                 — GetPipeline
-//	PATCH  /v1/…/deliveryPipelines/{id}?updateMask=     — PatchPipeline (LRO)
-//	DELETE /v1/…/deliveryPipelines/{id}                 — DeletePipeline (LRO)
-//	POST   /v1/…/targets?targetId=                      — CreateTarget (LRO)
-//	GET    /v1/…/targets                                — ListTargets
-//	GET    /v1/…/targets/{id}                           — GetTarget
-//	PATCH  /v1/…/targets/{id}?updateMask=               — PatchTarget (LRO)
-//	DELETE /v1/…/targets/{id}                           — DeleteTarget (LRO)
-//	GET    /v1/…/operations/{op}                        — Operations.Get (shared poller)
+//	POST   /v1/…/deliveryPipelines?deliveryPipelineId=  : CreatePipeline (LRO)
+//	GET    /v1/…/deliveryPipelines                      : ListPipelines
+//	GET    /v1/…/deliveryPipelines/{id}                 : GetPipeline
+//	PATCH  /v1/…/deliveryPipelines/{id}?updateMask=     : PatchPipeline (LRO)
+//	DELETE /v1/…/deliveryPipelines/{id}                 : DeletePipeline (LRO)
+//	POST   /v1/…/targets?targetId=                      : CreateTarget (LRO)
+//	GET    /v1/…/targets                                : ListTargets
+//	GET    /v1/…/targets/{id}                           : GetTarget
+//	PATCH  /v1/…/targets/{id}?updateMask=               : PatchTarget (LRO)
+//	DELETE /v1/…/targets/{id}                           : DeleteTarget (LRO)
+//	GET    /v1/…/operations/{op}                        : Operations.Get (shared poller)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting resource embedded in `response`, so an SDK or Terraform LRO wait
 // terminates on the first poll instead of hanging.
 //
 // Location-scoped operations: Cloud Deploy's operations live under
-// /v1/projects/{p}/locations/{l}/operations — the SAME space the shared GCP LRO
+// /v1/projects/{p}/locations/{l}/operations, the same space the shared GCP LRO
 // poller owns. Matches returns false for operation paths when a shared registry
 // is wired, letting that poller win; a standalone package server (no registry)
 // serves its own polls. The deliveryPipelines/targets resource-type guard keeps

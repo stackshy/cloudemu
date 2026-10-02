@@ -591,9 +591,8 @@ func TestSDKGCPBackendServiceInvalidBalancingMode(t *testing.T) {
 // TestSDKGCPURLMapBackendBucketRefNotRejected guards against a false-reject: a
 // url-map's defaultService may legitimately name a backendBuckets/{name}
 // self-link (standard CDN/static-content routing, e.g.
-// google_compute_backend_bucket.self_link). Backend buckets have no driver
-// model here, so the reference must be left unvalidated rather than rejected
-// as a dangling backend-service reference.
+// google_compute_backend_bucket.self_link). An existing backend bucket must be
+// accepted, not misread as a dangling backend-service reference.
 func TestSDKGCPURLMapBackendBucketRefNotRejected(t *testing.T) {
 	ts := newGCPLBServer(t)
 	ctx := context.Background()
@@ -604,6 +603,9 @@ func TestSDKGCPURLMapBackendBucketRefNotRejected(t *testing.T) {
 	}
 
 	t.Cleanup(func() { _ = um.Close() })
+
+	insertBB(ctx, t, newBackendBucketsClient(t, ts),
+		&computepb.BackendBucket{Name: ptrStr("static-assets"), BucketName: ptrStr("static-assets")})
 
 	bucketRef := "projects/" + testProject + "/global/backendBuckets/static-assets"
 

@@ -9,7 +9,7 @@ import (
 )
 
 // A real EKS cluster and node group, created through the mock and wired into
-// the provider, must appear in the cross-service inventory — this exercises
+// the provider, must appear in the cross-service inventory. This exercises
 // the eksDiscovery adapter end to end (adapter -> engine walker -> Resource).
 func TestResourceDiscoverySurfacesEKS(t *testing.T) {
 	ctx := context.Background()

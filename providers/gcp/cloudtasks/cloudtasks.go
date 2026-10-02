@@ -1,8 +1,8 @@
 // Package cloudtasks provides an in-memory backend for GCP Cloud Tasks
 // (cloudtasks.googleapis.com v2). It satisfies services/cloudtasks/driver.Queues
 // so the Cloud Tasks v2 REST wire handler (server/gcp/cloudtasks) serves real
-// google.golang.org/api/cloudtasks/v2 clients — and Terraform's google provider
-// (google_cloud_tasks_queue) — against it.
+// google.golang.org/api/cloudtasks/v2 clients, and Terraform's google provider
+// (google_cloud_tasks_queue), against it.
 //
 // This is the queue control plane only: create/get/list/patch/delete plus the
 // pause/resume/purge verbs and the IAM methods. Task-level operations and real

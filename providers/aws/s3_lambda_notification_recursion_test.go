@@ -37,7 +37,7 @@ func TestS3LambdaNotificationWriteBackDoesNotRecurseUnbounded(t *testing.T) {
 	var invocations atomic.Int64
 
 	// A well-behaved handler forwards the ctx it was invoked with into its own
-	// downstream calls, exactly as this test's handler does here — this is the
+	// downstream calls, as this test's handler does here. This is the
 	// channel the recursive-loop guard rides on.
 	p.Lambda.RegisterHandler(function, func(ctx context.Context, _ []byte) ([]byte, error) {
 		invocations.Add(1)

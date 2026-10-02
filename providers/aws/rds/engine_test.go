@@ -114,7 +114,7 @@ func TestCreateInstanceNoEngineIsSynthetic(t *testing.T) {
 // member is backed by the cluster's shared engine database using the CLUSTER's
 // master credentials (a member carries none of its own), that the cluster's
 // endpoints are pointed at the reachable engine host, and that the shared
-// database is torn down once — on cluster delete, not per member.
+// database is torn down once, on cluster delete, not per member.
 func TestAuroraClusterMemberUsesClusterCreds(t *testing.T) {
 	eng := &recordingEngine{host: "127.0.0.1", port: 55432}
 	m := New(config.NewOptions(config.WithDatabaseEngine(eng)))

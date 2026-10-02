@@ -164,7 +164,7 @@ func TestStopTaskSettlesStoppingToStopped(t *testing.T) {
 
 // TestRepeatedStopTaskDoesNotRestartSettleWindow verifies StopTask is
 // idempotent on an already-stopped task: once a task has settled to STOPPED, a
-// second StopTask call must not restart the stop-settle window — neither its
+// second StopTask call must not restart the stop-settle window. Neither its
 // own response nor an immediate DescribeTasks may report the
 // DEPROVISIONING/STOPPING transient again for a terminal task.
 func TestRepeatedStopTaskDoesNotRestartSettleWindow(t *testing.T) {
@@ -201,7 +201,7 @@ func TestRepeatedStopTaskDoesNotRestartSettleWindow(t *testing.T) {
 
 	// A second StopTask on the already-stopped task must be a clean idempotent
 	// no-op: its own response reports STOPPED (not a fresh DEPROVISIONING), and
-	// an immediate DescribeTasks agrees — the task never "un-stops".
+	// an immediate DescribeTasks agrees: the task never "un-stops".
 	again, err := m.StopTask(ctx, "default", tasks[0].ARN, "second stop")
 	require.NoError(t, err)
 	assert.Equal(t, statusStopped, again.LastStatus)
@@ -212,9 +212,9 @@ func TestRepeatedStopTaskDoesNotRestartSettleWindow(t *testing.T) {
 }
 
 // TestServiceReconciliationUnaffectedBySettle verifies a service's
-// running/pending counts reflect the tasks' already-final state immediately —
-// the settle transient is a read-time overlay on DescribeTasks/ListTasks only,
-// never on the scheduler's own internal bookkeeping.
+// running/pending counts reflect the tasks' already-final state immediately,
+// since the settle transient is a read-time overlay on DescribeTasks/ListTasks
+// only, never on the scheduler's own internal bookkeeping.
 func TestServiceReconciliationUnaffectedBySettle(t *testing.T) {
 	m, _ := newSettleMock()
 	ctx := context.Background()

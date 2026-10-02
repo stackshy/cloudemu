@@ -88,7 +88,7 @@ func TestSDKApplicationSecurityGroupRoundTrip(t *testing.T) {
 }
 
 // TestSDKNICReferencesApplicationSecurityGroup guards that an ASG id referenced
-// from a NIC ipConfiguration's applicationSecurityGroups round-trips on GET —
+// from a NIC ipConfiguration's applicationSecurityGroups round-trips on GET:
 // the additive threading through buildIPConfigs / toNICResponse.
 func TestSDKNICReferencesApplicationSecurityGroup(t *testing.T) {
 	ts := newVNetServer(t)

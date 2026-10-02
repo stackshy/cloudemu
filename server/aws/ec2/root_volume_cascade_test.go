@@ -148,7 +148,7 @@ func TestTerminateCascadeDeletesDeleteOnTerminationVolumes(t *testing.T) {
 	})
 
 	// Separately create and attach a DoT=false volume (AttachVolume defaults it
-	// to false — the volume must outlive the instance).
+	// to false, so the volume must outlive the instance).
 	cre, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
 		AvailabilityZone: aws.String("us-east-1a"),
 		Size:             aws.Int32(10),

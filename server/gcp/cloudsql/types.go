@@ -24,7 +24,7 @@ const (
 	availabilityZonal    = "ZONAL"
 
 	// pricingPlanPerUse is settings.pricingPlan. PER_USE is the only value valid
-	// for a second-gen instance (which is all the emulator mints — backendType
+	// for a second-gen instance (which is all the emulator mints, backendType
 	// SECOND_GEN), and it is what real Cloud SQL always returns; emitting it keeps
 	// Terraform, whose disk_ pricing_plan default is also PER_USE, from a perpetual
 	// diff.
@@ -46,7 +46,7 @@ const (
 
 	// selfLinkBase is the resource URI prefix Cloud SQL stamps on every
 	// selfLink/targetLink. Even the v1 client is answered with sql/v1beta4
-	// selfLinks — that is the version the real service returns.
+	// selfLinks. That is the version the real service returns.
 	selfLinkBase = "https://sqladmin.googleapis.com/sql/v1beta4/projects/"
 
 	// operationUser is the caller identity Cloud SQL records on an operation.
@@ -115,7 +115,7 @@ type sqlSettings struct {
 	// explicitly (maintenanceWindow, insightsConfig, locationPreference,
 	// connectorEnforcement, passwordValidationPolicy, …). It is populated by
 	// UnmarshalJSON from an inbound request and re-inlined by MarshalJSON on a Get
-	// so those fields round-trip instead of being silently dropped — a perpetual
+	// so those fields round-trip instead of being silently dropped, a perpetual
 	// Terraform drift source. It carries no json tag: the (Un)marshalers handle it.
 	extra map[string]json.RawMessage
 }
@@ -140,7 +140,7 @@ func isModeledSettingsKey(k string) bool {
 // sub-field captured in extra, so fields like maintenanceWindow round-trip on a
 // Get. Typed fields win over an extra of the same name.
 func (s *sqlSettings) MarshalJSON() ([]byte, error) {
-	type alias sqlSettings // new type, no methods — avoids recursion
+	type alias sqlSettings // new type, no methods; avoids recursion
 
 	b, err := json.Marshal(alias(*s))
 	if err != nil {
@@ -294,7 +294,7 @@ func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 		// zone from the region (a computed, read-only attribute in Terraform).
 		GceZone: gceZoneFor(inst.AvailabilityZone),
 		// connectionName is keyed on the REQUEST project (from the URL), matching
-		// real Cloud SQL's {project}:{region}:{instance} — not the server's
+		// real Cloud SQL's {project}:{region}:{instance}, not the server's
 		// configured project, which the stored inst.ConnectionName carries.
 		ConnectionName:     project + ":" + inst.AvailabilityZone + ":" + inst.ID,
 		MasterInstanceName: inst.ReadReplicaSource,
@@ -348,7 +348,7 @@ func gceZoneFor(region string) string {
 
 // availabilityType maps the portable MultiAZ flag to the Cloud SQL
 // availabilityType enum: REGIONAL for a highly available (multi-zone) instance,
-// ZONAL otherwise — matching what real Cloud SQL returns on a Get.
+// ZONAL otherwise, matching what real Cloud SQL returns on a Get.
 func availabilityType(multiAZ bool) string {
 	if multiAZ {
 		return availabilityRegional
@@ -502,7 +502,7 @@ func writeError(w http.ResponseWriter, status int, reason, msg string) {
 
 func writeErr(w http.ResponseWriter, err error) {
 	// cerrors.Message strips the internal code-name prefix (e.g. "NotFound: ")
-	// that Error() prepends — real Cloud SQL never leaks its error taxonomy into
+	// that Error() prepends. Real Cloud SQL never leaks its error taxonomy into
 	// the wire message, only the human-readable text.
 	msg := cerrors.Message(err)
 

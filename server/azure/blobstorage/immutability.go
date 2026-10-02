@@ -100,7 +100,7 @@ func (h *Handler) setBlobLegalHold(w http.ResponseWriter, r *http.Request, conta
 // (x-ms-immutability-policy-until-date / -mode, x-ms-legal-hold) on a Get Blob /
 // Get Blob Properties response when the driver tracks blob immutability and the
 // blob carries a policy or hold. A missing capability or blob is silently
-// skipped — the read itself still succeeds.
+// skipped; the read itself still succeeds.
 func (h *Handler) writeImmutabilityHeaders(w http.ResponseWriter, r *http.Request, container, blob string) {
 	ext, ok := h.bucket.(storagedriver.AzureImmutableBlob)
 	if !ok {

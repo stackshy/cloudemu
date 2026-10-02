@@ -888,7 +888,7 @@ func TestUpdateItemTableNotFound(t *testing.T) {
 }
 
 // TestUpdateItemUpsertsMissing pins that UpdateItem on a missing item CREATES it
-// (real DynamoDB UpdateItem upserts — "adds a new item to the table if it does
+// (real DynamoDB UpdateItem upserts: "adds a new item to the table if it does
 // not already exist"), rather than erroring.
 func TestUpdateItemUpsertsMissing(t *testing.T) {
 	m := newTestMock()

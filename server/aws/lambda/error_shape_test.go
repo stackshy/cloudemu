@@ -12,7 +12,7 @@ import (
 )
 
 // TestSDKLambdaErrorMessagesHaveNoInternalPrefix pins that Lambda wire error
-// messages carry only the human sentence — not the internal "NotFound:" code
+// messages carry only the human sentence, not the internal "NotFound:" code
 // prefix that cerrors.Error.Error() prepends.
 func TestSDKLambdaErrorMessagesHaveNoInternalPrefix(t *testing.T) {
 	client, _ := newSDKClient(t)

@@ -15,6 +15,11 @@ func newTestMock() *Mock {
 	return New(opts)
 }
 
+// testCerts is a single default certificate for HTTPS and TLS listeners.
+//
+//nolint:gochecknoglobals // shared read-only test fixture.
+var testCerts = []driver.Certificate{{CertificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/test", IsDefault: true}}
+
 func createTestLB(m *Mock) *driver.LBInfo {
 	info, _ := m.CreateLoadBalancer(context.Background(), driver.LBConfig{
 		Name:    "my-lb",
@@ -217,7 +222,9 @@ func TestDeleteListenerCascadesRules(t *testing.T) {
 	lb := createTestLB(m)
 
 	victim, _ := m.CreateListener(ctx, driver.ListenerConfig{LBARN: lb.ARN, Protocol: "HTTP", Port: 80})
-	survivor, _ := m.CreateListener(ctx, driver.ListenerConfig{LBARN: lb.ARN, Protocol: "HTTPS", Port: 443})
+	survivor, _ := m.CreateListener(ctx, driver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTPS", Port: 443, Certificates: testCerts,
+	})
 
 	_, _ = m.CreateRule(ctx, driver.RuleConfig{ListenerARN: victim.ARN, Priority: 10})
 	_, _ = m.CreateRule(ctx, driver.RuleConfig{ListenerARN: victim.ARN, Priority: 20})
@@ -244,7 +251,7 @@ func TestDescribeListeners(t *testing.T) {
 		LBARN: lb.ARN, Protocol: "HTTP", Port: 80,
 	})
 	_, _ = m.CreateListener(ctx, driver.ListenerConfig{
-		LBARN: lb.ARN, Protocol: "HTTPS", Port: 443,
+		LBARN: lb.ARN, Protocol: "HTTPS", Port: 443, Certificates: testCerts,
 	})
 
 	t.Run("success", func(t *testing.T) {
@@ -360,7 +367,7 @@ func TestDeregisterTargets(t *testing.T) {
 	})
 
 	t.Run("success by id alone when unambiguous", func(t *testing.T) {
-		// A caller that omits Port (the common case — RegisterTargets docs
+		// A caller that omits Port (the common case: RegisterTargets docs
 		// Example 1 registers and deregisters by ID alone) can still
 		// deregister as long as that ID has exactly one registered port.
 		err := m.DeregisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-2"}})
@@ -415,7 +422,7 @@ func TestDescribeTargetHealth(t *testing.T) {
 // TestCreateLoadBalancerSettlesProvisioningToActive verifies the AWS-realistic
 // provisioning->active transition when async settling is enabled: a new load
 // balancer is observed as "provisioning" until the settle window elapses, then
-// "active". The transition is driven purely by the clock — no wall-clock sleep.
+// "active". The transition is driven purely by the clock: no wall-clock sleep.
 func TestCreateLoadBalancerSettlesProvisioningToActive(t *testing.T) {
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	opts := config.NewOptions(config.WithClock(fc), config.WithAsyncSettle(),
@@ -488,15 +495,15 @@ func TestRegisterTargetsSettlesInitialToHealthy(t *testing.T) {
 }
 
 // TestRegisterTargetsBeforeListenerAttachArmsOnAttach is the regression case
-// for a common IaC ordering — aws_lb_target_group_attachment applied before
+// for a common IaC ordering: aws_lb_target_group_attachment applied before
 // the listener/rule that routes to it is wired up. A target registered on a
 // target group with no listener must not start its initial->healthy settle
 // window at registration time: real ELBv2 only begins health checking once
 // the group is referenced by a listener, so time passing while the group sits
 // unattached must not count toward the window. Advancing the clock well past
 // the settle duration BEFORE attaching a listener, then attaching, must still
-// observe "initial" on the next Describe — the window starts from the attach
-// (first-referenced-observation) point, not from registration.
+// observe "initial" on the next Describe, since the window starts from the
+// attach (first-referenced-observation) point, not from registration.
 func TestRegisterTargetsBeforeListenerAttachArmsOnAttach(t *testing.T) {
 	m, fc := newAsyncTestMock()
 	ctx := context.Background()
@@ -584,7 +591,7 @@ func TestRegisterTargetsCancelsDraining(t *testing.T) {
 	assertEqual(t, 1, len(health))
 	assertEqual(t, "initial", health[0].State)
 
-	// Advancing well past the (canceled) drain window must not remove it —
+	// Advancing well past the (canceled) drain window must not remove it:
 	// only the fresh registration's own window governs it now.
 	fc.Advance(5 * time.Second)
 
@@ -812,7 +819,7 @@ func TestModifyListener(t *testing.T) {
 
 	t.Run("modify protocol", func(t *testing.T) {
 		err := m.ModifyListener(ctx, driver.ModifyListenerInput{
-			ListenerARN: li.ARN, Protocol: "HTTPS",
+			ListenerARN: li.ARN, Protocol: "HTTPS", Certificates: testCerts,
 		})
 		requireNoError(t, err)
 

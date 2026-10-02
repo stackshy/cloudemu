@@ -2,16 +2,16 @@
 //
 // Supported operations, all under the /20180401 API version:
 //
-//	POST   /metrics                               — PostMetricData
-//	POST   /metrics/actions/listMetrics           — ListMetrics
-//	POST   /metrics/actions/summarizeMetricsData  — SummarizeMetricsData
-//	POST   /alarms                                — CreateAlarm
-//	GET    /alarms                                — ListAlarms
-//	GET    /alarms/status                         — ListAlarmsStatus
-//	GET    /alarms/{alarmId}                      — GetAlarm
-//	PUT    /alarms/{alarmId}                      — UpdateAlarm
-//	DELETE /alarms/{alarmId}                      — DeleteAlarm
-//	GET    /alarms/{alarmId}/history              — GetAlarmHistory
+//	POST   /metrics                                 PostMetricData
+//	POST   /metrics/actions/listMetrics             ListMetrics
+//	POST   /metrics/actions/summarizeMetricsData    SummarizeMetricsData
+//	POST   /alarms                                  CreateAlarm
+//	GET    /alarms                                  ListAlarms
+//	GET    /alarms/status                           ListAlarmsStatus
+//	GET    /alarms/{alarmId}                        GetAlarm
+//	PUT    /alarms/{alarmId}                        UpdateAlarm
+//	DELETE /alarms/{alarmId}                        DeleteAlarm
+//	GET    /alarms/{alarmId}/history                GetAlarmHistory
 //
 // Alarm mutations are synchronous in real OCI Monitoring, so none of them
 // returns a work request. RetrieveDimensionStates answers 501: an alarm is

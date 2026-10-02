@@ -12,7 +12,7 @@ import (
 // (including ones added after the initial validRuntimes snapshot, to guard
 // against re-introducing over-rejection), a garbage value real users never
 // legitimately send, and a runtime shaped like a real identifier but not yet
-// in the explicit snapshot — accepted per the family-pattern fallback so a
+// in the explicit snapshot, accepted per the family-pattern fallback so a
 // brand-new AWS runtime release never gets wrongly rejected before this list
 // is updated.
 func TestValidateRuntime(t *testing.T) {

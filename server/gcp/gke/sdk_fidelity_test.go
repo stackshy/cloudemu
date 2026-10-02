@@ -66,7 +66,7 @@ func TestSDKGKEOperationFullShape(t *testing.T) {
 // TestSDKGKEForeignOperationNotFound proves the store-aware Matches lets an
 // operation the GKE mock never recorded fall through to the shared LRO poller
 // (instead of GKE greedily claiming and 404ing it), and that the shared poller
-// now 404s an operation name no service registered — real GCP returns NOT_FOUND
+// now 404s an operation name no service registered. Real GCP returns NOT_FOUND
 // for an unknown operation id rather than masking it as done.
 func TestSDKGKEForeignOperationNotFound(t *testing.T) {
 	svc, project := newSDKClient(t)
@@ -215,7 +215,7 @@ func TestSDKGKEGetServerConfig(t *testing.T) {
 // TestSDKGKEErrorMessageOmitsCodePrefix proves a GKE error's wire message
 // carries only the human-readable text, not the internal cerrors code-name
 // prefix (e.g. "cluster ... not found", not "NotFound: cluster ... not
-// found") — real GKE never leaks its internal error taxonomy into the message
+// found"). Real GKE never leaks its internal error taxonomy into the message
 // an SDK surfaces to the caller. A black-box audit found every case in
 // writeErr using err.Error() (which includes the "NotFound: "/"AlreadyExists:
 // "/etc. prefix from cerrors.Error.Error()) instead of cerrors.Message(err).

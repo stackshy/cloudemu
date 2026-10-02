@@ -27,7 +27,7 @@ import (
 )
 
 // Cluster and node pool status values (real GKE clusterStatus / nodePoolStatus
-// enums). PROVISIONING_ERROR, ERROR, and DEGRADED are not modeled — the mock
+// enums). PROVISIONING_ERROR, ERROR, and DEGRADED are not modeled: the mock
 // has no failure injection for the control-plane provisioning path.
 const (
 	statusProvisioning = "PROVISIONING"
@@ -36,7 +36,7 @@ const (
 )
 
 // Operation status values (real GKE Operation.status enum). PENDING is not
-// modeled — the mock starts every operation directly in RUNNING.
+// modeled: the mock starts every operation directly in RUNNING.
 const (
 	opStatusRunning  = "RUNNING"
 	opStatusDone     = "DONE"
@@ -103,7 +103,7 @@ type Cluster struct {
 	// pool, frozen at creation. Real GKE returns cluster.nodeConfig on every
 	// read (it survives even a remove-default-node-pool deletion), and the
 	// Terraform google provider reads google_container_cluster.node_config from
-	// it — a missing cluster.nodeConfig makes the provider see the whole
+	// it: a missing cluster.nodeConfig makes the provider see the whole
 	// node_config block vanish and force-replace the cluster on the next plan.
 	NodeConfig        NodeConfigSpec
 	ResourceLabels    map[string]string
@@ -172,7 +172,7 @@ type Mock struct {
 	// clusterSettle/nodePoolSettle/opSettle overlay a transient
 	// PROVISIONING/RECONCILING/RUNNING window over a cluster's, node pool's, or
 	// operation's stored terminal status, so create/mutate calls report the real
-	// GKE intermediate state before settling — matching how real Container Engine
+	// GKE intermediate state before settling, matching how real Container Engine
 	// Operations poll RUNNING before DONE while the target resource is still
 	// PROVISIONING/RECONCILING. Each Set is a no-op unless config.Options.
 	// AsyncSettle is set (SettleDuration returns 0 -> inactive window -> the
@@ -243,7 +243,7 @@ func (m *Mock) SetK8sAPI(api *kubernetes.APIServer) {
 
 // Endpoint returns the data-plane URL clients should target for a given
 // cluster. If a Kubernetes APIServer is wired and the cluster has a
-// registered UID, returns "<base>/k8s/<uid>" — the in-memory data plane.
+// registered UID, returns "<base>/k8s/<uid>", the in-memory data plane.
 // Otherwise returns the cluster's synthesized control-plane IP (a bare IPv4
 // address, matching real GKE's `endpoint` field) so a kubeconfig renders to a
 // well-formed, non-sentinel host.
@@ -327,7 +327,7 @@ func (m *Mock) recordOperation(opType, location, target string) Operation {
 
 // recordOperationAsync behaves like recordOperation but additionally opens an
 // opSettle window so GetOperation/ListOperations report the intermediate
-// RUNNING status until dur elapses — mirroring how a real GKE LRO polls RUNNING
+// RUNNING status until dur elapses, mirroring how a real GKE LRO polls RUNNING
 // while its target cluster/node pool is still PROVISIONING/RECONCILING. now and
 // dur are shared with the caller's resource-level settle.Set.Begin call so both
 // windows open and close in lockstep. A non-positive dur (AsyncSettle off)
@@ -449,7 +449,7 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 		CreatedAt:         now,
 	}
 
-	// Bootstrap default node pool when none specified — matches real GKE. The
+	// Bootstrap default node pool when none specified. This matches real GKE. The
 	// cluster-level nodeConfig (when present) configures that pool; absent
 	// fields fall back to defaults via nodePoolFromSpec.
 	pools := input.NodePools
@@ -467,7 +467,7 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 		npKey := nodePoolKey(input.Location, input.Name, np.Name)
 
 		// cluster.nodeConfig mirrors the default (first) pool's effective config,
-		// frozen at creation — real GKE keeps returning it even after the default
+		// frozen at creation: real GKE keeps returning it even after the default
 		// pool is deleted (remove_default_node_pool).
 		if i == 0 {
 			cluster.NodeConfig = NodeConfigSpec{
@@ -494,6 +494,7 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 	if m.k8sAPI != nil {
 		uid, _ := m.k8sAPI.RegisterCluster()
 		m.k8sUIDs[key] = uid
+		m.syncK8sVersionLocked(key, cluster.MasterVersion)
 	}
 
 	m.clusters.Set(key, cluster)
@@ -657,6 +658,7 @@ func (m *Mock) UpdateCluster(
 
 		if input.MasterVersion != "" {
 			c.MasterVersion = input.MasterVersion
+			m.syncK8sVersionLocked(clusterKey(location, name), c.MasterVersion)
 		}
 
 		if input.NodeVersion != "" {
@@ -699,6 +701,22 @@ func (m *Mock) rollNodePoolVersions(location, clusterName, nodePoolID, version s
 		np.Version = version
 		m.nodePools.Set(k, np)
 	}
+}
+
+// syncK8sVersionLocked points the cluster's /version at its master version,
+// the stub default when none was set. A version the data plane can't parse,
+// such as "latest", leaves /version as it was. Caller holds m.mu.
+func (m *Mock) syncK8sVersionLocked(key, masterVersion string) {
+	uid, ok := m.k8sUIDs[key]
+	if !ok || m.k8sAPI == nil {
+		return
+	}
+
+	if masterVersion == "" {
+		masterVersion = StubMasterVer
+	}
+
+	m.k8sAPI.SetClusterVersion(uid, kubernetes.DistributionGKE, masterVersion)
 }
 
 // DeleteCluster removes a cluster and its node pools.
@@ -1036,7 +1054,7 @@ func (m *Mock) RollbackNodePool(_ context.Context, location, clusterName, name s
 // mutateNodePool applies fn to a node pool and records the operation it
 // triggers. Real GKE surfaces RECONCILING while any node-pool mutation (resize,
 // autoscaling toggle, management change, upgrade/rollback) is in flight, so a
-// brief RECONCILING settle window overlays the pool's status here too — the
+// brief RECONCILING settle window overlays the pool's status here too: the
 // mutated field (e.g. NodeCount) itself is applied immediately so a synchronous
 // currentNodeCount read reflects the new value right away.
 func (m *Mock) mutateNodePool(
@@ -1068,7 +1086,7 @@ func (m *Mock) mutateNodePool(
 
 // GetOperation returns one previously-recorded operation. The location is
 // part of the SDK URL but operation names are globally unique in the mock,
-// so the parameter is unused — kept for parity with the SDK signature.
+// so the parameter is unused: kept for parity with the SDK signature.
 func (m *Mock) GetOperation(_ context.Context, _, name string) (*Operation, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1128,9 +1146,9 @@ func (m *Mock) ListOperations(_ context.Context, location string) ([]Operation, 
 
 // CancelOperation marks a recorded operation as canceled. Real GKE cancels
 // long-running ops; the mock's ops are already DONE so this is a no-op for
-// state purposes — we still record the request returned an OK envelope. The
+// state purposes: we still record the request returned an OK envelope. The
 // location is part of the SDK URL but operation names are globally unique in
-// the mock, so the parameter is unused — kept for parity with the SDK.
+// the mock, so the parameter is unused: kept for parity with the SDK.
 func (m *Mock) CancelOperation(_ context.Context, _, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

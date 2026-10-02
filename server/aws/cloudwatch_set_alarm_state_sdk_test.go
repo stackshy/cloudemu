@@ -19,8 +19,8 @@ import (
 )
 
 // TestE2ECloudWatchSetAlarmStateFiresSNSToSQS covers F2 end-to-end: forcing an
-// alarm to ALARM with SetAlarmState must invoke the alarm's SNS AlarmAction —
-// the documented "test my alarm wiring" workflow — delivering to the subscribed
+// alarm to ALARM with SetAlarmState must invoke the alarm's SNS AlarmAction,
+// the documented "test my alarm wiring" workflow, delivering to the subscribed
 // queue and recording the transition in DescribeAlarmHistory.
 func TestE2ECloudWatchSetAlarmStateFiresSNSToSQS(t *testing.T) {
 	provider := cloudemu.NewAWS()

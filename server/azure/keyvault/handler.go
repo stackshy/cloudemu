@@ -13,18 +13,18 @@
 //
 // Coverage (Key Vault 7.x REST shapes):
 //
-//	PUT    /secrets/{name}               — set secret (create or new version)
-//	GET    /secrets/{name}[/{version}]   — get current or specific version
-//	PATCH  /secrets/{name}/{version}     — update version attributes/tags
-//	GET    /secrets/{name}/versions      — list versions
-//	GET    /secrets                      — list secrets
-//	DELETE /secrets/{name}               — soft-delete secret
-//	POST   /secrets/{name}/backup        — backup secret
-//	POST   /secrets/restore              — restore secret
-//	GET    /deletedsecrets               — list deleted secrets
-//	GET    /deletedsecrets/{name}        — get deleted secret
-//	POST   /deletedsecrets/{name}/recover— recover deleted secret
-//	DELETE /deletedsecrets/{name}        — purge deleted secret
+//	PUT    /secrets/{name}               : set secret (create or new version)
+//	GET    /secrets/{name}[/{version}]   : get current or specific version
+//	PATCH  /secrets/{name}/{version}     : update version attributes/tags
+//	GET    /secrets/{name}/versions      : list versions
+//	GET    /secrets                      : list secrets
+//	DELETE /secrets/{name}               : soft-delete secret
+//	POST   /secrets/{name}/backup        : backup secret
+//	POST   /secrets/restore              : restore secret
+//	GET    /deletedsecrets               : list deleted secrets
+//	GET    /deletedsecrets/{name}        : get deleted secret
+//	POST   /deletedsecrets/{name}/recover: recover deleted secret
+//	DELETE /deletedsecrets/{name}        : purge deleted secret
 package keyvault
 
 import (
@@ -94,9 +94,9 @@ type dataPlaneRoutes struct {
 	routeMain     func(tail string)
 }
 
-// serveDataPlane runs the shared Key Vault data-plane preamble — bearer
+// serveDataPlane runs the shared Key Vault data-plane preamble: bearer
 // challenge, backend-availability check, then dispatch to the deleted or main
-// path space — used by both the secrets and keys handlers.
+// path space. Used by both the secrets and keys handlers.
 // path is the vault-stripped Key Vault data-plane path (from vaultScope), so a
 // bare-host /{vault}/secrets/… routes identically to a vault-host /secrets/….
 func serveDataPlane(
@@ -230,13 +230,13 @@ var kvDataPlaneKeywords = map[string]bool{
 // is a Key Vault data-plane request at all. Two addressing forms are supported:
 //
 //   - Vault host: r.Host carries a {vault}.vault.azure.net (or Managed HSM / Gov
-//     / China) suffix — the real-cloud form. The vault is the host's leading
+//     / China) suffix: the real-cloud form. The vault is the host's leading
 //     label and the path is unchanged. On this form Key Vault always wins, so it
 //     never shadows a blob container of the same name.
 //   - Bare host (a local `serve` on localhost:PORT): the vault is the leading
 //     path segment, i.e. /{vault}/secrets/…, so multiple vaults isolate. A bare
 //     /secrets (no vault segment) is NOT a Key Vault request and falls through to
-//     blob storage — which is what lets a blob container literally named
+//     blob storage, which is what lets a blob container literally named
 //     "secrets"/"keys"/"certificates" be created.
 func vaultScope(r *http.Request) (vault, kvPath string, ok bool) {
 	path := r.URL.Path
@@ -252,7 +252,13 @@ func vaultScope(r *http.Request) (vault, kvPath string, ok bool) {
 		}
 	}
 
-	// Bare host: /{vault}/{keyword}/… — the vault is the leading segment. A bare
+	// A storage account host is never a Key Vault request, so a blob, file or
+	// queue path such as /data/keys/app.pem stays with the storage handlers.
+	if isStorageHost(host) {
+		return "", "", false
+	}
+
+	// Bare host: /{vault}/{keyword}/…: the vault is the leading segment. A bare
 	// /{keyword} (no vault) or a reserved leading segment is not a KV request.
 	seg, rest, hasRest := strings.Cut(strings.TrimPrefix(path, "/"), "/")
 	if !hasRest || seg == "" || seg == "subscriptions" || kvDataPlaneKeywords[seg] {
@@ -264,6 +270,38 @@ func vaultScope(r *http.Request) (vault, kvPath string, ok bool) {
 	}
 
 	return seg, "/" + rest, true
+}
+
+// storageServices are the Azure Storage data-plane service labels that sit
+// between the account name and the storage DNS suffix, as in
+// {account}.blob.core.windows.net.
+//
+//nolint:gochecknoglobals // read-only lookup set, not mutable state
+var storageServices = map[string]bool{"blob": true, "queue": true, "table": true, "file": true, "dfs": true}
+
+// storageSuffixes are the Azure Storage DNS suffixes across the public, China
+// and US Gov clouds.
+//
+//nolint:gochecknoglobals // read-only lookup table, not mutable state
+var storageSuffixes = []string{".core.windows.net", ".core.chinacloudapi.cn", ".core.usgovcloudapi.net"}
+
+// isStorageHost reports whether host is an {account}.{service}.{suffix}
+// storage account endpoint, matched case-insensitively.
+func isStorageHost(host string) bool {
+	host = strings.ToLower(host)
+
+	for _, suffix := range storageSuffixes {
+		prefix, found := strings.CutSuffix(host, suffix)
+		if !found {
+			continue
+		}
+
+		dot := strings.LastIndexByte(prefix, '.')
+
+		return dot > 0 && storageServices[prefix[dot+1:]]
+	}
+
+	return false
 }
 
 // firstSegment returns the first '/'-separated segment of path.

@@ -11,8 +11,8 @@ import (
 const columnPartLen = 2
 
 // ParseColumnList parses the parenthesised column list of a Kusto table schema
-// declaration — the "id:long, name:string, ts:datetime" body of
-// .create table T (...) — into an ordered, typed column set. The surrounding
+// declaration: the "id:long, name:string, ts:datetime" body of
+// .create table T (...), into an ordered, typed column set. The surrounding
 // parentheses may be present or absent. It errors on an empty list, a malformed
 // "name:type" pair, a duplicate column name, or an unknown scalar type.
 func ParseColumnList(def string) ([]Column, error) {

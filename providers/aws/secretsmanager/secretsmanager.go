@@ -4,6 +4,8 @@ package secretsmanager
 import (
 	"bytes"
 	"context"
+	stderrors "errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kmscrypto"
 	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
@@ -103,7 +106,7 @@ func (m *Mock) SetKMSCrypto(c KMSCrypto) {
 
 // encrypt seals a secret value under kmsKeyID (empty selects the default
 // aws/secretsmanager managed key). With no KMS wired it returns the value
-// unchanged — the library plaintext fallback.
+// unchanged, the library plaintext fallback.
 func (m *Mock) encrypt(ctx context.Context, kmsKeyID string, plaintext []byte) ([]byte, error) {
 	if m.kmsCrypto == nil {
 		stored := make([]byte, len(plaintext))
@@ -117,17 +120,37 @@ func (m *Mock) encrypt(ctx context.Context, kmsKeyID string, plaintext []byte) (
 		keyRef = defaultKMSKey
 	}
 
-	return m.kmsCrypto.Encrypt(ctx, keyRef, plaintext)
+	// Only a key-state failure is EncryptionFailure; other KMS errors (e.g. an
+	// unknown key) keep their own mapping, as real Secrets Manager validates
+	// the key reference separately from sealing the value.
+	stored, err := m.kmsCrypto.Encrypt(ctx, keyRef, plaintext)
+	if err != nil && isKeyStateErr(err) {
+		return nil, fmt.Errorf("%w: %w", driver.ErrEncryptionFailure, err)
+	}
+
+	return stored, err
 }
 
 // decrypt reverses encrypt. With no KMS wired the stored bytes are already
-// plaintext.
+// plaintext. Any KMS failure here (disabled, pending deletion or deleted key)
+// is DecryptionFailure: the stored value exists but can no longer be opened.
 func (m *Mock) decrypt(ctx context.Context, stored []byte) ([]byte, error) {
 	if m.kmsCrypto == nil {
 		return stored, nil
 	}
 
-	return m.kmsCrypto.Decrypt(ctx, stored)
+	plaintext, err := m.kmsCrypto.Decrypt(ctx, stored)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", driver.ErrDecryptionFailure, err)
+	}
+
+	return plaintext, nil
+}
+
+// isKeyStateErr reports whether a KMS error means the key exists but is in a
+// state (disabled, pending deletion) that forbids cryptographic use.
+func isKeyStateErr(err error) bool {
+	return stderrors.Is(err, kmsdriver.ErrKeyDisabled) || stderrors.Is(err, kmsdriver.ErrKeyInvalidState)
 }
 
 // decryptVersion decrypts a copied version's Value in place, so every read path
@@ -153,9 +176,9 @@ func (m *Mock) CreateSecret(ctx context.Context, cfg driver.SecretConfig, value 
 
 	// A customer-supplied KmsKeyId must reference a key that exists; real Secrets
 	// Manager rejects an unknown key with InvalidParameterException rather than
-	// storing a dangling reference. The default aws/secretsmanager key (used when
-	// KmsKeyId is empty) always exists, so only an explicit reference is checked.
-	if cfg.KMSKeyID != "" && m.kmsCrypto != nil {
+	// storing a dangling reference. AWS-managed aliases such as
+	// alias/aws/secretsmanager always exist, so they skip the check.
+	if _, managed := kmscrypto.ReservedAlias(cfg.KMSKeyID); cfg.KMSKeyID != "" && !managed && m.kmsCrypto != nil {
 		if _, err := m.kmsCrypto.DescribeKey(ctx, cfg.KMSKeyID); err != nil {
 			return nil, errors.Newf(errors.InvalidArgument,
 				"KMS key %q does not exist or is not accessible", cfg.KMSKeyID)
@@ -198,7 +221,7 @@ func (m *Mock) CreateSecret(ctx context.Context, cfg driver.SecretConfig, value 
 	// supplied; a metadata-only secret has no versions until PutSecretValue adds
 	// one. This matters for the common Terraform pattern, where
 	// aws_secretsmanager_secret creates the secret with no value and a separate
-	// aws_secretsmanager_secret_version adds the first version — creating a phantom
+	// aws_secretsmanager_secret_version adds the first version. Creating a phantom
 	// empty version here would demote that first real version's predecessor to a
 	// spurious AWSPREVIOUS.
 	if value != nil {
@@ -256,8 +279,8 @@ func (m *Mock) createSecretConflict(
 	existing.mu.Lock()
 	scheduledForDeletion := !existing.deletedAt.IsZero()
 
-	// A retry of this same CreateSecret call — the same ClientRequestToken
-	// naming the secret's already-created initial version — is a no-op that
+	// A retry of this same CreateSecret call, the same ClientRequestToken
+	// naming the secret's already-created initial version, is a no-op that
 	// returns the existing secret rather than erroring, matching real Secrets
 	// Manager's SDK-retry-safety contract (the whole reason a client token
 	// exists: a lost response must not turn a successful create into a hard
@@ -420,7 +443,7 @@ func (m *Mock) PutSecretValue(_ context.Context, name string, value []byte) (*dr
 //     identical content is an idempotent no-op (the existing version is returned);
 //     reusing it with different content is ResourceExistsException.
 //   - versionStages, when non-empty, are the exact labels the new version takes,
-//     and AWSCURRENT is NOT implied — so staging a candidate as [AWSPENDING]
+//     and AWSCURRENT is NOT implied, so staging a candidate as [AWSPENDING]
 //     leaves the prior AWSCURRENT untouched. An empty versionStages promotes the
 //     new version to AWSCURRENT (demoting the prior current to AWSPREVIOUS).
 func (m *Mock) PutSecretValueStaged(
@@ -471,7 +494,7 @@ func (m *Mock) PutSecretValueStaged(
 
 // reusedTokenVersion enforces ClientRequestToken idempotency: same token + same
 // content returns the existing version unchanged; same token + different content
-// is ResourceExistsException. The comparison is on plaintext — the stored value
+// is ResourceExistsException. The comparison is on plaintext. The stored value
 // is ciphertext whose bytes differ per write even for identical content.
 func (m *Mock) reusedTokenVersion(
 	ctx context.Context, existing *driver.SecretVersion, value []byte, token string,

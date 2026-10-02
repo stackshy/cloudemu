@@ -429,7 +429,7 @@ func (h *Handler) mutateVersion(w http.ResponseWriter, r *http.Request, rt route
 		return
 	}
 
-	// etag is optional on real Secret Manager's lifecycle verbs — an omitted
+	// etag is optional on real Secret Manager's lifecycle verbs: an omitted
 	// field, and even a truly zero-byte body (some HTTP clients never write a
 	// "{}" the way google-api-go-client does), must still succeed. Unlike
 	// gcprest.DecodeJSON, this tolerates io.EOF instead of answering 400.

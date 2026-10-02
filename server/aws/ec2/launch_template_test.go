@@ -172,7 +172,7 @@ func TestGetLaunchTemplateDataFromRunningInstance(t *testing.T) {
 
 // TestRunInstancesFromLaunchTemplate pins that RunInstances given a
 // LaunchTemplate reference resolves the template's default version and applies
-// its data (ImageId/InstanceType) to the launched instance — previously the
+// its data (ImageId/InstanceType) to the launched instance. Previously the
 // template was silently ignored and ImageId came back empty.
 func TestRunInstancesFromLaunchTemplate(t *testing.T) {
 	ctx := context.Background()

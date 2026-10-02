@@ -35,7 +35,7 @@ type acceptInvitationRequest struct {
 }
 
 // acceptAdminInvitationRequest is the AcceptAdministratorInvitation request body
-// (administrator naming) — the same concept as acceptInvitationRequest.
+// (administrator naming), the same concept as acceptInvitationRequest.
 type acceptAdminInvitationRequest struct {
 	AdministratorID string `json:"administratorId"`
 	InvitationID    string `json:"invitationId"`

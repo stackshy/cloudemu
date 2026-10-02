@@ -1,6 +1,6 @@
 // Admission webhook tests: a validating webhook served over TLS by
 // httptest.NewTLSServer denies a Pod create when admission is enabled, and is
-// never invoked at all when it's disabled (the default) — the feature must
+// never invoked at all when it's disabled (the default): the feature must
 // not change existing behavior unless explicitly turned on.
 
 package kubernetes_test
@@ -143,7 +143,7 @@ func TestAdmission_ValidatingWebhookDeniesCreate(t *testing.T) {
 func TestAdmission_DisabledByDefaultSkipsWebhook(t *testing.T) {
 	webhook, calls := newDenyingWebhook(t)
 
-	// Admission is left disabled (the default) — SetAdmissionEnabled is never
+	// Admission is left disabled (the default): SetAdmissionEnabled is never
 	// called, so the webhook config below is stored but never invoked.
 	api := kubernetes.NewAPIServer()
 	uid, _ := api.RegisterCluster()

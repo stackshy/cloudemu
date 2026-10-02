@@ -1,11 +1,11 @@
 // Package drivertest holds cross-provider conformance suites: one shared
 // acceptance test per driver interface (services/*/driver), run against every
-// provider's implementation of it. This is the fstest.TestFS pattern — the
+// provider's implementation of it. This is the fstest.TestFS pattern: the
 // interface's behavioral contract is encoded exactly once here, and each
 // provider's own _test.go package calls the matching Run*Conformance function
 // against a freshly constructed driver instance.
 //
-// Only genuinely provider-agnostic behavior belongs here — anything an
+// Only genuinely provider-agnostic behavior belongs here. Anything an
 // individual cloud's wire protocol adds beyond the shared driver interface
 // (Azure blob leases, S3 object versioning, GCP-only quirks, ...) stays in
 // that provider's own tests, not in a conformance suite every provider must
@@ -170,7 +170,7 @@ func testObjectMissingErrors(t *testing.T, d storagedriver.Bucket) {
 
 // testObjectRoundTrip covers a Put followed by a Get that returns matching
 // data/content-type/size/metadata, followed by a Delete that makes the
-// object NotFound again — all against the existing bucket "b1".
+// object NotFound again, all against the existing bucket "b1".
 func testObjectRoundTrip(t *testing.T, d storagedriver.Bucket) {
 	t.Helper()
 

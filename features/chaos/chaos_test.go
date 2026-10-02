@@ -153,7 +153,7 @@ func TestRecordedSkipsNoOps(t *testing.T) {
 	e := chaos.New(config.RealClock{})
 	defer e.Stop()
 
-	// No scenarios applied — the call should produce no recording.
+	// No scenarios applied: the call should produce no recording.
 	_ = e.Check("storage", "Op")
 
 	if rec := e.Recorded(); len(rec) != 0 {

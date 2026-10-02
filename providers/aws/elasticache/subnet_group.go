@@ -11,8 +11,8 @@ import (
 
 // SubnetResolver is the slice of the networking mock this package needs to
 // derive a subnet group's VPC. Real ElastiCache infers VpcId from the member
-// subnets, and callers tearing a VPC down list groups and match on that field
-// — so it has to be resolved rather than left blank.
+// subnets, and callers tearing a VPC down list groups and match on that field,
+// so it has to be resolved rather than left blank.
 type SubnetResolver interface {
 	DescribeSubnets(ctx context.Context, ids []string) ([]netdriver.SubnetInfo, error)
 }
@@ -79,7 +79,7 @@ func (m *Mock) DescribeCacheSubnetGroups(
 // DeleteCacheSubnetGroup deletes a cache subnet group.
 func (m *Mock) DeleteCacheSubnetGroup(_ context.Context, name string) error {
 	// Real ElastiCache refuses to delete a subnet group associated with any
-	// clusters — standalone cache clusters count, not only replication groups.
+	// clusters: standalone cache clusters count, not only replication groups.
 	// A teardown that skipped this would leave the group deleted and a live
 	// cluster pointing at nothing.
 	for _, cd := range m.caches.All() {

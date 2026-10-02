@@ -56,7 +56,7 @@ func TestCreateComputesStableFields(t *testing.T) {
 
 	// Update (change tags) must preserve every computed field.
 	upd := digitaltwins.Input{
-		Location: "West US", // immutable — must be ignored
+		Location: "West US", // immutable: must be ignored
 		Tags:     map[string]string{"env": "prod"},
 		Identity: sysAssigned(),
 	}

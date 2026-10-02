@@ -30,7 +30,7 @@ func TestCreateServiceLinkedRole(t *testing.T) {
 	assertEqual(t, role.Name, got.Name)
 
 	// Duplicate without a suffix is rejected as InvalidArgument (AWS: InvalidInput),
-	// never AlreadyExists — EntityAlreadyExists is not in this action's error set.
+	// never AlreadyExists. EntityAlreadyExists is not in this action's error set.
 	_, err = m.CreateServiceLinkedRole(ctx, "elasticbeanstalk.amazonaws.com", "", "")
 	assertError(t, err, true)
 	if !errors.IsInvalidArgument(err) {

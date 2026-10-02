@@ -21,14 +21,55 @@ AWS's `parameterstore` service · portable interface `driver.ParameterStore` · 
 
 Discovered by type assertion; only some providers implement these.
 
+### Documents
+
+Documents is an OPTIONAL capability, discovered by type assertion. It covers
+
+| Operation | Description |
+| --- | --- |
+| `CreateDocument` |  |
+| `DeleteDocument` | DeleteDocument removes every version, or only the selected one when ref |
+| `DescribeDocument` |  |
+| `DescribeDocumentPermission` |  |
+| `GetDocument` |  |
+| `ListDocumentTags` |  |
+| `ListDocumentVersions` |  |
+| `ListDocuments` | ListDocuments returns the default version of every matching document, |
+| `ModifyDocumentPermission` |  |
+| `TagDocument` |  |
+| `UntagDocument` |  |
+| `UpdateDocument` |  |
+| `UpdateDocumentDefaultVersion` |  |
+
+### ManagedNodes
+
+ManagedNodes is an OPTIONAL capability, discovered by type assertion. Every
+
+| Operation | Description |
+| --- | --- |
+| `DescribeInstanceInformation` |  |
+
 ### RunCommand
 
 RunCommand is an OPTIONAL capability, discovered by type assertion.
 
 | Operation | Description |
 | --- | --- |
-| `GetCommandInvocation` |  |
+| `CancelCommand` | CancelCommand cancels the command on the given instances, or on all of |
+| `GetCommandInvocation` | GetCommandInvocation reports one instance's run. pluginName selects a |
+| `ListCommandInvocations` | ListCommandInvocations returns the matching invocations, newest command |
+| `ListCommands` | ListCommands returns the matching commands, newest first. |
 | `SendCommand` |  |
+
+### ServiceSettings
+
+ServiceSettings is an OPTIONAL capability, discovered by type assertion. It
+
+| Operation | Description |
+| --- | --- |
+| `GetServiceSetting` |  |
+| `ResetServiceSetting` |  |
+| `UpdateServiceSetting` |  |
 
 ## Not in scope
 

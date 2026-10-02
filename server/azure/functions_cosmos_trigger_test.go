@@ -375,7 +375,7 @@ func TestCosmosDBTriggerDisabledFunctionSkipped(t *testing.T) {
 // its own monitored container terminates at recursionguard.MaxDepth rather
 // than recursing unbounded, mirroring TestBlobStorageTriggerRecursionGuard.
 // The handler forwards the ctx it was invoked with into a direct
-// p.CosmosDB.PutItem call (not a fresh HTTP round trip through the real SDK —
+// p.CosmosDB.PutItem call (not a fresh HTTP round trip through the real SDK;
 // an HTTP hop cannot carry ctx's depth value, only the DepthHeader-based
 // webhook path can) so that ctx-carried depth is the channel the guard rides
 // on, exactly like the blobTrigger recursion test's direct PutObject call.

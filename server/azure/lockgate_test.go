@@ -113,7 +113,7 @@ func TestLockGate(t *testing.T) {
 }
 
 // TestLockGateSelfExemption proves the locks API is always allowed on a locked
-// scope, so a caller can delete a lock to unlock — even a DELETE of a lock
+// scope, so a caller can delete a lock to unlock, even a DELETE of a lock
 // living under a ReadOnly-locked scope.
 func TestLockGateSelfExemption(t *testing.T) {
 	h := locks.New()

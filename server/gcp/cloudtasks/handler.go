@@ -1,24 +1,24 @@
 // Package cloudtasks implements the cloudtasks.googleapis.com v2 REST API as a
-// server.Handler. Real google.golang.org/api/cloudtasks/v2 clients — and
-// Terraform's google provider (google_cloud_tasks_queue) — pointed at this
+// server.Handler. Real google.golang.org/api/cloudtasks/v2 clients, and
+// Terraform's google provider (google_cloud_tasks_queue), pointed at this
 // server CRUD queues and drive the pause/resume/purge verbs and the IAM methods
 // end-to-end against the Cloud Tasks driver.
 //
-// Coverage (v2 REST), all SYNCHRONOUS (the Queue, or Empty for delete, or the
-// IAM Policy, is returned directly — Cloud Tasks has no long-running
+// Coverage (v2 REST), all synchronous (the Queue, or Empty for delete, or the
+// IAM Policy, is returned directly: Cloud Tasks has no long-running
 // operations):
 //
-//	POST   /v2/projects/{p}/locations/{l}/queues                     — Create queue (name in body)
-//	GET    /v2/projects/{p}/locations/{l}/queues/{q}                 — Get queue
-//	GET    /v2/projects/{p}/locations/{l}/queues                     — List queues (paged)
-//	PATCH  /v2/projects/{p}/locations/{l}/queues/{q}?updateMask=…    — Patch queue
-//	DELETE /v2/projects/{p}/locations/{l}/queues/{q}                 — Delete queue
-//	POST   /v2/projects/{p}/locations/{l}/queues/{q}:pause           — Pause queue  (→ PAUSED)
-//	POST   /v2/projects/{p}/locations/{l}/queues/{q}:resume          — Resume queue (→ RUNNING)
-//	POST   /v2/projects/{p}/locations/{l}/queues/{q}:purge           — Purge queue  (sets purgeTime)
-//	POST   /v2/projects/{p}/locations/{l}/queues/{q}:getIamPolicy    — Get IAM policy
-//	POST   /v2/projects/{p}/locations/{l}/queues/{q}:setIamPolicy    — Set IAM policy
-//	POST   /v2/projects/{p}/locations/{l}/queues/{q}:testIamPermissions — Test IAM permissions
+//	POST   /v2/projects/{p}/locations/{l}/queues                     : Create queue (name in body)
+//	GET    /v2/projects/{p}/locations/{l}/queues/{q}                 : Get queue
+//	GET    /v2/projects/{p}/locations/{l}/queues                     : List queues (paged)
+//	PATCH  /v2/projects/{p}/locations/{l}/queues/{q}?updateMask=…    : Patch queue
+//	DELETE /v2/projects/{p}/locations/{l}/queues/{q}                 : Delete queue
+//	POST   /v2/projects/{p}/locations/{l}/queues/{q}:pause           : Pause queue  (→ PAUSED)
+//	POST   /v2/projects/{p}/locations/{l}/queues/{q}:resume          : Resume queue (→ RUNNING)
+//	POST   /v2/projects/{p}/locations/{l}/queues/{q}:purge           : Purge queue  (sets purgeTime)
+//	POST   /v2/projects/{p}/locations/{l}/queues/{q}:getIamPolicy    : Get IAM policy
+//	POST   /v2/projects/{p}/locations/{l}/queues/{q}:setIamPolicy    : Set IAM policy
+//	POST   /v2/projects/{p}/locations/{l}/queues/{q}:testIamPermissions : Test IAM permissions
 //
 // This is the queue control plane only. Task-level operations and real task
 // dispatch/execution are out of scope; a queue's httpTarget config round-trips

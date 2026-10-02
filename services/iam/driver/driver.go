@@ -127,7 +127,7 @@ type InstanceProfileInfo struct {
 // SimulationResult is one action-on-resource evaluation returned by an IAM
 // policy simulation (SimulatePrincipalPolicy / SimulateCustomPolicy). Decision
 // is one of "allowed", "explicitDeny", or "implicitDeny". It is an AWS-only
-// shape, so it is not referenced by the IAM interface below — providers that
+// shape, so it is not referenced by the IAM interface below; providers that
 // support simulation expose it through a type-asserted optional method.
 type SimulationResult struct {
 	ActionName   string
@@ -138,7 +138,7 @@ type SimulationResult struct {
 // PolicyEntity is one principal (user, group, or role) that a managed policy is
 // attached to. Path lets the wire layer apply the ListEntitiesForPolicy
 // PathPrefix filter. It is an AWS-only shape (ListEntitiesForPolicy), so it is
-// not referenced by the IAM interface below — providers that support it expose
+// not referenced by the IAM interface below; providers that support it expose
 // it through a type-asserted optional method.
 type PolicyEntity struct {
 	Name string
@@ -241,6 +241,41 @@ type ContextualAuthorizer interface {
 	CheckPermissionWithContext(
 		ctx context.Context, principal, action, resource string, condCtx map[string]string,
 	) (bool, error)
+}
+
+// Decision is the outcome of one policy evaluation. The values match the AWS
+// SimulatePolicy EvalDecision strings.
+type Decision string
+
+// Policy evaluation outcomes. An explicit Deny always wins; an implicit deny
+// means no statement allowed the request.
+const (
+	DecisionAllowed      Decision = "allowed"
+	DecisionImplicitDeny Decision = "implicitDeny"
+	DecisionExplicitDeny Decision = "explicitDeny"
+)
+
+// EvalRequest is one permission question for PermissionEvaluator. When
+// ResourceKnown is false the caller cannot name the target resource, and the
+// evaluator answers conservatively: it never allows more than it would for any
+// concrete resource. Resource is ignored in that case.
+type EvalRequest struct {
+	Principal     string
+	Action        string
+	Resource      string
+	ResourceKnown bool
+	Context       map[string]string
+}
+
+// PermissionEvaluator is an optional capability: an IAM implementation that
+// reports the full tri-state decision (allowed, implicit deny, explicit deny)
+// and can evaluate a request whose resource is unknown, or a whole service
+// ("may this principal use any s3 action on anything?"). The AWS authorization
+// gate type-asserts for it. Like ContextualAuthorizer it is AWS-only and
+// therefore not part of the shared IAM interface.
+type PermissionEvaluator interface {
+	EvaluatePermission(ctx context.Context, req EvalRequest) Decision
+	EvaluateServiceWide(ctx context.Context, principal, service string, condCtx map[string]string) Decision
 }
 
 // IAM is the interface that IAM provider implementations must satisfy.

@@ -12,8 +12,21 @@ catch. Each `fixtures/<case>/` is one scenario.
 
 ## Point your own Terraform at CloudEmu
 
-Run the standalone server (`cloudemu serve`, AWS on `:4566`) and use this
-provider block — the same flags LocalStack and floci use:
+The easy way is the `cloudemu-tf` wrapper in this directory. Run it in place of
+`terraform`/`tofu`; your config needs only an empty `provider "aws" {}` block:
+
+```bash
+cloudemu serve &                                   # AWS on :4566
+CLOUDEMU_ENDPOINT=http://localhost:4566 ./cloudemu-tf init
+./cloudemu-tf apply
+```
+
+It writes `cloudemu_providers_override.tf` with an `endpoints {}` key for every
+AWS service CloudEmu serves (the list is checked against `server/aws/aws.go` by
+`wrapper_test.go`), so no call goes to real AWS. Two CloudEmu services have no
+provider key and are not listed: Bedrock Agent Runtime and Savings Plans.
+
+To write the provider block by hand, use:
 
 ```hcl
 provider "aws" {
@@ -24,7 +37,6 @@ provider "aws" {
   s3_use_path_style           = true   # CloudEmu S3 is path-style
   skip_credentials_validation = true
   skip_metadata_api_check     = true
-  skip_requesting_account_id  = true
 
   endpoints {
     s3       = "http://localhost:4566"
@@ -35,6 +47,11 @@ provider "aws" {
   }
 }
 ```
+
+Leave `skip_requesting_account_id` off. The provider then gets the account from
+STS `GetCallerIdentity`, which CloudEmu serves (`000000000000` by default). With
+the flag on, ARNs the provider builds itself (for example the Redshift cluster
+ARN it tags by) get an empty account. Keep the `sts` endpoint set.
 
 ## Run the suite
 

@@ -20,7 +20,7 @@ type snapshotState struct {
 }
 
 // Snapshot captures every healthcareapis workspace, FHIR service and DICOM
-// service. includeAssets is unused — these resources hold no bulk object bodies.
+// service. includeAssets is unused: these resources hold no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

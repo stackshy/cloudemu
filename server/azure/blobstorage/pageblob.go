@@ -151,7 +151,7 @@ func pageRangeHeader(r *http.Request) string {
 
 // parsePageRange parses an inclusive "bytes=start-end" page-range spec. Unlike a
 // read range, both bounds are required (a page write always names a bounded
-// range) and no clamping to a blob size happens here — bounds/alignment are the
+// range) and no clamping to a blob size happens here: bounds/alignment are the
 // provider's to validate. ok is false for a missing or malformed spec.
 func parsePageRange(header string) (start, end int64, ok bool) {
 	const prefix = "bytes="

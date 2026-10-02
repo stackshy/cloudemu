@@ -3,7 +3,7 @@
 // live armcosmos control plane and the azcosmos data plane against one emulator,
 // it proves that after BeginDelete:
 //   - the deleted account is gone from List (no ghost) and GET 404s;
-//   - recreating a same-named account starts CLEAN — none of the previous
+//   - recreating a same-named account starts CLEAN: none of the previous
 //     incarnation's databases/containers/items survive;
 //   - a DIFFERENT account's databases/containers/items are untouched.
 package cosmosaccount_test
@@ -144,7 +144,7 @@ func TestSDKCosmosAccountDeleteTearsDownNamespace(t *testing.T) {
 // guarantee end-to-end: deleting account "foo" must not touch account "foobar",
 // whose name merely starts with "foo". The teardown matches on the "{account}/"
 // separator, so "foobar/…" tables never fall inside "foo"'s namespace. A bare
-// HasPrefix(name, "foo") would wrongly reap foobar's data — this is the wire-level
+// HasPrefix(name, "foo") would wrongly reap foobar's data; this is the wire-level
 // CI guard against that regression class.
 func TestSDKCosmosAccountDeletePrefixSubset(t *testing.T) {
 	ctx := context.Background()

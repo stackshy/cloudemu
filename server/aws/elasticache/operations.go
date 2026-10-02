@@ -52,7 +52,7 @@ func parseTags(form url.Values) map[string]string {
 func (h *Handler) createCacheCluster(w http.ResponseWriter, r *http.Request) {
 	form := r.Form
 
-	nodes, err := parseNodeCount("NumCacheNodes", form.Get("NumCacheNodes"))
+	nodes, err := parsePositiveCount("NumCacheNodes", form.Get("NumCacheNodes"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -105,7 +105,7 @@ func (h *Handler) modifyCacheCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodes, err := parseNodeCount("NumCacheNodes", r.Form.Get("NumCacheNodes"))
+	nodes, err := parsePositiveCount("NumCacheNodes", r.Form.Get("NumCacheNodes"))
 	if err != nil {
 		writeErr(w, err)
 		return

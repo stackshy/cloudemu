@@ -14,7 +14,7 @@ type MLWorkspaceConfig struct {
 }
 
 // MLWorkspaceUpdate carries the mutable fields of a workspace PATCH. A nil
-// pointer means "field absent from the request body" — leave it unchanged.
+// pointer means "field absent from the request body", so leave it unchanged.
 type MLWorkspaceUpdate struct {
 	Tags         *map[string]string // nil = no change; non-nil = merge into existing tags
 	FriendlyName *string            // nil = no change

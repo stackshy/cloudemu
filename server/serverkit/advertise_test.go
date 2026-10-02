@@ -7,7 +7,7 @@ import (
 
 // The Kubernetes data plane self-advertises an endpoint (EKS/AKS/GKE
 // DescribeCluster returns it). It must never advertise a bind-all address like
-// 0.0.0.0 — that isn't connectable, so a kubeconfig pointing at it can't be
+// 0.0.0.0: that isn't connectable, so a kubeconfig pointing at it can't be
 // dialed or TLS-verified. Under Docker (`--host 0.0.0.0`) it must fall back to a
 // routable loopback.
 func TestAdvertiseHostFor(t *testing.T) {

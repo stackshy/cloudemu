@@ -126,7 +126,7 @@ func TestSDKSinksWriterIdentity(t *testing.T) {
 
 // TestSDKSinksMaskedPatch guards updateMask partial semantics: a patch naming
 // only "filter" updates the filter and must leave destination, description and
-// writerIdentity untouched (a full-replace would silently clear them — the bug
+// writerIdentity untouched (a full-replace would silently clear them, the bug
 // this test locks down).
 func TestSDKSinksMaskedPatch(t *testing.T) {
 	svc := newLoggingService(t)

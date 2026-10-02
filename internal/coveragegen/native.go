@@ -21,7 +21,7 @@ const providerNativeInterface = "provider-native"
 // handlers, GCP LRO/servicenetworking/cloudasset, OCI work requests, …).
 //
 // Without this, a service implemented only as a wire handler plus a provider
-// mock — no services/<name>/driver interface — is invisible in docs/coverage,
+// mock, with no services/<name>/driver interface, is invisible in docs/coverage,
 // so llms.txt readers wrongly conclude it is unsupported. Everything here is
 // still derived from the code (the server factory's registrations and the
 // mock's method set), so it cannot drift.
@@ -293,9 +293,10 @@ func handlerCallPkg(n ast.Node, aliases map[string]string, marker string) string
 // by the mock in mockDir. A mock that fully implements a portable driver
 // interface (a sibling service such as RDS/SQL/CloudSQL sharing the relationaldb
 // driver) reports that interface's operations, so the surface matches the driver
-// rather than the mock's internal helpers. Otherwise — the mock has no portable
-// counterpart (EKS/AKS/GKE) — it reports the mock's own exported methods, minus
-// the persistence and wiring plumbing (Snapshot/Restore and Set* setters).
+// rather than the mock's internal helpers. Otherwise, when the mock has no
+// portable counterpart (EKS/AKS/GKE), it reports the mock's own exported
+// methods, minus the persistence and wiring plumbing (Snapshot/Restore and
+// Set* setters).
 func nativeOperations(mockDir string, services map[string]*Service) []Operation {
 	if svc := implementedService(mockDir, services); svc != nil {
 		return svc.Operations

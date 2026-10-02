@@ -8,6 +8,7 @@ const (
 	ExStateMachineAlreadyExists = "StateMachineAlreadyExists"
 	ExExecutionDoesNotExist     = "ExecutionDoesNotExist"
 	ExExecutionAlreadyExists    = "ExecutionAlreadyExists"
+	ExExecutionNotRedrivable    = "ExecutionNotRedrivable"
 	ExActivityDoesNotExist      = "ActivityDoesNotExist"
 	ExActivityAlreadyExists     = "ActivityAlreadyExists"
 	ExResourceNotFound          = "ResourceNotFound"

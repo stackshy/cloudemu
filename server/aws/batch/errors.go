@@ -35,7 +35,7 @@ func writeError(w http.ResponseWriter, status int, errType, msg string) {
 
 // writeErr maps a canonical cloudemu error to a Batch exception. Every
 // client-side code becomes a ClientException (400); anything else is a
-// ServerException (500). Only the clean message is surfaced — no cerrors code
+// ServerException (500). Only the clean message is surfaced; no cerrors code
 // prefix leaks into the body.
 func writeErr(w http.ResponseWriter, err error) {
 	status, errType := http.StatusInternalServerError, exceptionServer

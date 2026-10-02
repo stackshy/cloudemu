@@ -40,6 +40,15 @@ func execAlreadyExists(name string) error {
 	}
 }
 
+// execNotRedrivable is the ExecutionNotRedrivable error RedriveExecution
+// returns for an execution that cannot be redriven.
+func execNotRedrivable(format string, args ...any) error {
+	return &driver.APIError{
+		Exception: driver.ExExecutionNotRedrivable,
+		Err:       errors.Newf(errors.FailedPrecondition, format, args...),
+	}
+}
+
 func activityNotFound(arn string) error {
 	return &driver.APIError{
 		Exception: driver.ExActivityDoesNotExist,

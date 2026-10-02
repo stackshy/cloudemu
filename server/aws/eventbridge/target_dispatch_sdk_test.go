@@ -1,4 +1,4 @@
-// target_dispatch_sdk_test.go — real aws-sdk-go-v2 end-to-end test for
+// target_dispatch_sdk_test.go: real aws-sdk-go-v2 end-to-end test for
 // EventBridge target dispatch by ARN service. A matching PutEvents must reach
 // every first-class target type, not only SQS: a Lambda function target is
 // invoked (ASYNC) and an SNS topic target is published (fanning out to its

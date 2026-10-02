@@ -58,7 +58,7 @@ func TestSDKImageFromDisk(t *testing.T) {
 
 	diskID := "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Compute/disks/os-disk"
 
-	// Create the image from that disk — no sourceVirtualMachine.
+	// Create the image from that disk: no sourceVirtualMachine.
 	imgClient, err := armcompute.NewImagesClient("sub-1", fakeCred{}, opts)
 	if err != nil {
 		t.Fatal(err)

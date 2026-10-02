@@ -57,7 +57,7 @@ func mkRouteTable(t *testing.T, h *Handler, vpcID string) string {
 // A caller tearing down a VPC can only learn association ids from
 // DescribeRouteTables. If Associate succeeds but Describe omits the
 // associationSet, teardown silently skips disassociation and reports success
-// over a VPC it never actually drained — so the round-trip, not the individual
+// over a VPC it never drained. So the round-trip, not the individual
 // call, is what this test pins.
 func TestRouteTableAssociationRoundTrip(t *testing.T) {
 	h := newFullHandler()
@@ -150,7 +150,7 @@ func TestDescribeRouteTablesByAssociationFilter(t *testing.T) {
 }
 
 // TestDescribeRouteTablesRejectsUnknownFilter guards against silently returning
-// an empty set for a filter we do not model — an empty result could tell a
+// an empty set for a filter we do not model. An empty result could tell a
 // caller a route table is gone and let it delete the VPC (DependencyViolation).
 func TestDescribeRouteTablesRejectsUnknownFilter(t *testing.T) {
 	h := newFullHandler()
@@ -215,7 +215,7 @@ func TestDeleteRouteAndRouteTable(t *testing.T) {
 		t.Fatalf("DeleteRoute = %d: %s", delRoute.Code, delRoute.Body.String())
 	}
 
-	// Deleting the same route twice must not report success — teardown retries,
+	// Deleting the same route twice must not report success. Teardown retries,
 	// and a lying second delete would hide a route that never went away.
 	again := do(t, h, http.MethodPost, "/", url.Values{
 		"Action": {"DeleteRoute"}, "RouteTableId": {rtID}, "DestinationCidrBlock": {"0.0.0.0/0"},

@@ -11,7 +11,7 @@ import (
 
 // TestModifyInstanceMetadataOptionsEnforcesIMDSv2 pins that
 // ModifyInstanceMetadataOptions(HttpTokens=required) updates the instance's IMDS
-// settings and that DescribeInstances reflects the change — the round-trip a
+// settings and that DescribeInstances reflects the change. That is the round-trip a
 // security baseline / Terraform aws_instance metadata_options update relies on.
 func TestModifyInstanceMetadataOptionsEnforcesIMDSv2(t *testing.T) {
 	ctx := context.Background()

@@ -43,6 +43,18 @@ func (m *Mock) CreateReplicationGroup(
 		engine = defaultEngine
 	}
 
+	if err := validateEngine(engine, true); err != nil {
+		return nil, err
+	}
+
+	if err := validateReplicationNodeCount(cfg.NumCacheNodes); err != nil {
+		return nil, err
+	}
+
+	if err := m.requireParameterGroup(cfg.ParameterGroupName); err != nil {
+		return nil, err
+	}
+
 	nodeType := cfg.NodeType
 	if nodeType == "" {
 		nodeType = defaultNodeType
@@ -75,10 +87,11 @@ func (m *Mock) CreateReplicationGroup(
 		// The reader endpoint lets clients scale reads across the replicas.
 		ReaderAddress: fmt.Sprintf("%s-ro.%s.cache.amazonaws.com",
 			cfg.ID, region),
-		ReaderPort:        defaultRedisPort,
-		MemberClusters:    memberClusters(cfg.ID, nodes),
-		AutomaticFailover: failoverStatus(cfg.AutomaticFailoverEnabled),
-		SubnetGroupName:   cfg.SubnetGroupName,
+		ReaderPort:         defaultRedisPort,
+		MemberClusters:     memberClusters(cfg.ID, nodes),
+		AutomaticFailover:  failoverStatus(cfg.AutomaticFailoverEnabled),
+		SubnetGroupName:    cfg.SubnetGroupName,
+		ParameterGroupName: cfg.ParameterGroupName,
 		ARN: "arn:aws:elasticache:" + region + ":" + m.opts.AccountID +
 			":replicationgroup:" + cfg.ID,
 	}
@@ -223,6 +236,10 @@ func (m *Mock) ModifyReplicationGroup(
 			"ReplicationGroupNotFoundFault: replication group %q not found", id)
 	}
 
+	if err := validateReplicationNodeCount(numCacheNodes); err != nil {
+		return nil, err
+	}
+
 	if numCacheNodes > 0 {
 		rg.NumCacheNodes = numCacheNodes
 		rg.MemberClusters = memberClusters(id, numCacheNodes)
@@ -234,6 +251,31 @@ func (m *Mock) ModifyReplicationGroup(
 	// back to available; a no-op when settle is off.
 	m.rgSettle.Begin(id, statusModifying, m.opts.Clock.Now(),
 		m.opts.SettleDuration(settle.DefaultCacheModifySettle))
+
+	result := rg
+	result.Status = m.settleRGStatus(id, result.Status)
+
+	return &result, nil
+}
+
+// ModifyReplicationGroupParameterGroup points a replication group at another
+// cache parameter group, which must exist. AWS-only; the wire handler reaches it
+// by type assertion.
+func (m *Mock) ModifyReplicationGroupParameterGroup(
+	_ context.Context, id, name string,
+) (*cachedriver.ReplicationGroup, error) {
+	rg, ok := m.replicationGroups.Get(id)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound,
+			"ReplicationGroupNotFoundFault: replication group %q not found", id)
+	}
+
+	if err := m.requireParameterGroup(name); err != nil {
+		return nil, err
+	}
+
+	rg.ParameterGroupName = name
+	m.replicationGroups.Set(id, rg)
 
 	result := rg
 	result.Status = m.settleRGStatus(id, result.Status)

@@ -72,8 +72,8 @@ type warehouse struct {
 	Tags                    map[string]string
 }
 
-// endpointTagPair / endpointTags mirror sql.EndpointTagPair / sql.EndpointTags
-// — the wire shape of a warehouse's "tags" object.
+// endpointTagPair / endpointTags mirror sql.EndpointTagPair / sql.EndpointTags,
+// the wire shape of a warehouse's "tags" object.
 type endpointTagPair struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
@@ -273,7 +273,7 @@ func newWarehouse(req *createRequest) *warehouse {
 		wh.ClusterSize = defaultClusterSize
 	}
 
-	// A nil AutoStopMins means the field was omitted — apply the default. An
+	// A nil AutoStopMins means the field was omitted; apply the default. An
 	// explicit value (including 0, which disables auto-stop) is honored as-is.
 	if req.AutoStopMins == nil {
 		wh.AutoStopMins = defaultAutoStopMins

@@ -4,7 +4,7 @@
 // Server registered with this handler and the plan purchase/describe lifecycle
 // runs against an in-memory backend.
 //
-// Savings Plans speaks REST-JSON with path-based operation dispatch — each
+// Savings Plans speaks REST-JSON with path-based operation dispatch: each
 // operation is POST /{OperationName} with a JSON body (no X-Amz-Target). Plan
 // state lives only in the wire server (no portable driver represents Savings
 // Plans), so the handler owns a self-contained store rather than a three-layer
@@ -34,7 +34,7 @@ type Handler struct {
 }
 
 // New returns a Savings Plans handler. accountID shapes generated plan ARNs
-// (which are global — no region segment); region tags purchased plans; clock
+// (which are global, with no region segment); region tags purchased plans; clock
 // (nil = real clock) drives the queued/active timeline for deterministic tests.
 func New(accountID, region string, clock config.Clock) *Handler {
 	h := &Handler{store: newStore(accountID, region, clock)}

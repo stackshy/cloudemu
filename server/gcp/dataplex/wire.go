@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	dpdriver "github.com/stackshy/cloudemu/v2/services/dataplex/driver"
 )
@@ -38,13 +39,23 @@ type operationJSON struct {
 	Response json.RawMessage `json:"response,omitempty"`
 }
 
-// decodeBody reads the request body once and returns the caller-supplied fields
+// decodeBody reads the request body once, rewrites numeric enums to their
+// value names, and returns the caller-supplied fields
 // with the output-only keys stripped. The trailing segment of any body `name` is
 // returned so a create can fall back to it when the id query param is absent.
-func decodeBody(w http.ResponseWriter, r *http.Request) (fields map[string]json.RawMessage, bodyName string, ok bool) {
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
+func decodeBody(
+	w http.ResponseWriter, r *http.Request, enums gcpenum.Fields,
+) (fields map[string]json.RawMessage, bodyName string, ok bool) {
+	in, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
 	if err != nil {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "reading request body: "+err.Error())
+		return nil, "", false
+	}
+
+	// The gapic REST client sends enums as numbers; store the value names.
+	raw, err := gcpenum.Normalize(in, enums)
+	if err != nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
 		return nil, "", false
 	}
 
@@ -97,7 +108,7 @@ func resourceName(r *dpdriver.Resource) string {
 func renderResource(rt *route, lvl *level, r *dpdriver.Resource) (json.RawMessage, error) {
 	m := make(map[string]json.RawMessage, len(r.Fields)+minComputedFields)
 	for k, v := range r.Fields {
-		m[k] = v
+		m[k] = storedEnumNames(lvl.enums, k, v)
 	}
 
 	if err := putJSON(m, "name", resourceName(r)); err != nil {
@@ -117,6 +128,27 @@ func renderResource(rt *route, lvl *level, r *dpdriver.Resource) (json.RawMessag
 	}
 
 	return json.Marshal(m)
+}
+
+// storedEnumNames renders the stored top-level field k with any numeric enum
+// in it as its value name. Fields stored before request bodies were normalized
+// can hold numbers; only the response changes, never the stored bytes.
+func storedEnumNames(enums gcpenum.Fields, k string, v json.RawMessage) json.RawMessage {
+	if e, ok := enums[k]; ok {
+		if name, known := gcpenum.Name(v, e); known {
+			if out, err := json.Marshal(name); err == nil {
+				return out
+			}
+		}
+
+		return v
+	}
+
+	if sub := gcpenum.Sub(enums, k); sub != nil {
+		return gcpenum.NormalizeStored(v, sub)
+	}
+
+	return v
 }
 
 // writeResource renders a driver resource and writes it as the HTTP response
@@ -155,6 +187,13 @@ func (h *Handler) doneOperation(name string, resp json.RawMessage) operationJSON
 
 	return operationJSON{Name: name, Done: true, Response: resp}
 }
+
+// emptyResponse is google.protobuf.Empty wrapped as an Any, a delete
+// operation's response. The gapic Delete*Operation Wait rejects a done
+// operation without one ("unsupported result type <nil>").
+//
+//nolint:gochecknoglobals // immutable wire constant
+var emptyResponse = json.RawMessage(`{"@type":"type.googleapis.com/google.protobuf.Empty"}`)
 
 // responseAny wraps a resource JSON object as a google.protobuf.Any (adding the
 // "@type" discriminator), the shape a completed operation's `response` carries. A

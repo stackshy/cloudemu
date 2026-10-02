@@ -11,7 +11,7 @@ import (
 
 // TestCreateVpcInstanceTenancyRoundTrips pins that a VPC created with
 // InstanceTenancy=dedicated reads back as "dedicated" on DescribeVpcs rather
-// than the hardcoded "default" — the perpetual-drift bug on
+// than the hardcoded "default", the perpetual-drift bug on
 // aws_vpc.instance_tenancy.
 func TestCreateVpcInstanceTenancyRoundTrips(t *testing.T) {
 	ctx := context.Background()
@@ -59,8 +59,8 @@ func TestCreateVpcInstanceTenancyDefaultsWhenUnset(t *testing.T) {
 	}
 }
 
-// TestCreateVpcInstanceTenancyInvalidRejected pins that a bogus tenancy — and the
-// "host" value, which real EC2 CreateVpc rejects — both fail with
+// TestCreateVpcInstanceTenancyInvalidRejected pins that a bogus tenancy and the
+// "host" value, which real EC2 CreateVpc rejects, both fail with
 // InvalidParameterValue rather than being silently accepted.
 func TestCreateVpcInstanceTenancyInvalidRejected(t *testing.T) {
 	ctx := context.Background()

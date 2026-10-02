@@ -103,7 +103,7 @@ func (h *Handler) listEndpoints(w http.ResponseWriter, r *http.Request, rt route
 }
 
 // patchEndpoint handles PATCH .../endpoints/{id}?updateMask=. Only the masked
-// top-level fields mutate (in practice threatExceptions and labels — severity and
+// top-level fields mutate (in practice threatExceptions and labels; severity and
 // network are ForceNew in the Terraform provider). The operation completes
 // inline.
 func (h *Handler) patchEndpoint(w http.ResponseWriter, r *http.Request, rt route) {

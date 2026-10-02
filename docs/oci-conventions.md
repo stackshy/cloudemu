@@ -7,7 +7,7 @@ seventeen independently-built services come out looking like one codebase.
 The foundation this builds on (`config` identity, `internal/idgen` OCIDs,
 `scope.Compartment`, `server/wire/ocirest`, `server/oci/workrequest`, the
 `Provider` and `Drivers` bundles) is already on `development`. Do not modify it
-without saying so in your PR — every other service depends on it.
+without saying so in your PR, because every other service depends on it.
 
 ## Scope of one branch
 
@@ -17,7 +17,7 @@ without saying so in your PR — every other service depends on it.
 
 Assign your slot in `providers/oci/oci.go` `New()` and `server/oci/oci.go`
 `New()`, and map it in `server/oci/from_provider.go`. The struct fields already
-exist — fill them in, do not restructure them. Those three one-line edits are
+exist: fill them in, do not restructure them. Those three one-line edits are
 the only shared files a service branch touches.
 
 ## The three layers
@@ -56,7 +56,7 @@ var _ ocivcn.Extras = (*vcnprovider.Mock)(nil)
 ```
 
 Importing the provider package from the handler for those types is the
-established shape — `server/azure/aks` and `server/gcp/gke` do the same.
+established shape; `server/azure/aks` and `server/gcp/gke` do the same.
 
 ## Identity
 
@@ -82,7 +82,7 @@ idgen.OCID("instance", o.Realm, o.OCIRegion())  // ocid1.instance.oc1.iad.aaaaaa
 idgen.GlobalOCID("compartment", o.Realm)        // ocid1.compartment.oc1..aaaaaaaa…
 ```
 
-Identity resources — compartments, users, groups, policies, dynamic groups —
+Identity resources (compartments, users, groups, policies, dynamic groups)
 are region-agnostic and use `GlobalOCID`. Everything else is region-scoped.
 The resource type segment is the lowercase OCI resource name (`instance`,
 `vcn`, `subnet`, `bucket`, `vault`, `cluster`).
@@ -96,7 +96,7 @@ time and filter lists by it:
 scope.Scope{Compartment: compartmentID}
 ```
 
-Matching is exact — real OCI only descends the compartment tree when the caller
+Matching is exact. Real OCI only descends the compartment tree when the caller
 passes `compartmentIdInSubtree=true`. Handlers get the parameter with
 `ocirest.RequireCompartmentID(w, r)`, which writes the 400 for you when it is
 missing. Use it on every list endpoint; do not fall back to listing across all
@@ -133,8 +133,8 @@ the OCI SDK's signing is ignored the same way.
 Register the narrowest predicate that identifies your service. Handlers are
 evaluated in registration order and first match wins, so a broad `Matches` will
 silently swallow another service's traffic. If your paths overlap another
-service's, say so in the `Drivers` field comment — that is what the GCP bundle
-does for AlloyDB and GKE.
+service's, say so in the `Drivers` field comment. The GCP bundle
+does this for AlloyDB and GKE.
 
 ## Work requests
 
@@ -171,7 +171,7 @@ the slice in `wireMonitoring` if it belongs there.
 ## Errors
 
 Return `errors.New(errors.<Code>, msg)` / `errors.Newf` from drivers. Use the
-canonical codes — the wire layer maps them. Do not return OCI error strings
+canonical codes; the wire layer maps them. Do not return OCI error strings
 from a driver; the driver is provider-agnostic and the same code path serves
 the portable API.
 
@@ -190,7 +190,7 @@ the PR. Table-driven tests with `testify`, matching the existing files.
 Cover, at minimum:
 
 - Driver CRUD, including the not-found and already-exists paths
-- Compartment filtering — a resource in another compartment must not list
+- Compartment filtering: a resource in another compartment must not list
 - OCID shape for each resource type the service mints
 - Handler routing: what `Matches` claims and, importantly, what it does not
 - The wire response for one success and one error per operation family
@@ -205,6 +205,6 @@ where the SDK makes it practical.
 - [ ] Wire handler registered in `server/oci/oci.go`
 - [ ] Slot assigned in `providers/oci/oci.go` and `server/oci/from_provider.go`
 - [ ] `go build ./...` clean
-- [ ] `go test ./...` clean — the whole suite, not just your package
+- [ ] `go test ./...` clean (the whole suite, not just your package)
 - [ ] `golangci-lint run` clean for the packages you touched
 - [ ] Operations added to `docs/services.md`

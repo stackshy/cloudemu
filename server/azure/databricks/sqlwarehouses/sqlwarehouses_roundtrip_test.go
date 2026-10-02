@@ -182,7 +182,7 @@ func TestSDKWarehouseAutoStopZeroAndTags(t *testing.T) {
 		ClusterSize:  "Small",
 		AutoStopMins: 0,
 		// ForceSendFields makes the SDK serialize the zero value instead of
-		// omitting it — that's how a caller disables auto-stop on the wire.
+		// omitting it: that's how a caller disables auto-stop on the wire.
 		ForceSendFields: []string{"AutoStopMins"},
 		Tags: &sql.EndpointTags{
 			CustomTags: []sql.EndpointTagPair{{Key: "team", Value: "data"}},

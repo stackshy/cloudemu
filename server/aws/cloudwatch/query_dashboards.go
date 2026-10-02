@@ -3,7 +3,7 @@ package cloudwatch
 // The AWS CLI and the Terraform AWS provider speak CloudWatch's classic query
 // protocol (form-encoded POST, XML responses). This file adds the query-protocol
 // dashboard operations (backing aws_cloudwatch_dashboard) and DescribeAlarmHistory
-// so those clients work — the rpc-v2-cbor twins live in dashboards.go and
+// so those clients work. The rpc-v2-cbor twins live in dashboards.go and
 // metric_data_ops.go.
 
 import (
@@ -20,7 +20,7 @@ func (h *Handler) queryPutDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := store.PutDashboard(r.Context(), r.Form.Get("DashboardName"), r.Form.Get("DashboardBody")); err != nil {
+	if err := putDashboardCore(r.Context(), store, r.Form.Get("DashboardName"), r.Form.Get("DashboardBody")); err != nil {
 		writeQueryDriverErr(w, err)
 		return
 	}
@@ -61,7 +61,14 @@ func (h *Handler) queryListDashboards(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	from, to, next := pageWindow(len(entries), decodeOffsetToken(r.Form.Get("NextToken")), dashboardPageSize)
+	// ListDashboards documents only InvalidParameterValue, not InvalidNextToken.
+	offset, err := offsetFromToken(r.Form.Get("NextToken"), errInvalidParameterValue)
+	if err != nil {
+		writeQueryDriverErr(w, err)
+		return
+	}
+
+	from, to, next := pageWindow(len(entries), offset, dashboardPageSize)
 
 	rows := make([]dashboardEntryXML, 0, to-from)
 	for _, e := range entries[from:to] {
@@ -118,7 +125,11 @@ func (h *Handler) queryDescribeAlarmHistory(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	items, next := pageAlarmHistory(filterAlarmHistory(entries, &in), &in)
+	items, next, err := pageAlarmHistory(filterAlarmHistory(entries, &in), &in)
+	if err != nil {
+		writeQueryDriverErr(w, err)
+		return
+	}
 
 	members := make([]alarmHistoryMemberXML, 0, len(items))
 	for i := range items {

@@ -5,7 +5,7 @@ import cerrors "github.com/stackshy/cloudemu/v2/errors"
 // ApplyUpdate applies a parsed UpdateProgram to item, mutating it in place and
 // returning it. item is expected to be a caller-owned copy. Clauses apply in
 // SET, REMOVE, ADD, DELETE order, and every operand is resolved against the
-// pre-update image of the item — DynamoDB evaluates all clauses against the
+// pre-update image of the item: DynamoDB evaluates all clauses against the
 // item as it was before the update. Because writes are copy-on-write, a shallow
 // snapshot stays pristine as item mutates. A SET operand that resolves to a
 // missing attribute, an ADD/DELETE type mismatch, or an invalid document path

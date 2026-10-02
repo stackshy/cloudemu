@@ -75,7 +75,7 @@ type invokeEvent struct {
 
 // dialFunctionURL issues an HTTP request against ts using rawURL's path/query
 // but the httptest server's actual host:port, while sending rawURL's own host
-// as the Host header — exactly how a real client resolves
+// as the Host header, which is how a real client resolves
 // <url-id>.lambda-url.<region>.on.aws to an IP and presents that hostname over
 // the wire.
 func dialFunctionURL(t *testing.T, ts *httptest.Server, method, rawURL string, body []byte) *http.Response {

@@ -16,7 +16,7 @@ import (
 
 // newARServiceFixedClock boots an Artifact Registry SDK client whose server uses
 // a frozen clock, so every repository gets the same second-granular createTime /
-// updateTime — the tie condition that exposed the non-deterministic sort.
+// updateTime, the tie condition that exposed the non-deterministic sort.
 func newARServiceFixedClock(t *testing.T) *ar.Service {
 	t.Helper()
 

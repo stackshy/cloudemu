@@ -436,7 +436,7 @@ func TestSDKAssociations(t *testing.T) {
 	// SN ↔ Resource
 	resA, err := client.CreateServiceNetworkResourceAssociation(ctx, &awsvpcl.CreateServiceNetworkResourceAssociationInput{
 		ServiceNetworkIdentifier:        aws.String(snID),
-		ResourceConfigurationIdentifier: aws.String("rcfg-1"),
+		ResourceConfigurationIdentifier: aws.String("rc-1"),
 	})
 	if err != nil {
 		t.Fatalf("CreateSNResourceAssociation: %v", err)
@@ -475,7 +475,7 @@ func TestSDKAssociations(t *testing.T) {
 	}
 
 	// ResourceEndpointAssociations aren't synthesized by the emulator, so a
-	// delete resolves to NotFound — exercises the otherwise-unreachable handler.
+	// delete resolves to NotFound. This exercises the otherwise-unreachable handler.
 	_, e := client.DeleteResourceEndpointAssociation(ctx, &awsvpcl.DeleteResourceEndpointAssociationInput{
 		ResourceEndpointAssociationIdentifier: aws.String("rea-none"),
 	})
@@ -501,7 +501,7 @@ func TestSDKResourceConfigGatewayEndpoint(t *testing.T) {
 	ctx := context.Background()
 
 	gw, err := client.CreateResourceGateway(ctx, &awsvpcl.CreateResourceGatewayInput{
-		Name:             aws.String("rgw-1"),
+		Name:             aws.String("rg-1"),
 		VpcIdentifier:    aws.String("vpc-1"),
 		SubnetIds:        []string{"subnet-1"},
 		SecurityGroupIds: []string{"sg-1"},

@@ -5,12 +5,12 @@
 //
 // Coverage (endpoint control plane):
 //
-//	POST   /v1/…/endpoints?endpointId=   — CreateEndpoint (LRO)
-//	GET    /v1/…/endpoints               — ListEndpoints
-//	GET    /v1/…/endpoints/{id}          — GetEndpoint
-//	PATCH  /v1/…/endpoints/{id}?updateMask= — PatchEndpoint (LRO)
-//	DELETE /v1/…/endpoints/{id}          — DeleteEndpoint (LRO)
-//	GET    /v1/…/operations/{op}         — Operations.Get (shared poller)
+//	POST   /v1/…/endpoints?endpointId=   : CreateEndpoint (LRO)
+//	GET    /v1/…/endpoints               : ListEndpoints
+//	GET    /v1/…/endpoints/{id}          : GetEndpoint
+//	PATCH  /v1/…/endpoints/{id}?updateMask= : PatchEndpoint (LRO)
+//	DELETE /v1/…/endpoints/{id}          : DeleteEndpoint (LRO)
+//	GET    /v1/…/operations/{op}         : Operations.Get (shared poller)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting endpoint embedded in `response` as an Any typed
@@ -18,7 +18,7 @@
 // wait terminates on the first poll instead of hanging.
 //
 // Location-scoped operations: an endpoint's operations live under
-// /v1/projects/{p}/locations/{l}/operations — the SAME space the shared GCP LRO
+// /v1/projects/{p}/locations/{l}/operations, the same space the shared GCP LRO
 // poller owns. Matches returns false for operation paths when a shared registry
 // is wired, letting that poller win; a standalone package server (no registry)
 // serves its own polls. The endpoints resource-type guard keeps this handler
@@ -62,6 +62,10 @@ type Handler struct {
 	// 404). Nil in a standalone package server, where this handler serves its own
 	// /operations/ poll.
 	ops *lro.Registry
+
+	// shared turns on the endpoints rules for a server that also mounts
+	// Vertex AI; see shared.go.
+	shared bool
 }
 
 // New returns a Cloud IDS handler backed by db.
@@ -98,6 +102,12 @@ func parseRoute(urlPath string) (route, bool) {
 
 	rt := route{project: parts[1], location: parts[3], resource: rest[0]}
 	if len(rest) == itemParts {
+		// Cloud IDS has no custom verbs, so endpoints/{e}:predict and the
+		// like are another API's.
+		if strings.Contains(rest[1], ":") {
+			return route{}, false
+		}
+
 		rt.name = rest[1]
 	}
 
@@ -120,11 +130,11 @@ func (h *Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	if rt.resource == operationsSeg && h.ops != nil {
-		return false
+	if rt.resource == operationsSeg {
+		return h.ops == nil
 	}
 
-	return true
+	return h.matchesShared(r, &rt)
 }
 
 // ServeHTTP routes on the parsed path and method.

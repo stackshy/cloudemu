@@ -13,7 +13,7 @@ import "context"
 // results, ML models, or data-quality scores. See docs/services.md.
 //
 // synthEmpty is the shared body: it returns an empty object, which the SDK
-// decodes as all-absent optional fields — a valid, honest "no data" response.
+// decodes as all-absent optional fields, a valid, honest "no data" response.
 func synthEmpty(_ context.Context, _ map[string]any) (map[string]any, error) {
 	return map[string]any{}, nil
 }

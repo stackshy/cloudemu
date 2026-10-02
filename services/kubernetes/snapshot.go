@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/version"
 
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 )
@@ -21,7 +22,7 @@ var errIncompleteSnapshot = errors.New("kubernetes: incomplete cluster snapshot"
 
 // Persistence of the shared Kubernetes data plane (#868). The provider side
 // (EKS/AKS/GKE) already persists each cluster's name->UID mapping and recomputes
-// its kubeconfig endpoint lazily at describe time; this is the missing half —
+// its kubeconfig endpoint lazily at describe time; this is the missing half:
 // capturing the APIServer's per-UID ClusterState so a restored kubeconfig's
 // /k8s/<uid> endpoint answers with the same pods/deployments/CRDs it did before
 // the restart, instead of 404-ing on an unknown cluster.
@@ -34,7 +35,7 @@ var errIncompleteSnapshot = errors.New("kubernetes: incomplete cluster snapshot"
 var _ snapshot.Snapshottable = (*APIServer)(nil)
 
 // apiServerSnapshot is the serialized form of every registered cluster, keyed by
-// the same UID the kubeconfig embeds — so a restore reinstates each ClusterState
+// the same UID the kubeconfig embeds, so a restore reinstates each ClusterState
 // under the exact UID the provider's persisted mapping still points at.
 type apiServerSnapshot struct {
 	Clusters map[string]clusterSnapshot `json:"clusters,omitempty"`
@@ -43,8 +44,9 @@ type apiServerSnapshot struct {
 // clusterSnapshot is one ClusterState's serializable surface. The nine typed
 // maps hold upstream JSON-tagged types (map[string]*corev1.Pod, …) and the
 // registry holds map[string]*unstructured.Unstructured, so every field marshals
-// directly — no per-kind mirror structs. The only bespoke work is the three
-// unexported scalars (rv, the two IP allocators), captured explicitly. The
+// directly, with no per-kind mirror structs. The only bespoke work is the
+// unexported scalars (rv, the two IP allocators, the server version), captured
+// explicitly. The
 // broadcasters, admissionClient, eventIndex, mutex, clock and config flags are
 // deliberately absent: they are runtime-only (rebuilt fresh on restore) or
 // config re-injected at registration, never serialized (see Restore).
@@ -59,6 +61,15 @@ type clusterSnapshot struct {
 	// already holds.
 	NextClusterIP uint32 `json:"nextClusterIP"`
 	NextPodIP     uint32 `json:"nextPodIP"`
+	// ServerVersion is what the cluster reports on /version. Older snapshots
+	// lack it and restore with the default.
+	ServerVersion *version.Info `json:"serverVersion,omitempty"`
+
+	// ManagedNodes and NextNodeOrdinal carry the managed node pool state: that
+	// the bootstrap nodes were retired (strict scheduling) and the node IP
+	// allocator.
+	ManagedNodes    bool   `json:"managedNodes,omitempty"`
+	NextNodeOrdinal uint32 `json:"nextNodeOrdinal,omitempty"`
 
 	Namespaces      map[string]*corev1.Namespace             `json:"namespaces,omitempty"`
 	ConfigMaps      map[string]*corev1.ConfigMap             `json:"configMaps,omitempty"`
@@ -77,7 +88,7 @@ type clusterSnapshot struct {
 }
 
 // registryStoreSnapshot is one registry store's objects. The store's def, watch
-// broadcaster and lock are not serialized — the def is reconstructed from the
+// broadcaster and lock are not serialized: the def is reconstructed from the
 // built-in registration (or, for a CRD kind, from the restored CRD object) and
 // the broadcaster is rebuilt fresh.
 type registryStoreSnapshot struct {
@@ -86,9 +97,9 @@ type registryStoreSnapshot struct {
 
 // Snapshot serializes every registered cluster's ClusterState. includeAssets is
 // ignored (as the EKS/AKS/GKE control-plane snapshots already ignore it):
-// Kubernetes objects are all metadata — a Secret/ConfigMap with its data dropped
-// would be a broken restore, not a smaller one — and the store is small (the
-// Event store is hard-capped at maxStoredEvents).
+// Kubernetes objects are all metadata: a Secret/ConfigMap with its data dropped
+// would be a broken restore, not a smaller one, and the store is small anyway
+// (the Event store is hard-capped at maxStoredEvents).
 func (s *APIServer) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	s.mu.RLock()
 
@@ -113,10 +124,16 @@ func (s *ClusterState) snapshot() clusterSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	serverVersion := s.targetServerVersionLocked()
+
 	cs := clusterSnapshot{
 		RV:            s.rv,
 		NextClusterIP: s.nextClusterIP,
 		NextPodIP:     s.nextPodIP,
+		ServerVersion: &serverVersion,
+
+		ManagedNodes:    s.managedNodes,
+		NextNodeOrdinal: s.nextNodeOrdinal,
 
 		Namespaces:      copyObjMap(s.namespaces),
 		ConfigMaps:      copyObjMap(s.configMaps),
@@ -165,7 +182,7 @@ func copyObjMap[T interface{ DeepCopy() T }](in map[string]T) map[string]T {
 // s.clusters directly (it owns the private map) rather than widening
 // RegisterCluster's random-UID-only public API. Each ClusterState is rebuilt via
 // newClusterState with the APIServer's current config (clock, admission, staged
-// lifecycle) re-injected — exactly the path RegisterCluster uses — then its
+// lifecycle) re-injected, exactly the path RegisterCluster uses, then its
 // persisted data is loaded on top. Restore fails loudly on a malformed snapshot
 // so a partial/degenerate cluster never silently replaces a valid one.
 func (s *APIServer) Restore(_ context.Context, data json.RawMessage) error {
@@ -195,7 +212,7 @@ func (s *APIServer) Restore(_ context.Context, data json.RawMessage) error {
 // s.mu (the APIServer lock), so reading the config fields is safe. newClusterState
 // pre-seeds the system namespaces/SAs/Node/Lease with FRESH UIDs; the persisted
 // stores overwrite that seed wholesale (below), so no wrong-UID seeded copy can
-// survive — the identity a client saw before the restart is preserved verbatim.
+// survive; the identity a client saw before the restart is preserved verbatim.
 func (s *APIServer) restoreClusterLocked(cs *clusterSnapshot) (*ClusterState, error) {
 	if err := cs.validate(); err != nil {
 		return nil, err
@@ -217,7 +234,7 @@ func (s *APIServer) restoreClusterLocked(cs *clusterSnapshot) (*ClusterState, er
 
 	restoreRegistryStores(st, cs.Registry)
 
-	// eventIndex is derived state — rebuild it from the restored Event store
+	// eventIndex is derived state: rebuild it from the restored Event store
 	// rather than serializing it, so it can never drift from the events it
 	// indexes (the dedup key is a pure function of fields stored on each Event).
 	rebuildEventIndex(st)
@@ -226,6 +243,9 @@ func (s *APIServer) restoreClusterLocked(cs *clusterSnapshot) (*ClusterState, er
 	// against a degenerate zero (a well-formed v4 snapshot always carries real
 	// values) so a malformed field can't wedge allocation at the reserved base.
 	st.rv = cs.RV
+	st.watchFloor = cs.RV
+	st.managedNodes = cs.ManagedNodes
+	st.nextNodeOrdinal = cs.NextNodeOrdinal
 
 	if cs.NextClusterIP != 0 {
 		st.nextClusterIP = cs.NextClusterIP
@@ -233,6 +253,10 @@ func (s *APIServer) restoreClusterLocked(cs *clusterSnapshot) (*ClusterState, er
 
 	if cs.NextPodIP != 0 {
 		st.nextPodIP = cs.NextPodIP
+	}
+
+	if cs.ServerVersion != nil && cs.ServerVersion.GitVersion != "" {
+		st.serverVersion = *cs.ServerVersion
 	}
 
 	return st, nil
@@ -289,7 +313,7 @@ func rebuildEventIndex(st *ClusterState) {
 
 // validate rejects a structurally-broken cluster snapshot so a partial restore
 // can never leave a half-populated cluster masquerading as valid. It asserts the
-// system namespaces every real cluster always carries are present — the canonical
+// system namespaces every real cluster always carries are present, the canonical
 // "this is a complete cluster snapshot" marker. It does NOT require the default
 // ServiceAccounts / Node / Lease individually: those are ordinary objects a user
 // can legitimately delete (`kubectl delete sa default`, `delete node …`), so a

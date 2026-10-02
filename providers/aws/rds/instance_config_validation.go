@@ -42,7 +42,7 @@ var validEngines = map[string]struct{}{ //nolint:gochecknoglobals // static look
 
 // instanceClassFamilies is a curated set of the DB instance-class families RDS
 // offers (db.<family>.<size>). The full class enum is region- and
-// engine-dependent, so — like the engine-default parameter tables — this is a
+// engine-dependent, so, like the engine-default parameter tables, this is a
 // representative set broad enough to accept real classes while rejecting a
 // clearly bogus family. Aurora Serverless v2 uses the db.serverless class,
 // handled separately.

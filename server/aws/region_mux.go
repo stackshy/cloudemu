@@ -21,7 +21,7 @@ type RegionEntry struct {
 // regionHolder guards a single region's lazy construction. once ensures the
 // (expensive) provider+server build runs exactly once even under a burst of
 // concurrent first-touch requests to the same new region, without holding the
-// mux map lock across the build — so a first request to a brand-new region never
+// mux map lock across the build, so a first request to a brand-new region never
 // blocks requests to already-built (or unrelated new) regions.
 type regionHolder struct {
 	once  sync.Once
@@ -30,8 +30,8 @@ type regionHolder struct {
 
 // RegionMux dispatches each AWS request to the wire server for the region the
 // caller addressed (via the SigV4 credential scope), building and caching a
-// fresh regional backend on first touch. An unsigned request — or one whose
-// scope names the default region — routes to the pre-built default entry, so the
+// fresh regional backend on first touch. An unsigned request, or one whose
+// scope names the default region, routes to the pre-built default entry, so the
 // single-region path is byte-identical to a non-muxed server.
 //
 // Global services (IAM, STS, Route 53, CloudFront, Global Accelerator) need no
@@ -49,7 +49,7 @@ type RegionMux struct {
 
 // NewRegionMux builds a mux seeded with the pre-built default-region entry.
 // build constructs a fresh backend for any other region on first touch. The
-// default region is never built through build — it is the entry passed here.
+// default region is never built through build: it is the entry passed here.
 func NewRegionMux(defaultRegion string, defaultEntry RegionEntry, build func(region string) RegionEntry) *RegionMux {
 	m := &RegionMux{
 		defaultRegion: defaultRegion,

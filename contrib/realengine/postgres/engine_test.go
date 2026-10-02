@@ -26,7 +26,7 @@ import (
 
 // TestPostgresProvisionRoundTrip provisions a database through the engine,
 // connects to it with the instance's master credentials, runs real SQL, then
-// deprovisions and confirms the database is gone — the engine's own contract.
+// deprovisions and confirms the database is gone: the engine's own contract.
 func TestPostgresProvisionRoundTrip(t *testing.T) {
 	eng := postgres.New(55440)
 	t.Cleanup(func() { _ = eng.Close() })
@@ -128,7 +128,7 @@ func TestGCPCloudSQLCloneIsIsolated(t *testing.T) {
 
 	_ = srcDB.Close()
 
-	// Clone — like `gcloud sql instances clone`.
+	// Clone, like `gcloud sql instances clone`.
 	if _, err := svc.Instances.Clone(project, source, &sqladmin.InstancesCloneRequest{
 		CloneContext: &sqladmin.CloneContext{DestinationInstanceName: clone},
 	}).Context(ctx).Do(); err != nil {
@@ -157,7 +157,7 @@ func TestGCPCloudSQLCloneIsIsolated(t *testing.T) {
 
 	_ = cloneDB.Close()
 
-	// Delete the clone — this drops the clone's database only.
+	// Delete the clone: this drops the clone's database only.
 	if _, err := svc.Instances.Delete(project, clone).Context(ctx).Do(); err != nil {
 		t.Fatalf("Instances.Delete clone: %v", err)
 	}

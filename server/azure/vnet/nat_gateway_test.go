@@ -14,7 +14,7 @@ import (
 // handler: every op used to 501. This drives the real armnetwork
 // NatGatewaysClient through create (bound to a public IP), get, subnet
 // association (via the subnet's own natGateway property, the real ARM
-// mechanism), and delete — checking both the subnets and publicIpAddresses
+// mechanism), and delete, checking both the subnets and publicIpAddresses
 // back-references round-trip.
 func TestSDKNATGatewayRoundTrip(t *testing.T) {
 	ts := newVNetServer(t)
@@ -229,7 +229,7 @@ func TestSDKNATGatewayPublicIPAlreadyBound(t *testing.T) {
 // TestSDKPublicIPCrossOwnerConflict guards the shared public-IP claim check
 // across NIC and NAT gateway. A static public IP binds to exactly one owner in
 // real Azure, so once a NIC holds it a NAT gateway cannot take it, and vice
-// versa — the two subsystems (NIC by ARM id, NAT by Elastic-IP allocation) did
+// versa; the two subsystems (NIC by ARM id, NAT by Elastic-IP allocation) did
 // not consult each other before this guard.
 func TestSDKPublicIPCrossOwnerConflict(t *testing.T) {
 	ts := newVNetServer(t)

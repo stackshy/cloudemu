@@ -14,6 +14,9 @@ const (
 	CrawlerRunning  = "RUNNING"
 	CrawlerStopping = "STOPPING"
 
+	// CrawlCancelled is the LastCrawl status of a crawl stopped by StopCrawler.
+	CrawlCancelled = "CANCELLED" //nolint:misspell // AWS Glue API status literal (British spelling).
+
 	TriggerCreated     = "CREATED"
 	TriggerActivated   = "ACTIVATED"
 	TriggerDeactivated = "DEACTIVATED"

@@ -189,7 +189,7 @@ func (m *MongoARMHandler) createOrUpdateCollection(
 		cfg.SortKey = idAttr
 	}
 
-	// Create-or-update: an existing collection (AlreadyExists) is not an error —
+	// Create-or-update: an existing collection (AlreadyExists) is not an error;
 	// re-apply its attrs and throughput. The shard key is immutable, so the
 	// existing table config is kept.
 	if err := m.h.db.CreateTable(r.Context(), cfg); err != nil && !cerrors.IsAlreadyExists(err) {

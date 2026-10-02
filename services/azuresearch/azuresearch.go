@@ -1,7 +1,7 @@
 // Package azuresearch provides a portable Azure AI Search API with
 // cross-cutting concerns. It wraps a driver.AzureSearch (ARM control plane +
 // search data plane) with recording, metrics, rate limiting, error injection,
-// and latency simulation — the same middle layer every other service ships, so
+// and latency simulation, the same middle layer every other service ships, so
 // Azure AI Search participates in the three-layer design.
 package azuresearch
 

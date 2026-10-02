@@ -36,7 +36,7 @@ const maxFormBytes = 64 << 10
 const bootstrapObjectID = "22222222-2222-2222-2222-222222222222"
 
 // TokenHandler serves the OAuth2 client-credentials token endpoint. It returns
-// a well-formed, fake-signed JWT for any request — CloudEmu accepts any
+// a well-formed, fake-signed JWT for any request. CloudEmu accepts any
 // credentials, so it neither reads the client secret nor verifies anything; it
 // only has to hand back a token the client can decode and present.
 type TokenHandler struct {
@@ -154,8 +154,8 @@ type claims struct {
 }
 
 // signedJWT builds a three-segment JWT (header.payload.signature). The signature
-// is a fixed placeholder: the token is never cryptographically verified —
-// clients only base64-decode the payload to read the claims, and CloudEmu's ARM
+// is a fixed placeholder: the token is never cryptographically verified.
+// Clients only base64-decode the payload to read the claims, and CloudEmu's ARM
 // layer accepts any bearer.
 func signedJWT(c *claims) string {
 	header := segment(map[string]string{"alg": "RS256", "typ": "JWT", "kid": "cloudemu"})

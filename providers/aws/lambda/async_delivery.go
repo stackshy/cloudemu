@@ -25,7 +25,7 @@ type asyncSNSPublisher interface {
 
 // SetAsyncDestinationTargets wires the SQS and SNS backends a failed asynchronous
 // invoke routes its event to: the function's DeadLetterConfig queue/topic and its
-// DestinationConfig OnFailure/OnSuccess targets. Either may be nil — routing to
+// DestinationConfig OnFailure/OnSuccess targets. Either may be nil. Routing to
 // that transport is then skipped, so a library user without SQS/SNS wired is
 // unaffected. Called once at provider wiring time, before any invoke.
 func (m *Mock) SetAsyncDestinationTargets(sqs asyncSQSDeliverer, sns asyncSNSPublisher) {
@@ -38,7 +38,7 @@ func (m *Mock) SetAsyncDestinationTargets(sqs asyncSQSDeliverer, sns asyncSNSPub
 const defaultMaxRetryAttempts = 2
 
 // routeAsyncDestinations routes a finished asynchronous (Event) invocation to its
-// configured destinations. A failure (out.Error set — a handler or engine error)
+// configured destinations. A failure (out.Error set, a handler or engine error)
 // goes to the DeadLetterConfig queue/topic and the OnFailure destination once
 // retries are exhausted; a success may go to the OnSuccess destination. It is
 // called only for InvokeType=Event, so synchronous invokes are never affected.

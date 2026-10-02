@@ -109,7 +109,7 @@ func (h *Handler) setMachineType(w http.ResponseWriter, r *http.Request, rp gcpr
 	}
 
 	// Real GCP rejects changing the machine type of an instance that is not
-	// TERMINATED (stopped) with a 400 — the VM must be stopped first.
+	// TERMINATED (stopped) with a 400. The VM must be stopped first.
 	if gcpStatusFor(inst.State) != statusTerminated {
 		gcprest.WriteError(w, http.StatusBadRequest, "conditionNotMet",
 			"Instance "+rp.ResourceName+" must be stopped before the machine type can be changed.")
@@ -381,7 +381,7 @@ func parseMaxResults(raw string) int {
 // common single-clause forms "<field> <op> <value>" where op is one of
 // "=", "!=", "eq", "ne" and field is name/status/machineType/zone or a
 // "labels.<key>" selector. An empty filter, an unparseable clause, or a
-// clause naming a field the emulator does not model all match everything —
+// clause naming a field the emulator does not model all match everything,
 // mirroring real GCP's leniency (and gcprest.NameMatches) so an unknown
 // field never silently excludes every instance.
 func parseFilter(raw string) func(*instanceResponse) bool {

@@ -12,7 +12,7 @@ import (
 // firewall arrives in one body and fully REPLACES the stored state, matching
 // ARM's CreateOrUpdate semantics. AzureFirewalls.CreateOrUpdate is an LRO;
 // returning the fully-provisioned body (provisioningState=Succeeded) completes
-// the poller on the first response — 201 on create, 200 on update.
+// the poller on the first response: 201 on create, 200 on update.
 func (h *Handler) createOrUpdateFirewall(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body firewallJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -45,7 +45,7 @@ func (h *Handler) getFirewall(w http.ResponseWriter, r *http.Request, rp *azurea
 	azurearm.WriteJSON(w, http.StatusOK, toFirewallJSON(rp, stored))
 }
 
-// updateFirewallTags handles PATCH .../azureFirewalls/{name} —
+// updateFirewallTags handles PATCH .../azureFirewalls/{name}:
 // AzureFirewalls.UpdateTags. Real armnetwork UpdateTags REPLACES the tag
 // collection wholesale (an omitted existing key is dropped); every other property
 // is left untouched. A request with tags entirely omitted (nil map) is a no-op.

@@ -1,10 +1,10 @@
 // Package driver defines the storage contract for Azure Private DNS
-// (Microsoft.Network/privateDnsZones) and its two child resources —
+// (Microsoft.Network/privateDnsZones) and its two child resources:
 // virtualNetworkLinks and record sets.
 //
 // Private DNS is an Azure-only ARM "echo-class" resource with no cross-cloud
 // equivalent (AWS Route 53 private hosted zones and GCP Cloud DNS private zones
-// have a different shape), so — like AzureFirewalls and AzureLoadBalancers — the
+// have a different shape), so, like AzureFirewalls and AzureLoadBalancers, the
 // Azure provider stores the ARM bodies natively and exposes them through this
 // dedicated, single-provider interface. AWS and GCP have no counterpart.
 //

@@ -3,11 +3,12 @@ package cloudwatch
 // This file implements the CloudWatch dashboard operations (PutDashboard,
 // GetDashboard, ListDashboards, DeleteDashboards) over the rpc-v2-cbor
 // protocol, backing the aws_cloudwatch_dashboard Terraform resource. The store
-// is an AWS-local optional capability so the shared Monitoring interface — and
-// the Azure/GCP providers — stay unchanged.
+// is an AWS-local optional capability so the shared Monitoring interface (and
+// the Azure/GCP providers) stay unchanged.
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -22,6 +23,20 @@ type dashboardStore interface {
 	GetDashboard(ctx context.Context, name string) (*mondriver.DashboardInfo, error)
 	ListDashboards(ctx context.Context, prefix string) ([]mondriver.DashboardEntry, error)
 	DeleteDashboards(ctx context.Context, names []string) error
+}
+
+// errInvalidParameterInput is the query code of DashboardInvalidInputError.
+const errInvalidParameterInput = "InvalidParameterInput"
+
+// putDashboardCore stores a dashboard after checking that its body is a JSON
+// object, which is what PutDashboard rejects with InvalidParameterInput.
+func putDashboardCore(ctx context.Context, store dashboardStore, name, body string) error {
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(body), &doc); err != nil || doc == nil {
+		return newWireError(errInvalidParameterInput, "The field DashboardBody must be a valid JSON object")
+	}
+
+	return store.PutDashboard(ctx, name, body)
 }
 
 type putDashboardInput struct {
@@ -53,7 +68,7 @@ func (h *Handler) putDashboard(w http.ResponseWriter, r *http.Request, body []by
 		return
 	}
 
-	if err := store.PutDashboard(r.Context(), in.DashboardName, in.DashboardBody); err != nil {
+	if err := putDashboardCore(r.Context(), store, in.DashboardName, in.DashboardBody); err != nil {
 		writeDriverErr(w, err)
 		return
 	}
@@ -136,7 +151,14 @@ func (h *Handler) listDashboards(w http.ResponseWriter, r *http.Request, body []
 		return
 	}
 
-	from, to, next := pageWindow(len(entries), decodeOffsetToken(in.NextToken), dashboardPageSize)
+	// ListDashboards documents only InvalidParameterValue, not InvalidNextToken.
+	offset, err := offsetFromToken(in.NextToken, errInvalidParameterValue)
+	if err != nil {
+		writeDriverErr(w, err)
+		return
+	}
+
+	from, to, next := pageWindow(len(entries), offset, dashboardPageSize)
 
 	rows := make([]dashboardEntryCBR, 0, to-from)
 	for _, e := range entries[from:to] {

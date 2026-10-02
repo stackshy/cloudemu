@@ -269,6 +269,214 @@ func TestSDKUpdateRuleGroup(t *testing.T) {
 	assert.Equal(t, "after", aws.ToString(desc.RuleGroupResponse.Description))
 }
 
+// TestSDKCreateRuleGroupWithRules verifies that a rule group's stateful and
+// stateless rule content survives a CreateRuleGroup -> DescribeRuleGroup
+// round-trip instead of being silently dropped.
+func TestSDKCreateRuleGroupWithRules(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	// Stateful: Suricata-style rules via the structured RulesSource.
+	_, err := client.CreateRuleGroup(ctx, &networkfirewall.CreateRuleGroupInput{
+		RuleGroupName: aws.String("rg-stateful"),
+		Type:          nftypes.RuleGroupTypeStateful,
+		Capacity:      aws.Int32(100),
+		RuleGroup: &nftypes.RuleGroup{
+			RulesSource: &nftypes.RulesSource{
+				RulesString: aws.String(`pass tcp any any -> any any (msg:"test"; sid:1;)`),
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	descStateful, err := client.DescribeRuleGroup(ctx, &networkfirewall.DescribeRuleGroupInput{
+		RuleGroupName: aws.String("rg-stateful"),
+		Type:          nftypes.RuleGroupTypeStateful,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, descStateful.RuleGroup)
+	require.NotNil(t, descStateful.RuleGroup.RulesSource)
+	assert.Equal(t, `pass tcp any any -> any any (msg:"test"; sid:1;)`,
+		aws.ToString(descStateful.RuleGroup.RulesSource.RulesString))
+
+	// Stateless: a structured StatelessRulesAndCustomActions payload.
+	_, err = client.CreateRuleGroup(ctx, &networkfirewall.CreateRuleGroupInput{
+		RuleGroupName: aws.String("rg-stateless"),
+		Type:          nftypes.RuleGroupTypeStateless,
+		Capacity:      aws.Int32(10),
+		RuleGroup: &nftypes.RuleGroup{
+			RulesSource: &nftypes.RulesSource{
+				StatelessRulesAndCustomActions: &nftypes.StatelessRulesAndCustomActions{
+					StatelessRules: []nftypes.StatelessRule{{
+						Priority: aws.Int32(1),
+						RuleDefinition: &nftypes.RuleDefinition{
+							Actions: []string{"aws:pass"},
+							MatchAttributes: &nftypes.MatchAttributes{
+								Protocols: []int32{6},
+							},
+						},
+					}},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	descStateless, err := client.DescribeRuleGroup(ctx, &networkfirewall.DescribeRuleGroupInput{
+		RuleGroupName: aws.String("rg-stateless"),
+		Type:          nftypes.RuleGroupTypeStateless,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, descStateless.RuleGroup)
+	require.NotNil(t, descStateless.RuleGroup.RulesSource.StatelessRulesAndCustomActions)
+	require.Len(t, descStateless.RuleGroup.RulesSource.StatelessRulesAndCustomActions.StatelessRules, 1)
+	gotRule := descStateless.RuleGroup.RulesSource.StatelessRulesAndCustomActions.StatelessRules[0]
+	assert.Equal(t, []string{"aws:pass"}, gotRule.RuleDefinition.Actions)
+	assert.Equal(t, []int32{6}, gotRule.RuleDefinition.MatchAttributes.Protocols)
+
+	// UpdateRuleGroup with new rules content also round-trips.
+	_, err = client.UpdateRuleGroup(ctx, &networkfirewall.UpdateRuleGroupInput{
+		RuleGroupName: aws.String("rg-stateful"),
+		Type:          nftypes.RuleGroupTypeStateful,
+		UpdateToken:   aws.String("00000000-0000-0000-0000-000000000000"),
+		RuleGroup: &nftypes.RuleGroup{
+			RulesSource: &nftypes.RulesSource{
+				RulesString: aws.String(`drop tcp any any -> any any (msg:"blocked"; sid:2;)`),
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	descAfterUpdate, err := client.DescribeRuleGroup(ctx, &networkfirewall.DescribeRuleGroupInput{
+		RuleGroupName: aws.String("rg-stateful"),
+		Type:          nftypes.RuleGroupTypeStateful,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, `drop tcp any any -> any any (msg:"blocked"; sid:2;)`,
+		aws.ToString(descAfterUpdate.RuleGroup.RulesSource.RulesString))
+}
+
+// TestSDKFirewallPolicyRuleGroupReferences verifies a firewall policy's
+// stateful/stateless rule-group references survive a
+// CreateFirewallPolicy -> DescribeFirewallPolicy round-trip.
+func TestSDKFirewallPolicyRuleGroupReferences(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	statefulRg, err := client.CreateRuleGroup(ctx, &networkfirewall.CreateRuleGroupInput{
+		RuleGroupName: aws.String("rg-ref-stateful"),
+		Type:          nftypes.RuleGroupTypeStateful,
+		Capacity:      aws.Int32(100),
+	})
+	require.NoError(t, err)
+	statefulARN := aws.ToString(statefulRg.RuleGroupResponse.RuleGroupArn)
+
+	statelessRg, err := client.CreateRuleGroup(ctx, &networkfirewall.CreateRuleGroupInput{
+		RuleGroupName: aws.String("rg-ref-stateless"),
+		Type:          nftypes.RuleGroupTypeStateless,
+		Capacity:      aws.Int32(10),
+	})
+	require.NoError(t, err)
+	statelessARN := aws.ToString(statelessRg.RuleGroupResponse.RuleGroupArn)
+
+	_, err = client.CreateFirewallPolicy(ctx, &networkfirewall.CreateFirewallPolicyInput{
+		FirewallPolicyName: aws.String("pol-refs"),
+		FirewallPolicy: &nftypes.FirewallPolicy{
+			StatelessDefaultActions:         []string{"aws:forward_to_sfe"},
+			StatelessFragmentDefaultActions: []string{"aws:forward_to_sfe"},
+			StatefulRuleGroupReferences: []nftypes.StatefulRuleGroupReference{
+				{ResourceArn: aws.String(statefulARN)},
+			},
+			StatelessRuleGroupReferences: []nftypes.StatelessRuleGroupReference{
+				{ResourceArn: aws.String(statelessARN), Priority: aws.Int32(1)},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	desc, err := client.DescribeFirewallPolicy(ctx, &networkfirewall.DescribeFirewallPolicyInput{
+		FirewallPolicyName: aws.String("pol-refs"),
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.FirewallPolicy.StatefulRuleGroupReferences, 1)
+	assert.Equal(t, statefulARN, aws.ToString(desc.FirewallPolicy.StatefulRuleGroupReferences[0].ResourceArn))
+	require.Len(t, desc.FirewallPolicy.StatelessRuleGroupReferences, 1)
+	assert.Equal(t, statelessARN, aws.ToString(desc.FirewallPolicy.StatelessRuleGroupReferences[0].ResourceArn))
+	assert.Equal(t, int32(1), aws.ToInt32(desc.FirewallPolicy.StatelessRuleGroupReferences[0].Priority))
+
+	// UpdateFirewallPolicy with a different reference set round-trips too.
+	_, err = client.UpdateFirewallPolicy(ctx, &networkfirewall.UpdateFirewallPolicyInput{
+		FirewallPolicyName: aws.String("pol-refs"),
+		UpdateToken:        aws.String("00000000-0000-0000-0000-000000000000"),
+		FirewallPolicy: &nftypes.FirewallPolicy{
+			StatelessDefaultActions:         []string{"aws:forward_to_sfe"},
+			StatelessFragmentDefaultActions: []string{"aws:forward_to_sfe"},
+			StatefulRuleGroupReferences: []nftypes.StatefulRuleGroupReference{
+				{ResourceArn: aws.String(statefulARN), Priority: aws.Int32(5)},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	descAfterUpdate, err := client.DescribeFirewallPolicy(ctx, &networkfirewall.DescribeFirewallPolicyInput{
+		FirewallPolicyName: aws.String("pol-refs"),
+	})
+	require.NoError(t, err)
+	require.Len(t, descAfterUpdate.FirewallPolicy.StatefulRuleGroupReferences, 1)
+	assert.Equal(t, int32(5), aws.ToInt32(descAfterUpdate.FirewallPolicy.StatefulRuleGroupReferences[0].Priority))
+	assert.Empty(t, descAfterUpdate.FirewallPolicy.StatelessRuleGroupReferences)
+}
+
+// TestSDKLoggingConfigurationDestination verifies LogDestinationType and
+// LogDestination survive an UpdateLoggingConfiguration -> Describe round-trip,
+// and that FirewallArn is populated even when the caller queries by name.
+func TestSDKLoggingConfigurationDestination(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	pol, err := client.CreateFirewallPolicy(ctx, &networkfirewall.CreateFirewallPolicyInput{
+		FirewallPolicyName: aws.String("pol-log"),
+		FirewallPolicy: &nftypes.FirewallPolicy{
+			StatelessDefaultActions:         []string{"aws:forward_to_sfe"},
+			StatelessFragmentDefaultActions: []string{"aws:forward_to_sfe"},
+		},
+	})
+	require.NoError(t, err)
+
+	fw, err := client.CreateFirewall(ctx, &networkfirewall.CreateFirewallInput{
+		FirewallName:      aws.String("fw-log"),
+		FirewallPolicyArn: pol.FirewallPolicyResponse.FirewallPolicyArn,
+		VpcId:             aws.String("vpc-1"),
+		SubnetMappings:    []nftypes.SubnetMapping{{SubnetId: aws.String("subnet-1")}},
+	})
+	require.NoError(t, err)
+	fwARN := aws.ToString(fw.Firewall.FirewallArn)
+
+	updated, err := client.UpdateLoggingConfiguration(ctx, &networkfirewall.UpdateLoggingConfigurationInput{
+		FirewallName: aws.String("fw-log"),
+		LoggingConfiguration: &nftypes.LoggingConfiguration{
+			LogDestinationConfigs: []nftypes.LogDestinationConfig{{
+				LogType:            nftypes.LogTypeFlow,
+				LogDestinationType: nftypes.LogDestinationTypeS3,
+				LogDestination:     map[string]string{"bucketName": "nf-flow-logs"},
+			}},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, fwARN, aws.ToString(updated.FirewallArn), "FirewallArn must resolve when queried by name")
+
+	desc, err := client.DescribeLoggingConfiguration(ctx, &networkfirewall.DescribeLoggingConfigurationInput{
+		FirewallName: aws.String("fw-log"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, fwARN, aws.ToString(desc.FirewallArn))
+	require.Len(t, desc.LoggingConfiguration.LogDestinationConfigs, 1)
+	got := desc.LoggingConfiguration.LogDestinationConfigs[0]
+	assert.Equal(t, nftypes.LogTypeFlow, got.LogType)
+	assert.Equal(t, nftypes.LogDestinationTypeS3, got.LogDestinationType)
+	assert.Equal(t, map[string]string{"bucketName": "nf-flow-logs"}, got.LogDestination)
+}
+
 // TestSDKListTagsForResource verifies tags applied via TagResource are readable
 // through ListTagsForResource (Terraform refresh flows).
 func TestSDKListTagsForResource(t *testing.T) {

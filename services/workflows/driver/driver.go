@@ -1,5 +1,5 @@
 // Package driver defines the portable interface for the Google Cloud Workflows
-// control plane (workflows.googleapis.com/v1). It is control-plane only — the
+// control plane (workflows.googleapis.com/v1). It is control-plane only: the
 // single location-scoped resource collection a Terraform google provider or a
 // real google.golang.org/api/workflows/v1 client CRUDs is modeled:
 //

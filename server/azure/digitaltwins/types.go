@@ -63,7 +63,7 @@ type propertiesResponse struct {
 	LastUpdatedTime     string `json:"lastUpdatedTime,omitempty"`
 }
 
-// listResponse is the ARM list envelope. nextLink is omitted — the emulator
+// listResponse is the ARM list envelope. nextLink is omitted: the emulator
 // returns a single page.
 type listResponse struct {
 	Value []instanceResponse `json:"value"`

@@ -36,7 +36,7 @@ type TopicConfig struct {
 	// SignatureVersion ("1" or "2"), TracingConfig ("Active" or "PassThrough"),
 	// and ArchivePolicy (AWS SNS only) are persisted and echoed by
 	// GetTopicAttributes; a create/update omitting one leaves it unchanged
-	// (mirrors DeliveryPolicy/KmsMasterKeyID — empty means "no opinion").
+	// (mirrors DeliveryPolicy/KmsMasterKeyID: empty means "no opinion").
 	SignatureVersion string
 	TracingConfig    string
 	ArchivePolicy    string
@@ -97,7 +97,7 @@ type TopicInfo struct {
 	ContentBasedDeduplication bool
 
 	// SignatureVersion, TracingConfig, ArchivePolicy, and the delivery-status
-	// feedback family mirror the TopicConfig fields of the same name — see
+	// feedback family mirror the TopicConfig fields of the same name; see
 	// there for what each means. Empty means unset; GetTopicAttributes omits an
 	// unset attribute rather than echoing "".
 	SignatureVersion                     string

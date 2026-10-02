@@ -93,6 +93,10 @@ const (
 // must have exactly 1 (a larger count is InvalidParameterValue, not silently
 // accepted).
 func validateNodeCount(engine string, numNodes int) error {
+	if numNodes < 1 {
+		return errors.New(errors.InvalidArgument, "NumCacheNodes must be at least 1")
+	}
+
 	if engine == engineMemcached {
 		if numNodes > maxMemcachedNodes {
 			return errors.Newf(errors.InvalidArgument,
@@ -110,11 +114,11 @@ func validateNodeCount(engine string, numNodes int) error {
 	return nil
 }
 
-// normalizeNodeCount defaults an unset node count to 1 and validates it against
-// the engine's limits.
+// normalizeNodeCount defaults an unset (zero) node count to 1 and validates it
+// against the engine's limits. The wire layer rejects an explicit 0.
 func normalizeNodeCount(engine string, requested int) (int, error) {
 	n := requested
-	if n < 1 {
+	if n == 0 {
 		n = 1
 	}
 
@@ -214,7 +218,7 @@ type Mock struct {
 	tagsByARN map[string]map[string]string
 }
 
-// ParameterGroup is an ElastiCache cache parameter group — a named, engine-family
+// ParameterGroup is an ElastiCache cache parameter group, a named, engine-family
 // set of engine parameters. The emulator stores its identity plus any user
 // overrides (name→value) applied via ModifyCacheParameterGroup, so IaC that
 // creates a group, sets `parameter { … }` blocks, and reads them back on refresh
@@ -284,7 +288,7 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 
 	// A replication group's member nodes ("<groupId>-001", …) are describable as
 	// single-node cache clusters without being backed by m.caches, so guard the
-	// same id space here — real ElastiCache rejects a create colliding with a
+	// same id space here. Real ElastiCache rejects a create colliding with a
 	// member id with CacheClusterAlreadyExists.
 	if _, member := m.lookupMember(cfg.Name); member {
 		return nil, errors.Newf(errors.AlreadyExists, "cache %q already exists", cfg.Name)
@@ -300,6 +304,10 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	engine := cfg.Engine
 	if engine == "" {
 		engine = defaultEngine
+	}
+
+	if err := validateEngine(engine, false); err != nil {
+		return nil, err
 	}
 
 	nodeType := cfg.NodeType
@@ -318,6 +326,10 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	}
 
 	if err := m.requireSubnetGroup(cfg.SubnetGroupName); err != nil {
+		return nil, err
+	}
+
+	if err := m.requireParameterGroup(cfg.ParameterGroupName); err != nil {
 		return nil, err
 	}
 
@@ -381,7 +393,7 @@ func (m *Mock) ModifyCache(_ context.Context, cfg driver.ModifyCacheConfig) (*dr
 		return nil, errors.Newf(errors.NotFound, "cache %q not found", cfg.Name)
 	}
 
-	if cfg.NumCacheNodes > 0 {
+	if cfg.NumCacheNodes != 0 {
 		if err := validateNodeCount(cd.info.Engine, cfg.NumCacheNodes); err != nil {
 			return nil, err
 		}
@@ -522,6 +534,7 @@ func (m *Mock) memberCacheInfo(rg *driver.ReplicationGroup, memberID string) dri
 		ARN:                     m.cacheARN(region, memberID),
 		NumCacheNodes:           1,
 		SubnetGroupName:         rg.SubnetGroupName,
+		ParameterGroupName:      rg.ParameterGroupName,
 		ReplicationGroupID:      rg.ID,
 		AutoMinorVersionUpgrade: true,
 	}
@@ -566,7 +579,7 @@ func (m *Mock) ListCaches(_ context.Context, filter scope.Scope) ([]driver.Cache
 	return caches, nil
 }
 
-// UpdateCache replaces the mutable fields of an existing cache — ARM
+// UpdateCache replaces the mutable fields of an existing cache, ARM
 // CreateOrUpdate-on-existing semantics (node type and tags come from the
 // request; identity, endpoint, and CreatedAt are preserved).
 func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.CacheInfo, error) {

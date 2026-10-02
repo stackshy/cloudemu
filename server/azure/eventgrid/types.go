@@ -17,6 +17,7 @@ const (
 	defaultInputSchema          = "EventGridSchema"
 	defaultPublicNetworkAccess  = "Enabled"
 	subEventSubscriptions       = "eventSubscriptions"
+	childMaxDepth               = 3 // {type}/{name}/{child}/{childName}
 	actionListKeys              = "listKeys"
 	subscriptionResourceType    = "Microsoft.EventGrid/topics/eventSubscriptions"
 	subscriptionProvisionedGood = "Succeeded"
@@ -81,8 +82,8 @@ func topicEndpoint(name, location string) string {
 // given path scope.
 func toTopicJSON(rp *azurearm.ResourcePath, info *ebdriver.EventBusInfo) topicJSON {
 	// Build the id (and the derived metricResourceId) from the topic's own
-	// group, not the request path's — which is empty on a subscription-scoped
-	// list — so the id carries its true resourceGroups/{rg} segment.
+	// group, not the request path's (which is empty on a subscription-scoped
+	// list), so the id carries its true resourceGroups/{rg} segment.
 	rg := info.Scope.ResourceGroup
 	if rg == "" {
 		rg = rp.ResourceGroup

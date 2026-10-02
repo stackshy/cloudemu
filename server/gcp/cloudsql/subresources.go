@@ -476,7 +476,7 @@ func (h *Handler) promoteReplica(w http.ResponseWriter, r *http.Request, p *sqlP
 
 // startReplica / stopReplica start and stop replication on a read replica.
 // Unlike Start/StopInstance they do not change the RUNNABLE state (a replica
-// stays running), and they require the target to actually be a replica —
+// stays running), and they require the target to actually be a replica,
 // matching real Cloud SQL, which errors otherwise.
 func (h *Handler) startReplica(w http.ResponseWriter, r *http.Request, p *sqlPath) {
 	if !h.requireReplica(w, r, p) {

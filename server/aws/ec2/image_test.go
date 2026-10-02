@@ -29,7 +29,7 @@ func launchInstanceForImage(t *testing.T, ctx context.Context, client *ec2.Clien
 
 // TestCreateImagePopulatesRootDeviceAndMapping pins that an AMI created from a
 // running instance carries a root device and a block device mapping that
-// references the backing snapshot — both were empty before.
+// references the backing snapshot: both were empty before.
 func TestCreateImagePopulatesRootDeviceAndMapping(t *testing.T) {
 	ctx := context.Background()
 	client := newEC2(t)
@@ -408,7 +408,7 @@ func findBDM(bdms []ec2types.BlockDeviceMapping, device string) *ec2types.BlockD
 // TestCreateImageBlockDeviceMappingOverrides drives a real aws-sdk-go-v2 client
 // through CreateImage with NoReboot=true, a client override of the root device's
 // size + DeleteOnTermination, and a NoDevice suppression of an attached data
-// volume — pinning that DescribeImages reflects the override, the data device is
+// volume. It pins that DescribeImages reflects the override, the data device is
 // gone, and the root mapping is backed by a snapshot that DescribeSnapshots finds.
 func TestCreateImageBlockDeviceMappingOverrides(t *testing.T) {
 	ctx := context.Background()

@@ -49,7 +49,7 @@ type policySnapshot struct {
 	VersionCounter int                  `json:"versionCounter,omitempty"`
 }
 
-// Snapshot captures the entire IAM state as JSON. includeAssets is unused — IAM
+// Snapshot captures the entire IAM state as JSON. includeAssets is unused: IAM
 // holds no bulk object bodies, so everything is always captured.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()

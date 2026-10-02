@@ -15,7 +15,7 @@
 // The emulator holds an in-memory registration state per namespace, seeded with
 // the providers cloudemu serves (a representative resourceTypes list each). A
 // register flips the stored state straight to Registered and unregister back to
-// NotRegistered — real Azure transitions Registering→Registered asynchronously,
+// NotRegistered. Real Azure transitions Registering→Registered asynchronously,
 // but a synchronous terminal state is a documented emulator simplification that
 // keeps the poller-free SDK calls (Register/Unregister return the provider
 // directly) consistent. State is per-server-instance and is not part of the

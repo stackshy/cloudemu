@@ -12,7 +12,7 @@ import (
 // Real Azure rejects any operation scoped to a resource group that does not
 // exist with 404 ResourceGroupNotFound, before it even looks at the resource
 // type. This single chokepoint restores that behavior for every resource type
-// at once — no per-handler edits — the same way newLockGate applies lock
+// at once, no per-handler edits, the same way newLockGate applies lock
 // semantics centrally.
 //
 // It fires only for a resource operation INSIDE a resource group: the path

@@ -8,7 +8,7 @@
 // The control plane is dispatched by the X-Amz-Target header
 // ("SageMaker.<Operation>"); the runtime is dispatched by the REST path
 // /endpoints/{name}/invocations. Matches is scoped to those so it does not
-// shadow the catch-all S3 handler registered alongside — register this handler
+// shadow the catch-all S3 handler registered alongside. Register this handler
 // before S3.
 package sagemaker
 

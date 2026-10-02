@@ -14,7 +14,7 @@
 //
 //   - Auto-provisioning one event bus per location, named "eventarc-<location>",
 //     the first time a trigger is created there. This is a synthesized
-//     container with no Eventarc analog — the SDK never sees it.
+//     container with no Eventarc analog. The SDK never sees it.
 //   - Mapping each trigger onto a driver rule keyed by the trigger id, with the
 //     trigger's eventFilters serialized into the rule's EventPattern and the
 //     destination folded into a single target so Get/List can round-trip them.
@@ -25,7 +25,7 @@
 // only the subset the driver can store survives a round-trip. This is an honest
 // approximation, not a faithful Eventarc emulation.
 //
-// This handler claims /v1/projects/{p}/locations/{l}/triggers[...] — a
+// This handler claims /v1/projects/{p}/locations/{l}/triggers[...], a
 // resource-type guard disjoint from the other /v1/projects/ GCP handlers
 // (Firestore, IAM, Secret Manager, GKE, …), so registration order among them is
 // unconstrained. Registered before the GCS fallback.
@@ -33,17 +33,17 @@
 // Create and Patch validate a trigger the way real Eventarc does at admission
 // time: eventFilters must include a "type" filter naming a known event type
 // (an audit-log trigger additionally needs "serviceName" and "methodName"),
-// and — when a Cloud Functions / Cloud Run resolver is wired — the
+// and, when a Cloud Functions / Cloud Run resolver is wired, the
 // destination must name a resource that actually exists rather than a dead
 // route. See validate.go.
 //
 // Coverage (v1 REST):
 //
-//	POST   /v1/projects/{p}/locations/{l}/triggers?triggerId={id}   — Create (LRO, done inline)
-//	GET    /v1/projects/{p}/locations/{l}/triggers/{id}             — Get
-//	GET    /v1/projects/{p}/locations/{l}/triggers                  — List (paginated)
-//	PATCH  /v1/projects/{p}/locations/{l}/triggers/{id}?updateMask= — Update (LRO, done inline)
-//	DELETE /v1/projects/{p}/locations/{l}/triggers/{id}             — Delete (LRO, done inline)
+//	POST   /v1/projects/{p}/locations/{l}/triggers?triggerId={id}   : Create (LRO, done inline)
+//	GET    /v1/projects/{p}/locations/{l}/triggers/{id}             : Get
+//	GET    /v1/projects/{p}/locations/{l}/triggers                  : List (paginated)
+//	PATCH  /v1/projects/{p}/locations/{l}/triggers/{id}?updateMask= : Update (LRO, done inline)
+//	DELETE /v1/projects/{p}/locations/{l}/triggers/{id}             : Delete (LRO, done inline)
 package eventarc
 
 import (
@@ -79,7 +79,7 @@ type Handler struct {
 	// functions and cloudRun resolve a trigger's destination to an existing
 	// Cloud Function / Cloud Run service so Create/Patch can reject a trigger
 	// that routes to a resource that doesn't exist. Nil (the default) skips
-	// that half of destination validation gracefully — a standalone package
+	// that half of destination validation gracefully. A standalone package
 	// server that doesn't wire the peer service keeps accepting any
 	// destination, as before.
 	functions FunctionResolver
@@ -154,7 +154,7 @@ func parseRoute(urlPath string) (route, bool) {
 // In an assembled server h.ops is the same *lro.Registry the shared poller
 // consults, and that poller is registered ahead of this handler, so it always
 // wins first-match-wins routing for every verb (GET/cancel/DELETE) on every
-// operation name, known or not — this handler never needs to (and, per this
+// operation name, known or not. This handler never needs to (and, per this
 // guard, no longer does) answer for operations it didn't create.
 func (h *Handler) Matches(r *http.Request) bool {
 	rt, ok := parseRoute(r.URL.Path)

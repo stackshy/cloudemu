@@ -46,7 +46,7 @@ type advancedFilter struct {
 // subscriptionFilter is the parsed form of an ARM EventSubscriptionFilter
 // (properties.filter on an event subscription). It is the Azure-only
 // counterpart to the generic driver.Rule.EventPattern content filter AWS
-// EventBridge uses — Event Grid's filter shape (subject prefix/suffix,
+// EventBridge uses: Event Grid's filter shape (subject prefix/suffix,
 // included event types, advanced per-field operators) has no equivalent in
 // the portable eventbus driver, so it stays local to this provider package.
 type subscriptionFilter struct {

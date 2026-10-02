@@ -11,7 +11,7 @@ import (
 
 // CronJob scheduling. cloudemu runs synchronously with no background timer, so
 // callers drive the scheduler by calling TickCronJobs (reachable via
-// APIServer.Lookup(uid)) — advancing the injected clock between ticks. Each tick
+// APIServer.Lookup(uid)), advancing the injected clock between ticks. Each tick
 // evaluates every CronJob's cron `spec.schedule` against the clock and only
 // materializes a Job when a scheduled time falls in (lastScheduleTime, now],
 // honoring concurrencyPolicy and startingDeadlineSeconds. This makes scheduling
@@ -37,8 +37,8 @@ func (s *ClusterState) TickCronJobs() {
 	defer s.mu.Unlock()
 
 	// Defense-in-depth self-gate (mirrors Tick's at lifecycle.go): CronJob firing
-	// is opt-in time-driven behavior, so it stays a no-op unless progression is on
-	// — even if a caller other than the gated serve ticker reaches this.
+	// is opt-in time-driven behavior, so it stays a no-op unless progression is on,
+	// even if a caller other than the gated serve ticker reaches this.
 	if !s.lifecycleProgression {
 		return
 	}
@@ -234,7 +234,7 @@ func (s *ClusterState) fireCronJobLocked(cj *unstructured.Unstructured, jobStore
 }
 
 // Default CronJob history limits (batch/v1 CronJobSpec), applied when the field
-// is unset — how many finished Jobs the controller keeps per CronJob.
+// is unset: how many finished Jobs the controller keeps per CronJob.
 const (
 	defaultSuccessfulJobsHistoryLimit = 3
 	defaultFailedJobsHistoryLimit     = 1
@@ -292,7 +292,7 @@ func (s *ClusterState) trimFinishedJobsLocked(jobs []*unstructured.Unstructured,
 }
 
 // jobHistoryLimit reads a CronJob history-limit field, falling back to def when
-// unset (a negative value clamps to 0 — keep none).
+// unset (a negative value clamps to 0, keeping none).
 func jobHistoryLimit(cj *unstructured.Unstructured, field string, def int) int {
 	n, found, _ := unstructured.NestedInt64(cj.Object, "spec", field)
 	if !found {

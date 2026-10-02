@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 )
 
-// clusterIPNone is the sentinel value a client sets on a headless Service —
+// clusterIPNone is the sentinel value a client sets on a headless Service;
 // real apiserver leaves the ClusterIP empty in that case.
 const clusterIPNone = "None"
 
@@ -413,7 +413,7 @@ func (s *ClusterState) allocateClusterIPLocked() string {
 	const (
 		baseAddr        uint32 = 10<<24 | 96<<16
 		octetMask       uint32 = 0xFF
-		serviceCIDRMask uint32 = 0x000FFFFF // /12 — host bits below the network
+		serviceCIDRMask uint32 = 0x000FFFFF // /12: host bits below the network
 		shift1                 = 24
 		shift2                 = 16
 		shift3                 = 8

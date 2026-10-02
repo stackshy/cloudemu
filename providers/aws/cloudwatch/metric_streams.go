@@ -4,11 +4,12 @@ package cloudwatch
 // GetMetricStream, ListMetricStreams, DeleteMetricStream, StartMetricStreams,
 // StopMetricStreams, and their tags), backing the aws_cloudwatch_metric_stream
 // Terraform resource. The store is an AWS-local optional capability so the
-// shared Monitoring interface — and the Azure/GCP providers — stay unchanged.
+// shared Monitoring interface, and the Azure/GCP providers, stay unchanged.
 
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -52,7 +53,7 @@ type storedMetricStream struct {
 // PutMetricStream creates or updates a metric stream. Creating a new stream
 // starts it in the "running" state (real CloudWatch semantics); updating an
 // existing one leaves its State unchanged. Tags are applied only when the
-// stream is being created — an update's Tags are ignored, matching the real
+// stream is being created. An update's Tags are ignored, matching the real
 // PutMetricStream API (use TagResource/UntagResource to retag an existing
 // stream). It returns the stream's ARN.
 //
@@ -111,6 +112,12 @@ func validateMetricStreamConfig(cfg *driver.MetricStreamConfig) error {
 		return errors.Newf(errors.InvalidArgument, "RoleArn is required")
 	}
 
+	for _, p := range [...]struct{ name, arn string }{{"FirehoseArn", cfg.FirehoseARN}, {"RoleArn", cfg.RoleARN}} {
+		if !validARN(p.arn) {
+			return errors.Newf(errors.InvalidArgument, "The value %s for parameter %s is not a valid ARN.", p.arn, p.name)
+		}
+	}
+
 	if !validMetricStreamOutputFormats[cfg.OutputFormat] {
 		return errors.Newf(errors.InvalidArgument, "invalid OutputFormat %q", cfg.OutputFormat)
 	}
@@ -121,6 +128,17 @@ func validateMetricStreamConfig(cfg *driver.MetricStreamConfig) error {
 
 	return nil
 }
+
+// validARN reports whether s has the arn:partition:service:region:account:resource
+// shape, with the partition, service and resource set.
+func validARN(s string) bool {
+	parts := strings.SplitN(s, ":", arnParts)
+
+	return len(parts) == arnParts && parts[0] == "arn" && parts[1] != "" && parts[2] != "" && parts[5] != ""
+}
+
+// arnParts is the number of colon-separated fields in an ARN.
+const arnParts = 6
 
 // GetMetricStream returns the named metric stream, or NotFound (the
 // CloudWatch ResourceNotFoundException) when it does not exist.

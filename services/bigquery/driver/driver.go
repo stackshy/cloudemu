@@ -4,7 +4,7 @@
 // google_bigquery_dataset / google_bigquery_table resources drive.
 //
 // Types here are semantic (time.Time, int64, recursive Field trees); the GCP
-// wire handler (server/gcp/bigquery) owns the wire representation — the
+// wire handler (server/gcp/bigquery) owns the wire representation: the
 // epoch-millis-string timestamps, the quoted-int64 counters, and the
 // "{project}:{dataset}[.{table}]" id format BigQuery emits.
 //

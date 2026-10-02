@@ -17,7 +17,7 @@ import (
 // TestSDKVMSSInstanceOrchestration drives the real armcompute
 // VirtualMachineScaleSetVMsClient against an in-process cloudemu server: a
 // scale set created at capacity N materializes N addressable instances that can
-// be listed, fetched, powered off, and deleted — a delete dropping one so the
+// be listed, fetched, powered off, and deleted: a delete dropping one so the
 // list returns N-1.
 func TestSDKVMSSInstanceOrchestration(t *testing.T) {
 	cloudP := cloudemu.NewAzure()

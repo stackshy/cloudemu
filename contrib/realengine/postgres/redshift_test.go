@@ -23,7 +23,7 @@ import (
 // TestRedshiftPostgresE2E performs the exact flow a real user runs against AWS
 // Redshift: create a cluster with the AWS SDK, read its endpoint, connect to it
 // with a real Postgres client using the master credentials, run SQL, then delete
-// the cluster — except it all runs against CloudEmu backed by a real embedded
+// the cluster; except it all runs against CloudEmu backed by a real embedded
 // Postgres (no Docker, no cloud account). Redshift speaks the Postgres wire
 // protocol, so it reuses the shared Postgres DatabaseEngine.
 func TestRedshiftPostgresE2E(t *testing.T) {
@@ -53,7 +53,7 @@ func TestRedshiftPostgresE2E(t *testing.T) {
 		password  = "Sup3rSecret!"
 	)
 
-	// 1. Create the cluster — exactly like `aws redshift create-cluster`.
+	// 1. Create the cluster, like `aws redshift create-cluster`.
 	_, err = client.CreateCluster(ctx, &redshift.CreateClusterInput{
 		ClusterIdentifier:  aws.String(clusterID),
 		NodeType:           aws.String("ra3.xlplus"),
@@ -65,7 +65,7 @@ func TestRedshiftPostgresE2E(t *testing.T) {
 		t.Fatalf("CreateCluster: %v", err)
 	}
 
-	// 2. Read the endpoint the SDK reports — the real embedded Postgres address.
+	// 2. Read the endpoint the SDK reports: the real embedded Postgres address.
 	desc, err := client.DescribeClusters(ctx, &redshift.DescribeClustersInput{
 		ClusterIdentifier: aws.String(clusterID),
 	})
@@ -112,7 +112,7 @@ func TestRedshiftPostgresE2E(t *testing.T) {
 
 	_ = db.Close()
 
-	// 4. Delete the cluster — the real database is torn down.
+	// 4. Delete the cluster: the real database is torn down.
 	if _, err := client.DeleteCluster(ctx, &redshift.DeleteClusterInput{
 		ClusterIdentifier:        aws.String(clusterID),
 		SkipFinalClusterSnapshot: aws.Bool(true),

@@ -12,6 +12,17 @@ import (
 
 func newMock() *Mock { return New(config.NewOptions()) }
 
+// logConfigs builds LogDestinationConfig entries carrying only LogType, for
+// tests that don't care about the destination fields.
+func logConfigs(logTypes ...string) []nfdriver.LogDestinationConfig {
+	out := make([]nfdriver.LogDestinationConfig, 0, len(logTypes))
+	for _, lt := range logTypes {
+		out = append(out, nfdriver.LogDestinationConfig{LogType: lt})
+	}
+
+	return out
+}
+
 func TestFirewallLifecycle(t *testing.T) {
 	m := newMock()
 	ctx := context.Background()
@@ -134,7 +145,7 @@ func TestFirewallDepth(t *testing.T) {
 		t.Fatalf("UpdateFirewallDeleteProtection: %v %+v", err, prot)
 	}
 
-	if err := m.UpdateLoggingConfiguration(ctx, "fw-1", []string{"FLOW", "ALERT"}); err != nil {
+	if err := m.UpdateLoggingConfiguration(ctx, "fw-1", logConfigs("FLOW", "ALERT")); err != nil {
 		t.Fatalf("UpdateLoggingConfiguration: %v", err)
 	}
 
@@ -191,7 +202,7 @@ func TestFirewallConcurrentAccess(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			_ = m.UpdateLoggingConfiguration(ctx, "fw-1", []string{"FLOW", "ALERT"})
+			_ = m.UpdateLoggingConfiguration(ctx, "fw-1", logConfigs("FLOW", "ALERT"))
 			_, _ = m.DescribeLoggingConfiguration(ctx, "fw-1")
 			_, _ = m.DescribeFirewall(ctx, "fw-1", "")
 			_ = m.TagResource(ctx, fw.ARN, map[string]string{"k": "v"})

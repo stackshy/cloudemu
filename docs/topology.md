@@ -2,11 +2,11 @@
 
 ## What It Is
 
-CloudEmu's topology engine is a network simulation layer that sits above the compute, networking, and DNS mock services. It reads the live state from those services -- VPCs, subnets, security groups, route tables, network ACLs, peering connections, NAT gateways, internet gateways, and DNS records -- and answers reachability questions: "Can instance A talk to instance B on port 443?" or "What path does a packet take from this subnet to the internet?" This enables integration tests that verify network architecture without deploying real infrastructure.
+The topology engine is a network simulation layer on top of the compute, networking and DNS mocks. It reads their current state (VPCs, subnets, security groups, route tables, network ACLs, peering connections, NAT gateways, internet gateways and DNS records) and answers reachability questions such as "Can instance A talk to instance B on port 443?" or "What path does a packet take from this subnet to the internet?" You can use it in integration tests to check a network design without deploying anything.
 
-## Why It Is Unique
+## Why it exists
 
-Most cloud mock libraries stop at CRUD operations: you can create a VPC and list it back, but the mock does not understand that two instances in different VPCs cannot reach each other unless a peering connection exists. CloudEmu's topology engine actually evaluates security group rules, network ACLs, route tables, and peering state to produce realistic connectivity answers. This means your tests can catch misconfigured security groups, missing routes, or broken peering connections before code reaches a real cloud environment.
+A plain CRUD mock lets you create a VPC and list it back, but it doesn't know that two instances in different VPCs can't reach each other without a peering connection. The topology engine evaluates security group rules, network ACLs, route tables and peering state, so tests can catch a misconfigured security group, a missing route or a broken peering connection before the code reaches a real cloud.
 
 ## Architecture
 
@@ -38,28 +38,28 @@ The topology engine does not store its own state. It reads from the existing moc
 
 `CanConnect` determines whether traffic can flow between a source and destination.
 
-**Step-by-step evaluation:**
+Steps:
 
-1. **Resolve endpoints** -- Look up the source and destination instances by ID. Determine their VPC, subnet, and associated security groups.
-2. **Same VPC check** -- If both instances are in the same VPC, proceed to security group evaluation. If in different VPCs, check for a peering connection.
-3. **Peering check** -- If instances are in different VPCs, look for an active peering connection between those VPCs. If none exists (or it is not in "active" state), return unreachable.
-4. **Route table evaluation** -- Check the route table associated with the source subnet for a route to the destination CIDR. Verify the route target is valid (not a blackhole).
-5. **Network ACL evaluation** -- Evaluate inbound and outbound ACL rules in rule-number order. The first matching rule determines allow/deny.
-6. **Security group evaluation** -- Check that the destination's inbound security group rules allow traffic from the source on the requested protocol and port. Check that the source's outbound rules allow the traffic.
-7. **Return result** -- If all checks pass, the connection is allowed. The result includes which rule or component allowed or denied the traffic.
+1. Resolve endpoints: look up the source and destination instances by ID, and find their VPC, subnet and security groups.
+2. Same VPC check: if both instances are in the same VPC, go on to security group evaluation. If they are in different VPCs, check for a peering connection.
+3. Peering check: for instances in different VPCs, look for an active peering connection between the two VPCs. If there is none, or it isn't in the "active" state, the result is unreachable.
+4. Route table evaluation: check the route table of the source subnet for a route to the destination CIDR, and check that the route target is valid (not a blackhole).
+5. Network ACL evaluation: evaluate inbound and outbound ACL rules in rule-number order. The first matching rule decides allow or deny.
+6. Security group evaluation: check that the destination's inbound rules allow traffic from the source on the requested protocol and port, and that the source's outbound rules allow it too.
+7. Return result: if every check passes, the connection is allowed. The result says which rule or component allowed or denied the traffic.
 
 ## TraceRoute Flow
 
 `TraceRoute` produces a hop-by-hop path from source to destination, similar to the `traceroute` command but evaluated against the virtual network topology.
 
-**Step-by-step evaluation:**
+Steps:
 
-1. **Start at source** -- Record the source instance, its subnet, and VPC.
-2. **Route table lookup** -- Find the route table for the source subnet. Determine the next hop based on the destination IP (longest prefix match).
-3. **Hop through gateways** -- If the route points to a NAT gateway, internet gateway, or peering connection, record that as a hop and continue from the next network segment.
-4. **Cross VPC** -- If the route goes through a peering connection, switch to the peer VPC and evaluate its route table for the destination.
-5. **Arrive at destination** -- When the destination subnet is reached, record the final hop.
-6. **Return trace** -- Return the ordered list of hops with their types (subnet, NAT gateway, internet gateway, peering connection, destination).
+1. Start at the source: record the source instance, its subnet and its VPC.
+2. Route table lookup: find the route table for the source subnet and pick the next hop for the destination IP (longest prefix match).
+3. Gateways: if the route points to a NAT gateway, internet gateway or peering connection, record it as a hop and continue from the next network segment.
+4. Cross VPC: if the route goes through a peering connection, switch to the peer VPC and evaluate its route table for the destination.
+5. Destination: when the destination subnet is reached, record the final hop.
+6. Return the trace: the ordered list of hops with their types (subnet, NAT gateway, internet gateway, peering connection, destination).
 
 ## API Reference
 

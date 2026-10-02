@@ -214,7 +214,7 @@ func TestCompatAWSIAMAuthorizationBoundary(t *testing.T) {
 // credential scope of "s3" (which the caller's policy fully allows) but sends a
 // DynamoDB X-Amz-Target. Because the gate derives the IAM service from the
 // dispatch key (X-Amz-Target -> dynamodb), not the client-controlled scope, the
-// action authorized is dynamodb:PutItem — which the caller is NOT granted — so
+// action authorized is dynamodb:PutItem, which the caller is NOT granted, so
 // the request is denied even though the signed scope is s3.
 func TestCompatAWSAuthorizationCrossServiceBypassClosed(t *testing.T) {
 	cloud := cloudemu.NewAWS()
@@ -269,8 +269,8 @@ func TestCompatAWSAuthorizationCrossServiceBypassClosed(t *testing.T) {
 // TestCompatAWSAuthorizationQueryAuthenticatedOnly pins the documented limitation
 // that the query protocol is authenticated but NOT authorization-enforced in this
 // revision: a user whose policy grants only dynamodb:GetItem (no EC2 permission)
-// can still make an authenticated EC2 query call, because query authorization —
-// which cannot be soundly bound to the executed operation before dispatch — is a
+// can still make an authenticated EC2 query call, because query authorization
+// cannot be soundly bound to the executed operation before dispatch and is a
 // follow-up.
 func TestCompatAWSAuthorizationQueryAuthenticatedOnly(t *testing.T) {
 	cloud := cloudemu.NewAWS()

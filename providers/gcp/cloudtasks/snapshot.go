@@ -19,7 +19,7 @@ type cloudtasksSnapshot struct {
 	Queues json.RawMessage `json:"queues,omitempty"`
 }
 
-// Snapshot captures every queue as JSON. includeAssets is unused — Cloud Tasks
+// Snapshot captures every queue as JSON. includeAssets is unused: Cloud Tasks
 // holds no object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.Lock()

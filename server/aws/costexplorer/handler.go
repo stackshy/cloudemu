@@ -8,7 +8,7 @@
 // Cost Explorer uses the AWS JSON 1.1 wire shape (POST + JSON body dispatched on
 // the X-Amz-Target header, prefix "AWSInsightsIndexService."). It is a
 // read-only, wire-only handler: there is no Cost Explorer provider mock, and no
-// cost model of its own — the numbers come entirely from services/cost over the
+// cost model of its own. The numbers come entirely from services/cost over the
 // resource-discovery inventory.
 package costexplorer
 

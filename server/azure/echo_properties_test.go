@@ -16,7 +16,7 @@ import (
 // echoTestServer wires a full Azure server (with the unmodeled-property overlay)
 // over a plain-HTTP httptest server. These tests drive the wire directly with an
 // http.Client rather than an SDK, so they can send properties no typed SDK model
-// exposes — which is the whole point of the fidelity fix.
+// exposes, which is the whole point of the fidelity fix.
 func echoTestServer(t *testing.T) (*httptest.Server, *http.Client) {
 	t.Helper()
 
@@ -153,7 +153,7 @@ func TestEchoDoesNotOverrideModeledFields(t *testing.T) {
 		"location": "eastus",
 		"properties": map[string]any{
 			"hardwareProfile":   map[string]any{"vmSize": "Standard_D2s_v5"},
-			"provisioningState": "Succeeded", // the handler owns this — must win
+			"provisioningState": "Succeeded", // the handler owns this; must win
 		},
 	})
 
@@ -205,7 +205,7 @@ func TestEchoSurvivesBodyReturningLifecycleAction(t *testing.T) {
 		t.Fatal("unmodeled maintenanceWindow was not preserved after create")
 	}
 
-	// Stop returns the full server body — the path that previously wiped the overlay.
+	// Stop returns the full server body: the path that previously wiped the overlay.
 	postJSON(t, c, base+"/stop?api-version=2023-12-30")
 
 	mw := props(t, getJSON(t, c, base+"?api-version=2023-12-30"))["maintenanceWindow"]
@@ -257,7 +257,7 @@ func TestEchoPartialPatchKeepsPreservedProps(t *testing.T) {
 
 // TestEchoDoesNotLeakSQLServerPassword is the SECURITY regression: a write-only
 // secret (administratorLoginPassword) sent on a Microsoft.Sql/servers PUT must
-// never be reflected on the create response or a later GET — real Azure omits
+// never be reflected on the create response or a later GET: real Azure omits
 // it. The non-secret modeled fields (administratorLogin, version) must still be
 // returned, and a PATCH must not reintroduce the password.
 func TestEchoDoesNotLeakSQLServerPassword(t *testing.T) {
@@ -439,7 +439,7 @@ func TestEchoDoesNotLeakCosmosPGRolePassword(t *testing.T) {
 
 // TestEchoDoesNotLeakAKSServicePrincipalSecret confirms the nested-object case:
 // servicePrincipalProfile is unmodeled by the AKS handler, so it is captured
-// wholesale — its secret must be stripped while the non-secret clientId leaf
+// wholesale; its secret must be stripped while the non-secret clientId leaf
 // still round-trips.
 func TestEchoDoesNotLeakAKSServicePrincipalSecret(t *testing.T) {
 	ts, c := echoTestServer(t)
@@ -542,7 +542,7 @@ func TestEchoDoesNotLeakNotificationHubCredentials(t *testing.T) {
 
 // TestEchoStripsSecretNestedDeepInArray confirms sanitizeUnmodeled removes a
 // secret buried two levels inside an array-of-objects (array -> object ->
-// object.password) while leaving the non-secret siblings intact — the deep
+// object.password) while leaving the non-secret siblings intact: the deep
 // array-recursion guarantee.
 func TestEchoStripsSecretNestedDeepInArray(t *testing.T) {
 	ts, c := echoTestServer(t)
@@ -586,7 +586,7 @@ func TestEchoStripsSecretNestedDeepInArray(t *testing.T) {
 // handler does not model aadProfile, so the whole block is captured verbatim.
 // serverAppSecret (which lowercases to serverappsecret, not an exact denylist
 // entry) must still be stripped by the ENDS-WITH-secret rule, while the public
-// serverAppID sibling — not ending in the suffix — round-trips as real Azure does.
+// serverAppID sibling, not ending in the suffix, round-trips as real Azure does.
 func TestEchoDoesNotLeakAKSAADServerAppSecret(t *testing.T) {
 	ts, c := echoTestServer(t)
 	url := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.ContainerService/managedClusters/aksaad?api-version=2024-02-01"
@@ -624,7 +624,7 @@ func TestEchoDoesNotLeakAKSAADServerAppSecret(t *testing.T) {
 
 // TestEchoSuffixRuleIsEndsWithNotContains locks the suffix semantics: keys
 // ENDING in password/secret are stripped, while keys that merely CONTAIN the
-// word (secretName, passwordPolicy) — a true endsWith, not a substring match —
+// word (secretName, passwordPolicy), a true endsWith and not a substring match,
 // survive. All live inside one wholly-unmodeled block so the overlay carries them.
 func TestEchoSuffixRuleIsEndsWithNotContains(t *testing.T) {
 	ts, c := echoTestServer(t)
@@ -662,7 +662,7 @@ func TestEchoSuffixRuleIsEndsWithNotContains(t *testing.T) {
 }
 
 // TestEchoStillReflectsNonSecretProperty is the REGRESSION guard: the secret
-// denylist must not disturb the overlay's legitimate job — a non-secret
+// denylist must not disturb the overlay's legitimate job: a non-secret
 // unmodeled property (a SQL database's maxSizeBytes, which only round-trips via
 // the overlay) must still be echoed on create and GET.
 func TestEchoStillReflectsNonSecretProperty(t *testing.T) {
@@ -721,7 +721,7 @@ func getRawBody(t *testing.T, c *http.Client, url string) []byte {
 // unmodeled property and re-inject the caller's cleartext secret on the create
 // response and every later GET. The path-aware write-only rule (a "value" under
 // "secrets") must suppress it, while a non-secret sibling under the same secret
-// element (identity) and a non-secret unmodeled top-level property still echo —
+// element (identity) and a non-secret unmodeled top-level property still echo,
 // proving the fix is precise, not a blanket bare-"value" denylist.
 func TestEchoDoesNotLeakContainerAppSecretValue(t *testing.T) {
 	ts, c := echoTestServer(t)
@@ -827,7 +827,7 @@ func deleteOK(t *testing.T, c *http.Client, url string) {
 // a named sub-resource (a SQL database under its server) must evict its
 // overlay entry the same way deleting a top-level resource does. Before the
 // fix, resourceIDFromPath returned "" for any path with a SubResource, so
-// DELETE .../servers/{s}/databases/{d} never called overlay.evict — a
+// DELETE .../servers/{s}/databases/{d} never called overlay.evict: a
 // same-named database recreated afterward resurrected the previous
 // incarnation's unmodeled properties.
 func TestEchoEvictsSubResourceOverlayOnDelete(t *testing.T) {

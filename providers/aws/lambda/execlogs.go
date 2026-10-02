@@ -35,6 +35,12 @@ func (m *Mock) surfaceInvokeLogs(ctx context.Context, functionName, executedVers
 
 	events := make([]logdriver.LogEvent, 0, len(lines))
 	for _, line := range lines {
+		// CloudWatch Logs rejects an empty message, and one empty line would
+		// fail the whole batch, so blank output lines are skipped.
+		if line == "" {
+			continue
+		}
+
 		events = append(events, logdriver.LogEvent{Timestamp: now, Message: line})
 	}
 

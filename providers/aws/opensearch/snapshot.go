@@ -12,12 +12,12 @@ import (
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // opensearchSnapshot is the full serialized state of the AWS OpenSearch mock. The
-// domains store holds an unexported *domainData (whose fields — status, config,
-// tags, dataSrcs — are all unexported and invisible to json.Marshal), so it is
+// domains store holds an unexported *domainData (whose fields, status, config,
+// tags, dataSrcs, are all unexported and invisible to json.Marshal), so it is
 // promoted to an exported domainSnapshot keyed by domain name. Every other store
 // holds a fully-exported *driver pointer type (or a plain string for the
 // name-claim stores pkgNames/appNames), so each round-trips through the generic
-// memstore helper under its exact key — preserving the composite keys used by
+// memstore helper under its exact key: preserving the composite keys used by
 // pkgAssoc ("packageID|domainName") so cross-references survive. The mu-guarded
 // defaultAppSet (application id -> raw default config) is captured beside the
 // stores. The per-domain mutex and the wired opts are intentionally not
@@ -47,8 +47,8 @@ type domainSnapshot struct {
 	DataSrcs map[string]driver.DataSource `json:"dataSrcs,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// OpenSearch is control-plane only and holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. OpenSearch is
+// control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := opensearchSnapshot{Domains: m.snapshotDomains()}
 	if err := m.snapshotStores(&snap); err != nil {

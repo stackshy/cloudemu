@@ -3,8 +3,6 @@ package cloudwatch
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -12,10 +10,12 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/monitoring/metricmath"
 )
 
 // Compile-time check that Mock implements driver.Monitoring.
@@ -32,6 +32,9 @@ const (
 	stateOK               = "OK"
 	stateInsufficientData = "INSUFFICIENT_DATA"
 )
+
+// reasonDataTimeFormat is the timestamp layout CloudWatch uses in stateReasonData.
+const reasonDataTimeFormat = "2006-01-02T15:04:05.000-0700"
 
 // historyStateUpdate is the HistoryItemType stamped on a recorded state change.
 const historyStateUpdate = "StateUpdate"
@@ -52,16 +55,25 @@ type metricKey struct {
 
 // Mock is an in-memory mock implementation of the AWS CloudWatch service.
 type Mock struct {
-	mu              sync.RWMutex
-	metrics         map[metricKey][]driver.MetricDatum
+	// alarmMu guards every alarm field and is taken before mu. SNS actions and
+	// EventBridge events are published only after both are released.
+	alarmMu sync.Mutex
+	mu      sync.RWMutex
+	metrics map[metricKey][]driver.MetricDatum
+	// lastReceived is when each series, keyed by seriesSig, last had data
+	// put. ListMetrics uses it for RecentlyActive and the two-week cutoff.
+	lastReceived    map[string]time.Time
 	alarms          *memstore.Store[*alarmData]
 	compositeAlarms *memstore.Store[*compositeAlarmData]
 	dashboards      *memstore.Store[*storedDashboard]
 	metricStreams   *memstore.Store[*storedMetricStream]
 	channels        *memstore.Store[*driver.NotificationChannelInfo]
-	history         []driver.AlarmHistoryEntry
-	opts            *config.Options
-	sns             ActionPublisher
+	// anomalyDetectors is keyed by detectorKey. Guarded by alarmMu.
+	anomalyDetectors *memstore.Store[*anomalyDetectorData]
+	history          []driver.AlarmHistoryEntry
+	opts             *config.Options
+	sns              ActionPublisher
+	events           awsevents.Emitter
 }
 
 // SetSNSPublisher wires the SNS backend so an alarm state transition delivers
@@ -87,6 +99,7 @@ type alarmData struct {
 	TreatMissingData        string
 	State                   string
 	StateReason             string
+	StateReasonData         string
 	StateUpdatedTimestamp   time.Time
 	AlarmActions            []string
 	OKActions               []string
@@ -95,26 +108,47 @@ type alarmData struct {
 	ActionsEnabled          bool
 	AlarmArn                string
 	Tags                    map[string]string
+	// StateTransitionedTimestamp is when State last changed.
+	StateTransitionedTimestamp time.Time
+	// LastEvaluatedAt is when the alarm was last evaluated or had its state
+	// set. The next lazy evaluation is due one EvaluationInterval later.
+	LastEvaluatedAt time.Time
+	// MetricQueryID is the id of the alarm's metric query in its state change
+	// events. A new configuration gets a new id, as on AWS.
+	MetricQueryID string
+	// ConfigUpdatedAt is when the configuration was last put.
+	ConfigUpdatedAt time.Time
+	// Metrics and ThresholdMetricID are set on a metric-math alarm.
+	Metrics           []driver.MetricDataQuery
+	ThresholdMetricID string
+	// EvaluateLowSampleCountPercentile is "", "evaluate" or "ignore".
+	EvaluateLowSampleCountPercentile string
+	// EvaluationWindow is nil for the default sliding window.
+	EvaluationWindow *driver.EvaluationWindow
 }
 
 // New creates a new CloudWatch mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		metrics:         make(map[metricKey][]driver.MetricDatum),
-		alarms:          memstore.New[*alarmData](),
-		compositeAlarms: memstore.New[*compositeAlarmData](),
-		dashboards:      memstore.New[*storedDashboard](),
-		metricStreams:   memstore.New[*storedMetricStream](),
-		channels:        memstore.New[*driver.NotificationChannelInfo](),
-		opts:            opts,
+		metrics:          make(map[metricKey][]driver.MetricDatum),
+		lastReceived:     make(map[string]time.Time),
+		alarms:           memstore.New[*alarmData](),
+		compositeAlarms:  memstore.New[*compositeAlarmData](),
+		dashboards:       memstore.New[*storedDashboard](),
+		metricStreams:    memstore.New[*storedMetricStream](),
+		channels:         memstore.New[*driver.NotificationChannelInfo](),
+		anomalyDetectors: memstore.New[*anomalyDetectorData](),
+		opts:             opts,
 	}
 }
 
 // PutMetricData stores metric data points and evaluates any matching alarms.
-func (m *Mock) PutMetricData(_ context.Context, data []driver.MetricDatum) error {
+func (m *Mock) PutMetricData(ctx context.Context, data []driver.MetricDatum) error {
 	if len(data) == 0 {
 		return errors.Newf(errors.InvalidArgument, "metric data is required")
 	}
+
+	received := m.opts.Clock.Now()
 
 	m.mu.Lock()
 	for i := range data {
@@ -123,201 +157,20 @@ func (m *Mock) PutMetricData(_ context.Context, data []driver.MetricDatum) error
 			MetricName: data[i].MetricName,
 		}
 		m.metrics[key] = append(m.metrics[key], data[i])
+		m.lastReceived[seriesSig(key, data[i].Dimensions)] = received
 	}
 	m.mu.Unlock()
 
-	// Evaluate alarms for each unique namespace/metric pair that was updated.
+	// New data re-evaluates the alarms on each updated metric right away.
 	seen := make(map[metricKey]bool)
 
 	for i := range data {
-		mk := metricKey{Namespace: data[i].Namespace, MetricName: data[i].MetricName}
-		if !seen[mk] {
-			seen[mk] = true
-
-			m.evaluateAlarms(data[i].Namespace, data[i].MetricName)
-		}
+		seen[metricKey{Namespace: data[i].Namespace, MetricName: data[i].MetricName}] = true
 	}
+
+	m.evaluateMetricAlarms(ctx, seen)
 
 	return nil
-}
-
-func (m *Mock) evaluateAlarms(namespace, metricName string) {
-	allAlarms := m.alarms.All()
-
-	for _, alarm := range allAlarms {
-		if alarm.Namespace != namespace || alarm.MetricName != metricName {
-			continue
-		}
-
-		m.evaluateSingleAlarm(alarm, namespace, metricName)
-	}
-}
-
-// alarmParams projects an alarm's thresholds onto the shared evaluator's Params.
-func alarmParams(alarm *alarmData) alarmeval.Params {
-	return alarmeval.Params{
-		Period:             alarm.Period,
-		EvaluationPeriods:  alarm.EvaluationPeriods,
-		DatapointsToAlarm:  alarm.DatapointsToAlarm,
-		Stat:               alarm.Stat,
-		ComparisonOperator: alarm.ComparisonOperator,
-		Threshold:          alarm.Threshold,
-		TreatMissingData:   alarm.TreatMissingData,
-	}
-}
-
-func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName string) {
-	now := m.opts.Clock.Now()
-	params := alarmParams(alarm)
-
-	filtered := m.collectFilteredDatums(namespace, metricName, alarm.Dimensions, params.WindowStart(now), now)
-	if len(filtered) == 0 {
-		return
-	}
-
-	newState, reason, ok := alarmeval.EvaluateWindow(filtered, &params, now)
-	if !ok {
-		return
-	}
-
-	m.transitionAlarm(alarm, newState, reason, now)
-}
-
-// transitionAlarm sets an alarm's state and — only when the state actually
-// changes — records a history entry and fires the new state's actions. This
-// matches CloudWatch, where both the history entry and the action invocation
-// happen on a state change regardless of whether the change came from metric
-// evaluation or a manual SetAlarmState. An alarm invokes its actions only when
-// it changes state; it never re-fires while the state is steady.
-func (m *Mock) transitionAlarm(alarm *alarmData, newState, reason string, now time.Time) {
-	oldState := alarm.State
-
-	if oldState != newState {
-		m.appendHistory(alarm.Name, oldState, newState, reason, now)
-		alarm.StateUpdatedTimestamp = now
-	}
-
-	alarm.State = newState
-	alarm.StateReason = reason
-
-	if oldState != newState {
-		m.fireAlarmActions(alarm, oldState, newState, now)
-	}
-}
-
-// appendHistory records one alarm state transition in the history log.
-func (m *Mock) appendHistory(name, oldState, newState, reason string, now time.Time) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.history = append(m.history, driver.AlarmHistoryEntry{
-		AlarmName:       name,
-		Timestamp:       now,
-		OldState:        oldState,
-		NewState:        newState,
-		HistoryItemType: historyStateUpdate,
-		Reason:          fmt.Sprintf("Transition from %s to %s: %s", oldState, newState, reason),
-	})
-}
-
-// fireAlarmActions delivers an alarm's state-change actions. Only SNS-topic
-// action ARNs are published (via the wired publisher); the notification carries
-// the alarm's new state so subscribers can react. It is a no-op when no
-// publisher is wired or the alarm has actions disabled.
-//
-// The stateInsufficientData branch below is wired for completeness (and to
-// keep the switch exhaustive over the alarm state enum) but is currently
-// unreachable: evaluateSingleAlarm only ever assigns stateAlarm or stateOK,
-// since alarm evaluation here is event-driven off incoming PutMetricData
-// calls. Real CloudWatch instead transitions an alarm to INSUFFICIENT_DATA
-// on a background timer when expected datapoints stop arriving — a
-// timer-driven behavior this mock does not simulate.
-func (m *Mock) fireAlarmActions(a *alarmData, oldState, newState string, now time.Time) {
-	if m.sns == nil || !a.ActionsEnabled {
-		return
-	}
-
-	var actions []string
-
-	switch newState {
-	case stateAlarm:
-		actions = a.AlarmActions
-	case stateOK:
-		actions = a.OKActions
-	case stateInsufficientData:
-		actions = a.InsufficientDataActions
-	}
-
-	if len(actions) == 0 {
-		return
-	}
-
-	message := m.alarmNotification(a, oldState, newState, now)
-
-	for _, arn := range actions {
-		if strings.HasPrefix(arn, snsTopicARNPrefix) {
-			_ = m.sns.PublishExternal(context.Background(), arn, message)
-		}
-	}
-}
-
-// alarmNotification renders the JSON body CloudWatch publishes to an SNS topic
-// on a state change. It mirrors the real notification's key fields so a
-// subscriber (e.g. an SQS queue) receives a recognizable alarm payload.
-func (m *Mock) alarmNotification(a *alarmData, oldState, newState string, now time.Time) string {
-	payload := map[string]any{
-		"AlarmName":        a.Name,
-		"AlarmDescription": a.AlarmDescription,
-		"AWSAccountId":     m.opts.AccountID,
-		"Region":           m.opts.Region,
-		"NewStateValue":    newState,
-		"NewStateReason":   a.StateReason,
-		"OldStateValue":    oldState,
-		"StateChangeTime":  now.UTC().Format(time.RFC3339),
-		"Trigger": map[string]any{
-			"MetricName":         a.MetricName,
-			"Namespace":          a.Namespace,
-			"Statistic":          a.Stat,
-			"ComparisonOperator": a.ComparisonOperator,
-			"Threshold":          a.Threshold,
-			"Period":             a.Period,
-			"EvaluationPeriods":  a.EvaluationPeriods,
-		},
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-
-	return string(body)
-}
-
-func (m *Mock) collectFilteredDatums(
-	namespace, metricName string, dims map[string]string, windowStart, now time.Time,
-) []driver.MetricDatum {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	key := metricKey{Namespace: namespace, MetricName: metricName}
-	dataPoints := m.metrics[key]
-
-	var filtered []driver.MetricDatum
-
-	for i := range dataPoints {
-		d := &dataPoints[i]
-		if d.Timestamp.Before(windowStart) || d.Timestamp.After(now) {
-			continue
-		}
-
-		if !alarmeval.MatchDimensions(d.Dimensions, dims) {
-			continue
-		}
-
-		filtered = append(filtered, *d)
-	}
-
-	return filtered
 }
 
 // GetMetricData retrieves metric data for the given query, filtering by time range and
@@ -325,6 +178,11 @@ func (m *Mock) collectFilteredDatums(
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*driver.MetricDataResult, error) {
+	return m.readMetric(&input), nil
+}
+
+// readMetric aggregates one metric over the input's periods.
+func (m *Mock) readMetric(input *driver.GetMetricInput) *driver.MetricDataResult {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -333,8 +191,7 @@ func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*d
 		MetricName: input.MetricName,
 	}
 
-	dataPoints := m.metrics[key]
-	filtered := filterByTimeAndDimensions(dataPoints, input.StartTime, input.EndTime, input.Dimensions)
+	filtered := filterDatums(m.metrics[key], input)
 
 	// Sort by timestamp.
 	sort.Slice(filtered, func(i, j int) bool {
@@ -346,19 +203,21 @@ func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*d
 		period = 60
 	}
 
-	return buildMetricResult(filtered, input.StartTime, input.EndTime, period, input.Stat), nil
+	return buildMetricResult(filtered, input.StartTime, period, input.Stat)
 }
 
-func filterByTimeAndDimensions(dataPoints []driver.MetricDatum, startTime, endTime time.Time, dims map[string]string) []driver.MetricDatum {
+// filterDatums keeps the datums inside the query's time range that match its
+// dimensions and unit.
+func filterDatums(dataPoints []driver.MetricDatum, in *driver.GetMetricInput) []driver.MetricDatum {
 	var filtered []driver.MetricDatum
 
 	for i := range dataPoints {
 		d := &dataPoints[i]
-		if d.Timestamp.Before(startTime) || !d.Timestamp.Before(endTime) {
+		if d.Timestamp.Before(in.StartTime) || !d.Timestamp.Before(in.EndTime) {
 			continue
 		}
 
-		if !alarmeval.MatchDimensions(d.Dimensions, dims) {
+		if !alarmeval.MatchDimensions(d.Dimensions, in.Dimensions) || !alarmeval.MatchUnit(d.Unit, in.Unit) {
 			continue
 		}
 
@@ -368,40 +227,69 @@ func filterByTimeAndDimensions(dataPoints []driver.MetricDatum, startTime, endTi
 	return filtered
 }
 
-func buildMetricResult(filtered []driver.MetricDatum, startTime, endTime time.Time, period int, stat string) *driver.MetricDataResult {
-	result := &driver.MetricDataResult{}
+// MetricUnits returns the sorted distinct units of the data a query would
+// read, with a unit-less datum counted as None. Unit in the query is ignored.
+// GetMetricStatistics uses it to return one datapoint per unit, as AWS does
+// when the caller omits Unit.
+func (m *Mock) MetricUnits(_ context.Context, in *driver.GetMetricInput) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	if len(filtered) == 0 {
-		result.Timestamps = []time.Time{}
-		result.Values = []float64{}
+	anyUnit := *in
+	anyUnit.Unit = ""
 
-		return result
-	}
+	seen := map[string]bool{}
+	units := []string{}
 
-	// Carry the stored unit so the wire layer can echo the real unit (e.g.
-	// "Percent" for CPUUtilization) instead of hardcoding "Count".
-	result.Unit = unitOf(filtered)
-
-	periodDur := time.Duration(period) * time.Second
-
-	// Walk through periods from StartTime to EndTime.
-	for periodStart := startTime; periodStart.Before(endTime); periodStart = periodStart.Add(periodDur) {
-		periodEnd := periodStart.Add(periodDur)
-		periodDatums := collectPeriodDatums(filtered, periodStart, periodEnd)
-
-		if len(periodDatums) == 0 {
+	data := filterDatums(m.metrics[metricKey{Namespace: in.Namespace, MetricName: in.MetricName}], &anyUnit)
+	for i := range data {
+		u := alarmeval.EffectiveUnit(data[i].Unit)
+		if seen[u] {
 			continue
 		}
 
-		s := alarmeval.StatOf(periodDatums, stat)
+		seen[u] = true
 
-		result.Timestamps = append(result.Timestamps, periodStart)
-		result.Values = append(result.Values, s)
+		units = append(units, u)
 	}
 
-	if result.Timestamps == nil {
-		result.Timestamps = []time.Time{}
-		result.Values = []float64{}
+	sort.Strings(units)
+
+	return units
+}
+
+// buildMetricResult aggregates datums sorted by time into one value per
+// non-empty period from startTime. It makes one pass over the datums, so a
+// long range with sparse data stays cheap.
+func buildMetricResult(filtered []driver.MetricDatum, startTime time.Time, period int, stat string) *driver.MetricDataResult {
+	result := &driver.MetricDataResult{Timestamps: []time.Time{}, Values: []float64{}}
+
+	if len(filtered) == 0 {
+		return result
+	}
+
+	// Carry the stored unit so the wire layer can echo it. Data put without a
+	// unit reads back as None, like on AWS.
+	result.Unit = alarmeval.EffectiveUnit(unitOf(filtered))
+
+	periodDur := time.Duration(period) * time.Second
+
+	for from := 0; from < len(filtered); {
+		idx := filtered[from].Timestamp.Sub(startTime) / periodDur
+
+		to := from + 1
+		for to < len(filtered) && filtered[to].Timestamp.Sub(startTime)/periodDur == idx {
+			to++
+		}
+
+		// A period where an extended statistic is not available, such as a
+		// percentile over negative values, is left out as on AWS.
+		if v, ok := alarmeval.StatValue(filtered[from:to], stat); ok {
+			result.Timestamps = append(result.Timestamps, startTime.Add(idx*periodDur))
+			result.Values = append(result.Values, v)
+		}
+
+		from = to
 	}
 
 	return result
@@ -417,18 +305,6 @@ func unitOf(data []driver.MetricDatum) string {
 	}
 
 	return ""
-}
-
-func collectPeriodDatums(filtered []driver.MetricDatum, periodStart, periodEnd time.Time) []driver.MetricDatum {
-	var datums []driver.MetricDatum
-
-	for i := range filtered {
-		if !filtered[i].Timestamp.Before(periodStart) && filtered[i].Timestamp.Before(periodEnd) {
-			datums = append(datums, filtered[i])
-		}
-	}
-
-	return datums
 }
 
 // ListMetrics returns unique metric names for the given namespace.
@@ -461,6 +337,32 @@ func (m *Mock) ListMetricsDetailed(_ context.Context) ([]driver.MetricIdentifier
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	return m.seriesRowsLocked(func(string) bool { return true }), nil
+}
+
+// ListMetricsActive is ListMetricsDetailed limited to the series that had
+// data put within the last `within`. ListMetrics uses it for its two-week
+// visibility and for RecentlyActive.
+func (m *Mock) ListMetricsActive(_ context.Context, within time.Duration) ([]driver.MetricIdentifier, error) {
+	cutoff := m.opts.Clock.Now().Add(-within)
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.seriesRowsLocked(func(sig string) bool {
+		at, ok := m.lastReceived[sig]
+
+		return !ok || !at.Before(cutoff)
+	}), nil
+}
+
+// seriesSig identifies one metric series: namespace, name and dimension set.
+func seriesSig(key metricKey, dims map[string]string) string {
+	return key.Namespace + "\x00" + key.MetricName + "\x00" + canonicalDims(dims)
+}
+
+// seriesRowsLocked lists each series that keep accepts. The caller holds mu.
+func (m *Mock) seriesRowsLocked(keep func(sig string) bool) []driver.MetricIdentifier {
 	// AWS lists one entry per unique (namespace, name, dimension-set), so walk
 	// every stored datum and dedupe on a canonical dimension signature.
 	seen := make(map[string]bool)
@@ -468,12 +370,16 @@ func (m *Mock) ListMetricsDetailed(_ context.Context) ([]driver.MetricIdentifier
 
 	for key, data := range m.metrics {
 		for i := range data {
-			sig := key.Namespace + "\x00" + key.MetricName + "\x00" + canonicalDims(data[i].Dimensions)
+			sig := seriesSig(key, data[i].Dimensions)
 			if seen[sig] {
 				continue
 			}
 
 			seen[sig] = true
+
+			if !keep(sig) {
+				continue
+			}
 
 			out = append(out, driver.MetricIdentifier{
 				Namespace:  key.Namespace,
@@ -495,7 +401,7 @@ func (m *Mock) ListMetricsDetailed(_ context.Context) ([]driver.MetricIdentifier
 		return canonicalDims(out[i].Dimensions) < canonicalDims(out[j].Dimensions)
 	})
 
-	return out, nil
+	return out
 }
 
 // canonicalDims renders a dimension map as a stable, order-independent string.
@@ -533,126 +439,6 @@ func copyDims(dims map[string]string) map[string]string {
 	}
 
 	return out
-}
-
-// CreateAlarm creates or updates an alarm with the given configuration.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
-	if cfg.Name == "" {
-		return errors.Newf(errors.InvalidArgument, "alarm name is required")
-	}
-
-	dims := make(map[string]string, len(cfg.Dimensions))
-	for k, v := range cfg.Dimensions {
-		dims[k] = v
-	}
-
-	actionsEnabled := true
-	if cfg.ActionsEnabled != nil {
-		actionsEnabled = *cfg.ActionsEnabled
-	}
-
-	// When PutMetricAlarm updates an existing alarm, its state is left unchanged and
-	// tags supplied in this operation are ignored (real AWS API_PutMetricAlarm semantics).
-	// The rest of the configuration is completely overwritten.
-	state := stateInsufficientData
-	stateReason := ""
-	stateUpdated := m.opts.Clock.Now()
-
-	tags := make(map[string]string, len(cfg.Tags))
-	for k, v := range cfg.Tags {
-		tags[k] = v
-	}
-
-	if existing, ok := m.alarms.Get(cfg.Name); ok {
-		state = existing.State
-		stateReason = existing.StateReason
-		stateUpdated = existing.StateUpdatedTimestamp
-		tags = existing.Tags
-	}
-
-	alarm := &alarmData{
-		Name:                    cfg.Name,
-		Namespace:               cfg.Namespace,
-		MetricName:              cfg.MetricName,
-		Dimensions:              dims,
-		ComparisonOperator:      cfg.ComparisonOperator,
-		Threshold:               cfg.Threshold,
-		Period:                  cfg.Period,
-		EvaluationPeriods:       cfg.EvaluationPeriods,
-		DatapointsToAlarm:       cfg.DatapointsToAlarm,
-		Stat:                    cfg.Stat,
-		ExtendedStatistic:       cfg.ExtendedStatistic,
-		Unit:                    cfg.Unit,
-		TreatMissingData:        cfg.TreatMissingData,
-		State:                   state,
-		StateReason:             stateReason,
-		StateUpdatedTimestamp:   stateUpdated,
-		AlarmActions:            append([]string{}, cfg.AlarmActions...),
-		OKActions:               append([]string{}, cfg.OKActions...),
-		InsufficientDataActions: append([]string{}, cfg.InsufficientDataActions...),
-		AlarmDescription:        cfg.AlarmDescription,
-		ActionsEnabled:          actionsEnabled,
-		AlarmArn:                idgen.AWSARN("cloudwatch", m.opts.Region, m.opts.AccountID, "alarm:"+cfg.Name),
-		Tags:                    tags,
-	}
-
-	m.alarms.Set(cfg.Name, alarm)
-
-	return nil
-}
-
-// DeleteAlarm deletes the alarm with the given name.
-func (m *Mock) DeleteAlarm(_ context.Context, name string) error {
-	if !m.alarms.Delete(name) {
-		return errors.Newf(errors.NotFound, "alarm %q not found", name)
-	}
-
-	return nil
-}
-
-// DescribeAlarms returns alarms matching the given names, or all alarms if names is empty.
-func (m *Mock) DescribeAlarms(_ context.Context, names []string) ([]driver.AlarmInfo, error) {
-	if len(names) == 0 {
-		all := m.alarms.All()
-		result := make([]driver.AlarmInfo, 0, len(all))
-
-		for _, a := range all {
-			result = append(result, toAlarmInfo(a))
-		}
-
-		return result, nil
-	}
-
-	result := make([]driver.AlarmInfo, 0, len(names))
-
-	for _, name := range names {
-		a, ok := m.alarms.Get(name)
-		if !ok {
-			continue
-		}
-
-		result = append(result, toAlarmInfo(a))
-	}
-
-	return result, nil
-}
-
-// SetAlarmState manually sets the state of an alarm. Like a metric-driven
-// transition, a state change records a history entry and invokes the actions
-// configured for the new state (AlarmActions / OKActions /
-// InsufficientDataActions), so the documented "force ALARM to test wiring"
-// workflow delivers its notifications.
-func (m *Mock) SetAlarmState(_ context.Context, name, state, reason string) error {
-	a, ok := m.alarms.Get(name)
-	if !ok {
-		return errors.Newf(errors.NotFound, "alarm %q not found", name)
-	}
-
-	m.transitionAlarm(a, state, reason, m.opts.Clock.Now())
-
-	return nil
 }
 
 // CreateNotificationChannel creates a new notification channel and returns its info.
@@ -715,8 +501,10 @@ func (m *Mock) ListNotificationChannels(_ context.Context) ([]driver.Notificatio
 // GetAlarmHistory returns an alarm's history entries newest-first (CloudWatch's
 // default TimestampDescending order). When limit > 0 it keeps the newest limit
 // entries. Passing limit <= 0 returns the full history so a caller can apply its
-// own filters before truncating.
-func (m *Mock) GetAlarmHistory(_ context.Context, alarmName string, limit int) ([]driver.AlarmHistoryEntry, error) {
+// own filters before truncating. Alarms that are due are evaluated first.
+func (m *Mock) GetAlarmHistory(ctx context.Context, alarmName string, limit int) ([]driver.AlarmHistoryEntry, error) {
+	m.evaluateDue(ctx, m.opts.Clock.Now())
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -738,8 +526,8 @@ func (m *Mock) GetAlarmHistory(_ context.Context, alarmName string, limit int) (
 // SetAlarmActionsEnabled toggles ActionsEnabled for the named alarms. It backs
 // the AWS-local EnableAlarmActions / DisableAlarmActions wire operations.
 func (m *Mock) SetAlarmActionsEnabled(_ context.Context, names []string, enabled bool) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
 
 	for _, name := range names {
 		a, ok := m.alarms.Get(name)
@@ -782,8 +570,8 @@ func (m *Mock) alarmTagsOf(name string, ensure bool) (map[string]string, bool) {
 // AddAlarmTags merges tags onto the named alarm (metric or composite), backing
 // TagResource.
 func (m *Mock) AddAlarmTags(_ context.Context, alarmName string, tags map[string]string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
 
 	target, ok := m.alarmTagsOf(alarmName, true)
 	if !ok {
@@ -800,8 +588,8 @@ func (m *Mock) AddAlarmTags(_ context.Context, alarmName string, tags map[string
 // RemoveAlarmTags deletes the given tag keys from the named alarm (metric or
 // composite), backing UntagResource.
 func (m *Mock) RemoveAlarmTags(_ context.Context, alarmName string, keys []string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
 
 	target, ok := m.alarmTagsOf(alarmName, false)
 	if !ok {
@@ -818,8 +606,8 @@ func (m *Mock) RemoveAlarmTags(_ context.Context, alarmName string, keys []strin
 // AlarmTags returns a copy of the named alarm's tags (metric or composite),
 // backing ListTagsForResource.
 func (m *Mock) AlarmTags(_ context.Context, alarmName string) (map[string]string, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
 
 	target, ok := m.alarmTagsOf(alarmName, false)
 	if !ok {
@@ -841,28 +629,48 @@ func toAlarmInfo(a *alarmData) driver.AlarmInfo {
 	}
 
 	return driver.AlarmInfo{
-		Name:                    a.Name,
-		Namespace:               a.Namespace,
-		MetricName:              a.MetricName,
-		State:                   a.State,
-		ComparisonOperator:      a.ComparisonOperator,
-		Threshold:               a.Threshold,
-		StateReason:             a.StateReason,
-		StateUpdatedTimestamp:   a.StateUpdatedTimestamp,
-		Period:                  a.Period,
-		EvaluationPeriods:       a.EvaluationPeriods,
-		DatapointsToAlarm:       a.DatapointsToAlarm,
-		Statistic:               a.Stat,
-		ExtendedStatistic:       a.ExtendedStatistic,
-		Unit:                    a.Unit,
-		TreatMissingData:        a.TreatMissingData,
-		ActionsEnabled:          a.ActionsEnabled,
-		AlarmActions:            append([]string{}, a.AlarmActions...),
-		OKActions:               append([]string{}, a.OKActions...),
-		InsufficientDataActions: append([]string{}, a.InsufficientDataActions...),
-		AlarmDescription:        a.AlarmDescription,
-		AlarmArn:                a.AlarmArn,
-		Dimensions:              dims,
-		Tags:                    tags,
+		Name:                       a.Name,
+		Namespace:                  a.Namespace,
+		MetricName:                 a.MetricName,
+		State:                      a.State,
+		ComparisonOperator:         a.ComparisonOperator,
+		Threshold:                  a.Threshold,
+		StateReason:                a.StateReason,
+		StateReasonData:            a.StateReasonData,
+		StateUpdatedTimestamp:      a.StateUpdatedTimestamp,
+		StateTransitionedTimestamp: a.StateTransitionedTimestamp,
+		Period:                     a.Period,
+		EvaluationPeriods:          a.EvaluationPeriods,
+		DatapointsToAlarm:          a.DatapointsToAlarm,
+		Statistic:                  a.Stat,
+		ExtendedStatistic:          a.ExtendedStatistic,
+		Unit:                       a.Unit,
+		TreatMissingData:           a.TreatMissingData,
+		ActionsEnabled:             a.ActionsEnabled,
+		AlarmActions:               append([]string{}, a.AlarmActions...),
+		OKActions:                  append([]string{}, a.OKActions...),
+		InsufficientDataActions:    append([]string{}, a.InsufficientDataActions...),
+		AlarmDescription:           a.AlarmDescription,
+		AlarmArn:                   a.AlarmArn,
+		Dimensions:                 dims,
+		Tags:                       tags,
+		Metrics:                    metricmath.Clone(a.Metrics),
+		ThresholdMetricID:          a.ThresholdMetricID,
+
+		AlarmConfigurationUpdatedTimestamp: a.ConfigUpdatedAt,
+		EvaluateLowSampleCountPercentile:   a.EvaluateLowSampleCountPercentile,
+		EvaluationWindow:                   cloneWindow(a.EvaluationWindow),
 	}
+}
+
+// cloneWindow copies an evaluation window so callers cannot change the
+// stored one.
+func cloneWindow(w *driver.EvaluationWindow) *driver.EvaluationWindow {
+	if w == nil {
+		return nil
+	}
+
+	c := *w
+
+	return &c
 }

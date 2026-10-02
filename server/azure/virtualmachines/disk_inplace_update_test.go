@@ -15,7 +15,7 @@ import (
 
 // TestSDKDiskInPlaceUpdateOnAttachedDisk is the regression test for the disk
 // CreateOrUpdate fix: re-PUTting a disk that is already attached to a VM must
-// update it IN PLACE — exactly one backing volume, the new tag applied, and the
+// update it IN PLACE: exactly one backing volume, the new tag applied, and the
 // derived uniqueId + timeCreated unchanged from the first PUT. The old code did
 // delete+create, which (a) silently failed the delete on an attached disk and
 // created a duplicate phantom volume, and (b) regenerated the volume id, churning
@@ -89,7 +89,7 @@ func TestSDKDiskInPlaceUpdateOnAttachedDisk(t *testing.T) {
 		t.Fatalf("attach poll: %v", err)
 	}
 
-	// Re-PUT the (now attached) disk adding a tag — the operation that used to
+	// Re-PUT the (now attached) disk adding a tag: the operation that used to
 	// duplicate the volume and drop the update.
 	rePoller, err := diskClient.BeginCreateOrUpdate(ctx, "rg-1", "d-att", armcompute.Disk{
 		Location: to.Ptr("eastus"),
@@ -108,7 +108,7 @@ func TestSDKDiskInPlaceUpdateOnAttachedDisk(t *testing.T) {
 		t.Fatalf("re-PUT poll: %v", err)
 	}
 
-	// Exactly ONE backing volume — no duplicate phantom.
+	// Exactly ONE backing volume; no duplicate phantom.
 	vols, err := cloudP.VirtualMachines.DescribeVolumes(ctx, nil)
 	if err != nil {
 		t.Fatalf("DescribeVolumes: %v", err)

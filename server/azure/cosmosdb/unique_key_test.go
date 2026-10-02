@@ -120,7 +120,7 @@ func TestSDKUniqueKeyMissingFieldAllowed(t *testing.T) {
 // of a single winner and 409s for the rest. It fires N concurrent creates that
 // all share one (partition="team-a", email="race@example.com") and asserts
 // EXACTLY one succeeds. Filler documents widen the scan window the race lives
-// in. This is a logical (check-then-act) race, so -race does not surface it —
+// in. This is a logical (check-then-act) race, so -race does not surface it;
 // the assertion on the winner count is what fails pre-fix.
 func TestSDKUniqueKeyConcurrentCreateSingleWinner(t *testing.T) {
 	ctx := context.Background()
@@ -131,7 +131,7 @@ func TestSDKUniqueKeyConcurrentCreateSingleWinner(t *testing.T) {
 		collName = "users"
 		// fillers is deliberately large: checkUniqueKeys does a full-table Scan,
 		// so a big container widens the check-then-write window enough that the
-		// pre-fix (unlocked) race reproduces on every run — a handful of fillers
+		// pre-fix (unlocked) race reproduces on every run; a handful of fillers
 		// leaves the window too narrow to reliably catch the bug.
 		fillers = 40000
 		racers  = 50
@@ -141,7 +141,7 @@ func TestSDKUniqueKeyConcurrentCreateSingleWinner(t *testing.T) {
 
 	// Preload filler docs straight through the shared driver (fast, in-memory).
 	// They share partition "team-a" with distinct emails, so none collide with
-	// each other or the racers — they only make checkUniqueKeys' full-table Scan
+	// each other or the racers; they only make checkUniqueKeys' full-table Scan
 	// walk more items, widening the check-then-write window.
 	table := dbName + "/" + collName
 

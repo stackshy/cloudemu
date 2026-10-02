@@ -343,7 +343,7 @@ func (m *Mock) RestoreSecret(_ context.Context, name string) (*driver.SecretInfo
 // untouched, matching RotateSecret's "reuse the last configured value"
 // semantics); the call always leaves rotation enabled. With rotateImmediately
 // true (the real service's default), a new version is appended carrying the
-// current value forward — real rotation invokes a Lambda to generate the new
+// current value forward. Real rotation invokes a Lambda to generate the new
 // value; with no Lambda runtime, the emulator carries the value forward
 // unchanged so callers still see the version advance and AWSPREVIOUS move as
 // they would in production. With rotateImmediately false, only the

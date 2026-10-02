@@ -10,7 +10,7 @@ import (
 )
 
 // A DB instance placed in a subnet group must report that association back as
-// the nested complex DBInstance.DBSubnetGroup element real RDS returns — not a
+// the nested complex DBInstance.DBSubnetGroup element real RDS returns, not a
 // scalar DBSubnetGroupName the SDK has no field to bind. Terraform and the
 // aws-sdk-go-v2 rdstypes.DBInstance read db_subnet_group_name off
 // DBSubnetGroup.DBSubnetGroupName, so a nil DBSubnetGroup silently drops the

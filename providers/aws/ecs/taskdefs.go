@@ -241,6 +241,7 @@ func (m *Mock) DescribeTaskDefinition(_ context.Context, id string) (*driver.Tas
 	}
 
 	out := cloneTaskDef(td)
+	out.Tags = m.liveTags(td.ARN, td.Tags)
 
 	return &out, nil
 }
@@ -272,7 +273,7 @@ func (m *Mock) DeregisterTaskDefinition(_ context.Context, id string) (*driver.T
 	return &out, nil
 }
 
-// taskDefHasRevision reports whether id names a specific revision — either
+// taskDefHasRevision reports whether id names a specific revision, either
 // "family:revision" or an ARN whose "task-definition/family:revision" segment
 // carries a revision. A bare family name has no revision.
 func taskDefHasRevision(id string) bool {
@@ -303,8 +304,8 @@ func (m *Mock) resolveTaskDef(id string) (*driver.TaskDefinition, bool) {
 // (INACTIVE) definition when referenced by an explicit family:revision or ARN;
 // real ECS refuses to run new tasks from such a definition, so launch paths use
 // this instead. A missing definition is a not-found ClientException; a resolved
-// but INACTIVE one is an InvalidParameter ClientException (it exists, it's just
-// not runnable). Bare-family lookups are unaffected — latestActive already skips
+// but INACTIVE one is an InvalidParameter ClientException (it exists, it's
+// not runnable). Bare-family lookups are unaffected; latestActive already skips
 // INACTIVE revisions.
 func (m *Mock) resolveLaunchableTaskDef(id string) (*driver.TaskDefinition, error) {
 	td, ok := m.resolveTaskDef(id)

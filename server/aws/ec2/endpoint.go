@@ -1,6 +1,7 @@
 package ec2
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 
@@ -14,17 +15,17 @@ import (
 const defaultVPCEndpointType = "Gateway"
 
 type vpcEndpointXML struct {
-	VpcEndpointID       string    `xml:"vpcEndpointId"`
-	VpcEndpointType     string    `xml:"vpcEndpointType"`
-	VpcID               string    `xml:"vpcId"`
-	ServiceName         string    `xml:"serviceName"`
-	State               string    `xml:"state"`
-	RouteTableIDs       []string  `xml:"routeTableIdSet>item,omitempty"`
-	SubnetIDs           []string  `xml:"subnetIdSet>item,omitempty"`
-	Groups              []string  `xml:"groupSet>item,omitempty"`
-	NetworkInterfaceIDs []string  `xml:"networkInterfaceIdSet>item,omitempty"`
-	CreationTime        string    `xml:"creationTimestamp,omitempty"`
-	Tags                []tagItem `xml:"tagSet>item,omitempty"`
+	VpcEndpointID       string      `xml:"vpcEndpointId"`
+	VpcEndpointType     string      `xml:"vpcEndpointType"`
+	VpcID               string      `xml:"vpcId"`
+	ServiceName         string      `xml:"serviceName"`
+	State               string      `xml:"state"`
+	RouteTableIDs       []string    `xml:"routeTableIdSet>item,omitempty"`
+	SubnetIDs           []string    `xml:"subnetIdSet>item,omitempty"`
+	Groups              []groupItem `xml:"groupSet>item,omitempty"`
+	NetworkInterfaceIDs []string    `xml:"networkInterfaceIdSet>item,omitempty"`
+	CreationTime        string      `xml:"creationTimestamp,omitempty"`
+	Tags                []tagItem   `xml:"tagSet>item,omitempty"`
 }
 
 func (h *Handler) routeVPCEndpoints(w http.ResponseWriter, r *http.Request, action string) bool {
@@ -69,7 +70,7 @@ func (h *Handler) createVPCEndpoint(w http.ResponseWriter, r *http.Request) {
 		Xmlns    string         `xml:"xmlns,attr"`
 		Req      string         `xml:"requestId"`
 		Endpoint vpcEndpointXML `xml:"vpcEndpoint"`
-	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Endpoint: toVPCEndpointXML(ep)})
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Endpoint: h.toVPCEndpointXML(r.Context(), ep)})
 }
 
 // deleteVPCEndpoints is idempotent: like real EC2 it always returns HTTP 200
@@ -81,7 +82,7 @@ func (h *Handler) deleteVPCEndpoints(w http.ResponseWriter, r *http.Request) {
 	for _, id := range awsquery.ListStrings(r.Form, "VpcEndpointId") {
 		if err := h.vpc.DeleteVPCEndpoint(r.Context(), id); err != nil {
 			item := unsuccessfulItemXML{ResourceID: id}
-			item.Error.Code = "InvalidVpcEndpointId.NotFound"
+			item.Error.Code = codeInvalidVpcEndpointID
 			item.Error.Message = cerrors.Message(err)
 			unsuccessful = append(unsuccessful, item)
 		}
@@ -108,7 +109,7 @@ func (h *Handler) describeVPCEndpoints(w http.ResponseWriter, r *http.Request) {
 
 	for i := range items {
 		if vpcEndpointMatchesFilters(&items[i], filters) {
-			out = append(out, toVPCEndpointXML(&items[i]))
+			out = append(out, h.toVPCEndpointXML(r.Context(), &items[i]))
 		}
 	}
 
@@ -127,6 +128,26 @@ func (h *Handler) describeVPCEndpoints(w http.ResponseWriter, r *http.Request) {
 // change an endpoint's subnets, route tables, and security groups.
 func (h *Handler) modifyVPCEndpoint(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("VpcEndpointId")
+
+	// A backend that applies the change as a delta does the read-modify-write
+	// under its own lock, so parallel modifies of one endpoint do not race.
+	if sets, ok := h.vpc.(netdriver.VPCEndpointSetModifier); ok {
+		if _, err := sets.ModifyVPCEndpointSets(r.Context(), id, &netdriver.VPCEndpointSetChange{
+			AddRouteTableIDs:       awsquery.ListStrings(r.Form, "AddRouteTableId"),
+			RemoveRouteTableIDs:    awsquery.ListStrings(r.Form, "RemoveRouteTableId"),
+			AddSubnetIDs:           awsquery.ListStrings(r.Form, "AddSubnetId"),
+			RemoveSubnetIDs:        awsquery.ListStrings(r.Form, "RemoveSubnetId"),
+			AddSecurityGroupIDs:    awsquery.ListStrings(r.Form, "AddSecurityGroupId"),
+			RemoveSecurityGroupIDs: awsquery.ListStrings(r.Form, "RemoveSecurityGroupId"),
+		}); err != nil {
+			writeVPCEndpointErr(w, err)
+			return
+		}
+
+		writeReturnTrue(w, "ModifyVpcEndpointResponse")
+
+		return
+	}
 
 	current, err := h.vpc.DescribeVPCEndpoints(r.Context(), []string{id})
 	if err != nil {
@@ -214,7 +235,17 @@ func vpcEndpointMatchesFilter(ep *netdriver.VPCEndpoint, f awsquery.Filter) bool
 	}
 }
 
-func toVPCEndpointXML(ep *netdriver.VPCEndpoint) vpcEndpointXML {
+// toVPCEndpointXML renders ep. Real EC2 types VpcEndpoint.Groups as
+// SecurityGroupIdentifier, so each <groupSet><item> carries <groupId> and,
+// when the group exists, its resolved <groupName>.
+func (h *Handler) toVPCEndpointXML(ctx context.Context, ep *netdriver.VPCEndpoint) vpcEndpointXML {
+	names := h.securityGroupNames(ctx, ep.SecurityGroupIDs)
+
+	groups := make([]groupItem, 0, len(ep.SecurityGroupIDs))
+	for _, sg := range ep.SecurityGroupIDs {
+		groups = append(groups, groupItem{GroupID: sg, GroupName: names[sg]})
+	}
+
 	return vpcEndpointXML{
 		VpcEndpointID:       ep.ID,
 		VpcEndpointType:     nonEmpty(ep.EndpointType, defaultVPCEndpointType),
@@ -223,7 +254,7 @@ func toVPCEndpointXML(ep *netdriver.VPCEndpoint) vpcEndpointXML {
 		State:               nonEmpty(ep.State, stateAvailable),
 		RouteTableIDs:       ep.RouteTableIDs,
 		SubnetIDs:           ep.SubnetIDs,
-		Groups:              ep.SecurityGroupIDs,
+		Groups:              groups,
 		NetworkInterfaceIDs: ep.NetworkInterfaceIDs,
 		CreationTime:        ep.CreatedAt,
 		Tags:                toTagItems(ep.Tags),
@@ -231,5 +262,12 @@ func toVPCEndpointXML(ep *netdriver.VPCEndpoint) vpcEndpointXML {
 }
 
 func writeVPCEndpointErr(w http.ResponseWriter, err error) {
-	writeErrWithNotFound(w, err, "InvalidVpcEndpointId.NotFound", "DependencyViolation")
+	// The only AlreadyExists an endpoint call raises is a second endpoint route
+	// for the same service in one route table.
+	if cerrors.IsAlreadyExists(err) {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "RouteAlreadyExists", cerrors.Message(err))
+		return
+	}
+
+	writeErrWithNotFound(w, err, codeInvalidVpcEndpointID, "DependencyViolation")
 }

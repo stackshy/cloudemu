@@ -21,7 +21,7 @@ const codeMalformedPolicy = "MalformedPolicyDocument"
 // trust-policy document. An empty document is left to the driver's required-field
 // checks; a non-empty one must parse as a JSON object and carry the "Statement"
 // element. The IAM policy grammar defines a policy as
-// { <version_block?>, <id_block?>, <statement_block> } — only the statement
+// { <version_block?>, <id_block?>, <statement_block> }. Only the statement
 // block is non-optional, so real IAM rejects a document without it (and any
 // non-JSON body) with MalformedPolicyDocument.
 func validPolicyDocument(doc string) bool {
@@ -996,7 +996,7 @@ func (h *Handler) removeRoleFromInstanceProfile(w http.ResponseWriter, r *http.R
 }
 
 // lookupRole resolves a role name to RoleInfo for embedding in InstanceProfile
-// responses. Returns nil if the role doesn't exist — the caller falls back to
+// responses. Returns nil if the role doesn't exist; the caller falls back to
 // emitting a minimal Role with just the name.
 //
 // listInstanceProfiles calls this once per profile (an N+1 driver hop). This

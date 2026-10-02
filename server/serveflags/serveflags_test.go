@@ -15,7 +15,7 @@ import (
 // are the built-in ones (not the host environment).
 func noEnv(string) string { return "" }
 
-// commonFlagNames is the pinned set of flag names RegisterCommon must register —
+// commonFlagNames is the pinned set of flag names RegisterCommon must register:
 // the single source of truth both serve entrypoints build from. A common flag
 // added, renamed, or dropped in only one place changes this set and fails the
 // test, so the two mains cannot drift. Update it deliberately when the shared
@@ -23,11 +23,11 @@ func noEnv(string) string { return "" }
 //
 //nolint:gochecknoglobals // test fixture: the pinned common-flag name set
 var commonFlagNames = []string{
-	"account-id", "admin", "advertise-host", "aws-port", "azure-port", "azure-subscription",
+	"account-id", "admin", "advertise-host", "async-settle", "aws-port", "azure-port", "azure-subscription",
 	"endpoints-file", "enforce-auth", "gcp-grpc-port", "gcp-port", "host", "init-dir", "k8s-nodes", "k8s-port",
 	"k8s-progression", "k8s-progression-interval", "latency", "log-requests", "oci-port",
 	"persist", "persist-interval", "persist-metadata-only", "persist-strategy", "project-id",
-	"providers", "quiet", "region", "shutdown-timeout", "state-file", "tls-cert", "tls-host",
+	"providers", "quiet", "region", "shutdown-timeout", "state-file", "tick-interval", "tls-cert", "tls-host",
 	"tls-key", "vcr", "vcr-cassette", "vcr-strict",
 }
 
@@ -73,6 +73,7 @@ func TestRegisterCommonDefaults(t *testing.T) {
 		"providers":                "aws,azure,gcp",
 		"aws-port":                 "4566",
 		"shutdown-timeout":         defaultShutdownTimeout.String(),
+		"tick-interval":            time.Second.String(),
 	}
 
 	for name, want := range cases {
@@ -95,6 +96,7 @@ func TestRegisterCommonEnvFallback(t *testing.T) {
 		"CLOUDEMU_PERSIST_INTERVAL":         "2s",
 		"CLOUDEMU_K8S_PROGRESSION":          "true",
 		"CLOUDEMU_K8S_PROGRESSION_INTERVAL": "5s",
+		"CLOUDEMU_TICK_INTERVAL":            "250ms",
 	}
 	getenv := func(k string) string { return env[k] }
 
@@ -122,10 +124,14 @@ func TestRegisterCommonEnvFallback(t *testing.T) {
 	if c.K8sProgressionInterval != 5*time.Second {
 		t.Fatalf("k8s-progression-interval = %v, want 5s (env)", c.K8sProgressionInterval)
 	}
+
+	if c.TickInterval != 250*time.Millisecond {
+		t.Fatalf("tick-interval = %v, want 250ms (env)", c.TickInterval)
+	}
 }
 
 // TestToServerkitConfigRoundTrip parses a representative arg set and asserts the
-// resulting serverkit.Config carries every value through — ports, persistence,
+// resulting serverkit.Config carries every value through: ports, persistence,
 // TLS, k8s progression, and the identity BaseOptions.
 func TestToServerkitConfigRoundTrip(t *testing.T) {
 	var c CommonConfig
@@ -142,12 +148,13 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 		"--latency", "20ms",
 		"--tls-cert", "/c.pem", "--tls-key", "/k.pem", "--tls-host", "a", "--tls-host", "b",
 		"--endpoints-file", "/eps.json",
-		"--admin=false", "--log-requests", "--quiet", "--enforce-auth",
+		"--admin=false", "--log-requests", "--quiet", "--enforce-auth", "--async-settle",
 		"--shutdown-timeout", "3s",
 		"--persist", "--state-file", "/s.json", "--persist-metadata-only",
 		"--persist-strategy", "manual", "--persist-interval", "7s",
 		"--init-dir", "/seeds",
 		"--k8s-progression", "--k8s-progression-interval", "4s", "--k8s-nodes", "3",
+		"--tick-interval", "2s",
 		"--vcr", "record", "--vcr-cassette", "/c.json", "--vcr-strict=false",
 	}
 	if err := fs.Parse(args); err != nil {
@@ -181,6 +188,7 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 	assertEqual(t, "log-requests", sk.LogRequests, true)
 	assertEqual(t, "quiet", sk.Quiet, true)
 	assertEqual(t, "enforce-auth", sk.EnforceAuth, true)
+	assertEqual(t, "async-settle", sk.AsyncSettle, true)
 	assertEqual(t, "shutdown-timeout", sk.ShutdownTimeout, 3*time.Second)
 	assertEqual(t, "persist", sk.Persist, true)
 	assertEqual(t, "state-file", sk.StateFile, "/s.json")
@@ -191,6 +199,7 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 	assertEqual(t, "k8s-progression", sk.K8sProgression, true)
 	assertEqual(t, "k8s-progression-interval", sk.K8sProgressionInterval, 4*time.Second)
 	assertEqual(t, "k8s-nodes", sk.K8sNodes, 3)
+	assertEqual(t, "tick-interval", sk.TickInterval, 2*time.Second)
 	assertEqual(t, "vcr", sk.VCRMode, "record")
 	assertEqual(t, "vcr-cassette", sk.VCRCassette, "/c.json")
 	assertEqual(t, "vcr-strict", sk.VCRStrict, false)
@@ -222,6 +231,10 @@ func TestValidate(t *testing.T) {
 
 	if err := (&CommonConfig{VCRMode: "record"}).Validate(); err != ErrVCRCassetteRequired {
 		t.Fatalf("vcr without cassette: err = %v, want %v", err, ErrVCRCassetteRequired)
+	}
+
+	if err := (&CommonConfig{TickInterval: -time.Second}).Validate(); err != ErrNegativeTickInterval {
+		t.Fatalf("negative tick interval: err = %v, want %v", err, ErrNegativeTickInterval)
 	}
 
 	if err := (&CommonConfig{VCRMode: "bogus", VCRCassette: "/c.json"}).Validate(); err == nil {

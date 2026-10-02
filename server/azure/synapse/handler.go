@@ -7,9 +7,9 @@
 // to all of them. The SDK's workspace create/update/delete, SQL-pool
 // create/delete/pause/resume, Spark-pool create/delete and integration-runtime
 // create/delete/start/stop are Begin* pollers. This handler answers them
-// synchronously — a create returns 201/200 with provisioningState already
+// synchronously: a create returns 201/200 with provisioningState already
 // "Succeeded" and no Azure-AsyncOperation/Location header, a delete returns
-// 200/204, and an action returns 200 — so the poller terminates on its first
+// 200/204, and an action returns 200. So the poller terminates on its first
 // poll and never hangs. This mirrors the Event Hubs and Container Apps
 // control-plane handlers.
 //
@@ -40,6 +40,9 @@ const (
 	actionResume = "resume"
 	actionStart  = "start"
 	actionStop   = "stop"
+
+	childMaxDepth    = 3 // workspaces/{w}/{child}/{name}
+	childActionDepth = 4 // ... /{name}/{action}
 )
 
 // Handler serves ARM Synapse requests. It owns the in-memory workspace tree.
@@ -81,6 +84,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // serveChild dispatches the child-resource routes under a workspace.
 func (h *Handler) serveChild(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	// {child}/{name}/{action} is the deepest workspace route.
+	if azurearm.TooDeep(w, r, rp, childActionDepth) {
+		return
+	}
+
 	switch {
 	case strings.EqualFold(rp.SubResource, childSQLPools):
 		h.serveSQLPool(w, r, rp)
@@ -89,7 +97,7 @@ func (h *Handler) serveChild(w http.ResponseWriter, r *http.Request, rp *azurear
 	case strings.EqualFold(rp.SubResource, childIntRuntime):
 		h.serveIntRuntime(w, r, rp)
 	default:
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "unsupported Synapse sub-resource")
+		azurearm.WriteUnknownType(w, r, rp)
 	}
 }
 

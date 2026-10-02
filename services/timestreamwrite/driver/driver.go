@@ -49,7 +49,7 @@ type RetentionProperties struct {
 
 // Database is a Timestream database. Arn, KmsKeyID and CreationTime are computed
 // once at create and never regenerated, so repeated reads never drift;
-// LastUpdatedTime is bumped on every mutation. TableCount is not stored — it is
+// LastUpdatedTime is bumped on every mutation. TableCount is not stored; it is
 // derived from the tables that belong to the database at read time.
 type Database struct {
 	Arn             string

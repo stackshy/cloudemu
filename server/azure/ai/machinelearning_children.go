@@ -178,7 +178,7 @@ func (h *MachineLearningHandler) serveEndpoints(w http.ResponseWriter, r *http.R
 	ep := p.rest[3]
 
 	// Nested deployments: .../{online,batch}Endpoints/{e}/deployments[/{d}]
-	if len(p.rest) > mlLenChild && p.rest[4] == "deployments" {
+	if len(p.rest) > mlLenChild && p.rest[4] == collDeployments {
 		h.serveEndpointDeployments(w, r, p, ws, kind, ep)
 
 		return
@@ -330,7 +330,7 @@ func (h *MachineLearningHandler) serveJobs(w http.ResponseWriter, r *http.Reques
 
 	name := p.rest[3]
 
-	if len(p.rest) > mlLenChild && p.rest[4] == "cancel" {
+	if len(p.rest) > mlLenChild && p.rest[4] == subCancel {
 		if r.Method != http.MethodPost {
 			writeMLMethodNotAllowed(w)
 
@@ -393,7 +393,7 @@ func (h *MachineLearningHandler) serveAssets(w http.ResponseWriter, r *http.Requ
 
 	name := p.rest[3]
 
-	if len(p.rest) < mlLenSub || p.rest[4] != "versions" {
+	if len(p.rest) < mlLenSub || p.rest[4] != subVersions {
 		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "expected /versions under asset container")
 
 		return

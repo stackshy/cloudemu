@@ -11,7 +11,7 @@ import (
 )
 
 // TestSnapshotRestoreRoundTrip proves the Eventarc mock serializes its entire
-// state — channels, triggers (rules), and targets — and restores it into a fresh
+// state, channels, triggers (rules), and targets, and restores it into a fresh
 // mock identity-preservingly.
 func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	ctx := context.Background()

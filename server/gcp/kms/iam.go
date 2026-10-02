@@ -21,7 +21,7 @@ type iamState struct {
 const (
 	// iamEtagTag is the protobuf field-1 varint tag byte. Real IAM policy etags
 	// are base64 of a single-field protobuf carrying a version, e.g. "CAE="
-	// decodes to tag 0x08 then varint 1 — the same shape cloudemu mints for its
+	// decodes to tag 0x08 then varint 1, the same shape cloudemu mints for its
 	// other GCP IAM policies.
 	iamEtagTag = 0x08
 	// iamEtagInitialVersion is the version an unset policy reports (etag "CAE=").

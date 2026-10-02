@@ -41,7 +41,7 @@ type gkeCluster struct {
 	// LegacyAbac and NetworkConfig are ALWAYS emitted (non-omitempty pointers)
 	// because real GKE always returns them, and the official Terraform google
 	// provider dereferences cluster.LegacyAbac.Enabled and cluster.NetworkConfig.
-	// Network/Subnetwork unconditionally on read — a nil either one panics the
+	// Network/Subnetwork unconditionally on read. A nil either one panics the
 	// provider on the very first google_container_cluster apply.
 	LegacyAbac    *gkeLegacyAbac    `json:"legacyAbac"`
 	NetworkConfig *gkeNetworkConfig `json:"networkConfig"`
@@ -100,7 +100,7 @@ type gkeNodeConfig struct {
 
 type gkeAutoscaling struct {
 	// Enabled has no omitempty so a disabled pool still emits {enabled:false}
-	// rather than dropping the field — clients read it to confirm the disable.
+	// rather than dropping the field. Clients read it to confirm the disable.
 	Enabled      bool  `json:"enabled"`
 	MinNodeCount int64 `json:"minNodeCount,omitempty"`
 	MaxNodeCount int64 `json:"maxNodeCount,omitempty"`
@@ -111,7 +111,7 @@ type gkeNodeManagement struct {
 	AutoRepair  bool `json:"autoRepair,omitempty"`
 }
 
-// Request envelopes — only the fields we read are listed here.
+// Request envelopes: only the fields we read are listed here.
 
 type createClusterReq struct {
 	Cluster *gkeCluster `json:"cluster,omitempty"`
@@ -228,12 +228,12 @@ type gkeServerConfig struct {
 // every selfLink/targetLink it returns.
 const selfLinkBase = "https://container.googleapis.com/v1/"
 
-// int64Ptr wraps v so the wire shape emits it explicitly — including a genuine
+// int64Ptr wraps v so the wire shape emits it explicitly, including a genuine
 // 0 node count, which a bare int64 with omitempty would silently drop.
 func int64Ptr(v int64) *int64 { return &v }
 
 // toClusterResource converts a provider Cluster into the wire shape. The
-// endpoint argument is what the Mock reported via Endpoint(location, name) —
+// endpoint argument is what the Mock reported via Endpoint(location, name),
 // either the in-memory K8s data-plane URL when a data plane is wired, or the
 // cluster's synthesized control-plane IP.
 func toClusterResource(
@@ -420,9 +420,9 @@ func writeError(w http.ResponseWriter, status int, reason, msg string) {
 }
 
 // writeErr maps a CloudEmu canonical error to the matching GKE HTTP status and
-// reason. The wire message is cerrors.Message(err) — the error's
+// reason. The wire message is cerrors.Message(err): the error's
 // human-readable text without the canonical code prefix (e.g. "cluster x not
-// found", not "NotFound: cluster x not found") — matching every other GCP
+// found", not "NotFound: cluster x not found"), matching every other GCP
 // wire handler, which never leaks the internal error-taxonomy name into the
 // message an SDK surfaces to the caller.
 func writeErr(w http.ResponseWriter, err error) {

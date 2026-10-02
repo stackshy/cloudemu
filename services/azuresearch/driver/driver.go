@@ -1,5 +1,5 @@
 // Package driver defines the interface for Azure AI Search
-// (Microsoft.Search/searchServices) — both the ARM control plane (service
+// (Microsoft.Search/searchServices): both the ARM control plane (service
 // lifecycle, admin/query keys, private links) and the search data plane
 // (indexes, documents, indexers, data sources, skillsets, synonym maps,
 // aliases, service statistics).

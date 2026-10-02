@@ -52,7 +52,7 @@ func TestSDKDeleteListenerCascadesRules(t *testing.T) {
 			listeners.Listeners, survivorARN)
 	}
 
-	// DescribeRules on the deleted listener is ListenerNotFound — its rules are
+	// DescribeRules on the deleted listener is ListenerNotFound. Its rules are
 	// not queryable through their (now gone) parent.
 	_, err = client.DescribeRules(ctx, &elb.DescribeRulesInput{
 		ListenerArn: aws.String(victimARN),

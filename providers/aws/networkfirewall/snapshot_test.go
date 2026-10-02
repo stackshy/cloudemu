@@ -34,7 +34,7 @@ func TestSnapshotRoundTripNetworkFirewall(t *testing.T) {
 		t.Fatalf("create rule group: %v", err)
 	}
 
-	if err := src.UpdateLoggingConfiguration(ctx, "fw-1", []string{"FLOW", "ALERT"}); err != nil {
+	if err := src.UpdateLoggingConfiguration(ctx, "fw-1", logConfigs("FLOW", "ALERT")); err != nil {
 		t.Fatalf("update logging: %v", err)
 	}
 
@@ -66,7 +66,7 @@ func TestSnapshotRoundTripNetworkFirewall(t *testing.T) {
 
 	// Logging (mu-guarded) survived.
 	logs, err := dst.DescribeLoggingConfiguration(ctx, "fw-1")
-	if err != nil || len(logs) != 2 || logs[0] != "FLOW" || logs[1] != "ALERT" {
+	if err != nil || len(logs) != 2 || logs[0].LogType != "FLOW" || logs[1].LogType != "ALERT" {
 		t.Fatalf("restored logging = %+v, err %v", logs, err)
 	}
 }

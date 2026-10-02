@@ -194,6 +194,10 @@ func (h *Handler) routeVNGateway(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createVNGateway(w, r, rp, svc)
@@ -302,7 +306,7 @@ func toRecordBgp(in *bgpSettings) *netdriver.AzureGatewayBgpSettings {
 }
 
 // patchVNGateway applies an ARM UpdateTags PATCH (VirtualNetworkGateways
-// Client.BeginUpdateTags — an LRO): the body's tags REPLACE the stored set
+// Client.BeginUpdateTags, an LRO): the body's tags REPLACE the stored set
 // wholesale (tags:{} wipes them), the gateway's other fields are left intact,
 // and the full resource is returned. A sync 200 with a terminal
 // provisioningState completes the poller immediately (the same convention the
@@ -469,6 +473,10 @@ func (h *Handler) routeLNGateway(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createLNGateway(w, r, rp, svc)
@@ -523,7 +531,7 @@ func (*Handler) createLNGateway(w http.ResponseWriter, r *http.Request, rp azure
 }
 
 // patchLNGateway applies an ARM UpdateTags PATCH (LocalNetworkGatewaysClient.
-// UpdateTags — a synchronous 200): the body's tags REPLACE the stored set
+// UpdateTags, a synchronous 200): the body's tags REPLACE the stored set
 // wholesale (tags:{} wipes them), the gateway's other fields are left intact,
 // and the full resource is returned. The get-modify-put is guarded by patchMu so
 // a concurrent PATCH cannot drop the write. A PATCH on a missing gateway is a
@@ -649,6 +657,10 @@ func (h *Handler) routeConnection(w http.ResponseWriter, r *http.Request, rp azu
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createConnection(w, r, rp, svc)
@@ -704,7 +716,7 @@ func (*Handler) createConnection(w http.ResponseWriter, r *http.Request, rp azur
 }
 
 // patchConnection applies an ARM UpdateTags PATCH (VirtualNetworkGateway
-// ConnectionsClient.BeginUpdateTags — an LRO): the body's tags REPLACE the
+// ConnectionsClient.BeginUpdateTags, an LRO): the body's tags REPLACE the
 // stored set wholesale (tags:{} wipes them), the connection's other fields are
 // left intact, and the full resource is returned. A sync 200 with a terminal
 // provisioningState completes the poller immediately (the same convention the

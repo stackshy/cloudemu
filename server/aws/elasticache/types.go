@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	ecprovider "github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
 
@@ -127,7 +128,7 @@ type describeCacheClustersResponse struct {
 	Metadata responseMetadata            `xml:"ResponseMetadata"`
 }
 
-// nodeSnapshotXML mirrors AWS's NodeSnapshot — the per-node backup record a
+// nodeSnapshotXML mirrors AWS's NodeSnapshot, the per-node backup record a
 // caller reads to size a restore.
 type nodeSnapshotXML struct {
 	CacheNodeID         string `xml:"CacheNodeId,omitempty"`
@@ -225,23 +226,6 @@ func toSnapshotXML(s *cachedriver.Snapshot) snapshotXML {
 	}
 }
 
-// defaultParamGroupName derives the default cache parameter group name AWS
-// assigns to a cluster, e.g. "default.redis7" or "default.memcached1.6". For
-// redis the family is engine + major version; for memcached it is major.minor.
-func defaultParamGroupName(engine, version string) string {
-	family := engine
-
-	parts := strings.Split(version, ".")
-	switch {
-	case engine == "memcached" && len(parts) >= 2:
-		family = engine + parts[0] + "." + parts[1]
-	case len(parts) >= 1 && parts[0] != "":
-		family = engine + parts[0]
-	}
-
-	return "default." + family
-}
-
 // fallbackRegion is used when a cluster's ARN is missing or malformed and its
 // region cannot be read; it is the AWS default region.
 const fallbackRegion = "us-east-1"
@@ -295,8 +279,8 @@ func toCacheClusterXML(info *cachedriver.CacheInfo) cacheClusterXML {
 
 	// Defensive clamp to the real ElastiCache ceiling (Memcached tops out at 40
 	// nodes; Redis reports 1). The stored count is validated on create, but bound
-	// it here too — with an explicit comparison immediately before the node
-	// allocation below — so a tainted value can never size an unbounded allocation.
+	// it here too so a tainted value can never drive an unbounded node list. The
+	// node slice below gets no capacity hint for the same reason.
 	if numNodes > maxCacheNodesPerCluster {
 		numNodes = maxCacheNodesPerCluster
 	}
@@ -319,7 +303,7 @@ func toCacheClusterXML(info *cachedriver.CacheInfo) cacheClusterXML {
 		// otherwise report the engine family's default (default.<family>).
 		paramGroup := info.ParameterGroupName
 		if paramGroup == "" {
-			paramGroup = defaultParamGroupName(info.Engine, info.EngineVersion)
+			paramGroup = ecprovider.DefaultParameterGroupName(info.Engine, info.EngineVersion)
 		}
 
 		out.CacheParameterGroup = &cacheParameterGroupStatusXML{
@@ -343,7 +327,7 @@ func toCacheClusterXML(info *cachedriver.CacheInfo) cacheClusterXML {
 		// looks like to a client.
 		az := clusterAZ(info.ARN)
 
-		nodes := make([]cacheNodeXML, 0, numNodes)
+		nodes := make([]cacheNodeXML, 0)
 		for i := 1; i <= numNodes; i++ {
 			nodes = append(nodes, cacheNodeXML{
 				CacheNodeID:              fmt.Sprintf("%04d", i),

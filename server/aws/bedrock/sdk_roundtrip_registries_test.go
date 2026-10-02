@@ -48,7 +48,7 @@ func TestSDKInferenceProfileLifecycle(t *testing.T) {
 		t.Fatalf("unexpected models: %+v", got.Models)
 	}
 
-	list, err := client.ListInferenceProfiles(ctx, &awsbedrock.ListInferenceProfilesInput{})
+	list, err := client.ListInferenceProfiles(ctx, &awsbedrock.ListInferenceProfilesInput{TypeEquals: bedrocktypes.InferenceProfileTypeApplication})
 	if err != nil {
 		t.Fatalf("ListInferenceProfiles: %v", err)
 	}

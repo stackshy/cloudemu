@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stretchr/testify/assert"
@@ -281,9 +282,11 @@ func TestSetAlarmState(t *testing.T) {
 		state     string
 		wantErr   bool
 		errSubstr string
+		invalid   bool // want InvalidArgument and the state left as OK
 	}{
 		{name: "success", alarm: "a1", state: "OK"},
 		{name: "not found", alarm: "missing", state: "OK", wantErr: true, errSubstr: "not found"},
+		{name: "invalid state", alarm: "a1", state: "BOGUS", wantErr: true, errSubstr: "invalid alarm state", invalid: true},
 	}
 
 	for _, tt := range tests {
@@ -293,6 +296,11 @@ func TestSetAlarmState(t *testing.T) {
 			case tt.wantErr:
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errSubstr)
+				if tt.invalid {
+					assert.True(t, cerrors.IsInvalidArgument(err), "got %v", err)
+					alarms, _ := m.DescribeAlarms(ctx, []string{"a1"})
+					assert.Equal(t, "OK", alarms[0].State)
+				}
 			default:
 				require.NoError(t, err)
 				alarms, descErr := m.DescribeAlarms(ctx, []string{tt.alarm})

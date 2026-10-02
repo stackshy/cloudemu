@@ -1,12 +1,12 @@
 // Package mongocluster provides an in-memory mock of Azure Cosmos DB for MongoDB
-// (vCore) — the Microsoft.DocumentDB/mongoClusters ARM control plane only. It
+// (vCore), the Microsoft.DocumentDB/mongoClusters ARM control plane only. It
 // manages the mongo-cluster lifecycle (create/update/get/delete/list) plus the
 // listConnectionStrings POST action. The MongoDB data plane (a running mongod
 // endpoint, wire-protocol traffic), firewall rules, private endpoints and
 // geo-replica (replica) linking are out of scope.
 //
 // This is distinct from the Cosmos DB core service (Microsoft.DocumentDB/
-// databaseAccounts) served by the cosmosdb service — mongoClusters is a separate
+// databaseAccounts) served by the cosmosdb service: mongoClusters is a separate
 // resource type under the same Microsoft.DocumentDB namespace, the Cosmos DB for
 // MongoDB (vCore) offering.
 //
@@ -24,7 +24,7 @@
 // backend.
 //
 // Every computed field is derived deterministically from the resource identity,
-// so the same resource always reports the same values — across gets, patches,
+// so the same resource always reports the same values, across gets, patches,
 // listConnectionStrings and a snapshot/restore.
 package mongocluster
 
@@ -253,7 +253,7 @@ func (m *Mock) ListClustersBySubscription(_ context.Context, sub string) ([]Clus
 	}), nil
 }
 
-// ListConnectionStrings returns the cluster's connection strings — the stable,
+// ListConnectionStrings returns the cluster's connection strings, the stable,
 // minted default string. It errors with NotFound if the cluster is absent. The
 // returned strings embed a literal "<password>" placeholder, never the secret.
 func (m *Mock) ListConnectionStrings(_ context.Context, sub, rg, name string) ([]ConnectionStringEntry, error) {
@@ -313,7 +313,7 @@ func (m *Mock) filterClusters(pred func(*Cluster) bool) []Cluster {
 // applyClusterInput overlays the mutable request fields onto c, leaving the
 // immutable location untouched. A nil pointer/slice means "not supplied": the
 // stored value is preserved, so a PATCH merges only what it names. The connection
-// string is (re)minted only when it is still empty — i.e. once, at create — so it
+// string is (re)minted only when it is still empty (i.e. once, at create) so it
 // stays stable across every later update.
 func applyClusterInput(c *Cluster, in *ClusterInput) {
 	if in.Tags != nil {
@@ -375,8 +375,8 @@ func applyClusterBlocks(c *Cluster, in *ClusterInput) {
 // connectionString derives the stable default connection string, matching the
 // "mongodb+srv://<user>:<password>@<name>.mongocluster.cosmos.azure.com/..." form
 // real Azure emits on the resource and from listConnectionStrings. Azure keeps the
-// literal "<user>" and "<password>" placeholders — it never substitutes the real
-// administrator login or the secret — so the string is derived from the (immutable)
+// literal "<user>" and "<password>" placeholders: it never substitutes the real
+// administrator login or the secret, so the string is derived from the (immutable)
 // cluster name alone and is inherently stable across gets, patches and the action.
 func connectionString(name string) string {
 	return "mongodb+srv://<user>:<password>@" +

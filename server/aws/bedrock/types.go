@@ -201,7 +201,7 @@ type countTokensConverse struct {
 
 type countTokensInvokeModel struct {
 	// Body is the model-native InvokeModel payload. The SDK serializes it as a
-	// base64 blob (a JSON string), so it is typed []byte — encoding/json
+	// base64 blob (a JSON string), so it is typed []byte; encoding/json
 	// base64-decodes it back to the raw bytes on unmarshal.
 	Body []byte `json:"body"`
 }

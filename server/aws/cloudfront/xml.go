@@ -112,7 +112,7 @@ type distributionListResponse struct {
 	Items       []distributionSummaryXML `xml:"Items>DistributionSummary"`
 }
 
-// distributionSummaryXML is a <DistributionSummary> — the server identity fields
+// distributionSummaryXML is a <DistributionSummary>: the server identity fields
 // followed by the verbatim config sub-tree. The SDK/Terraform deserializers skip
 // the few config elements a summary does not model (CallerReference, Logging).
 type distributionSummaryXML struct {
@@ -191,7 +191,7 @@ type errorXML struct {
 }
 
 // isoTime formats a timestamp the way CloudFront renders LastModifiedTime /
-// CreateTime — ISO8601 / RFC3339 in UTC.
+// CreateTime: ISO8601 / RFC3339 in UTC.
 func isoTime(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
 // decodeXML reads an XML request body into v, writing a MalformedXML error and
@@ -237,6 +237,8 @@ func codeFor(err error) errCode {
 		return errCode{http.StatusConflict, "DistributionNotDisabled"}
 	case errors.Is(err, cfdriver.ErrCallerReferenceImmutable):
 		return errCode{http.StatusBadRequest, "IllegalUpdate"}
+	case errors.Is(err, cfdriver.ErrNoSuchResource):
+		return errCode{http.StatusNotFound, "NoSuchResource"}
 	default:
 		return errCode{http.StatusInternalServerError, "InternalFailure"}
 	}

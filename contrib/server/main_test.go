@@ -25,8 +25,8 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/serveflags"
 )
 
-// TestBatteriesServerE2E starts the batteries-included server in-process — now
-// assembled through the shared server/serverkit package — with a real Postgres
+// TestBatteriesServerE2E starts the batteries-included server in-process, now
+// assembled through the shared server/serverkit package, with a real Postgres
 // and Redis engine wired in, drives it with the real AWS SDK (RDS + ElastiCache,
 // the two engine-backed services), connects real lib/pq and go-redis clients to
 // the endpoints the SDK reports, does a real round-trip against each, then cancels
@@ -72,8 +72,8 @@ func TestBatteriesServerE2E(t *testing.T) {
 // TestBatteriesServerIdentityPreserved guards the swap from
 // awsserver.NewFromProvider to serverkit (which builds via awsserver.DriversFrom):
 // DriversFrom copies AccountID/Region/EnforceAuth verbatim, so a request routed
-// through serverkit must observe the same identity, and — with enforce-auth off,
-// the batteries default — accept arbitrary credentials exactly as before.
+// through serverkit must observe the same identity, and, with enforce-auth off
+// (the batteries default), accept arbitrary credentials exactly as before.
 //
 // It runs with all engines off, so it needs no Docker/Postgres and stays fast and
 // deterministic. The RDS DBInstanceArn embeds the account id from the provider
@@ -364,7 +364,7 @@ func redisRoundTrip(ctx context.Context, t *testing.T, addr string) {
 }
 
 // assertPortReleased fails if anything is still listening on port after
-// shutdown — proving Provider.Close() stopped the embedded Postgres server.
+// shutdown, proving Provider.Close() stopped the embedded Postgres server.
 func assertPortReleased(t *testing.T, port int) {
 	t.Helper()
 
@@ -442,7 +442,7 @@ func freePort(t *testing.T) int {
 }
 
 // allEnginesOff is the fully in-memory selection (every capability "off"), the
-// engine equivalent of a no-flag run — what buildOptions validates against.
+// engine equivalent of a no-flag run: what buildOptions validates against.
 func allEnginesOff() engineSelection {
 	return engineSelection{
 		db:         engineOff,

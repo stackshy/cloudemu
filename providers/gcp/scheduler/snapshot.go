@@ -18,7 +18,7 @@ type schedulerSnapshot struct {
 	Jobs json.RawMessage `json:"jobs,omitempty"`
 }
 
-// Snapshot captures every job as JSON. includeAssets is unused — Cloud
+// Snapshot captures every job as JSON. includeAssets is unused: Cloud
 // Scheduler holds no object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.Lock()

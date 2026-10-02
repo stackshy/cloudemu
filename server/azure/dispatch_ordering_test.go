@@ -3,15 +3,15 @@ package azure_test
 // Dispatch-ordering regression tests (Architecture Theme 2, #590).
 //
 // server.Server is a first-match-wins dispatcher. In server/azure/azure.go
-// New(), the BlobStorage data-plane handler is the permissive fallback — its
-// Matches() claims every non-/subscriptions/ path — so it MUST register last.
+// New(), the BlobStorage data-plane handler is the permissive fallback: its
+// Matches() claims every non-/subscriptions/ path, so it MUST register last.
 // Several service handlers (Cosmos DB on /dbs, Key Vault on /secrets, ACR on
 // /acr/v1/…) sit on non-/subscriptions/ paths and are therefore ambiguous with
 // the Blob fallback; each is documented as "register before the permissive
 // BlobStorage fallback".
 //
 // These tests drive the FULL production server (NewFromProvider) with those
-// ambiguous paths and assert the specific handler — not Blob — served. The
+// ambiguous paths and assert the specific handler, not Blob, served. The
 // robust discriminator is the "X-Ms-Version" response header: the BlobStorage
 // handler sets it on every response, and the specific handlers never do. If a
 // contributor moves the Blob fallback earlier (or alphabetizes registrations),
@@ -72,7 +72,7 @@ func TestSpecificHandlersWinBeforeBlobFallback(t *testing.T) {
 
 			// The BlobStorage fallback stamps X-Ms-Version on every response;
 			// the specific handlers never do. Its presence proves Blob wrongly
-			// swallowed the request — i.e. the registration order is broken.
+			// swallowed the request: the registration order is broken.
 			if v := resp.Header.Get("X-Ms-Version"); v != "" {
 				t.Errorf("GET %s was served by the permissive BlobStorage fallback (X-Ms-Version=%q); "+
 					"the specific handler must register before it", tc.path, v)

@@ -9,7 +9,7 @@ import (
 // azcontainerregistry's Client.GetManifest / DeleteManifest / UploadManifest
 // actually issue requests against: "/v2/{name}/manifests/{reference}". This
 // is a *different* URL family from the "/acr/v1/{name}/_manifests/{digest}"
-// changeableAttributes path served by operations.go — real ACR exposes both:
+// changeableAttributes path served by operations.go. Real ACR exposes both:
 // /acr/v1 for catalog metadata (list/get/patch), /v2 for the manifest content
 // itself (get/delete/push), per the Docker Registry HTTP API V2 the ACR data
 // plane implements alongside its own /acr/v1 extension.
@@ -50,8 +50,8 @@ func parseV2ManifestPath(path string) (repo, reference string, ok bool) {
 
 // serveV2Manifest routes GET (fetch manifest content) and DELETE (delete
 // manifest) against the shared ContainerRegistry driver's already-modeled
-// GetImage/DeleteImage. PUT (push) is not modeled — cloudemu has no real OCI
-// blob storage — and answers a clean 405 instead of silently falling through
+// GetImage/DeleteImage. PUT (push) is not modeled: cloudemu has no real OCI
+// blob storage. It answers a clean 405 instead of silently falling through
 // to an unrelated handler.
 func (h *Handler) serveV2Manifest(w http.ResponseWriter, r *http.Request, repo, reference string) {
 	switch r.Method {

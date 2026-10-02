@@ -13,7 +13,7 @@ import (
 // against: its IP address (IPv4 or IPv6) and the security groups it belongs to.
 // The group memberships let a rule that references another security group
 // (UserIdGroupPairs / ReferencedGroupID) resolve "is the peer a member of the
-// referenced group?" — the most common real-cloud pattern (e.g. "allow the db
+// referenced group?", the most common real-cloud pattern (e.g. "allow the db
 // SG ingress from the app SG"), which a CIDR-only matcher silently denies.
 type ruleSource struct {
 	ip       string

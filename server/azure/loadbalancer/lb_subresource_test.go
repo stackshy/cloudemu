@@ -219,7 +219,7 @@ func TestSDKLBBackendPoolPutPreservesSiblings(t *testing.T) {
 
 // HIGH: standalone GET on the Get/List-only sub-resource kinds (probes,
 // loadBalancingRules) must also return the addressed child, not the whole
-// parent LoadBalancer object under a wrong .Name — same routing root cause,
+// parent LoadBalancer object under a wrong .Name: same routing root cause,
 // exercised on the two kinds with no standalone PUT/DELETE.
 func TestSDKLBProbeAndRuleGetReturnChildNotParent(t *testing.T) {
 	c := newLBSubClients(t)
@@ -408,7 +408,7 @@ func TestSDKLBNatRuleDanglingFrontendRefRejected(t *testing.T) {
 }
 
 // probes and loadBalancingRules have no standalone create/delete in real ARM
-// (Get/List only) — a raw PUT/DELETE against those sub-resource paths must
+// (Get/List only); a raw PUT/DELETE against those sub-resource paths must
 // not fall through to the whole-LB handlers (which would wipe/delete the
 // parent); it must be rejected outright, and the parent and every sibling
 // must survive the attempt.
@@ -583,7 +583,7 @@ func TestSDKLBDuplicatePoolNameRejected(t *testing.T) {
 
 // HIGH: a standalone backendAddressPools DELETE must be rejected with 409
 // when a loadBalancingRule on the same load balancer still references the
-// pool — the pool, the rule, and the parent must all survive the rejected
+// pool: the pool, the rule, and the parent must all survive the rejected
 // attempt.
 func TestSDKLBBackendPoolDeleteInUseRejected(t *testing.T) {
 	c := newLBSubClients(t)

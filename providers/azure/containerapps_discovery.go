@@ -7,8 +7,8 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
-// containerAppsDiscovery projects Azure Container Apps resources — managed
-// environments and container apps (Microsoft.App) — into the cross-service
+// containerAppsDiscovery projects Azure Container Apps resources, managed
+// environments and container apps (Microsoft.App), into the cross-service
 // inventory so they surface in Resource Graph / `az resource list`. Container
 // Apps are Azure-only with no shared cross-cloud driver, so this rides the
 // generic GenericResources projection (like azureMLDiscovery and

@@ -73,8 +73,8 @@ const (
 
 // ResourceLister is the query surface the handler needs from its inventory. A
 // single-region *resourcediscovery.Engine satisfies it, and so does a
-// cross-region aggregator that fans List out over every live region's engine —
-// letting the multi-region mux serve an account-wide (aggregator-index)
+// cross-region aggregator that fans List out over every live region's engine.
+// That lets the multi-region mux serve an account-wide (aggregator-index)
 // Resource Explorer without this handler knowing how many regions exist.
 type ResourceLister interface {
 	List(ctx context.Context, q resourcediscovery.Query) ([]resourcediscovery.Resource, error)
@@ -427,7 +427,7 @@ func (h *Handler) getIndex(w http.ResponseWriter, _ *http.Request) {
 
 // createIndex creates the LOCAL index for the calling region. Real Resource
 // Explorer requires this before Search; the emulator bootstraps one at New(),
-// so this is idempotent — it returns the existing index rather than erroring.
+// so this is idempotent: it returns the existing index rather than erroring.
 func (h *Handler) createIndex(w http.ResponseWriter, _ *http.Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

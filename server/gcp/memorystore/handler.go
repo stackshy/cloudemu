@@ -5,24 +5,24 @@
 //
 // Coverage (v1 REST):
 //
-//	POST   /v1/projects/{p}/locations/{l}/instances?instanceId={i}  — Create (LRO)
-//	GET    /v1/projects/{p}/locations/{l}/instances/{i}             — Get
-//	GET    /v1/projects/{p}/locations/{l}/instances                 — List
-//	DELETE /v1/projects/{p}/locations/{l}/instances/{i}             — Delete (LRO)
-//	GET    /v1/projects/{p}/locations/{l}/operations/{op}           — Operations.Get
+//	POST   /v1/projects/{p}/locations/{l}/instances?instanceId={i}  : Create (LRO)
+//	GET    /v1/projects/{p}/locations/{l}/instances/{i}             : Get
+//	GET    /v1/projects/{p}/locations/{l}/instances                 : List
+//	DELETE /v1/projects/{p}/locations/{l}/instances/{i}             : Delete (LRO)
+//	GET    /v1/projects/{p}/locations/{l}/operations/{op}           : Operations.Get
 //
 // Mutating ops return a google.longrunning.Operation with done=true so SDK
 // pollers terminate on the first response. The operation's `response` carries
 // the Instance (Create) or an empty object (Delete).
 //
-// Matches claims /v1/projects/{p}/locations/{l}/{instances|operations}/... — a
+// Matches claims /v1/projects/{p}/locations/{l}/{instances|operations}/..., a
 // distinct sub-path within the /v1/projects/ family used by Firestore, IAM,
 // Secret Manager, etc. Its {instances|operations} guard is disjoint from those
 // (Cloud Functions uses functions/, GKE uses clusters/, …), so registration
 // order relative to them is unconstrained. Registered before the permissive
 // Firestore / GCS fallbacks so its paths aren't swallowed.
 //
-// Only the instance control plane is mapped — the real Memorystore SDK manages
+// Only the instance control plane is mapped: the real Memorystore SDK manages
 // instances, not the Redis data plane. The driver's data-plane methods
 // (Set/Get/Incr/…) have no cloud-SDK surface and are out of scope.
 package memorystore
@@ -32,6 +32,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
@@ -53,7 +54,13 @@ type Handler struct {
 	// names 404). Nil in a standalone package server, where this handler serves
 	// its own /operations/ poll.
 	ops *lro.Registry
+
+	// shared leaves zonal locations to Filestore; Redis is regional only.
+	shared bool
 }
+
+// SetSharedPath turns on the rules for a server that also mounts Filestore.
+func (h *Handler) SetSharedPath() { h.shared = true }
 
 // SetOperationRegistry wires the shared LRO poller so created operations are
 // resolvable (with their response) through the full server's operations host.
@@ -116,7 +123,7 @@ func parseRoute(urlPath string) (route, bool) {
 // In an assembled server h.ops is the same *lro.Registry the shared poller
 // consults, and that poller is registered ahead of this handler, so it always
 // wins first-match-wins routing for every verb (GET/cancel/DELETE) on every
-// operation name, known or not — this handler never needs to (and, per this
+// operation name, known or not. This handler never needs to (and, per this
 // guard, no longer does) answer for operations it didn't create.
 func (h *Handler) Matches(r *http.Request) bool {
 	rt, ok := parseRoute(r.URL.Path)
@@ -124,11 +131,11 @@ func (h *Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	if rt.resource == operationsSeg && h.ops != nil {
+	if (rt.resource == operationsSeg && h.ops != nil) || (h.shared && sharedpath.IsZone(rt.location)) {
 		return false
 	}
 
-	return true
+	return !sharedpath.Yield(r, sharedpath.Redis, sharedpath.File, sharedpath.SecureSourceManager, sharedpath.DataFusion)
 }
 
 // ServeHTTP routes on the parsed path and method.

@@ -152,7 +152,7 @@ func TestSDKRDSClusterParameterGroupLifecycle(t *testing.T) {
 // TestSDKRDSClusterParametersSourceFilter pins that DescribeDBClusterParameters
 // honors the "Source" request filter. terraform-provider-aws reads a cluster
 // parameter group (aws_neptune_cluster_parameter_group / aws_rds_cluster_parameter_group)
-// with Source="user" and expects the engine-default set excluded — otherwise
+// with Source="user" and expects the engine-default set excluded. Otherwise
 // every default surfaces as an unmanaged parameter block and the plan never
 // converges.
 func TestSDKRDSClusterParametersSourceFilter(t *testing.T) {
@@ -229,7 +229,7 @@ func findSDKParam(params []awsrdstypes.Parameter, name string) *awsrdstypes.Para
 
 // TestSDKRDSDescribeDefaultParameters pins that DescribeDBParameters on the
 // always-present default parameter group (never explicitly created) returns the
-// engine-default set — real RDS never returns an empty parameter list.
+// engine-default set. Real RDS never returns an empty parameter list.
 func TestSDKRDSDescribeDefaultParameters(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()

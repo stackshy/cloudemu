@@ -67,7 +67,7 @@ func weightedSetIdentifiers(
 }
 
 // TestSDKWeightedDeleteBySetIdentifier pins that DELETE of one weighted record
-// set removes ONLY that SetIdentifier — the sibling weighted records sharing the
+// set removes ONLY that SetIdentifier. The sibling weighted records sharing the
 // same name+type are untouched.
 func TestSDKWeightedDeleteBySetIdentifier(t *testing.T) {
 	client := newRoute53Client(t)

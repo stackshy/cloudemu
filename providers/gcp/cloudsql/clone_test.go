@@ -9,7 +9,7 @@ import (
 )
 
 // TestCloneInstanceFieldsCoherent guards the field split: a clone must report
-// its OWN connection name and keep a reachable IP in Endpoint — not the old bug
+// its OWN connection name and keep a reachable IP in Endpoint, not the old bug
 // where the connection-name string was written into Endpoint (corrupting the
 // reported ipAddress) while ConnectionName silently inherited the source's.
 func TestCloneInstanceFieldsCoherent(t *testing.T) {

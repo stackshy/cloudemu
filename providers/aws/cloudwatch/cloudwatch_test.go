@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -245,6 +246,14 @@ func TestSetAlarmState(t *testing.T) {
 	t.Run("not found", func(t *testing.T) {
 		err := m.SetAlarmState(ctx, "nope", "OK", "")
 		assertError(t, err, true)
+	})
+
+	t.Run("invalid state", func(t *testing.T) {
+		err := m.SetAlarmState(ctx, "a1", "BOGUS", "x")
+		assertEqual(t, true, cerrors.IsInvalidArgument(err))
+
+		alarms, _ := m.DescribeAlarms(ctx, []string{"a1"})
+		assertEqual(t, "ALARM", alarms[0].State)
 	})
 }
 

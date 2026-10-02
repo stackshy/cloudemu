@@ -19,7 +19,7 @@ type gwSnapshot struct {
 	Gateways json.RawMessage `json:"gateways,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // the gateway mock holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	b, err := m.gws.Snapshot()

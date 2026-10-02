@@ -19,8 +19,8 @@ type fisSnapshot struct {
 	Experiments map[string]driver.Experiment         `json:"experiments,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// FIS is control-plane only and holds no bulk assets.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. FIS is control-plane
+// only and holds no bulk assets.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := fisSnapshot{}
 

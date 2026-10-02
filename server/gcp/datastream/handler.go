@@ -6,24 +6,24 @@
 //
 // Coverage (connection-profile + stream control plane only):
 //
-//	POST   /v1/…/connectionProfiles?connectionProfileId=  — CreateConnectionProfile (LRO)
-//	GET    /v1/…/connectionProfiles                       — ListConnectionProfiles
-//	GET    /v1/…/connectionProfiles/{id}                  — GetConnectionProfile
-//	PATCH  /v1/…/connectionProfiles/{id}?updateMask=      — PatchConnectionProfile (LRO)
-//	DELETE /v1/…/connectionProfiles/{id}                  — DeleteConnectionProfile (LRO)
-//	POST   /v1/…/streams?streamId=                        — CreateStream (LRO)
-//	GET    /v1/…/streams                                  — ListStreams
-//	GET    /v1/…/streams/{id}                             — GetStream
-//	PATCH  /v1/…/streams/{id}?updateMask=                 — PatchStream (LRO)
-//	DELETE /v1/…/streams/{id}                             — DeleteStream (LRO)
-//	GET    /v1/…/operations/{op}                          — Operations.Get (shared poller)
+//	POST   /v1/…/connectionProfiles?connectionProfileId=  : CreateConnectionProfile (LRO)
+//	GET    /v1/…/connectionProfiles                       : ListConnectionProfiles
+//	GET    /v1/…/connectionProfiles/{id}                  : GetConnectionProfile
+//	PATCH  /v1/…/connectionProfiles/{id}?updateMask=      : PatchConnectionProfile (LRO)
+//	DELETE /v1/…/connectionProfiles/{id}                  : DeleteConnectionProfile (LRO)
+//	POST   /v1/…/streams?streamId=                        : CreateStream (LRO)
+//	GET    /v1/…/streams                                  : ListStreams
+//	GET    /v1/…/streams/{id}                             : GetStream
+//	PATCH  /v1/…/streams/{id}?updateMask=                 : PatchStream (LRO)
+//	DELETE /v1/…/streams/{id}                             : DeleteStream (LRO)
+//	GET    /v1/…/operations/{op}                          : Operations.Get (shared poller)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting resource embedded in `response`, so an SDK or Terraform LRO wait
 // terminates on the first poll instead of hanging.
 //
 // Location-scoped operations: Datastream's operations live under
-// /v1/projects/{p}/locations/{l}/operations — the SAME space the shared GCP LRO
+// /v1/projects/{p}/locations/{l}/operations, the same space the shared GCP LRO
 // poller owns. Matches returns false for operation paths when a shared registry
 // is wired, letting that poller win; a standalone package server (no registry)
 // serves its own polls. The connectionProfiles/streams resource-type guard keeps

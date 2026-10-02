@@ -103,7 +103,7 @@ func (h *Handler) serveVaultConfig(w http.ResponseWriter, r *http.Request, rp *a
 }
 
 // serveStorageConfig routes the singleton backupstorageconfig surface (GET,
-// PATCH — matching real ARM, which exposes only get/update here).
+// PATCH, matching real ARM, which exposes only get/update here).
 func (h *Handler) serveStorageConfig(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	serveSingletonConfig(w, r, rp, h.store.GetStorageConfig, h.store.UpdateStorageConfig, writeStorageConfig)
 }

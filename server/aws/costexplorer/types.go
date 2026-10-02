@@ -13,8 +13,8 @@ const (
 const hoursPerMonth = 730.0
 
 // costMetrics are the request metrics that carry a dollar amount. Any other
-// requested metric (UsageQuantity, NormalizedUsageAmount) is a usage metric —
-// the emulator does not track metered usage, so it reports zero with unit N/A.
+// requested metric (UsageQuantity, NormalizedUsageAmount) is a usage metric.
+// The emulator does not track metered usage, so it reports zero with unit N/A.
 var costMetrics = map[string]bool{ //nolint:gochecknoglobals // static lookup table
 	"UnblendedCost":    true,
 	"BlendedCost":      true,

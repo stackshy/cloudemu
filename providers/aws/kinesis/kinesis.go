@@ -19,6 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/kinesis/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 // Compile-time check that Mock implements driver.Kinesis.
@@ -94,6 +95,10 @@ type Mock struct {
 	// event batch on every PutRecord(s) so a mapped Lambda actually runs.
 	esmInvoker EventSourceInvoker
 
+	// monitoring, when wired via SetMonitoring, receives the stream-level
+	// AWS/Kinesis metrics real Kinesis publishes for every put/get.
+	monitoring mondriver.Monitoring
+
 	opts *config.Options
 }
 
@@ -137,8 +142,8 @@ func (m *Mock) streamARN(ctx context.Context, name string) string {
 }
 
 // consumerARN builds an enhanced-fan-out consumer ARN. Real Kinesis appends the
-// consumer's creation timestamp (Unix seconds) to the ARN — the documented
-// Consumer.ConsumerARN pattern ends in ":[0-9]+" — so that recreating a consumer
+// consumer's creation timestamp (Unix seconds) to the ARN, the documented
+// Consumer.ConsumerARN pattern ends in ":[0-9]+", so that recreating a consumer
 // with the same name yields a distinct ARN.
 func (m *Mock) consumerARN(ctx context.Context, streamName, consumerName string, createdAt time.Time) string {
 	return idgen.AWSARN("kinesis", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID,

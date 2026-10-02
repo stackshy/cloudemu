@@ -16,7 +16,7 @@ import (
 
 // recordingEngine is a config.FunctionEngine that records what the wire+provider
 // plumbing hands it, so a server-level test can assert the zipdeploy PUT drives
-// Deploy and the invoke drives Invoke — without a real runtime (no Docker).
+// Deploy and the invoke drives Invoke, without a real runtime (no Docker).
 type recordingEngine struct {
 	deploys []config.FunctionDeployment
 	invoked []string
@@ -67,7 +67,7 @@ func TestZipDeployDrivesEngineAndHandlerSetting(t *testing.T) {
 
 	ensureRG(t, http.DefaultClient, srv.URL, subID, rgName)
 
-	// 1. ARM site create carries no code — the engine is not deployed yet.
+	// 1. ARM site create carries no code: the engine is not deployed yet.
 	doReq(t, srv.URL, http.MethodPut, sitesURL("app1")+apiVer,
 		strings.NewReader(siteBodyWithHandler), http.StatusOK)
 
@@ -113,7 +113,7 @@ func TestZipDeployDrivesEngineAndHandlerSetting(t *testing.T) {
 		t.Fatalf("engine invoke not driven: %v", eng.invoked)
 	}
 
-	// 4. GET the site — the reserved handler key must not be echoed back.
+	// 4. GET the site: the reserved handler key must not be echoed back.
 	getBody := doReq(t, srv.URL, http.MethodGet, sitesURL("app1")+apiVer, nil, http.StatusOK)
 	if bytes.Contains(getBody, []byte("_CLOUDEMU_HANDLER")) {
 		t.Fatalf("reserved handler setting leaked into GET response: %s", getBody)

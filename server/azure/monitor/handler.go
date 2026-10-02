@@ -102,6 +102,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp, "networkSecurityPerimeterConfigurations") {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, &rp, kind)

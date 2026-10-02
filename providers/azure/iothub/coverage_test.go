@@ -91,7 +91,7 @@ func TestScalarPassthroughAndPolicyOverride(t *testing.T) {
 		t.Errorf("explicit policy key not honored: %+v", p)
 	}
 
-	// Still five policies — override did not append a duplicate.
+	// Still five policies: override did not append a duplicate.
 	keys, _ := m.ListKeys(context.Background(), "sub", "rg", "hub1")
 	if len(keys) != 5 {
 		t.Errorf("policy count after override = %d, want 5", len(keys))

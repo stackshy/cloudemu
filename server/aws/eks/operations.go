@@ -9,6 +9,8 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
+	"github.com/stackshy/cloudemu/v2/server/authctx"
+	"github.com/stackshy/cloudemu/v2/server/wire/sigv4"
 )
 
 // parseMaxResults reads the EKS maxResults query param (0 = server default).
@@ -51,6 +53,33 @@ func paginateNames(
 	return items, page.NextPageToken, true
 }
 
+// paginateItems pages a slice of records by a unique string key, using the
+// same token scheme as paginateNames. Returns ok=false after writing an error.
+func paginateItems[T any](
+	w http.ResponseWriter, r *http.Request, items []T, key func(*T) string,
+) (page []T, next string, ok bool) {
+	byKey := make(map[string]T, len(items))
+	keys := make([]string, 0, len(items))
+
+	for i := range items {
+		k := key(&items[i])
+		keys = append(keys, k)
+		byKey[k] = items[i]
+	}
+
+	pageKeys, next, ok := paginateNames(w, r, keys)
+	if !ok {
+		return nil, "", false
+	}
+
+	page = make([]T, 0, len(pageKeys))
+	for _, k := range pageKeys {
+		page = append(page, byKey[k])
+	}
+
+	return page, next, true
+}
+
 // safeInt32 narrows an int to int32, clamping at math.MaxInt32 / math.MinInt32.
 // EKS scaling and disk-size fields are int32 on the wire; the driver uses int
 // for ergonomics. A direct int->int32 cast would trip gosec G115; explicit
@@ -66,6 +95,22 @@ func safeInt32(v int) int32 {
 	}
 }
 
+// creatorARN returns the IAM principal that sent a CreateCluster request.
+// It is empty when nothing identifies the caller, and the provider then
+// derives one from the access key.
+func (h *Handler) creatorARN(r *http.Request) string {
+	if h.identities != nil {
+		return h.identities.Resolve(r).ARN
+	}
+
+	// With EnforceAuth on, the gate has resolved the real caller.
+	if p, ok := authctx.PrincipalFrom(r.Context()); ok {
+		return p.ARN
+	}
+
+	return ""
+}
+
 // Cluster operations.
 
 func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
@@ -75,11 +120,14 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := eksdriver.ClusterConfig{
-		Name:    body.Name,
-		Version: body.Version,
-		RoleArn: body.RoleArn,
-		Tags:    body.Tags,
+		Name:               body.Name,
+		Version:            body.Version,
+		RoleArn:            body.RoleArn,
+		Tags:               body.Tags,
+		CreatorAccessKeyID: sigv4.AccessKeyID(r),
 	}
+
+	cfg.CreatorPrincipalArn = h.creatorARN(r)
 
 	if body.ResourcesVpcConfig != nil {
 		cfg.VPCConfig = vpcRequestToDriver(body.ResourcesVpcConfig)
@@ -140,12 +188,23 @@ func (h *Handler) updateClusterConfig(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 
-	var vpc eksdriver.VPCConfig
+	var vpc *eksdriver.VPCConfig
 	if body.ResourcesVpcConfig != nil {
-		vpc = vpcRequestToDriver(body.ResourcesVpcConfig)
+		v := vpcRequestToDriver(body.ResourcesVpcConfig)
+		vpc = &v
 	}
 
-	upd, err := h.eks.UpdateClusterConfig(r.Context(), name, vpc, body.Tags)
+	var logging []eksdriver.ClusterLogging
+	if body.Logging != nil {
+		logging = loggingRequestToDriver(body.Logging)
+	}
+
+	var accessConfig *eksdriver.AccessConfigUpdate
+	if body.AccessConfig != nil {
+		accessConfig = &eksdriver.AccessConfigUpdate{AuthenticationMode: body.AccessConfig.AuthenticationMode}
+	}
+
+	upd, err := h.eks.UpdateClusterConfig(r.Context(), name, vpc, logging, accessConfig, body.Tags)
 	if err != nil {
 		writeErr(w, err)
 
@@ -161,7 +220,12 @@ func (h *Handler) updateClusterVersion(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 
-	upd, err := h.eks.UpdateClusterVersion(r.Context(), name, body.Version)
+	in := eksdriver.ClusterVersionUpdate{Version: body.Version, Force: body.Force}
+	if body.RollbackConfig != nil {
+		in.RollbackTimeoutMinutes = body.RollbackConfig.TimeoutMinutes
+	}
+
+	upd, err := h.eks.UpdateClusterVersion(r.Context(), name, in)
 	if err != nil {
 		writeErr(w, err)
 
@@ -241,11 +305,24 @@ func (h *Handler) createNodegroup(w http.ResponseWriter, r *http.Request, cluste
 	}
 
 	if body.ScalingConfig != nil {
-		cfg.ScalingConfig = scalingFromJSON(body.ScalingConfig)
+		sc, ok := scalingFromJSON(body.ScalingConfig)
+		if !ok {
+			// EKS takes all three sizes on create, or none of them.
+			writeError(w, http.StatusBadRequest, "InvalidParameterException",
+				"scalingConfig must specify all of minSize, maxSize and desiredSize, or none of them")
+
+			return
+		}
+
+		cfg.ScalingConfig = sc
 	}
 
 	if body.UpdateConfig != nil {
 		cfg.UpdateConfig = updateConfigFromJSON(body.UpdateConfig)
+	}
+
+	if body.LaunchTemplate != nil {
+		cfg.LaunchTemplate = launchTemplateFromJSON(body.LaunchTemplate)
 	}
 
 	ng, err := h.eks.CreateNodegroup(r.Context(), cfg)
@@ -294,19 +371,7 @@ func (h *Handler) updateNodegroupConfig(w http.ResponseWriter, r *http.Request, 
 	update := eksdriver.NodegroupConfigUpdate{}
 
 	if body.ScalingConfig != nil {
-		// Real EKS applies only the sizes present in the request; the driver
-		// replaces ScalingConfig wholesale, so merge onto the current config
-		// here to avoid zeroing MinSize/MaxSize/DesiredSize that were omitted.
-		cur, err := h.eks.DescribeNodegroup(r.Context(), clusterName, ngName)
-		if err != nil {
-			writeErr(w, err)
-
-			return
-		}
-
-		merged := cur.ScalingConfig
-		mergeScaling(&merged, body.ScalingConfig)
-		update.Scaling = &merged
+		update.Scaling = scalingUpdateFromJSON(body.ScalingConfig)
 	}
 
 	if body.UpdateConfig != nil {
@@ -340,7 +405,12 @@ func (h *Handler) updateNodegroupVersion(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	upd, err := h.eks.UpdateNodegroupVersion(r.Context(), clusterName, ngName, body.Version, body.ReleaseVersion)
+	in := eksdriver.NodegroupVersionUpdate{Version: body.Version, ReleaseVersion: body.ReleaseVersion}
+	if body.LaunchTemplate != nil {
+		in.LaunchTemplate = launchTemplateFromJSON(body.LaunchTemplate)
+	}
+
+	upd, err := h.eks.UpdateNodegroupVersion(r.Context(), clusterName, ngName, in)
 	if err != nil {
 		writeErr(w, err)
 
@@ -573,20 +643,47 @@ func accessConfigRequestToDriver(a *accessConfigRequest) eksdriver.AccessConfigR
 	}
 }
 
-// mergeScaling overlays only the sizes present in s onto dst, leaving omitted
-// fields untouched. This is the partial-update semantics real EKS applies.
-func mergeScaling(dst *eksdriver.NodegroupScalingConfig, s *nodegroupScalingConfigJSON) {
-	if s.MinSize != nil {
-		dst.MinSize = int(*s.MinSize)
+// launchTemplateFromJSON converts the wire launchTemplate to the driver shape.
+func launchTemplateFromJSON(l *launchTemplateSpecificationJSON) *eksdriver.LaunchTemplateSpecification {
+	return &eksdriver.LaunchTemplateSpecification{
+		ID:      l.ID,
+		Name:    l.Name,
+		Version: l.Version,
+	}
+}
+
+// launchTemplateToJSON renders the driver launchTemplate to the wire response
+// shape, returning nil when the nodegroup has none.
+func launchTemplateToJSON(l *eksdriver.LaunchTemplateSpecification) *launchTemplateSpecificationJSON {
+	if l == nil {
+		return nil
 	}
 
-	if s.MaxSize != nil {
-		dst.MaxSize = int(*s.MaxSize)
+	return &launchTemplateSpecificationJSON{
+		ID:      l.ID,
+		Name:    l.Name,
+		Version: l.Version,
+	}
+}
+
+// scalingUpdateFromJSON carries only the sizes present in s; the provider
+// merges them onto the current config.
+func scalingUpdateFromJSON(s *nodegroupScalingConfigJSON) *eksdriver.NodegroupScalingUpdate {
+	return &eksdriver.NodegroupScalingUpdate{
+		MinSize:     optInt(s.MinSize),
+		MaxSize:     optInt(s.MaxSize),
+		DesiredSize: optInt(s.DesiredSize),
+	}
+}
+
+func optInt(v *int32) *int {
+	if v == nil {
+		return nil
 	}
 
-	if s.DesiredSize != nil {
-		dst.DesiredSize = int(*s.DesiredSize)
-	}
+	n := int(*v)
+
+	return &n
 }
 
 // taintsToDriver converts wire taints to driver taints.
@@ -654,22 +751,21 @@ func updateConfigToJSON(u eksdriver.NodegroupUpdateConfig) *nodegroupUpdateConfi
 	}
 }
 
-func scalingFromJSON(s *nodegroupScalingConfigJSON) eksdriver.NodegroupScalingConfig {
-	out := eksdriver.NodegroupScalingConfig{}
-
-	if s.MinSize != nil {
-		out.MinSize = int(*s.MinSize)
+// scalingFromJSON converts a create-time scalingConfig. An empty object means
+// none were given (nil). ok is false when only some of the sizes are set.
+func scalingFromJSON(s *nodegroupScalingConfigJSON) (cfg *eksdriver.NodegroupScalingConfig, ok bool) {
+	switch {
+	case s.MinSize == nil && s.MaxSize == nil && s.DesiredSize == nil:
+		return nil, true
+	case s.MinSize == nil || s.MaxSize == nil || s.DesiredSize == nil:
+		return nil, false
 	}
 
-	if s.MaxSize != nil {
-		out.MaxSize = int(*s.MaxSize)
-	}
-
-	if s.DesiredSize != nil {
-		out.DesiredSize = int(*s.DesiredSize)
-	}
-
-	return out
+	return &eksdriver.NodegroupScalingConfig{
+		MinSize:     int(*s.MinSize),
+		MaxSize:     int(*s.MaxSize),
+		DesiredSize: int(*s.DesiredSize),
+	}, true
 }
 
 func toClusterJSON(c *eksdriver.Cluster) clusterJSON {
@@ -784,6 +880,8 @@ func toNodegroupJSON(n *eksdriver.Nodegroup) nodegroupJSON {
 	if n.DiskSize > 0 {
 		out.DiskSize = &disk
 	}
+
+	out.LaunchTemplate = launchTemplateToJSON(n.LaunchTemplate)
 
 	// Real EKS always reports a health block (empty issues when healthy) and a
 	// resources block naming at least one managed Auto Scaling group. The mock

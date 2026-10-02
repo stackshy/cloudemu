@@ -20,7 +20,7 @@ const (
 	fieldAnnotations = "annotations"
 )
 
-// resource-name builders (server side) — must match the driver's stable names.
+// resource-name builders (server side); must match the driver's stable names.
 func nsResourceName(project, location, ns string) string {
 	return "projects/" + project + "/locations/" + location + "/" + namespacesSeg + "/" + ns
 }
@@ -364,8 +364,8 @@ func namespaceJSON(ns *sddriver.Namespace) map[string]any {
 }
 
 // serviceJSON renders a service as Service Directory wire JSON for the given API
-// version. The string map is emitted under the version's field name —
-// `metadata` on v1beta1, `annotations` on v1 — so a v1beta1 Terraform refresh
+// version. The string map is emitted under the version's field name
+// (`metadata` on v1beta1, `annotations` on v1), so a v1beta1 Terraform refresh
 // and a v1 SDK read each see the key they expect and neither drifts.
 func serviceJSON(svc *sddriver.Service, version string) map[string]any {
 	m := map[string]any{

@@ -365,7 +365,7 @@ func classAndNameMatch(obj *gcsObject, c *gcsLifecycleCondition) bool {
 // one the emulator can evaluate. customTime and noncurrent-time conditions have
 // no backing object state (the emulator does not track an object's custom time
 // or the instant a version became noncurrent), so a rule carrying any of them is
-// treated as non-matching rather than silently ignoring the unmet guard — the
+// treated as non-matching rather than silently ignoring the unmet guard, the
 // conservative choice that avoids deleting versions the condition has not
 // actually cleared. These fields still round-trip verbatim; only their
 // evaluation is suppressed.

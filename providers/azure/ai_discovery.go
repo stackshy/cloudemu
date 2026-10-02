@@ -10,8 +10,8 @@ import (
 // azureMLDiscovery projects the durable Azure AI resources into the
 // cross-service inventory: Machine Learning workspaces, their online endpoints,
 // and Cognitive Services (Azure OpenAI / AI Services) accounts. Mirrors the AWS
-// sagemakerDiscovery and GCP vertexDiscovery adapters so ML — including serving
-// endpoints — is surfaced on all three providers.
+// sagemakerDiscovery and GCP vertexDiscovery adapters so ML, including serving
+// endpoints, is surfaced on all three providers.
 type azureMLDiscovery struct{ m azureMLMock }
 
 // azureMLMock is the subset of the Azure AI mock discovery reads.

@@ -1,5 +1,5 @@
 // Package blobstore provides an opt-in real object-storage engine that persists
-// object bytes to a real local filesystem — no Docker — backing CloudEmu's
+// object bytes to a real local filesystem (no Docker), backing CloudEmu's
 // object stores (AWS S3, Azure Blob, GCP GCS). Bytes are written to real files
 // under a root directory, so they survive in the store for the process's
 // lifetime and can be inspected with ordinary tools. Wire it in with

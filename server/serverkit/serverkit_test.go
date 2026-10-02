@@ -20,7 +20,7 @@ import (
 // fakeCacheEngine is a no-op CacheEngine that also implements io.Closer, so a
 // provider built with it registers it as an engine-closer. Its Close increments
 // a shared counter, letting a test observe that serverkit closes the outgoing
-// providers across a rebuild — the leak guard for the contrib real-engine case.
+// providers across a rebuild: the leak guard for the contrib real-engine case.
 type fakeCacheEngine struct{ closed *atomic.Int64 }
 
 func (fakeCacheEngine) Provision(context.Context, config.CacheProvisionRequest) (config.ProvisionResult, error) {
@@ -46,7 +46,7 @@ func newTestApp(t *testing.T, cfg Config) *App {
 
 // TestProviderClosedOnResetAndRestore is the leak guard: the outgoing provider's
 // engines must be Close()d after a rebuild swap on BOTH /_cloudemu/reset and the
-// snapshot restore path — not only on final shutdown. Without this, contrib's
+// snapshot restore path, not only on final shutdown. Without this, contrib's
 // real embedded-postgres/Docker engines would leak on every reset.
 func TestProviderClosedOnResetAndRestore(t *testing.T) {
 	var closed atomic.Int64
@@ -158,7 +158,7 @@ func TestSnapshotOnShutdownBeforeClose(t *testing.T) {
 		t.Fatalf("Serve: %v", err)
 	}
 
-	// The snapshot was written and holds the seeded bucket — so it ran while the
+	// The snapshot was written and holds the seeded bucket, so it ran while the
 	// provider was still live.
 	data, err := os.ReadFile(stateFile)
 	if err != nil {

@@ -9,7 +9,14 @@ import (
 )
 
 func (h *Handler) listFoundationModels(w http.ResponseWriter, r *http.Request) {
-	models, err := h.bedrock.ListFoundationModels(r.Context())
+	q := r.URL.Query()
+
+	models, err := h.bedrock.ListFoundationModels(r.Context(), bedrockdriver.FoundationModelFilter{
+		ByProvider:          q.Get("byProvider"),
+		ByCustomizationType: q.Get("byCustomizationType"),
+		ByOutputModality:    q.Get("byOutputModality"),
+		ByInferenceType:     q.Get("byInferenceType"),
+	})
 	if err != nil {
 		writeErr(w, err)
 
@@ -82,12 +89,17 @@ func (h *Handler) listCustomizationJobs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	out := make([]jobSummaryJSON, 0, len(jobs))
-	for i := range jobs {
-		out = append(out, toJobSummaryJSON(&jobs[i]))
+	page, next, ok := paginate(w, r, jobs)
+	if !ok {
+		return
 	}
 
-	writeJSON(w, listJobsResponse{ModelCustomizationJobSummaries: out})
+	out := make([]jobSummaryJSON, 0, len(page))
+	for i := range page {
+		out = append(out, toJobSummaryJSON(&page[i]))
+	}
+
+	writeJSON(w, listJobsResponse{ModelCustomizationJobSummaries: out, NextToken: next})
 }
 
 func (h *Handler) listCustomModels(w http.ResponseWriter, r *http.Request) {
@@ -98,12 +110,17 @@ func (h *Handler) listCustomModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]customModelSummaryJSON, 0, len(models))
-	for i := range models {
-		out = append(out, toCustomModelSummaryJSON(&models[i]))
+	page, next, ok := paginate(w, r, models)
+	if !ok {
+		return
 	}
 
-	writeJSON(w, listCustomModelsResponse{ModelSummaries: out})
+	out := make([]customModelSummaryJSON, 0, len(page))
+	for i := range page {
+		out = append(out, toCustomModelSummaryJSON(&page[i]))
+	}
+
+	writeJSON(w, listCustomModelsResponse{ModelSummaries: out, NextToken: next})
 }
 
 func (h *Handler) getCustomModel(w http.ResponseWriter, r *http.Request, id string) {

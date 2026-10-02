@@ -1,4 +1,4 @@
-// list_tags_pagination_test.go — unit coverage for the ListTagsOfResource
+// list_tags_pagination_test.go: unit coverage for the ListTagsOfResource
 // pagination plumbing. DynamoDB caps a resource at 50 tags, so a real response
 // fits one page; these tests drive pageTags with a deliberately small page size
 // to prove the offset-token cursor walks a stable-sorted order exactly once

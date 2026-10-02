@@ -13,7 +13,7 @@ import (
 // that a regression could silently drop: HostedZone.Id carries the
 // "/hostedzone/" prefix (as real AWS returns), while the pagination
 // Marker/NextMarker stay bare (no prefix). Asserting the literal wire format
-// here is what makes the fix regression-proof — comparing the value against
+// here is what makes the fix regression-proof; comparing the value against
 // itself would pass even if the prefix were removed.
 func TestSDKHostedZoneIDIsPrefixed(t *testing.T) {
 	client := newRoute53Client(t)

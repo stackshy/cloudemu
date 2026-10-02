@@ -11,8 +11,8 @@ import (
 // listEffectiveNSGs serves InterfacesClient.BeginListEffectiveNetworkSecurityGroups:
 // POST .../networkInterfaces/{nic}/effectiveNetworkSecurityGroups. It returns
 // one EffectiveNetworkSecurityGroup entry per NSG that actually applies to the
-// NIC — its own networkSecurityGroup association and its (primary
-// ipConfiguration's) subnet's networkSecurityGroup association — each carrying
+// NIC: its own networkSecurityGroup association and its (primary
+// ipConfiguration's) subnet's networkSecurityGroup association, each carrying
 // that NSG's custom rules plus the six built-in defaults, matching real ARM's
 // merged view of "what traffic this NIC actually sees".
 //

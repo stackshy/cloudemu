@@ -1,7 +1,7 @@
 // Package driver defines the interface for relational-database service
 // implementations (RDS, Cloud SQL, Azure SQL, …). The shape covers the lifecycle
 // of a managed DB server (instance) plus the Aurora-style cluster grouping and
-// snapshot/restore operations. It does not model the SQL surface itself —
+// snapshot/restore operations. It does not model the SQL surface itself;
 // connection-string consumers are expected to point at a real engine.
 package driver
 
@@ -51,7 +51,7 @@ func HAEnabled(mode string) bool {
 }
 
 // ValidHAMode reports whether mode is an accepted highAvailability.mode value.
-// The empty string is valid — it means "not specified" (no HA change on an
+// The empty string is valid: it means "not specified" (no HA change on an
 // update, HA disabled on a create). Any other non-enum value is rejected, so a
 // caller sending a bogus mode gets the same 400 real Azure returns.
 func ValidHAMode(mode string) bool {
@@ -101,14 +101,14 @@ type InstanceConfig struct {
 	PreferredMaintenanceWindow string
 	// BackupRetentionPeriod is the AWS RDS CreateDBInstance attribute. Unlike
 	// the two window fields above, 0 is a meaningful explicit value (it
-	// disables automated backups — terraform-provider-aws's schema default is
+	// disables automated backups; terraform-provider-aws's schema default is
 	// 0), so it cannot be treated as "unset". Real RDS defaults it to 1 only
-	// when the caller omits the parameter entirely — the wire layer, which can
+	// when the caller omits the parameter entirely: the wire layer, which can
 	// see whether the parameter was present, applies that default before this
 	// field is set. Other engines leave it zero/unused.
 	BackupRetentionPeriod int
 	// AutoMinorVersionUpgrade is the AWS RDS CreateDBInstance attribute (real RDS
-	// defaults it to true when the caller omits it — the wire layer, which can
+	// defaults it to true when the caller omits it: the wire layer, which can
 	// see whether the parameter was present, applies that default before this
 	// field is set). Other engines leave it false/unused.
 	AutoMinorVersionUpgrade bool
@@ -247,7 +247,7 @@ type Instance struct {
 	GCPStorageAutoResize bool
 	// Scope records where the resource lives (Azure subscription/resource
 	// group), echoed from the InstanceConfig it was created with. Zero for
-	// AWS/GCP and unscoped portable callers — Scope.Matches treats a zero
+	// AWS/GCP and unscoped portable callers: Scope.Matches treats a zero
 	// Scope as visible under any filter.
 	Scope scope.Scope
 }
@@ -310,6 +310,25 @@ type ModifyInstanceInput struct {
 	// RDS/Aurora ignore it (they use BackupRetentionPeriod). Redshift's
 	// PreferredMaintenanceWindow reuses the shared field above.
 	AutomatedSnapshotRetentionPeriod *int
+	// VPCSecurityGroups / ClusterSecurityGroups are the Redshift ModifyCluster
+	// VpcSecurityGroupIds / ClusterSecurityGroups inputs; a nil slice means "no
+	// change" so a modify that touches an unrelated field never drops the
+	// cluster's existing security-group associations. RDS/Aurora ignore them
+	// (they use the shared VPCSecurityGroups on ClusterConfig/Cluster directly
+	// at create time). Redshift-only.
+	VPCSecurityGroups     []string
+	ClusterSecurityGroups []string
+	// AllowVersionUpgrade / PubliclyAccessible / Encrypted are Redshift
+	// ModifyCluster inputs; nil means "no change" (false is a valid, distinct
+	// value from "not sent"). Redshift-only.
+	AllowVersionUpgrade *bool
+	PubliclyAccessible  *bool
+	Encrypted           *bool
+	// MaintenanceTrackName / ElasticIP are the Redshift ModifyCluster
+	// MaintenanceTrackName / ElasticIp inputs; empty means "no change".
+	// Redshift-only.
+	MaintenanceTrackName string
+	ElasticIP            string
 	// GCPDatabaseFlags / GCPBackupConfig / GCPIPConfig update the Cloud SQL
 	// settings sub-objects (opaque JSON); empty means "no change". Cloud SQL-only;
 	// RDS/Redshift ignore them.
@@ -353,7 +372,7 @@ type PendingModifiedValues struct {
 	AllocatedStorage int
 	EngineVersion    string
 	// MasterUserPassword is always MaskedPassword ("****") when a password
-	// change is pending — the plaintext is never echoed.
+	// change is pending; the plaintext is never echoed.
 	MasterUserPassword    string
 	BackupRetentionPeriod int
 	MultiAZ               *bool
@@ -420,6 +439,15 @@ type ClusterConfig struct {
 	// when unset). Both are Redshift-specific; zero for RDS/Aurora/Azure/GCP.
 	AutomatedSnapshotRetentionPeriod int
 	PreferredMaintenanceWindow       string
+	// ClusterSecurityGroups / AllowVersionUpgrade / MaintenanceTrackName /
+	// ElasticIP are further Redshift-specific create inputs carried on the
+	// shared config; zero for RDS/Aurora/Azure/GCP. AllowVersionUpgrade is a
+	// pointer only on the create input so the provider can fill the documented
+	// AWS default (true) when the caller omits it.
+	ClusterSecurityGroups []string
+	AllowVersionUpgrade   *bool
+	MaintenanceTrackName  string
+	ElasticIP             string
 	// Location is the Azure region an Azure SQL logical server lives in (ARM
 	// top-level "location"). Empty for AWS/GCP.
 	Location string
@@ -492,6 +520,14 @@ type Cluster struct {
 	// RDS/Aurora/Azure/GCP.
 	AutomatedSnapshotRetentionPeriod int
 	PreferredMaintenanceWindow       string
+	// ClusterSecurityGroups / AllowVersionUpgrade / MaintenanceTrackName /
+	// ElasticIP echo the corresponding Redshift cluster attributes on read, so
+	// a value set at create or by ModifyCluster round-trips instead of always
+	// reporting a hardcoded default. Zero for RDS/Aurora/Azure/GCP.
+	ClusterSecurityGroups []string
+	AllowVersionUpgrade   bool
+	MaintenanceTrackName  string
+	ElasticIP             string
 	// Location is the Azure region an Azure SQL logical server lives in (ARM
 	// top-level "location"), echoed on read. Empty for AWS/GCP.
 	Location  string
@@ -574,6 +610,9 @@ type ClusterSnapshotConfig struct {
 	ID        string
 	ClusterID string
 	Tags      map[string]string
+	// ManualSnapshotRetentionPeriod is the Redshift manual snapshot retention
+	// in days (-1 keeps it forever). Nil means omitted, which is -1.
+	ManualSnapshotRetentionPeriod *int
 }
 
 // ClusterSnapshot describes a cluster snapshot.
@@ -603,6 +642,14 @@ type ClusterSnapshot struct {
 	DatabaseName   string
 	CreatedAt      time.Time
 	Tags           map[string]string
+	// ManualSnapshotRetentionPeriod is the Redshift manual snapshot retention
+	// in days; -1 keeps it forever. Zero is never valid and reads as -1 (rows
+	// saved before the field existed). Unused outside Redshift.
+	ManualSnapshotRetentionPeriod int
+	// ManualSnapshotRemainingDays is the days left before a Redshift manual
+	// snapshot passes its retention period. Worked out on read, never stored,
+	// and nil when the snapshot is kept forever.
+	ManualSnapshotRemainingDays *int `json:"-"`
 	// AllocatedStorage / EngineMode capture the source cluster's shape at
 	// snapshot time so RestoreDBClusterFromSnapshot can reproduce it instead of
 	// leaving the restored cluster with the Go zero value. Zero/empty on
@@ -627,7 +674,7 @@ type RestoreInstanceInput struct {
 	Port int
 	Tags map[string]string
 	// AutoMinorVersionUpgrade is the AWS RDS RestoreDBInstanceFromDBSnapshot
-	// attribute; real RDS defaults it to true when the caller omits it — the
+	// attribute; real RDS defaults it to true when the caller omits it: the
 	// wire layer, which can see whether the parameter was present, applies
 	// that default before this field is set (mirroring InstanceConfig's field
 	// of the same name).
@@ -706,8 +753,8 @@ type SubnetGroupConfig struct {
 	Tags        map[string]string
 }
 
-// SubnetGroups is an OPTIONAL capability. Subnet groups are an AWS concept —
-// Azure and GCP place managed databases with vnet integration instead — so
+// SubnetGroups is an OPTIONAL capability. Subnet groups are an AWS concept;
+// Azure and GCP place managed databases with vnet integration instead, so
 // this is deliberately kept out of the RelationalDB interface and discovered
 // by type assertion. Drivers that do not implement it answer InvalidAction,
 // which is the truthful response for a cloud that has no such resource.
@@ -733,12 +780,12 @@ type DatabaseConfig struct {
 	Location string
 	Tags     map[string]string
 	// SKUName / SKUTier are the database compute SKU (e.g. "GP_Gen5_2" /
-	// "GeneralPurpose") and ZoneRedundant is the HA flag — cost inputs a
+	// "GeneralPurpose") and ZoneRedundant is the HA flag: cost inputs a
 	// discoverer reads from an Azure SQL database's sku / properties.
 	SKUName string
 	SKUTier string
 	// SKUCapacity is the vCore/DTU count on an Azure SQL database SKU
-	// (sku.capacity). Optional — zero means unset, so a request that omits it
+	// (sku.capacity). Optional: zero means unset, so a request that omits it
 	// carries no capacity. Only the Azure SQL provider populates it.
 	SKUCapacity   int
 	ZoneRedundant bool
@@ -853,6 +900,43 @@ type TransparentDataEncryptions interface {
 	ListTransparentDataEncryption(ctx context.Context, server, database string) ([]TransparentDataEncryption, error)
 }
 
+// ShortTermRetentionPolicy is a database's backupShortTermRetentionPolicies/
+// default: point-in-time restore retention and differential backup interval.
+type ShortTermRetentionPolicy struct {
+	Server                    string
+	Database                  string
+	RetentionDays             int
+	DiffBackupIntervalInHours int
+}
+
+// LongTermRetentionPolicy is a database's backupLongTermRetentionPolicies/
+// default. Retentions are ISO-8601 durations, stored verbatim.
+type LongTermRetentionPolicy struct {
+	Server           string
+	Database         string
+	WeeklyRetention  string
+	MonthlyRetention string
+	YearlyRetention  string
+	WeekOfYear       int
+}
+
+// DatabaseRetentionPolicies is an OPTIONAL Azure SQL capability, discovered by
+// type assertion. Every database has both policies; a database that never set
+// one reports the Azure default.
+type DatabaseRetentionPolicies interface {
+	SetShortTermRetention(ctx context.Context, p *ShortTermRetentionPolicy) (*ShortTermRetentionPolicy, error)
+	GetShortTermRetention(ctx context.Context, server, database string) (*ShortTermRetentionPolicy, error)
+	SetLongTermRetention(ctx context.Context, p *LongTermRetentionPolicy) (*LongTermRetentionPolicy, error)
+	GetLongTermRetention(ctx context.Context, server, database string) (*LongTermRetentionPolicy, error)
+}
+
+// ServerConnectionPolicies is an OPTIONAL Azure SQL capability: a server's
+// connectionPolicies/default connection type (Default, Proxy or Redirect).
+type ServerConnectionPolicies interface {
+	SetConnectionPolicy(ctx context.Context, server, connectionType string) (string, error)
+	GetConnectionPolicy(ctx context.Context, server string) (string, error)
+}
+
 // FirewallRuleConfig describes a server firewall rule to create or replace.
 type FirewallRuleConfig struct {
 	Server         string
@@ -902,7 +986,7 @@ type Configuration struct {
 
 // Configurations is an OPTIONAL capability for reading and setting server
 // parameters, discovered by type assertion. Parameters have engine defaults, so
-// there is no create/delete — only set (update), get and list.
+// there is no create/delete: only set (update), get and list.
 type Configurations interface {
 	SetConfiguration(ctx context.Context, cfg ConfigurationConfig) (*Configuration, error)
 	GetConfiguration(ctx context.Context, server, name string) (*Configuration, error)
@@ -925,7 +1009,7 @@ type Failover interface {
 
 // ScopedDelete is an OPTIONAL capability, discovered by type assertion. It lets
 // a scoped provider (Azure MySQL/Postgres Flexible Server) refuse to delete an
-// instance that does not belong to the caller's subscription/resource group —
+// instance that does not belong to the caller's subscription/resource group:
 // a single atomic check-and-delete, avoiding the fetch-then-delete race a
 // handler-level Scope check on top of the plain DeleteInstance would leave.
 // AWS RDS and GCP Cloud SQL have no resource-group concept and do not
@@ -968,7 +1052,7 @@ type ElasticPoolConfig struct {
 	SKUName  string
 	SKUTier  string
 	// SKUCapacity is the vCore/DTU count on the pool SKU (sku.capacity).
-	// Optional — zero means unset, so a request that omits it carries no
+	// Optional: zero means unset, so a request that omits it carries no
 	// capacity. Only the Azure SQL provider populates it.
 	SKUCapacity  int
 	MaxSizeBytes int64
@@ -1115,7 +1199,7 @@ func vCoreFamilyCapacity(parts []string) (family string, capacity int) {
 }
 
 // dtuTier maps a DTU service-objective name to its pricing tier. Basic, the
-// Standard series (S0–S12) and the Premium series (P1–P15) are the DTU purchasing
+// Standard series (S0-S12) and the Premium series (P1-P15) are the DTU purchasing
 // model; every other name is a non-DTU sku this helper does not classify.
 func dtuTier(name string) string {
 	const basic = "Basic" // sku name and its pricing tier share the literal
@@ -1225,7 +1309,7 @@ type ManagedInstanceConfig struct {
 	Tags               map[string]string
 }
 
-// ManagedInstance is a SQL Managed Instance — a fully-managed instance that
+// ManagedInstance is a SQL Managed Instance: a fully-managed instance that
 // hosts managed databases, distinct from the single-database logical server.
 type ManagedInstance struct {
 	Name        string
@@ -1675,7 +1759,7 @@ type ModifyClusterEndpointInput struct {
 	ExcludedMembers []string
 }
 
-// ClusterEndpoint is an Aurora cluster endpoint — either a built-in WRITER /
+// ClusterEndpoint is an Aurora cluster endpoint: either a built-in WRITER /
 // READER endpoint auto-provisioned at cluster create time, or a user-created
 // CUSTOM endpoint.
 type ClusterEndpoint struct {

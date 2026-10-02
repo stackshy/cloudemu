@@ -1,0 +1,6 @@
+- Workflows are never executed: the Workflow Definition Language is stored and echoed verbatim, not interpreted, so no trigger fires and no action runs.
+- Trigger, run and version resources are not served: `workflows/{name}/triggers` (list, get, run, reset, setState, schemas, histories), `workflows/{name}/runs` (and their actions, operations and repetitions) and `workflows/{name}/versions` answer 501. The one trigger operation served is `POST .../triggers/{trigger}/listCallbackUrl`, which mints a stable, deterministic URL from the workflow's access endpoint; its signature is not a real SAS and nothing listens on it.
+- Workflow-level actions other than `enable` and `disable` are not served: `validate` (by resource group and by location), `regenerateAccessKey`, `listSwagger`, `listCallbackUrl` (workflow level), `generateUpgradedDefinition` and `move` answer 501.
+- List operations ignore `$filter` (State, Trigger, ReferencedResourceId); every workflow in scope is returned.
+- Integration accounts, integration service environments and managed APIs are not emulated: `integrationAccount`, `integrationServiceEnvironment` and `sku` are stored and echoed as opaque references, never resolved.
+- `endpointsConfiguration` IP addresses are synthetic, derived per region; they are stable but are not Azure's published Logic Apps addresses.

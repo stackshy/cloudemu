@@ -208,7 +208,7 @@ func TestAttributesLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Filter by targetType — sorted by (targetId, name).
+	// Filter by targetType, sorted by (targetId, name).
 	got, err := m.ListAttributes(ctx, "prod", "container-instance", "", "")
 	require.NoError(t, err)
 	require.Len(t, got, 2)

@@ -2,13 +2,13 @@
 // Injection Simulator (FIS) control plane: experiment templates and the
 // experiments started from them.
 //
-// The mock is control-plane only — it does NOT inject any real faults. An
+// The mock is control-plane only. It does NOT inject any real faults. An
 // experiment template is created synchronously with stable computed fields (id,
 // arn, creationTime, lastUpdateTime) minted once at create and stored, so
 // repeated reads never drift. StartExperiment materializes an experiment from a
-// template and places it directly in the running state (there is no data plane
-// to advance it to completion); StopExperiment moves a running experiment to the
-// stopped terminal state.
+// template; it then advances initiating -> running -> completed on the clock
+// (see lifecycle.go), and StopExperiment moves an initiating or running
+// experiment to the stopped terminal state.
 package fis
 
 import (
@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/fis/driver"
@@ -58,14 +59,25 @@ type Mock struct {
 	templates   *memstore.Store[driver.ExperimentTemplate]
 	experiments *memstore.Store[driver.Experiment]
 	opts        *config.Options
+
+	// templateTokens dedups CreateExperimentTemplate's clientToken;
+	// experimentTokens dedups StartExperiment's. Neither op has any other
+	// natural uniqueness key (each mints a fresh id every call), so without
+	// this a retried request mints a second resource outright. The FIS API
+	// reference documents no token lifetime, so both use
+	// idempotency.DefaultTTL.
+	templateTokens   *idempotency.Store
+	experimentTokens *idempotency.Store
 }
 
 // New creates a new FIS mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		templates:   memstore.New[driver.ExperimentTemplate](),
-		experiments: memstore.New[driver.Experiment](),
-		opts:        opts,
+		templates:        memstore.New[driver.ExperimentTemplate](),
+		experiments:      memstore.New[driver.Experiment](),
+		opts:             opts,
+		templateTokens:   idempotency.New(idempotency.DefaultTTL),
+		experimentTokens: idempotency.New(idempotency.DefaultTTL),
 	}
 }
 

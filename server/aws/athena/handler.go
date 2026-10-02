@@ -2,7 +2,7 @@
 // server.Handler. Point the real aws-sdk-go-v2/service/athena client (or the
 // `aws athena` CLI, or the Terraform AWS provider) at a Server registered with
 // this handler and workgroup, named-query, query-execution, and Data Catalog
-// read operations run against an in-memory Athena driver.
+// operations run against an in-memory Athena driver.
 //
 // Athena uses the AWS JSON 1.1 wire shape (POST + JSON body dispatched on the
 // X-Amz-Target header, prefix "AmazonAthena.").
@@ -47,8 +47,13 @@ func New(d athenadriver.Athena) *Handler {
 		"ListQueryExecutions": h.listQueryExecutions,
 		"GetDatabase":         h.getDatabase,
 		"ListDatabases":       h.listDatabases,
+		"GetTableMetadata":    h.getTableMetadata,
+		"ListTableMetadata":   h.listTableMetadata,
+		"CreateDataCatalog":   h.createDataCatalog,
 		"GetDataCatalog":      h.getDataCatalog,
 		"ListDataCatalogs":    h.listDataCatalogs,
+		"UpdateDataCatalog":   h.updateDataCatalog,
+		"DeleteDataCatalog":   h.deleteDataCatalog,
 		"TagResource":         h.tagResource,
 		"UntagResource":       h.untagResource,
 		"ListTagsForResource": h.listTagsForResource,

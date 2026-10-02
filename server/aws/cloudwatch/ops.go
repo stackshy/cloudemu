@@ -1,7 +1,6 @@
 package cloudwatch
 
 import (
-	"context"
 	"net/http"
 	"sort"
 	"strings"
@@ -9,18 +8,15 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
-	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 const (
-	statSum           = "Sum"
-	statMinimum       = "Minimum"
-	statMaximum       = "Maximum"
-	statSampleCount   = "SampleCount"
-	statAverage       = "Average"
-	defaultMetricUnit = "Count"
+	statSum         = "Sum"
+	statMinimum     = "Minimum"
+	statMaximum     = "Maximum"
+	statSampleCount = "SampleCount"
+	statAverage     = "Average"
 )
 
 // putMetricDataInput mirrors the AWS wire shape for the operation. Field
@@ -61,42 +57,7 @@ func (h *Handler) putMetricData(w http.ResponseWriter, r *http.Request, body []b
 		return
 	}
 
-	data := make([]mondriver.MetricDatum, 0, len(in.MetricData))
-
-	for i := range in.MetricData {
-		d := &in.MetricData[i]
-		// AWS defaults an omitted timestamp to request-receipt time; storing the
-		// Go zero value instead would make the datapoint unqueryable and leave
-		// alarms stuck in INSUFFICIENT_DATA.
-		ts := time.Now().UTC()
-		if d.Timestamp != nil {
-			ts = *d.Timestamp
-		}
-
-		datum := mondriver.MetricDatum{
-			Namespace:  in.Namespace,
-			MetricName: d.MetricName,
-			Value:      d.Value,
-			Unit:       d.Unit,
-			Dimensions: toDimensionMap(d.Dimensions),
-			Timestamp:  ts,
-			Values:     d.Values,
-			Counts:     d.Counts,
-		}
-
-		if d.StatisticValues != nil {
-			datum.StatisticValues = &mondriver.StatisticSet{
-				SampleCount: d.StatisticValues.SampleCount,
-				Sum:         d.StatisticValues.Sum,
-				Minimum:     d.StatisticValues.Minimum,
-				Maximum:     d.StatisticValues.Maximum,
-			}
-		}
-
-		data = append(data, datum)
-	}
-
-	if err := h.monitoring.PutMetricData(r.Context(), data); err != nil {
+	if err := h.putMetricDataCore(r.Context(), &in); err != nil {
 		writeDriverErr(w, err)
 		return
 	}
@@ -104,25 +65,18 @@ func (h *Handler) putMetricData(w http.ResponseWriter, r *http.Request, body []b
 	writeCBORResponse(w, struct{}{})
 }
 
-// getMetricStatisticsInput mirrors the SDK's GetMetricStatistics request.
-type getMetricStatisticsInput struct {
-	Namespace  string         `cbor:"Namespace"`
-	MetricName string         `cbor:"MetricName"`
-	StartTime  *time.Time     `cbor:"StartTime,omitempty"`
-	EndTime    *time.Time     `cbor:"EndTime,omitempty"`
-	Period     int            `cbor:"Period"`
-	Statistics []string       `cbor:"Statistics,omitempty"`
-	Dimensions []dimensionCBR `cbor:"Dimensions,omitempty"`
-}
-
+// datapointCBR uses pointers so a requested statistic of 0 is still sent.
+// With a plain float64 and omitempty, the SDK decoded a 0 Sum as nil.
 type datapointCBR struct {
 	Timestamp   time.Time `cbor:"Timestamp"`
-	SampleCount float64   `cbor:"SampleCount,omitempty"`
-	Average     float64   `cbor:"Average,omitempty"`
-	Sum         float64   `cbor:"Sum,omitempty"`
-	Minimum     float64   `cbor:"Minimum,omitempty"`
-	Maximum     float64   `cbor:"Maximum,omitempty"`
+	SampleCount *float64  `cbor:"SampleCount,omitempty"`
+	Average     *float64  `cbor:"Average,omitempty"`
+	Sum         *float64  `cbor:"Sum,omitempty"`
+	Minimum     *float64  `cbor:"Minimum,omitempty"`
+	Maximum     *float64  `cbor:"Maximum,omitempty"`
 	Unit        string    `cbor:"Unit,omitempty"`
+
+	ExtendedStatistics map[string]float64 `cbor:"ExtendedStatistics,omitempty"`
 }
 
 type getMetricStatisticsOutput struct {
@@ -137,175 +91,18 @@ func (h *Handler) getMetricStatistics(w http.ResponseWriter, r *http.Request, bo
 		return
 	}
 
-	// Every requested statistic is returned on each datapoint. Callers routinely
-	// ask for several (e.g. Average, Sum, Maximum) in one call and expect all of
-	// them populated, so fall back to Average only when none was requested.
-	stats := in.Statistics
-	if len(stats) == 0 {
-		stats = []string{statAverage}
-	}
-
-	start := time.Time{}
-	if in.StartTime != nil {
-		start = *in.StartTime
-	}
-
-	end := time.Time{}
-	if in.EndTime != nil {
-		end = *in.EndTime
-	}
-
-	if h.ipam != nil && in.Namespace == netdriver.IpamMetricNamespace {
-		h.getIpamMetricStatistics(w, r, in.MetricName, toDimensionMap(in.Dimensions), stats)
+	res, err := h.getMetricStatisticsCore(r.Context(), &in)
+	if err != nil {
+		writeDriverErr(w, err)
 		return
 	}
 
-	dims := toDimensionMap(in.Dimensions)
-	acc := newDatapointAcc()
-
-	for _, stat := range stats {
-		result, err := h.monitoring.GetMetricData(r.Context(), mondriver.GetMetricInput{
-			Namespace:  in.Namespace,
-			MetricName: in.MetricName,
-			Dimensions: dims,
-			StartTime:  start,
-			EndTime:    end,
-			Period:     in.Period,
-			Stat:       stat,
-		})
-		if err != nil {
-			writeDriverErr(w, err)
-			return
-		}
-
-		acc.add(result, stat)
+	out := getMetricStatisticsOutput{Label: res.Label}
+	for _, dp := range res.Datapoints {
+		out.Datapoints = append(out.Datapoints, datapointCBR(dp))
 	}
 
-	writeCBORResponse(w, getMetricStatisticsOutput{
-		Label:      in.MetricName,
-		Datapoints: acc.datapoints(),
-	})
-}
-
-// getIpamMetricStatistics returns a single datapoint for a derived AWS/IPAM
-// metric, matched by name and (if supplied) dimensions, populating every
-// requested statistic.
-func (h *Handler) getIpamMetricStatistics(
-	w http.ResponseWriter, r *http.Request, name string, dims map[string]string, stats []string,
-) {
-	for _, mtr := range h.ipam.IpamMetrics(r.Context()) {
-		if mtr.MetricName != name || !dimensionsMatch(mtr.Dimensions, dims) {
-			continue
-		}
-
-		dp := datapointCBR{Timestamp: time.Unix(0, 0).UTC(), Unit: mtr.Unit}
-		for _, stat := range stats {
-			setDatapointStat(&dp, stat, mtr.Value)
-		}
-
-		writeCBORResponse(w, getMetricStatisticsOutput{Label: name, Datapoints: []datapointCBR{dp}})
-
-		return
-	}
-
-	writeCBORResponse(w, getMetricStatisticsOutput{Label: name, Datapoints: nil})
-}
-
-// datapointAcc merges per-statistic MetricDataResults into one datapoint per
-// timestamp, so a multi-statistic GetMetricStatistics call returns each
-// datapoint with all requested statistics populated.
-type datapointAcc struct {
-	byTS  map[int64]*datapointCBR
-	order []int64
-	unit  string
-}
-
-func newDatapointAcc() *datapointAcc {
-	return &datapointAcc{byTS: map[int64]*datapointCBR{}}
-}
-
-// add folds one statistic's result into the accumulator.
-func (a *datapointAcc) add(res *mondriver.MetricDataResult, stat string) {
-	if res == nil {
-		return
-	}
-
-	if a.unit == "" {
-		a.unit = res.Unit
-	}
-
-	for i := range res.Timestamps {
-		ts := res.Timestamps[i].UTC()
-		key := ts.UnixNano()
-
-		dp, ok := a.byTS[key]
-		if !ok {
-			dp = &datapointCBR{Timestamp: ts}
-			a.byTS[key] = dp
-			a.order = append(a.order, key)
-		}
-
-		setDatapointStat(dp, stat, res.Values[i])
-	}
-}
-
-// datapoints returns the merged datapoints in ascending timestamp order, each
-// stamped with the resolved unit.
-func (a *datapointAcc) datapoints() []datapointCBR {
-	unit := a.unit
-	if unit == "" {
-		unit = defaultMetricUnit
-	}
-
-	sort.Slice(a.order, func(i, j int) bool { return a.order[i] < a.order[j] })
-
-	out := make([]datapointCBR, 0, len(a.order))
-
-	for _, key := range a.order {
-		dp := a.byTS[key]
-		dp.Unit = unit
-		out = append(out, *dp)
-	}
-
-	return out
-}
-
-// dimensionsMatch reports whether every requested dimension is present in have.
-func dimensionsMatch(have, want map[string]string) bool {
-	for k, v := range want {
-		if have[k] != v {
-			return false
-		}
-	}
-
-	return true
-}
-
-func setDatapointStat(dp *datapointCBR, stat string, value float64) {
-	switch stat {
-	case statSum:
-		dp.Sum = value
-	case statMinimum:
-		dp.Minimum = value
-	case statMaximum:
-		dp.Maximum = value
-	case statSampleCount:
-		dp.SampleCount = value
-	default:
-		dp.Average = value
-	}
-}
-
-type dimensionFilterCBR struct {
-	Name  string `cbor:"Name"`
-	Value string `cbor:"Value,omitempty"`
-}
-
-type listMetricsInput struct {
-	Namespace  string               `cbor:"Namespace,omitempty"`
-	MetricName string               `cbor:"MetricName,omitempty"`
-	Dimensions []dimensionFilterCBR `cbor:"Dimensions,omitempty"`
-	NextToken  string               `cbor:"NextToken,omitempty"`
+	writeCBORResponse(w, out)
 }
 
 type metricCBR struct {
@@ -319,9 +116,6 @@ type listMetricsOutput struct {
 	NextToken string      `cbor:"NextToken,omitempty"`
 }
 
-// listMetricsPageSize is the number of metrics AWS returns per ListMetrics page.
-const listMetricsPageSize = 500
-
 func (h *Handler) listMetrics(w http.ResponseWriter, r *http.Request, body []byte) {
 	var in listMetricsInput
 	if err := cbor.Unmarshal(body, &in); err != nil {
@@ -329,158 +123,20 @@ func (h *Handler) listMetrics(w http.ResponseWriter, r *http.Request, body []byt
 		return
 	}
 
-	// An exact AWS/IPAM request returns only the synthetic IPAM metrics.
-	if h.ipam != nil && in.Namespace == netdriver.IpamMetricNamespace {
-		writeCBORResponse(w, listMetricsOutput{Metrics: h.ipamMetricRows(r)})
-		return
-	}
-
-	rows, err := h.allMetricRows(r)
+	res, err := h.listMetricsCore(r.Context(), in)
 	if err != nil {
 		writeDriverErr(w, err)
 		return
 	}
 
-	if h.ipam != nil && in.Namespace == "" {
-		rows = append(rows, h.ipamMetricRows(r)...)
+	out := listMetricsOutput{Metrics: make([]metricCBR, 0, len(res.Metrics)), NextToken: res.NextToken}
+	for _, m := range res.Metrics {
+		out.Metrics = append(out.Metrics, metricCBR{
+			Namespace: m.Namespace, MetricName: m.MetricName, Dimensions: dimsToCBR(m.Dimensions),
+		})
 	}
 
-	matched := filterMetricRows(rows, in)
-	sort.SliceStable(matched, func(i, j int) bool {
-		return metricRowKey(matched[i]) < metricRowKey(matched[j])
-	})
-
-	from, to, next := pageWindow(len(matched), decodeOffsetToken(in.NextToken), listMetricsPageSize)
-
-	resp := listMetricsOutput{Metrics: matched[from:to]}
-	if next > 0 {
-		resp.NextToken = encodeOffsetToken(next)
-	}
-
-	writeCBORResponse(w, resp)
-}
-
-// metricRowKey renders a metric row as a stable sort key over namespace, metric
-// name, then its sorted dimension pairs — a deterministic order for paging.
-func metricRowKey(m metricCBR) string {
-	parts := make([]string, 0, len(m.Dimensions))
-	for _, d := range m.Dimensions {
-		parts = append(parts, d.Name+"="+d.Value)
-	}
-
-	sort.Strings(parts)
-
-	return m.Namespace + "\x00" + m.MetricName + "\x00" + strings.Join(parts, ",")
-}
-
-// filterMetricRows applies the ListMetrics namespace / metric-name / dimension
-// filters AWS honors server-side.
-func filterMetricRows(rows []metricCBR, in listMetricsInput) []metricCBR {
-	out := make([]metricCBR, 0, len(rows))
-
-	for _, row := range rows {
-		if in.Namespace != "" && row.Namespace != in.Namespace {
-			continue
-		}
-
-		if in.MetricName != "" && row.MetricName != in.MetricName {
-			continue
-		}
-
-		if !rowMatchesDimensionFilters(row, in.Dimensions) {
-			continue
-		}
-
-		out = append(out, row)
-	}
-
-	return out
-}
-
-// rowMatchesDimensionFilters reports whether a metric row satisfies every
-// DimensionFilter: a filter with a Value requires an exact match, a filter with
-// only a Name requires that dimension to be present.
-func rowMatchesDimensionFilters(row metricCBR, filters []dimensionFilterCBR) bool {
-	if len(filters) == 0 {
-		return true
-	}
-
-	have := make(map[string]string, len(row.Dimensions))
-	for _, d := range row.Dimensions {
-		have[d.Name] = d.Value
-	}
-
-	for _, f := range filters {
-		v, ok := have[f.Name]
-		if !ok {
-			return false
-		}
-
-		if f.Value != "" && v != f.Value {
-			return false
-		}
-	}
-
-	return true
-}
-
-// detailedMetricLister is the AWS-local capability that enumerates every metric
-// with its namespace, backing a namespace-less ListMetrics. The shared
-// Monitoring interface only lists names within a single namespace.
-type detailedMetricLister interface {
-	ListMetricsDetailed(ctx context.Context) ([]mondriver.MetricIdentifier, error)
-}
-
-// allMetricRows lists every real metric tagged with its true namespace, using
-// the detailed lister when available and otherwise degrading to the
-// empty-namespace name list.
-func (h *Handler) allMetricRows(r *http.Request) ([]metricCBR, error) {
-	if dl, ok := h.monitoring.(detailedMetricLister); ok {
-		ids, err := dl.ListMetricsDetailed(r.Context())
-		if err != nil {
-			return nil, err
-		}
-
-		out := make([]metricCBR, 0, len(ids))
-		for _, id := range ids {
-			out = append(out, metricCBR{
-				Namespace:  id.Namespace,
-				MetricName: id.MetricName,
-				Dimensions: dimsToCBR(id.Dimensions),
-			})
-		}
-
-		return out, nil
-	}
-
-	names, err := h.monitoring.ListMetrics(r.Context(), "")
-	if err != nil {
-		return nil, err
-	}
-
-	out := make([]metricCBR, 0, len(names))
-	for _, name := range names {
-		out = append(out, metricCBR{MetricName: name})
-	}
-
-	return out, nil
-}
-
-// ipamMetricRows returns the derived AWS/IPAM metrics with their dimensions.
-func (h *Handler) ipamMetricRows(r *http.Request) []metricCBR {
-	metrics := h.ipam.IpamMetrics(r.Context())
-	out := make([]metricCBR, 0, len(metrics))
-
-	for _, mtr := range metrics {
-		dims := make([]dimensionCBR, 0, len(mtr.Dimensions))
-		for k, v := range mtr.Dimensions {
-			dims = append(dims, dimensionCBR{Name: k, Value: v})
-		}
-
-		out = append(out, metricCBR{Namespace: netdriver.IpamMetricNamespace, MetricName: mtr.MetricName, Dimensions: dims})
-	}
-
-	return out
+	writeCBORResponse(w, out)
 }
 
 type tagCBR struct {
@@ -489,46 +145,30 @@ type tagCBR struct {
 }
 
 type putMetricAlarmInput struct {
-	AlarmName               string         `cbor:"AlarmName"`
-	AlarmDescription        string         `cbor:"AlarmDescription,omitempty"`
-	Namespace               string         `cbor:"Namespace"`
-	MetricName              string         `cbor:"MetricName"`
-	ComparisonOperator      string         `cbor:"ComparisonOperator"`
-	Threshold               float64        `cbor:"Threshold"`
-	Period                  int            `cbor:"Period"`
-	EvaluationPeriods       int            `cbor:"EvaluationPeriods"`
-	DatapointsToAlarm       int            `cbor:"DatapointsToAlarm,omitempty"`
-	Statistic               string         `cbor:"Statistic,omitempty"`
-	ExtendedStatistic       string         `cbor:"ExtendedStatistic,omitempty"`
-	Unit                    string         `cbor:"Unit,omitempty"`
-	TreatMissingData        string         `cbor:"TreatMissingData,omitempty"`
-	Dimensions              []dimensionCBR `cbor:"Dimensions,omitempty"`
-	AlarmActions            []string       `cbor:"AlarmActions,omitempty"`
-	OKActions               []string       `cbor:"OKActions,omitempty"`
-	InsufficientDataActions []string       `cbor:"InsufficientDataActions,omitempty"`
-	ActionsEnabled          *bool          `cbor:"ActionsEnabled,omitempty"`
-	Tags                    []tagCBR       `cbor:"Tags,omitempty"`
-}
+	AlarmName               string               `cbor:"AlarmName"`
+	AlarmDescription        string               `cbor:"AlarmDescription,omitempty"`
+	Namespace               string               `cbor:"Namespace"`
+	MetricName              string               `cbor:"MetricName"`
+	ComparisonOperator      string               `cbor:"ComparisonOperator"`
+	Threshold               *float64             `cbor:"Threshold,omitempty"`
+	Period                  int                  `cbor:"Period"`
+	EvaluationPeriods       int                  `cbor:"EvaluationPeriods"`
+	DatapointsToAlarm       int                  `cbor:"DatapointsToAlarm,omitempty"`
+	Statistic               string               `cbor:"Statistic,omitempty"`
+	ExtendedStatistic       string               `cbor:"ExtendedStatistic,omitempty"`
+	Unit                    string               `cbor:"Unit,omitempty"`
+	TreatMissingData        string               `cbor:"TreatMissingData,omitempty"`
+	Dimensions              []dimensionCBR       `cbor:"Dimensions,omitempty"`
+	AlarmActions            []string             `cbor:"AlarmActions,omitempty"`
+	OKActions               []string             `cbor:"OKActions,omitempty"`
+	InsufficientDataActions []string             `cbor:"InsufficientDataActions,omitempty"`
+	ActionsEnabled          *bool                `cbor:"ActionsEnabled,omitempty"`
+	Tags                    []tagCBR             `cbor:"Tags,omitempty"`
+	Metrics                 []metricDataQueryCBR `cbor:"Metrics,omitempty"`
+	ThresholdMetricID       string               `cbor:"ThresholdMetricId,omitempty"`
 
-// validComparisonOperators is the closed CloudWatch ComparisonOperator enum. A
-// value outside this set is rejected with a ValidationError, matching AWS,
-// rather than silently stored (which would leave the alarm unable to fire).
-//
-//nolint:gochecknoglobals // fixed lookup table for a closed enum.
-var validComparisonOperators = map[string]bool{
-	"GreaterThanOrEqualToThreshold":            true,
-	"GreaterThanThreshold":                     true,
-	"LessThanThreshold":                        true,
-	"LessThanOrEqualToThreshold":               true,
-	"LessThanLowerOrGreaterThanUpperThreshold": true,
-	"LessThanLowerThreshold":                   true,
-	"GreaterThanUpperThreshold":                true,
-}
-
-// comparisonOperatorValid reports whether op is empty (unset — AWS allows metric-
-// math/anomaly alarms to omit it) or a member of the closed enum.
-func comparisonOperatorValid(op string) bool {
-	return op == "" || validComparisonOperators[op]
+	EvaluateLowSampleCountPercentile string               `cbor:"EvaluateLowSampleCountPercentile,omitempty"`
+	EvaluationWindow                 *evaluationWindowCBR `cbor:"EvaluationWindow,omitempty"`
 }
 
 func (h *Handler) putMetricAlarm(w http.ResponseWriter, r *http.Request, body []byte) {
@@ -538,19 +178,13 @@ func (h *Handler) putMetricAlarm(w http.ResponseWriter, r *http.Request, body []
 		return
 	}
 
-	if !comparisonOperatorValid(in.ComparisonOperator) {
-		writeCBORError(w, http.StatusBadRequest, "ValidationError",
-			"Invalid ComparisonOperator: "+in.ComparisonOperator)
-		return
-	}
-
 	cfg := mondriver.AlarmConfig{
 		Name:                    in.AlarmName,
 		Namespace:               in.Namespace,
 		MetricName:              in.MetricName,
 		Dimensions:              toDimensionMap(in.Dimensions),
 		ComparisonOperator:      in.ComparisonOperator,
-		Threshold:               in.Threshold,
+		Threshold:               floatOrZero(in.Threshold),
 		Period:                  in.Period,
 		EvaluationPeriods:       in.EvaluationPeriods,
 		DatapointsToAlarm:       in.DatapointsToAlarm,
@@ -564,9 +198,13 @@ func (h *Handler) putMetricAlarm(w http.ResponseWriter, r *http.Request, body []
 		AlarmDescription:        in.AlarmDescription,
 		ActionsEnabled:          in.ActionsEnabled,
 		Tags:                    tagsToMap(in.Tags),
+		Metrics:                 toDriverQueries(in.Metrics),
+		ThresholdMetricID:       in.ThresholdMetricID,
+
+		EvaluateLowSampleCountPercentile: in.EvaluateLowSampleCountPercentile,
 	}
 
-	if err := h.monitoring.CreateAlarm(r.Context(), cfg); err != nil {
+	if err := h.putMetricAlarmCore(r.Context(), &cfg, in.Threshold != nil, in.EvaluationWindow.input()); err != nil {
 		writeDriverErr(w, err)
 		return
 	}
@@ -595,6 +233,9 @@ type describeAlarmsInput struct {
 	ActionPrefix    string   `cbor:"ActionPrefix,omitempty"`
 	MaxRecords      int      `cbor:"MaxRecords,omitempty"`
 	NextToken       string   `cbor:"NextToken,omitempty"`
+
+	ChildrenOfAlarmName string `cbor:"ChildrenOfAlarmName,omitempty"`
+	ParentsOfAlarmName  string `cbor:"ParentsOfAlarmName,omitempty"`
 }
 
 // maxAlarmPageSize is the AWS cap on DescribeAlarms MaxRecords, used as the page
@@ -602,28 +243,36 @@ type describeAlarmsInput struct {
 const maxAlarmPageSize = 100
 
 type metricAlarmCBR struct {
-	AlarmName               string         `cbor:"AlarmName"`
-	AlarmArn                string         `cbor:"AlarmArn,omitempty"`
-	AlarmDescription        string         `cbor:"AlarmDescription,omitempty"`
-	Namespace               string         `cbor:"Namespace"`
-	MetricName              string         `cbor:"MetricName"`
-	Dimensions              []dimensionCBR `cbor:"Dimensions,omitempty"`
-	StateValue              string         `cbor:"StateValue"`
-	StateReason             string         `cbor:"StateReason,omitempty"`
-	StateUpdatedTimestamp   *time.Time     `cbor:"StateUpdatedTimestamp,omitempty"`
-	ComparisonOperator      string         `cbor:"ComparisonOperator"`
-	Threshold               float64        `cbor:"Threshold"`
-	Period                  int            `cbor:"Period,omitempty"`
-	EvaluationPeriods       int            `cbor:"EvaluationPeriods,omitempty"`
-	DatapointsToAlarm       int            `cbor:"DatapointsToAlarm,omitempty"`
-	Statistic               string         `cbor:"Statistic,omitempty"`
-	ExtendedStatistic       string         `cbor:"ExtendedStatistic,omitempty"`
-	Unit                    string         `cbor:"Unit,omitempty"`
-	TreatMissingData        string         `cbor:"TreatMissingData,omitempty"`
-	ActionsEnabled          bool           `cbor:"ActionsEnabled"`
-	AlarmActions            []string       `cbor:"AlarmActions,omitempty"`
-	OKActions               []string       `cbor:"OKActions,omitempty"`
-	InsufficientDataActions []string       `cbor:"InsufficientDataActions,omitempty"`
+	AlarmName                  string               `cbor:"AlarmName"`
+	AlarmArn                   string               `cbor:"AlarmArn,omitempty"`
+	AlarmDescription           string               `cbor:"AlarmDescription,omitempty"`
+	Namespace                  string               `cbor:"Namespace,omitempty"`
+	MetricName                 string               `cbor:"MetricName,omitempty"`
+	Dimensions                 []dimensionCBR       `cbor:"Dimensions,omitempty"`
+	StateValue                 string               `cbor:"StateValue"`
+	StateReason                string               `cbor:"StateReason,omitempty"`
+	StateReasonData            string               `cbor:"StateReasonData,omitempty"`
+	StateUpdatedTimestamp      *time.Time           `cbor:"StateUpdatedTimestamp,omitempty"`
+	StateTransitionedTimestamp *time.Time           `cbor:"StateTransitionedTimestamp,omitempty"`
+	ComparisonOperator         string               `cbor:"ComparisonOperator"`
+	Threshold                  *float64             `cbor:"Threshold,omitempty"`
+	Period                     int                  `cbor:"Period,omitempty"`
+	EvaluationPeriods          int                  `cbor:"EvaluationPeriods,omitempty"`
+	DatapointsToAlarm          int                  `cbor:"DatapointsToAlarm,omitempty"`
+	Statistic                  string               `cbor:"Statistic,omitempty"`
+	ExtendedStatistic          string               `cbor:"ExtendedStatistic,omitempty"`
+	Unit                       string               `cbor:"Unit,omitempty"`
+	TreatMissingData           string               `cbor:"TreatMissingData,omitempty"`
+	ActionsEnabled             bool                 `cbor:"ActionsEnabled"`
+	AlarmActions               []string             `cbor:"AlarmActions,omitempty"`
+	OKActions                  []string             `cbor:"OKActions,omitempty"`
+	InsufficientDataActions    []string             `cbor:"InsufficientDataActions,omitempty"`
+	Metrics                    []metricDataQueryCBR `cbor:"Metrics,omitempty"`
+	ThresholdMetricID          string               `cbor:"ThresholdMetricId,omitempty"`
+
+	EvaluateLowSampleCountPercentile   string               `cbor:"EvaluateLowSampleCountPercentile,omitempty"`
+	EvaluationWindow                   *evaluationWindowCBR `cbor:"EvaluationWindow,omitempty"`
+	AlarmConfigurationUpdatedTimestamp *time.Time           `cbor:"AlarmConfigurationUpdatedTimestamp,omitempty"`
 }
 
 type describeAlarmsOutput struct {
@@ -639,56 +288,25 @@ func (h *Handler) describeAlarms(w http.ResponseWriter, r *http.Request, body []
 		return
 	}
 
-	matched := make([]metricAlarmCBR, 0)
-
-	// AlarmTypes selects metric alarms, composite alarms, or (when omitted) both.
-	if wantsAlarmType(in.AlarmTypes, alarmTypeMetric) {
-		alarms, err := h.monitoring.DescribeAlarms(r.Context(), in.AlarmNames)
-		if err != nil {
-			writeDriverErr(w, err)
-			return
-		}
-
-		for i := range alarms {
-			if !alarmMatchesFilters(&alarms[i], &in) {
-				continue
-			}
-
-			matched = append(matched, toMetricAlarmCBR(&alarms[i]))
-		}
+	page, err := h.describeAlarmsPage(r.Context(), &in)
+	if err != nil {
+		writeDriverErr(w, err)
+		return
 	}
 
-	// Always paginate: real CloudWatch caps a page at 100 alarms and returns a
-	// NextToken for the rest, so an unpaged "return everything" reply would drop
-	// alarms past 100 for callers that don't pass paging inputs.
-	sort.SliceStable(matched, func(i, j int) bool {
-		return matched[i].AlarmName < matched[j].AlarmName
-	})
+	if familyQuery(&in) {
+		metric, composite := familyRows(page)
+		writeCBORResponse(w, describeFamilyOutput{MetricAlarms: metric, CompositeAlarms: composite, NextToken: page.next})
 
-	size := in.MaxRecords
-	if size <= 0 {
-		size = maxAlarmPageSize
+		return
 	}
 
-	offset := decodeOffsetToken(in.NextToken)
-	from, to, next := pageWindow(len(matched), offset, size)
-
-	resp := describeAlarmsOutput{MetricAlarms: matched[from:to]}
-	if next > 0 {
-		resp.NextToken = encodeOffsetToken(next)
+	resp := describeAlarmsOutput{MetricAlarms: make([]metricAlarmCBR, 0, len(page.metric)), NextToken: page.next}
+	for i := range page.metric {
+		resp.MetricAlarms = append(resp.MetricAlarms, toMetricAlarmCBR(&page.metric[i]))
 	}
 
-	// Composite alarms are a small, separate collection; return them all on the
-	// first page (offset 0) so they aren't duplicated across metric-alarm pages.
-	if offset == 0 && wantsAlarmType(in.AlarmTypes, alarmTypeComposite) {
-		composites, err := h.compositeAlarmRows(r, &in)
-		if err != nil {
-			writeDriverErr(w, err)
-			return
-		}
-
-		resp.CompositeAlarms = composites
-	}
+	resp.CompositeAlarms = compositeRows(page.composite)
 
 	writeCBORResponse(w, resp)
 }
@@ -734,8 +352,9 @@ func toMetricAlarmCBR(a *mondriver.AlarmInfo) metricAlarmCBR {
 		Dimensions:              dimsToCBR(a.Dimensions),
 		StateValue:              a.State,
 		StateReason:             a.StateReason,
+		StateReasonData:         a.StateReasonData,
 		ComparisonOperator:      a.ComparisonOperator,
-		Threshold:               a.Threshold,
+		Threshold:               alarmThreshold(a),
 		Period:                  a.Period,
 		EvaluationPeriods:       a.EvaluationPeriods,
 		DatapointsToAlarm:       a.DatapointsToAlarm,
@@ -747,12 +366,24 @@ func toMetricAlarmCBR(a *mondriver.AlarmInfo) metricAlarmCBR {
 		AlarmActions:            a.AlarmActions,
 		OKActions:               a.OKActions,
 		InsufficientDataActions: a.InsufficientDataActions,
+		Metrics:                 toQueriesCBR(a.Metrics),
+		ThresholdMetricID:       a.ThresholdMetricID,
+
+		EvaluateLowSampleCountPercentile: a.EvaluateLowSampleCountPercentile,
+		EvaluationWindow:                 toEvaluationWindowCBR(a.EvaluationWindow),
 	}
 
 	if !a.StateUpdatedTimestamp.IsZero() {
 		ts := a.StateUpdatedTimestamp.UTC()
 		m.StateUpdatedTimestamp = &ts
 	}
+
+	if !a.StateTransitionedTimestamp.IsZero() {
+		ts := a.StateTransitionedTimestamp.UTC()
+		m.StateTransitionedTimestamp = &ts
+	}
+
+	m.AlarmConfigurationUpdatedTimestamp = optTime(a.AlarmConfigurationUpdatedTimestamp)
 
 	return m
 }
@@ -789,37 +420,15 @@ func (h *Handler) deleteAlarms(w http.ResponseWriter, r *http.Request, body []by
 		return
 	}
 
-	// AWS tolerates incorrect alarm names: the correctly named alarms are still
-	// deleted and no ResourceNotFound is returned. Skip not-found names so a
-	// batch that includes an already-gone alarm (e.g. terraform destroy) never
-	// fails spuriously or leaves a half-deleted state.
-	for _, name := range in.AlarmNames {
-		if err := h.monitoring.DeleteAlarm(r.Context(), name); err != nil && !cerrors.IsNotFound(err) {
-			writeDriverErr(w, err)
-			return
-		}
-	}
-
-	// DeleteAlarms accepts both metric and composite alarm names in one call; a
-	// name that isn't a metric alarm (tolerated above) may be a composite alarm.
-	if store, ok := h.monitoring.(compositeAlarmStore); ok {
-		if err := store.DeleteCompositeAlarms(r.Context(), in.AlarmNames); err != nil {
-			writeDriverErr(w, err)
-			return
-		}
+	if err := h.deleteAlarmsCore(r.Context(), in.AlarmNames); err != nil {
+		writeDriverErr(w, err)
+		return
 	}
 
 	writeCBORResponse(w, struct{}{})
 }
 
-type setAlarmStateInput struct {
-	AlarmName   string `cbor:"AlarmName"`
-	StateValue  string `cbor:"StateValue"`
-	StateReason string `cbor:"StateReason"`
-}
-
-// setAlarmState is the SDK (rpc-v2-cbor) side of SetAlarmState — the query/CLI
-// path already had it, but SDK clients got UnknownOperationException.
+// setAlarmState is the SDK (rpc-v2-cbor) side of SetAlarmState.
 func (h *Handler) setAlarmState(w http.ResponseWriter, r *http.Request, body []byte) {
 	var in setAlarmStateInput
 	if err := cbor.Unmarshal(body, &in); err != nil {
@@ -827,7 +436,7 @@ func (h *Handler) setAlarmState(w http.ResponseWriter, r *http.Request, body []b
 		return
 	}
 
-	if err := h.monitoring.SetAlarmState(r.Context(), in.AlarmName, in.StateValue, in.StateReason); err != nil {
+	if err := h.setAlarmStateCore(r.Context(), &in); err != nil {
 		writeDriverErr(w, err)
 		return
 	}

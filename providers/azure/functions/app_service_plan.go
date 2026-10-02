@@ -2,20 +2,22 @@ package functions
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-// AppServicePlan is an Azure App Service plan (Microsoft.Web/serverfarms) — the
+// AppServicePlan is an Azure App Service plan (Microsoft.Web/serverfarms), the
 // resource that carries the pricing tier an App Service or Function App bills
 // on. Only the cost-relevant SKU is modeled.
 type AppServicePlan struct {
 	Name string
 	// Subscription and ResourceGroup scope the plan's storage key
-	// (planKey) — unlike a Web App name, an App Service plan name is only
+	// (planKey): unlike a Web App name, an App Service plan name is only
 	// required to be unique within a resource group, so two different
 	// resource groups (even in the same subscription) can each have a plan
 	// named e.g. "default".
@@ -163,7 +165,7 @@ func (m *Mock) GetAppServicePlan(_ context.Context, subscription, resourceGroup,
 // DeleteAppServicePlan removes one App Service plan scoped to the given
 // subscription and resource group, or NotFound. A plan that still has a Web App
 // assigned to it (any site whose ServerFarmID targets the plan's ARM id) cannot
-// be deleted — real Azure answers 409 Conflict ("Server farm ... cannot be
+// be deleted: real Azure answers 409 Conflict ("Server farm ... cannot be
 // deleted because it has web app(s) assigned to it"), so the delete is rejected
 // with FailedPrecondition (mapped to 409 by the wire layer) rather than
 // silently leaving every site pointing at a plan that no longer exists.
@@ -182,10 +184,58 @@ func (m *Mock) DeleteAppServicePlan(_ context.Context, subscription, resourceGro
 	return nil
 }
 
+// PurgeResourceGroup deletes every site (function app or web app) and then
+// every App Service plan recorded under the resource group. Sites go first so a
+// plan is no longer referenced when it is deleted. A plan still referenced by a
+// site in another resource group stays in place and is reported, as the real
+// Azure delete of that plan fails. It backs the ARM resource-group delete
+// cascade.
+func (m *Mock) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	sites, _ := m.ListSiteMeta(ctx, "", "")
+
+	var errs []error
+
+	for i := range sites {
+		s := &sites[i]
+		if !inGroup(s.Subscription, s.ResourceGroup, subscription, resourceGroup) {
+			continue
+		}
+
+		if err := m.DeleteFunctionScoped(ctx, s.Subscription, s.ResourceGroup, s.Name); err != nil &&
+			!cerrors.IsNotFound(err) {
+			errs = append(errs, err)
+			continue
+		}
+
+		// A site with no deployed function record is not removed above.
+		_ = m.DeleteSiteMeta(ctx, s.Subscription, s.ResourceGroup, s.Name)
+	}
+
+	for _, p := range m.plans.SortedValues() {
+		if !inGroup(p.Subscription, p.ResourceGroup, subscription, resourceGroup) {
+			continue
+		}
+
+		if err := m.DeleteAppServicePlan(ctx, p.Subscription, p.ResourceGroup, p.Name); err != nil &&
+			!cerrors.IsNotFound(err) {
+			errs = append(errs, err)
+		}
+	}
+
+	return stderrors.Join(errs...)
+}
+
+// inGroup reports whether a record's subscription and resource group fall in
+// the purged group. Names compare case-insensitively; an empty subscription on
+// either side matches, as the emulator serves a single estate.
+func inGroup(recSub, recRG, subscription, resourceGroup string) bool {
+	return scope.Scope{Subscription: recSub, ResourceGroup: recRG}.InResourceGroup(subscription, resourceGroup)
+}
+
 // planAssignedSite returns the name of a site still assigned to the named plan
 // (its ServerFarmID equal to the plan's ARM id), or "" when none reference it.
 // A site's plan may live in a different resource group than the site, so every
-// site in the subscription is a candidate — the join mirrors listPlanWebApps.
+// site in the subscription is a candidate, the join mirrors listPlanWebApps.
 func (m *Mock) planAssignedSite(subscription, resourceGroup, name string) string {
 	planID := idgen.AzureID(subscription, resourceGroup, "Microsoft.Web", "serverfarms", name)
 

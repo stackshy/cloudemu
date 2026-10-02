@@ -34,7 +34,7 @@ func TestWatch_OverflowEmits410Gone(t *testing.T) {
 	}
 }
 
-// A watch with a labelSelector must stream only matching objects — both in the
+// A watch with a labelSelector must stream only matching objects, both in the
 // initial snapshot and in live events. Regression guard for the blocker where
 // watch streams ignored the selector, polluting informer caches with
 // non-matching objects.

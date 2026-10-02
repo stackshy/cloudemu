@@ -8,7 +8,7 @@
 // does not interpret (networkConfiguration, loggingConfiguration,
 // airflowConfigurationOptions, the worker/scheduler sizing, the S3 code paths)
 // verbatim as map[string]json.RawMessage, so a round-tripped environment
-// reflects everything the caller sent — a bool that must round-trip false and
+// reflects everything the caller sent. A bool that must round-trip false and
 // an int that must round-trip 0 both survive because the raw JSON is preserved.
 // Running Apache Airflow and executing DAGs are out of scope for this
 // control-plane surface: an environment is created directly in the AVAILABLE

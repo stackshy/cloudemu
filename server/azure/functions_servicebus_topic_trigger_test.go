@@ -143,7 +143,7 @@ func createQueueStorageTriggeredApp(t *testing.T, ts *httptest.Server, app, queu
 // TestServiceBusQueueAndTopicTriggersCoexist proves the #997 Queue Storage
 // queueTrigger path still fires unchanged alongside a new Service Bus
 // topic/subscription trigger, with no cross-fire between them. (The
-// queueName-bound serviceBusTrigger path is not exercised here — real
+// queueName-bound serviceBusTrigger path is not exercised here: real
 // ARM-provisioned Service Bus queues are stored namespace-prefixed
 // (server/azure/servicebus/queue.go:72, "{namespace}/{queue}"), which
 // bindingMatchesQueue's bare queueName comparison never matches; that gap
@@ -262,7 +262,7 @@ func TestServiceBusTopicTriggerDisabledFunctionSkipped(t *testing.T) {
 // recursing unbounded, mirroring
 // TestS3LambdaNotificationWriteBackDoesNotRecurseUnbounded. The handler
 // forwards the ctx it was invoked with into its own SendMessage call (a direct
-// provider call, not a fresh HTTP round trip) — that ctx-carried depth is the
+// provider call, not a fresh HTTP round trip); that ctx-carried depth is the
 // channel the guard rides on.
 func TestServiceBusTopicTriggerRecursionGuard(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)

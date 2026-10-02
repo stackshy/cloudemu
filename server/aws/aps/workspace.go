@@ -17,9 +17,10 @@ func (h *Handler) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ws, err := h.aps.CreateWorkspace(r.Context(), &driver.CreateWorkspaceInput{
-		Alias:     stringField(raw, "alias"),
-		KmsKeyArn: stringField(raw, "kmsKeyArn"),
-		Tags:      tagsFromBody(raw),
+		Alias:       stringField(raw, "alias"),
+		KmsKeyArn:   stringField(raw, "kmsKeyArn"),
+		ClientToken: stringField(raw, "clientToken"),
+		Tags:        tagsFromBody(raw),
 	})
 	if err != nil {
 		writeErr(w, err)

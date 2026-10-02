@@ -253,7 +253,7 @@ func (h *Handler) applyPutObjectLock(w http.ResponseWriter, r *http.Request, buc
 
 // writeObjectLockHeaders echoes an object version's Object Lock state on
 // GET/HEAD (x-amz-object-lock-mode / -retain-until-date / -legal-hold). It is
-// best-effort — a read error or absent lock simply omits the headers.
+// best-effort: a read error or absent lock omits the headers.
 func (h *Handler) writeObjectLockHeaders(w http.ResponseWriter, r *http.Request, bucket, key, versionID string) {
 	if h.objectLock == nil {
 		return

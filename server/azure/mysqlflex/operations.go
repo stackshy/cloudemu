@@ -10,7 +10,7 @@ import (
 )
 
 // requestScope builds the subscription/resource-group filter a server must
-// live in to be visible under rp's path — a MySQL Flexible Server created
+// live in to be visible under rp's path: a MySQL Flexible Server created
 // under one resource group must not resolve, list, or delete under another.
 func requestScope(rp *azurearm.ResourcePath) scope.Scope {
 	return scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}
@@ -43,7 +43,7 @@ func (h *Handler) lookupInScope(
 // ---- Server lifecycle ----
 
 // rejectInvalidHAMode writes a 400 and returns true when the body carries a
-// highAvailability.mode that is not a recognized enum value — real Azure
+// highAvailability.mode that is not a recognized enum value: real Azure
 // rejects a bogus mode rather than storing it.
 func rejectInvalidHAMode(w http.ResponseWriter, body *armServer) bool {
 	if body.Properties == nil || body.Properties.HighAvailability == nil {
@@ -138,7 +138,7 @@ func instanceConfigFromBody(body *armServer, rp *azurearm.ResourcePath) rdsdrive
 
 // upsertOnNameCollision resolves a PUT whose server name is already taken.
 // Flexible Server names are globally unique (they back a public FQDN), so a
-// same-name PUT from a different resource group is a naming conflict — mutating
+// same-name PUT from a different resource group is a naming conflict: mutating
 // the real owner's server would be a cross-tenant write. Only an in-scope
 // collision is a legitimate idempotent PUT that applies the body's
 // storage/sku/version/HA. It writes the wire error and returns false when the
@@ -220,7 +220,7 @@ func (h *Handler) updateServer(w http.ResponseWriter, r *http.Request, rp *azure
 	azurearm.WriteJSON(w, http.StatusOK, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
 }
 
-// getServer handles GET on a single server — Servers.Get. The driver keys
+// getServer handles GET on a single server (Servers.Get). The driver keys
 // servers by name alone, so the handler enforces the request's resource-group
 // scope: a server created in one subscription/resource group must not resolve
 // under a different one in the URL (real ARM answers 404, since the id would
@@ -234,7 +234,7 @@ func (h *Handler) getServer(w http.ResponseWriter, r *http.Request, rp *azurearm
 	azurearm.WriteJSON(w, http.StatusOK, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
 }
 
-// deleteServer handles DELETE — Servers.Delete. When the backend implements
+// deleteServer handles DELETE (Servers.Delete). When the backend implements
 // ScopedDelete (MySQL Flex always does), the scope check and the delete happen
 // atomically so a cross-tenant DELETE can never remove another resource
 // group's server; otherwise DeleteInstance runs unscoped.
@@ -255,8 +255,8 @@ func (h *Handler) deleteServer(w http.ResponseWriter, r *http.Request, rp *azure
 	w.WriteHeader(http.StatusOK)
 }
 
-// listServers handles GET on the collection — Servers.ListByResourceGroup /
-// ListBySubscription. The filter carries the path's subscription and, for
+// listServers handles GET on the collection (Servers.ListByResourceGroup /
+// ListBySubscription). The filter carries the path's subscription and, for
 // RG-level lists, its resource group; subscription-level lists leave the
 // resource group empty so the filter spans the subscription's groups.
 func (h *Handler) listServers(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -276,7 +276,7 @@ func (h *Handler) listServers(w http.ResponseWriter, r *http.Request, rp *azurea
 		}
 
 		// Render the id from the server's own group, not the request path's
-		// (empty on a subscription-scoped list) — so the id carries its true
+		// (empty on a subscription-scoped list), so the id carries its true
 		// resourceGroups/{rg} segment.
 		rg := insts[i].Scope.ResourceGroup
 		if rg == "" {
@@ -322,7 +322,7 @@ func (h *Handler) stopServer(w http.ResponseWriter, r *http.Request, rp *azurear
 // standby instead of a plain in-place restart.
 const restartWithFailoverEnabled = "Enabled"
 
-// restartServer handles POST .../restart — Servers.BeginRestart. The request
+// restartServer handles POST .../restart (Servers.BeginRestart). The request
 // body is a ServerRestartParameter: restartWithFailover=="Enabled" routes the
 // restart through FailoverInstance (so it inherits the standby precondition)
 // instead of a plain in-place reboot; maxFailoverSeconds bounds the SDK

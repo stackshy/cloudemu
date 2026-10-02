@@ -16,7 +16,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // group plus its engine handle/engine-backed flag) are unexported, so it is
 // promoted to an exported form keyed by the composite ARM key
 // (subscription/resourceGroup/name). The wired opts and the live container-engine
-// workload are not serialized — a restored group reports its stored state.
+// workload are not serialized: a restored group reports its stored state.
 type ciSnapshot struct {
 	Groups map[string]*groupSnapshot `json:"groups,omitempty"`
 }
@@ -28,7 +28,7 @@ type groupSnapshot struct {
 	EngineBacked bool                  `json:"engineBacked,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // ACI holds container-group metadata, not bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := ciSnapshot{}

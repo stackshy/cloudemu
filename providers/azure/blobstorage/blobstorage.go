@@ -31,7 +31,7 @@ const (
 	// blob URL host and the Event Grid system-topic routing key both derive from
 	// it, so a system-topic subscription created for this account (a bus of this
 	// name on the Event Grid mock) receives the account's Blob events.
-	AccountName     = "cloudemu"
+	AccountName     = driver.AzureDefaultStorageAccount
 	blobHoursPerDay = 24
 )
 
@@ -50,7 +50,7 @@ type blobObject struct {
 	// BlobType is "BlockBlob" (default, empty) or "AppendBlob".
 	BlobType string
 	// VersionID is this blob's version identifier when account-level versioning
-	// is enabled — a timestamp id minted on the write that produced it. Empty on
+	// is enabled, a timestamp id minted on the write that produced it. Empty on
 	// an account that never had versioning enabled. On a live (base) blob it is
 	// the current version's id; on a copy held in the container's versions store
 	// it identifies that historical version.
@@ -145,6 +145,9 @@ type containerMeta struct {
 	// accessPolicies are the container's stored access policies (Set/Get
 	// Container ACL).
 	accessPolicies []driver.SignedIdentifier
+	// encryptionScope is the ARM blob container's encryption scope setting,
+	// guarded by mu.
+	encryptionScope driver.ContainerEncryptionScope
 	// staging holds uncommitted blocks (Put Block) keyed by blob name.
 	staging *memstore.Store[*blockStaging]
 	// snapshots holds immutable blob snapshots keyed by snapshotKey(blob, id).
@@ -182,7 +185,17 @@ type blockStaging struct {
 
 // Mock is an in-memory mock implementation of Azure Blob Storage.
 type Mock struct {
+	// containers is keyed by driver.AzureContainerKey: the bare name for the
+	// default account, "account/name" for any other account.
 	containers *memstore.Store[*containerMeta]
+	// accounts holds the ARM storage accounts, keyed by name. An account is its
+	// own resource: it is not a container and owns the containers under its
+	// key prefix.
+	accounts *memstore.Store[driver.StorageAccountRef]
+	// accountMu serializes account create/delete against qualified container
+	// creates, so a container can never be created under an account that is
+	// being deleted.
+	accountMu sync.Mutex
 	// bucketAttrs holds Azure storage-account attributes (SKU/kind/access tier/
 	// location/tags) per container, for the BucketAttributes discovery capability.
 	bucketAttrs *memstore.Store[driver.AccountAttributes]
@@ -197,8 +210,11 @@ type Mock struct {
 	// configuration (Properties.Encryption), for the AccountEncryptionConfig
 	// capability. Kept separate from bucketAttrs so that struct stays small.
 	accountEncryption *memstore.Store[driver.AccountEncryption]
-	opts              *config.Options
-	monitoring        mondriver.Monitoring
+	// acctSettings holds the account-level settings documents (queue, table
+	// and file service properties, management policy) keyed account/kind.
+	acctSettings *memstore.Store[driver.AccountSetting]
+	opts         *config.Options
+	monitoring   mondriver.Monitoring
 	// eventgrid, when wired, receives a Microsoft.Storage.BlobCreated/BlobDeleted
 	// event on every blob write/delete so an Event Grid system-topic subscription
 	// for this account can deliver it. nil in library/typed use, where blob writes
@@ -245,7 +261,7 @@ func (m *Mock) emitMetric(container string, metrics map[string]float64) {
 			Namespace:  "Microsoft.Storage/storageAccounts",
 			MetricName: name,
 			Value:      value,
-			Unit:       "None",
+			Unit:       metricUnit(name),
 			Dimensions: map[string]string{"containerName": container},
 			Timestamp:  now,
 		})
@@ -254,14 +270,26 @@ func (m *Mock) emitMetric(container string, metrics map[string]float64) {
 	_ = m.monitoring.PutMetricData(context.Background(), data)
 }
 
+// metricUnit is the Azure Monitor unit of a storage account metric. Ingress
+// and Egress are Bytes. Transactions is a Count.
+func metricUnit(name string) string {
+	if name == "Ingress" || name == "Egress" {
+		return "Bytes"
+	}
+
+	return "Count"
+}
+
 // New creates a new Azure Blob Storage mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
 		containers:        memstore.New[*containerMeta](),
+		accounts:          memstore.New[driver.StorageAccountRef](),
 		bucketAttrs:       memstore.New[driver.AccountAttributes](),
 		accountKeys:       memstore.New[[]driver.AccountKey](),
 		blobServiceProps:  memstore.New[driver.BlobServiceProperties](),
 		accountEncryption: memstore.New[driver.AccountEncryption](),
+		acctSettings:      memstore.New[driver.AccountSetting](),
 		opts:              opts,
 	}
 }
@@ -297,7 +325,7 @@ func (m *Mock) BucketAttributes(_ context.Context, bucket string) (driver.Accoun
 }
 
 // UpdateBucketAttributes atomically applies fn to a container's stored
-// attributes (Azure storage-account PATCH — AccountsClient.Update), seeding
+// attributes (Azure storage-account PATCH, AccountsClient.Update), seeding
 // the real-Azure baseline (Standard_LRS/StorageV2/Hot) first if none was set
 // yet. Routed through memstore's Update rather than a Get-then-Set pair so a
 // concurrent PATCH/create never loses an update.
@@ -318,7 +346,7 @@ func (m *Mock) UpdateBucketAttributes(
 
 // SetBlobServiceProperties implements the storage BlobServiceConfig optional
 // capability (…/blobServices/default PUT), replacing any previously stored
-// properties for the account wholesale — matching real Azure's Set Blob
+// properties for the account wholesale, matching real Azure's Set Blob
 // Service Properties, which takes a complete properties document each call.
 func (m *Mock) SetBlobServiceProperties(_ context.Context, account string, props driver.BlobServiceProperties) error {
 	m.blobServiceProps.Set(account, props)
@@ -328,7 +356,7 @@ func (m *Mock) SetBlobServiceProperties(_ context.Context, account string, props
 
 // BlobServiceProperties implements the storage BlobServiceConfig optional
 // capability (…/blobServices/default GET), returning the zero value (all
-// features disabled) for an account that never had properties set — matching
+// features disabled) for an account that never had properties set, matching
 // real Azure's defaults for a freshly created account.
 func (m *Mock) BlobServiceProperties(_ context.Context, account string) (driver.BlobServiceProperties, error) {
 	props, _ := m.blobServiceProps.Get(account)
@@ -353,10 +381,21 @@ func (m *Mock) AccountEncryption(_ context.Context, account string) (driver.Acco
 	return enc, nil
 }
 
-// CreateBucket creates a new blob container.
+// CreateBucket creates a new blob container. A qualified "account/name" key
+// (see driver.AzureContainerKey) creates the container in that account, which
+// must exist.
 func (m *Mock) CreateBucket(_ context.Context, name string) error {
 	if name == "" {
 		return cerrors.New(cerrors.InvalidArgument, "container name cannot be empty")
+	}
+
+	if strings.Contains(name, "/") {
+		m.accountMu.Lock()
+		defer m.accountMu.Unlock()
+
+		if err := m.checkQualifiedContainer(name); err != nil {
+			return err
+		}
 	}
 
 	if m.containers.Has(name) {
@@ -394,7 +433,9 @@ func (m *Mock) DeleteBucket(_ context.Context, name string) error {
 	return nil
 }
 
-// ListBuckets lists all blob containers.
+// ListBuckets lists the default account's blob containers. Containers of
+// other storage accounts are reached through ListAccountContainers, so the
+// portable contract never sees a qualified key.
 func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
 	keys := m.containers.Keys()
 	sort.Strings(keys)
@@ -402,6 +443,10 @@ func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
 	result := make([]driver.BucketInfo, 0, len(keys))
 
 	for _, k := range keys {
+		if strings.Contains(k, "/") {
+			continue
+		}
+
 		ctr, ok := m.containers.Get(k)
 		if !ok {
 			continue
@@ -602,7 +647,7 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 
 	ctr.objects.Delete(key)
 
-	// Best-effort byte purge — the in-memory delete already succeeded, so a
+	// Best-effort byte purge: the in-memory delete already succeeded, so a
 	// backing cleanup failure must not fail an idempotent object delete.
 	_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key})
 
@@ -629,8 +674,8 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 	return &info, nil
 }
 
-// listEntry is one item in the merged list stream — either a blob or a
-// delimiter-rolled-up common prefix — so both count toward maxresults and
+// listEntry is one item in the merged list stream (either a blob or a
+// delimiter-rolled-up common prefix) so both count toward maxresults and
 // paginate together (matching real Azure's List Blobs).
 type listEntry struct {
 	name     string
@@ -823,7 +868,7 @@ func (m *Mock) copyBlobInternal(
 }
 
 // GeneratePresignedURL generates a mock presigned URL.
-// Note: expiry is tracked in the URL but not enforced on use — this is a mock limitation.
+// Note: expiry is tracked in the URL but not enforced on use, a mock limitation.
 func (m *Mock) GeneratePresignedURL(_ context.Context, req driver.PresignedURLRequest) (*driver.PresignedURL, error) {
 	if req.Method != http.MethodGet && req.Method != http.MethodPut {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "method must be GET or PUT, got %q", req.Method)
@@ -1131,7 +1176,7 @@ func (m *Mock) ListMultipartUploads(_ context.Context, bucket string) ([]driver.
 }
 
 // SetBucketVersioning enables or disables versioning on a bucket.
-// Note: this sets the flag but does not maintain object version history — mock limitation.
+// Note: this sets the flag but does not maintain object version history, a mock limitation.
 func (m *Mock) SetBucketVersioning(_ context.Context, bucket string, enabled bool) error {
 	ctr, ok := m.containers.Get(bucket)
 	if !ok {

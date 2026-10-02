@@ -68,7 +68,7 @@ func TestClusterLifecycle(t *testing.T) {
 }
 
 // TestListClustersResourceGroupCaseInsensitive verifies a subscription-scoped
-// list with a differently-cased resource group still returns the cluster — ARM
+// list with a differently-cased resource group still returns the cluster: ARM
 // resource-group names are case-insensitive.
 func TestListClustersResourceGroupCaseInsensitive(t *testing.T) {
 	m := newTestMock()
@@ -127,7 +127,7 @@ func TestAgentPoolLifecycle(t *testing.T) {
 	assertEqual(t, int32(4), pool.Count)
 	assertEqual(t, "User", pool.Mode)
 
-	// Update pool — count change.
+	// Update pool: count change.
 	pool, err = m.CreateOrUpdateAgentPool(ctx, "rg-1", "k8s-1", AgentPoolInput{
 		Name:  "userpool",
 		Count: int32Ptr(6),
@@ -210,8 +210,8 @@ func TestClusterStartStopRequiresCluster(t *testing.T) {
 
 // TestDeleteAgentPoolRejectsLastSystemPool asserts AKS's invariant that every
 // cluster retains at least one System-mode pool: deleting the sole System
-// pool is rejected, but deleting a User pool — or a System pool when another
-// System pool remains — succeeds.
+// pool is rejected, but deleting a User pool (or a System pool when another
+// System pool remains) succeeds.
 func TestDeleteAgentPoolRejectsLastSystemPool(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

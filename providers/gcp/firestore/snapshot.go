@@ -33,7 +33,7 @@ type collectionSnapshot struct {
 }
 
 // Snapshot captures every collection's full state as JSON. includeAssets is
-// unused — Firestore documents are the resource, so they are always captured.
+// unused: Firestore documents are the resource, so they are always captured.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

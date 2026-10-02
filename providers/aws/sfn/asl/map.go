@@ -9,8 +9,8 @@ import (
 // whole effective input when absent) and runs the ItemProcessor/Iterator
 // sub-state-machine once per item, sequentially, applying ItemSelector to shape
 // each iteration's input. The state's result is the array of per-iteration
-// outputs in order. Any iteration failure fails the Map, which — with the state's
-// own I/O-pipeline errors — flows through the state's Retry (re-running all
+// outputs in order. Any iteration failure fails the Map, which, with the state's
+// own I/O-pipeline errors, flows through the state's Retry (re-running all
 // iterations) and Catch. MaxConcurrency is parsed but not honored (execution is
 // sequential). ctx threads into every iteration so a Map -> Task -> Lambda cycle
 // stays bounded by the recursion guard.

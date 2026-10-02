@@ -26,7 +26,7 @@ func apiError(t *testing.T, err error) smithy.APIError {
 // TestSDKErrorMessageHasNoCodePrefix proves the ELBv2 error <Message> carries
 // only the human-readable text, never the internal cloudemu error-taxonomy name
 // (e.g. "NotFound:" / "AlreadyExists:"). Real AWS never leaks such a prefix into
-// its message, and a user asserting on the message text — or simply reading it —
+// its message, and a user asserting on the message text (or just reading it)
 // must not see one. The error Code still classifies the fault; only the Message
 // is checked here.
 func TestSDKErrorMessageHasNoCodePrefix(t *testing.T) {

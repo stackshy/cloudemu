@@ -320,8 +320,8 @@ func granularityOrDefault(g string) string {
 
 // forecastGranularity restricts to the DAILY/MONTHLY granularities
 // GetCostForecast supports (unlike GetCostAndUsage, it does not accept
-// HOURLY), rejecting anything else with a ValidationException — matching AWS,
-// which errors rather than silently substituting a different granularity.
+// HOURLY). Anything else gets a ValidationException, as on AWS, rather than a
+// silently substituted granularity.
 func forecastGranularity(g string) (string, error) {
 	switch {
 	case strings.EqualFold(g, granularityDaily):

@@ -150,7 +150,7 @@ func TestSDKAzureCacheLifecycle(t *testing.T) {
 		t.Fatalf("provisioningState = %v, want Succeeded", got.Properties.ProvisioningState)
 	}
 
-	// List by subscription — should include the one cache.
+	// List by subscription: should include the one cache.
 	var names []string
 
 	pager := client.NewListBySubscriptionPager(nil)
@@ -199,7 +199,7 @@ func TestSDKAzureCacheNotFound(t *testing.T) {
 
 // TestSDKAzureCachePremiumClustering verifies a Premium clustered cache
 // round-trips its real SKU (family P, capacity) plus shardCount and
-// replicasPerPrimary through the ARM API — the fields that drive node-count
+// replicasPerPrimary through the ARM API: the fields that drive node-count
 // cost and could not be represented when Family/Capacity were stubbed.
 func TestSDKAzureCachePremiumClustering(t *testing.T) {
 	client := newRedisClient(t)
@@ -328,7 +328,7 @@ func TestSDKAzureCacheRejectsClusteringOnStandard(t *testing.T) {
 }
 
 // TestSDKAzureCacheCapacityZeroRoundTrips covers the Basic/Standard C0 tier
-// (capacity 0) — the cheapest tier and the default in many azurerm_redis_cache
+// (capacity 0): the cheapest tier and the default in many azurerm_redis_cache
 // configs. Capacity 0 must round-trip verbatim on create, Get and update; a
 // backend that coerces 0 to 1 (or omits it) makes azurerm see a perpetual diff.
 func TestSDKAzureCacheCapacityZeroRoundTrips(t *testing.T) {

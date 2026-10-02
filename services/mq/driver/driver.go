@@ -11,8 +11,8 @@
 // (engineType, engineVersion, hostInstanceType, deploymentMode, the security
 // groups and subnet ids, the logs block, the maintenance window, encryption
 // options, storage type) are carried verbatim as map[string]json.RawMessage, so
-// a round-tripped broker reflects exactly what the caller sent — a bool that
-// must round-trip false and an int that must round-trip 0 both survive because
+// a round-tripped broker reflects what the caller sent. A bool that must
+// round-trip false and an int that must round-trip 0 both survive because
 // the raw JSON is preserved. Configuration revision data (base64-encoded XML)
 // round-trips verbatim per revision. Broker user passwords are write-only and
 // are never echoed back on DescribeUser, mirroring the real API.

@@ -12,6 +12,7 @@ import (
 var (
 	_ driver.GCPComputeResourceStore  = (*Mock)(nil)
 	_ driver.GCPBackendServicePatcher = (*Mock)(nil)
+	_ driver.GCPForwardingRulePatcher = (*Mock)(nil)
 )
 
 // gcpResourceKey builds the store key for an opaque GCP resource. The NUL
@@ -78,17 +79,56 @@ func (m *Mock) UpdateGCPResource(_ context.Context, collection, scope, name stri
 	return nil
 }
 
+// PatchGCPForwardingRule applies mutate to the forwarding rule named name (its
+// driver name) under the store lock. mutate works on a copy with its own Tags
+// map, so an error leaves the stored record untouched. Returns NotFound when no
+// such rule exists.
+func (m *Mock) PatchGCPForwardingRule(_ context.Context, name string, mutate func(*driver.LBInfo) error) error {
+	arn := idgen.GCPID(m.opts.ProjectID, "forwardingRules", name)
+
+	var mutErr error
+
+	updated := m.lbs.Update(arn, func(lb driver.LBInfo) driver.LBInfo {
+		next := lb
+		next.Tags = make(map[string]string, len(lb.Tags))
+
+		for k, v := range lb.Tags {
+			next.Tags[k] = v
+		}
+
+		if mutErr = mutate(&next); mutErr != nil {
+			return lb
+		}
+
+		return next
+	})
+	if !updated {
+		return cerrors.Newf(cerrors.NotFound, "forwarding rule %q not found", name)
+	}
+
+	return mutErr
+}
+
 // PatchGCPBackendService applies mutate to the target group named name, holding
-// the store lock across the read-modify-write. Returns NotFound when no backend
-// service with that name exists.
+// the store lock across the read-modify-write. mutate works on a copy with its
+// own Tags map, so readers holding the stored map never see it change. Returns
+// NotFound when no backend service with that name exists.
 func (m *Mock) PatchGCPBackendService(_ context.Context, name string, mutate func(*driver.TargetGroupInfo)) error {
 	// CreateTargetGroup keys the store by GCPID(project, "backendServices", name),
 	// so the ARN is derivable from the name without scanning.
 	arn := idgen.GCPID(m.opts.ProjectID, "backendServices", name)
 
 	updated := m.tgs.Update(arn, func(tg driver.TargetGroupInfo) driver.TargetGroupInfo {
-		mutate(&tg)
-		return tg
+		next := tg
+		next.Tags = make(map[string]string, len(tg.Tags))
+
+		for k, v := range tg.Tags {
+			next.Tags[k] = v
+		}
+
+		mutate(&next)
+
+		return next
 	})
 	if !updated {
 		return cerrors.Newf(cerrors.NotFound, "backend service %q not found", name)

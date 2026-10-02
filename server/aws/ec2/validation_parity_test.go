@@ -59,7 +59,7 @@ func TestCreateVpcCIDRValidation(t *testing.T) {
 		assertAPIErr(t, err, "InvalidVpcRange")
 	}
 
-	// A well-formed in-range block still succeeds — no happy-path regression.
+	// A well-formed in-range block still succeeds (no happy-path regression).
 	ok, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
 	if err != nil {
 		t.Fatalf("CreateVpc(10.0.0.0/16): %v", err)
@@ -109,7 +109,7 @@ func TestRunInstancesCountValidation(t *testing.T) {
 // TestCreateTagsRestrictions pins the CreateTags limits real EC2 enforces:
 // at most 50 user tags per resource (TagLimitExceeded) and no key in the
 // reserved "aws:" namespace (InvalidTagKey.Malformed, HTTP 400). A value that
-// starts with "aws:" is permitted — only the key is restricted.
+// starts with "aws:" is permitted; only the key is restricted.
 func TestCreateTagsRestrictions(t *testing.T) {
 	ctx := context.Background()
 	client := newEC2(t)
@@ -138,7 +138,7 @@ func TestCreateTagsRestrictions(t *testing.T) {
 	})
 	assertAPIErr(t, err, "InvalidTagKey.Malformed")
 
-	// A value in the reserved aws: namespace is permitted — real EC2 restricts
+	// A value in the reserved aws: namespace is permitted. Real EC2 restricts
 	// only the key, so this tag is written successfully.
 	_, err = client.CreateTags(ctx, &ec2.CreateTagsInput{
 		Resources: []string{id},

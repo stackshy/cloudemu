@@ -6,9 +6,9 @@
 // billing linkage, browse the service+SKU catalog, and CRUD budgets
 // end-to-end.
 //
-// Scope note: the Cloud Billing API is a control plane. GCP does NOT expose
-// per-resource cost or usage figures through it — actual spend lives in the
-// BigQuery billing export, not this API — so this handler models accounts,
+// Scope note: the Cloud Billing API is a control plane. GCP does not expose
+// per-resource cost or usage figures through it. Actual spend lives in the
+// BigQuery billing export, not this API, so this handler models accounts,
 // project-billing linkage, the catalog, and budgets, not a GetCostAndUsage
 // analog. Both APIs are served from one handler because they share the
 // /v1/billingAccounts URL space (a budget's name is
@@ -16,20 +16,20 @@
 //
 // Coverage (v1 REST):
 //
-//	GET    /v1/billingAccounts                                 — billingAccounts.list
-//	POST   /v1/billingAccounts                                 — billingAccounts.create
-//	GET    /v1/billingAccounts/{id}                            — billingAccounts.get
-//	PATCH  /v1/billingAccounts/{id}                            — billingAccounts.patch
-//	GET    /v1/billingAccounts/{id}/projects                   — billingAccounts.projects.list
-//	GET    /v1/billingAccounts/{id}/budgets                    — budgets.list
-//	POST   /v1/billingAccounts/{id}/budgets                    — budgets.create
-//	GET    /v1/billingAccounts/{id}/budgets/{budgetId}         — budgets.get
-//	PATCH  /v1/billingAccounts/{id}/budgets/{budgetId}         — budgets.patch
-//	DELETE /v1/billingAccounts/{id}/budgets/{budgetId}         — budgets.delete
-//	GET    /v1/projects/{project}/billingInfo                  — projects.getBillingInfo
-//	PUT    /v1/projects/{project}/billingInfo                  — projects.updateBillingInfo
-//	GET    /v1/services                                        — services.list
-//	GET    /v1/services/{service}/skus                         — services.skus.list
+//	GET    /v1/billingAccounts                                 : billingAccounts.list
+//	POST   /v1/billingAccounts                                 : billingAccounts.create
+//	GET    /v1/billingAccounts/{id}                            : billingAccounts.get
+//	PATCH  /v1/billingAccounts/{id}                            : billingAccounts.patch
+//	GET    /v1/billingAccounts/{id}/projects                   : billingAccounts.projects.list
+//	GET    /v1/billingAccounts/{id}/budgets                    : budgets.list
+//	POST   /v1/billingAccounts/{id}/budgets                    : budgets.create
+//	GET    /v1/billingAccounts/{id}/budgets/{budgetId}         : budgets.get
+//	PATCH  /v1/billingAccounts/{id}/budgets/{budgetId}         : budgets.patch
+//	DELETE /v1/billingAccounts/{id}/budgets/{budgetId}         : budgets.delete
+//	GET    /v1/projects/{project}/billingInfo                  : projects.getBillingInfo
+//	PUT    /v1/projects/{project}/billingInfo                  : projects.updateBillingInfo
+//	GET    /v1/services                                        : services.list
+//	GET    /v1/services/{service}/skus                         : services.skus.list
 package cloudbilling
 
 import (

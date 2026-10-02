@@ -12,21 +12,21 @@
 //
 // Coverage (query protocol):
 //
-//	CreateTopic                 — Notification.CreateTopic
-//	DeleteTopic                 — Notification.DeleteTopic
-//	GetTopicAttributes          — Notification.GetTopic
-//	ListTopics                  — Notification.ListTopics
-//	Subscribe                   — Notification.Subscribe
-//	Unsubscribe                 — Notification.Unsubscribe
-//	ConfirmSubscription         — snsExtras.ConfirmSubscription
-//	GetSubscriptionAttributes   — snsExtras.GetSubscription
-//	SetSubscriptionAttributes   — snsExtras.SetSubscriptionAttribute
-//	ListSubscriptions           — Notification.ListSubscriptions across all topics
-//	ListSubscriptionsByTopic    — Notification.ListSubscriptions for one topic
-//	Publish                     — Notification.Publish
-//	PublishBatch                — Notification.Publish per entry
-//	AddPermission               — snsExtras.AddTopicPermission
-//	RemovePermission            — snsExtras.RemoveTopicPermission
+//	CreateTopic                   Notification.CreateTopic
+//	DeleteTopic                   Notification.DeleteTopic
+//	GetTopicAttributes            Notification.GetTopic
+//	ListTopics                    Notification.ListTopics
+//	Subscribe                     Notification.Subscribe
+//	Unsubscribe                   Notification.Unsubscribe
+//	ConfirmSubscription           snsExtras.ConfirmSubscription
+//	GetSubscriptionAttributes     snsExtras.GetSubscription
+//	SetSubscriptionAttributes     snsExtras.SetSubscriptionAttribute
+//	ListSubscriptions             Notification.ListSubscriptions across all topics
+//	ListSubscriptionsByTopic      Notification.ListSubscriptions for one topic
+//	Publish                       Notification.Publish
+//	PublishBatch                  Notification.Publish per entry
+//	AddPermission                 snsExtras.AddTopicPermission
+//	RemovePermission              snsExtras.RemoveTopicPermission
 package sns
 
 import (
@@ -89,7 +89,7 @@ const actionListTagsForResource = "ListTagsForResource"
 //
 // ListTagsForResource collides with RDS in the shared query protocol (RDS
 // registers first), so both handlers claim it only for their own SigV4
-// credential scope — see Matches.
+// credential scope; see Matches.
 type topicTagger interface {
 	TagTopic(ctx context.Context, topicName string, tags map[string]string) error
 	UntagTopic(ctx context.Context, topicName string, keys []string) error
@@ -97,7 +97,7 @@ type topicTagger interface {
 
 // snsExtras is the AWS-only surface (subscription attributes, confirmation, and
 // topic access-policy permissions) that isn't part of the portable Notification
-// driver — Azure Notification Hubs and GCP FCM don't model it. The AWS SNS mock
+// driver, since Azure Notification Hubs and GCP FCM don't model it. The AWS SNS mock
 // implements it; handlers type-assert for it and return NotSupported otherwise.
 type snsExtras interface {
 	GetSubscription(ctx context.Context, subscriptionARN string) (*notifdriver.SubscriptionInfo, error)

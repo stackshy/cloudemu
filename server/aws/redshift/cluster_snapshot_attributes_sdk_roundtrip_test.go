@@ -54,7 +54,7 @@ func TestSDKRedshiftSnapshotAttributes(t *testing.T) {
 
 // TestSDKRedshiftSnapshotPreservesKmsKeyId proves the source cluster's KmsKeyId
 // is captured on the snapshot, reported on DescribeClusterSnapshots, and carried
-// onto a restored cluster — the encryption key survives snapshot/restore so
+// onto a restored cluster. The encryption key survives snapshot/restore so
 // aws_redshift_cluster / snapshot Terraform does not drift.
 func TestSDKRedshiftSnapshotPreservesKmsKeyId(t *testing.T) {
 	client := newSDKClient(t)

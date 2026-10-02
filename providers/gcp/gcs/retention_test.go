@@ -55,11 +55,11 @@ func TestRetentionPolicyBlocksDeleteUntilElapsed(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, isImmutable(err), "expected GCSImmutableError, got %v", err)
 
-	// Halfway through — still blocked.
+	// Halfway through: still blocked.
 	clk.Advance(30 * time.Minute)
 	assert.True(t, isImmutable(m.DeleteObjectGCS(ctx, "b", "obj", nil, driver.GCSPrecondition{})))
 
-	// Past the period — delete succeeds.
+	// Past the period: delete succeeds.
 	clk.Advance(31 * time.Minute)
 	require.NoError(t, m.DeleteObjectGCS(ctx, "b", "obj", nil, driver.GCSPrecondition{}))
 }
@@ -138,7 +138,7 @@ func TestTemporaryHoldBlocksDeleteAndOverwrite(t *testing.T) {
 	_, err := m.PutObjectGCS(ctx, "b", "obj", []byte("x"), "text/plain", nil, nil, driver.GCSPrecondition{})
 	assert.True(t, isImmutable(err))
 
-	// Release the hold — delete now succeeds.
+	// Release the hold: delete now succeeds.
 	setHold(t, m, "b", "obj", boolPtr(false), nil)
 	require.NoError(t, m.DeleteObjectGCS(ctx, "b", "obj", nil, driver.GCSPrecondition{}))
 }
@@ -161,7 +161,7 @@ func TestEventBasedHoldBlocksAndResetsRetentionClock(t *testing.T) {
 	clk.Advance(2 * time.Hour)
 	assert.True(t, isImmutable(m.DeleteObjectGCS(ctx, "b", "obj", nil, driver.GCSPrecondition{})))
 
-	// Release the hold — the retention clock restarts from now, so the object is
+	// Release the hold: the retention clock restarts from now, so the object is
 	// still retained for a fresh full period.
 	setHold(t, m, "b", "obj", nil, boolPtr(false))
 	assert.True(t, isImmutable(m.DeleteObjectGCS(ctx, "b", "obj", nil, driver.GCSPrecondition{})),
@@ -171,7 +171,7 @@ func TestEventBasedHoldBlocksAndResetsRetentionClock(t *testing.T) {
 	clk.Advance(30 * time.Minute)
 	assert.True(t, isImmutable(m.DeleteObjectGCS(ctx, "b", "obj", nil, driver.GCSPrecondition{})))
 
-	// Past the fresh full period from release — delete succeeds.
+	// Past the fresh full period from release: delete succeeds.
 	clk.Advance(31 * time.Minute)
 	require.NoError(t, m.DeleteObjectGCS(ctx, "b", "obj", nil, driver.GCSPrecondition{}))
 }

@@ -42,6 +42,7 @@ func (h *Handler) createRuleGroupsNamespace(w http.ResponseWriter, r *http.Reque
 		WorkspaceID: workspaceID,
 		Name:        stringField(raw, "name"),
 		Data:        stringField(raw, "data"),
+		ClientToken: stringField(raw, "clientToken"),
 		Tags:        tagsFromBody(raw),
 	})
 	if err != nil {

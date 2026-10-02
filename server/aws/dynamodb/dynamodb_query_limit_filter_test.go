@@ -31,7 +31,7 @@ func seedLimitFilterTable(t *testing.T, client *dynamodb.Client) {
 // number of items to EVALUATE, and the FilterExpression is applied AFTER
 // reading that page. So ScannedCount is capped at Limit, Count counts matches
 // only among those first Limit evaluated items, and LastEvaluatedKey is
-// returned whenever Limit items were evaluated and more remain — including the
+// returned whenever Limit items were evaluated and more remain. That includes the
 // documented case where a page returns an empty result set plus a
 // LastEvaluatedKey because every item read was filtered out.
 func TestDDBQueryLimitFilterInteraction(t *testing.T) {

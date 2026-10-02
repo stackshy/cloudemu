@@ -312,7 +312,7 @@ func TargetTypeOf(targetID string) string {
 }
 
 // assocHandle names an attachment from its two ends. OCI has no association
-// resource — a subnet simply carries a routeTableId — so this is a handle,
+// resource (a subnet simply carries a routeTableId), so this is a handle,
 // not an OCID.
 func assocHandle(routeTableID, subnetID string) string {
 	return routeTableID + "|" + subnetID

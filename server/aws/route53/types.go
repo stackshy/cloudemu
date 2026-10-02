@@ -154,7 +154,7 @@ type createHostedZoneResponse struct {
 }
 
 // updateHostedZoneCommentResponse carries the updated hosted zone back, the
-// same as GetHostedZone but without a DelegationSet — matching real Route 53's
+// same as GetHostedZone but without a DelegationSet, matching real Route 53's
 // UpdateHostedZoneComment response shape.
 type updateHostedZoneCommentResponse struct {
 	XMLName    xml.Name      `xml:"UpdateHostedZoneCommentResponse"`
@@ -286,6 +286,16 @@ type errorResponse struct {
 type errorXML struct {
 	Code    string `xml:"Code"`
 	Message string `xml:"Message"`
+}
+
+// invalidChangeBatchResponse is the body real Route 53 sends for a rejected
+// change batch: an InvalidChangeBatch root with Messages and no Error element.
+// The Go SDK maps it to InvalidChangeBatch; botocore shows an empty code for
+// it, as it does against real Route 53.
+type invalidChangeBatchResponse struct {
+	XMLName  xml.Name `xml:"InvalidChangeBatch"`
+	Xmlns    string   `xml:"xmlns,attr"`
+	Messages []string `xml:"Messages>Message"`
 }
 
 // trimZonePrefix strips the "/hostedzone/" prefix real Route 53 wraps zone ids

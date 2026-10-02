@@ -8,7 +8,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork"
 )
 
-// Finding: a subnet CreateOrUpdate was create-only — re-PUTting an existing
+// Finding: a subnet CreateOrUpdate was create-only: re-PUTting an existing
 // subnet with a new addressPrefix silently dropped the change (GET returned the
 // old CIDR). Real ARM replaces the addressPrefix in place.
 func TestSDKSubnetUpdateAddressPrefix(t *testing.T) {
@@ -49,7 +49,7 @@ func TestSDKSubnetUpdateAddressPrefix(t *testing.T) {
 	}
 }
 
-// Finding: an associated NSG could never be removed — re-PUTting a subnet
+// Finding: an associated NSG could never be removed: re-PUTting a subnet
 // WITHOUT networkSecurityGroup left the association in place. Real ARM's
 // CreateOrUpdate is a full replacement: an omitted networkSecurityGroup clears
 // the association (the azurerm_subnet_network_security_group_association delete
@@ -170,7 +170,7 @@ func TestSDKPeeringDeleteDisconnectsReciprocal(t *testing.T) {
 }
 
 // Finding: NSG references were resolved by name only, not resource-group
-// scoped — a NIC in rgA could reference an NSG that exists only in rgB and be
+// scoped: a NIC in rgA could reference an NSG that exists only in rgB and be
 // accepted. The reference must resolve within the NSG id's own resource group.
 func TestSDKNICNSGCrossRGRejected(t *testing.T) {
 	ts := newVNetServer(t)

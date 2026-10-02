@@ -261,7 +261,7 @@ func lastPathSegment(arn string) string {
 	return arn
 }
 
-// kmsKeyID returns the key id KMS tags by — the segment after ":key/" in a KMS
+// kmsKeyID returns the key id KMS tags by: the segment after ":key/" in a KMS
 // ARN (arn:aws:kms:…:key/<id>).
 func kmsKeyID(arn string) string {
 	const marker = ":key/"
@@ -272,7 +272,7 @@ func kmsKeyID(arn string) string {
 	return lastPathSegment(arn)
 }
 
-// ssmParamName returns the parameter name SSM keys its tag store by — the
+// ssmParamName returns the parameter name SSM keys its tag store by: the
 // segment after ":parameter/" in an SSM parameter ARN.
 func ssmParamName(arn string) string {
 	const marker = ":parameter/"
@@ -283,7 +283,7 @@ func ssmParamName(arn string) string {
 	return arn
 }
 
-// cwAlarmName returns the alarm name CloudWatch keys its tag store by — the
+// cwAlarmName returns the alarm name CloudWatch keys its tag store by: the
 // segment after ":alarm:" in a CloudWatch alarm ARN (arn:aws:cloudwatch:…:alarm:<name>).
 func cwAlarmName(arn string) string {
 	const marker = ":alarm:"

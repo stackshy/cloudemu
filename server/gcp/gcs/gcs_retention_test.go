@@ -1,4 +1,4 @@
-// Package gcs_test — suite cell STORAGE / gcp / sdk-compat.
+// Package gcs_test: suite cell STORAGE / gcp / sdk-compat.
 //
 // Real cloud.google.com/go/storage SDK journeys for bucket retention policies +
 // bucket lock and object temporary/event-based holds (WORM), driven against the
@@ -117,7 +117,7 @@ func TestGCSRetentionPolicyBlocksDeleteUntilElapsed(t *testing.T) {
 	// Delete before the period elapses is forbidden.
 	assertForbidden(t, bkt.Object("obj").Delete(ctx))
 
-	// Advance past the period — delete now succeeds.
+	// Advance past the period. Delete now succeeds.
 	clk.Advance(2 * time.Hour)
 
 	if err := bkt.Object("obj").Delete(ctx); err != nil {
@@ -235,7 +235,7 @@ func TestGCSTemporaryHoldBlocksDelete(t *testing.T) {
 	_, _ = w.Write([]byte("x"))
 	assertForbidden(t, w.Close())
 
-	// Release the hold — delete now succeeds.
+	// Release the hold. Delete now succeeds.
 	if _, err := obj.Update(ctx, storage.ObjectAttrsToUpdate{TemporaryHold: false}); err != nil {
 		t.Fatalf("release temporary hold: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestGCSEventBasedHoldResetsRetentionClock(t *testing.T) {
 	clk.Advance(2 * time.Hour)
 	assertForbidden(t, obj.Delete(ctx))
 
-	// Release the hold — the retention clock restarts from now.
+	// Release the hold. The retention clock restarts from now.
 	if _, err := obj.Update(ctx, storage.ObjectAttrsToUpdate{EventBasedHold: false}); err != nil {
 		t.Fatalf("release event-based hold: %v", err)
 	}

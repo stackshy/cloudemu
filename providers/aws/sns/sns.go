@@ -3,12 +3,15 @@ package sns
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -289,7 +292,7 @@ func (m *Mock) ListTopics(_ context.Context, filter scope.Scope) ([]driver.Topic
 	return topics, nil
 }
 
-// UpdateTopic replaces the mutable fields of an existing topic — ARM
+// UpdateTopic replaces the mutable fields of an existing topic, ARM
 // CreateOrUpdate-on-existing semantics (display name and tags come from the
 // request; identity is preserved).
 func (m *Mock) UpdateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.TopicInfo, error) {
@@ -514,12 +517,26 @@ func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.
 		return nil, errors.New(errors.InvalidArgument, "message is required")
 	}
 
+	// SNS messages must be UTF-8. Rejecting here keeps an invalid body from
+	// being accepted and then dropped at SQS delivery.
+	if !utf8.ValidString(input.Message) {
+		return nil, errors.New(errors.InvalidArgument, "Invalid parameter: Message must be valid UTF-8")
+	}
+
 	if err := validateFIFOPublish(&td.info, &input); err != nil {
 		return nil, err
 	}
 
 	if err := validateMessageStructure(&input); err != nil {
 		return nil, err
+	}
+
+	// A FIFO topic with ContentBasedDeduplication enabled and no explicit
+	// MessageDeduplicationId gets one derived here, exactly as real SNS does,
+	// so fan-out to a FIFO SQS subscription (which requires a dedup id) is not
+	// silently rejected downstream.
+	if td.info.FifoTopic && input.MessageDeduplicationID == "" && td.info.ContentBasedDeduplication {
+		input.MessageDeduplicationID = contentBasedDeduplicationID(input.Message)
 	}
 
 	msgID := idgen.GenerateID("msg-")
@@ -848,6 +865,17 @@ func envelopeAttributes(input *driver.PublishInput) map[string]any {
 	}
 
 	return out
+}
+
+// contentBasedDeduplicationID derives the FIFO MessageDeduplicationId SNS
+// computes for a publish when the topic has ContentBasedDeduplication enabled:
+// the hex-encoded SHA-256 hash of the message body, matching real SNS/SQS
+// content-based dedup (and mirroring providers/aws/sqs's own derivation so the
+// two stay consistent).
+func contentBasedDeduplicationID(message string) string {
+	sum := sha256.Sum256([]byte(message))
+
+	return hex.EncodeToString(sum[:])
 }
 
 // defaultDataType returns dt, or "String" when dt is empty.

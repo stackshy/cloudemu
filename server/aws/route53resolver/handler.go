@@ -91,7 +91,7 @@ func (h *Handler) routes() map[string]func(http.ResponseWriter, *http.Request) {
 		"GetResolverDnssecConfig":    h.getResolverDnssecConfig,
 		"UpdateResolverDnssecConfig": h.updateResolverDnssecConfig,
 		"ListResolverDnssecConfigs":  h.listResolverDnssecConfigs,
-		// DNS Firewall — domain lists
+		// DNS Firewall: domain lists
 		"CreateFirewallDomainList": h.createFirewallDomainList,
 		"GetFirewallDomainList":    h.getFirewallDomainList,
 		"DeleteFirewallDomainList": h.deleteFirewallDomainList,
@@ -99,7 +99,7 @@ func (h *Handler) routes() map[string]func(http.ResponseWriter, *http.Request) {
 		"UpdateFirewallDomains":    h.updateFirewallDomains,
 		"ImportFirewallDomains":    h.importFirewallDomains,
 		"ListFirewallDomains":      h.listFirewallDomains,
-		// DNS Firewall — rules
+		// DNS Firewall: rules
 		"CreateFirewallRule":      h.createFirewallRule,
 		"UpdateFirewallRule":      h.updateFirewallRule,
 		"DeleteFirewallRule":      h.deleteFirewallRule,
@@ -107,20 +107,20 @@ func (h *Handler) routes() map[string]func(http.ResponseWriter, *http.Request) {
 		"BatchCreateFirewallRule": h.batchCreateFirewallRule,
 		"BatchUpdateFirewallRule": h.batchUpdateFirewallRule,
 		"BatchDeleteFirewallRule": h.batchDeleteFirewallRule,
-		// DNS Firewall — rule groups
+		// DNS Firewall: rule groups
 		"CreateFirewallRuleGroup":    h.createFirewallRuleGroup,
 		"GetFirewallRuleGroup":       h.getFirewallRuleGroup,
 		"DeleteFirewallRuleGroup":    h.deleteFirewallRuleGroup,
 		"ListFirewallRuleGroups":     h.listFirewallRuleGroups,
 		"PutFirewallRuleGroupPolicy": h.putFirewallRuleGroupPolicy,
 		"GetFirewallRuleGroupPolicy": h.getFirewallRuleGroupPolicy,
-		// DNS Firewall — rule-group associations
+		// DNS Firewall: rule-group associations
 		"AssociateFirewallRuleGroup":         h.associateFirewallRuleGroup,
 		"DisassociateFirewallRuleGroup":      h.disassociateFirewallRuleGroup,
 		"GetFirewallRuleGroupAssociation":    h.getFirewallRuleGroupAssociation,
 		"ListFirewallRuleGroupAssociations":  h.listFirewallRuleGroupAssociations,
 		"UpdateFirewallRuleGroupAssociation": h.updateFirewallRuleGroupAssociation,
-		// DNS Firewall — configs + rule types
+		// DNS Firewall: configs + rule types
 		"GetFirewallConfig":     h.getFirewallConfig,
 		"UpdateFirewallConfig":  h.updateFirewallConfig,
 		"ListFirewallConfigs":   h.listFirewallConfigs,

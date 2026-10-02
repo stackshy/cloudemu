@@ -224,7 +224,7 @@ func lenMethods(ifaces []ifaceDecl, name string) int {
 }
 
 // referencedInterface returns the driver interface the portable package holds as
-// its backend — the one used as a struct-field or parameter type (e.g.
+// its backend: the one used as a struct-field or parameter type (e.g.
 // `driver driver.Networking`), the most-referenced such type. Only type
 // positions count, so an optional capability a wrapper probes for via a type
 // assertion (`x.(driver.NetworkInterfaces)`) is never mistaken for the primary.
@@ -270,8 +270,8 @@ func referencedInterface(portableDir string, ifaces []ifaceDecl) string {
 
 // countFieldTypes counts, per known interface, how often it is the type of a
 // struct field, function parameter, or result (every ast.Field carries a type),
-// i.e. where the package stores or consumes the interface — never a type
-// assertion, which is an expression, not a field.
+// i.e. where the package stores or consumes the interface. A type assertion is
+// an expression, not a field, so it never counts.
 func countFieldTypes(file *ast.File, known map[string]int) {
 	ast.Inspect(file, func(n ast.Node) bool {
 		field, ok := n.(*ast.Field)

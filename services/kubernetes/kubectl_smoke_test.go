@@ -1,12 +1,12 @@
 //go:build kubectl
 
 // This file is gated behind the "kubectl" build tag, so it never runs as
-// part of the normal `go test ./...` gate — it needs a real kubectl binary
+// part of the normal `go test ./...` gate: it needs a real kubectl binary
 // on PATH and is meant to be run explicitly:
 //
 //	go test -tags kubectl ./services/kubernetes/... -run TestKubectlSmoke -v
 //
-// CI WIRING NOTE (not implemented here — this file intentionally does not
+// CI WIRING NOTE (not implemented here; this file intentionally does not
 // touch .github/workflows): a workflow job that wants this test needs to
 // install kubectl before invoking go test, e.g.:
 //
@@ -16,7 +16,7 @@
 //   - run: go test -tags kubectl ./services/kubernetes/... -run TestKubectlSmoke -v
 //
 // COVERAGE: the emulator here is served over plain HTTP via httptest.NewServer
-// (no TLS), so this test drives real kubectl against it directly — discovery
+// (no TLS), so this test drives real kubectl against it directly: discovery
 // negotiation (kubectl refuses to proceed without a working /api, /apis,
 // /version, and OpenAPI, all exercised implicitly by every command below),
 // `kubectl get namespaces`, and a create+read round trip via `kubectl apply
@@ -25,7 +25,7 @@
 // handlers the Go-client tests cover).
 //
 // NOT COVERED: TLS/certificate trust (the SDK-compat `serve` entrypoint's
-// kubeconfigs point at an HTTPS endpoint backed by internal/k8spki — this
+// kubeconfigs point at an HTTPS endpoint backed by internal/k8spki; this
 // harness uses a plain-HTTP kubeconfig instead, since kubectl doesn't need
 // TLS to talk to a plain httptest server); ?watch=true streaming; and
 // RBAC/NetworkPolicy evaluation (covered by rbac_test.go / networkpolicy_test.go).
@@ -66,7 +66,7 @@ func TestKubectlSmoke(t *testing.T) {
 }
 
 // writeSmokeKubeconfig writes a minimal kubeconfig pointing at the emulator's
-// plain-HTTP test server — no certificate-authority-data is needed since
+// plain-HTTP test server. No certificate-authority-data is needed since
 // there's no TLS handshake to validate.
 func writeSmokeKubeconfig(t *testing.T, baseURL, uid string) string {
 	t.Helper()
@@ -253,7 +253,7 @@ func kubectlOut(t *testing.T, kubectlPath, kubeconfig string, args ...string) st
 }
 
 // kubectlRaw runs kubectl with the kubeconfig and returns combined output and
-// error without failing the test — for cases that expect a non-zero exit.
+// error without failing the test, for cases that expect a non-zero exit.
 func kubectlRaw(kubectlPath, kubeconfig string, args ...string) (string, error) {
 	cmdArgs := append([]string{"--kubeconfig=" + kubeconfig}, args...)
 	out, err := exec.Command(kubectlPath, cmdArgs...).CombinedOutput()

@@ -5,12 +5,12 @@
 //
 // It maps the Azure Queue REST surface onto the shared messagequeue driver:
 //
-//	PUT    /{queue}                              — create queue
-//	DELETE /{queue}                              — delete queue
-//	GET    /?comp=list                           — list queues
-//	POST   /{queue}/messages                     — enqueue message
-//	GET    /{queue}/messages                     — dequeue messages
-//	DELETE /{queue}/messages/{messageid}?popreceipt=… — delete message
+//	PUT    /{queue}                              : create queue
+//	DELETE /{queue}                              : delete queue
+//	GET    /?comp=list                           : list queues
+//	POST   /{queue}/messages                     : enqueue message
+//	GET    /{queue}/messages                     : dequeue messages
+//	DELETE /{queue}/messages/{messageid}?popreceipt=… : delete message
 //
 // Message bodies are XML <QueueMessage><MessageText>… envelopes; the SDK
 // base64-encodes application payloads into MessageText, so this handler treats
@@ -90,17 +90,17 @@ func New(mq mqdriver.MessageQueue) *Handler {
 // These are non-ARM data-plane URLs; the detection signals are disjoint from
 // the Blob fallback:
 //
-//   - /{queue}/messages and /{queue}/messages/{id} — the "/messages" segment
+//   - /{queue}/messages and /{queue}/messages/{id}: the "/messages" segment
 //     is the queue data-plane marker. NOTE: this is not strictly disjoint from
-//     Blob — a blob literally named "messages" (or under a "messages/" prefix)
+//     Blob: a blob literally named "messages" (or under a "messages/" prefix)
 //     has the same shape. Azure separates them only by the {account}.queue vs
 //     {account}.blob hostname, invisible behind a shared endpoint. When both
 //     handlers are wired, the Queue handler owns this shape; a blob named
 //     "messages" is a known collision.
-//   - PUT|DELETE /{queue} with no restype=container query — Blob container ops
+//   - PUT|DELETE /{queue} with no restype=container query: Blob container ops
 //     always carry restype=container, so a bare PUT/DELETE on a single path
 //     segment is a queue create/delete. Disjoint from Blob container ops.
-//   - GET /?comp=list (list queues) — this shape is byte-for-byte identical to
+//   - GET /?comp=list (list queues): this shape is byte-for-byte identical to
 //     Blob's list-containers; Azure disambiguates only by hostname. When both
 //     handlers are registered, the Queue handler (registered first) owns it.
 //
@@ -117,14 +117,14 @@ func (*Handler) Matches(r *http.Request) bool {
 	queue, sub, msgID := parseQueuePath(r.URL.Path)
 	q := r.URL.Query()
 
-	// /{queue}/messages[/{id}] — the unambiguous queue message surface.
+	// /{queue}/messages[/{id}]: the unambiguous queue message surface.
 	if sub == "messages" {
 		_ = msgID
 
 		return true
 	}
 
-	// GET /?comp=list — list queues (see Matches doc: shares Blob's shape).
+	// GET /?comp=list: list queues (see Matches doc: shares Blob's shape).
 	if queue == "" {
 		return r.Method == http.MethodGet && q.Get("comp") == compList && q.Get("restype") == ""
 	}
@@ -136,7 +136,7 @@ func (*Handler) Matches(r *http.Request) bool {
 		case http.MethodPut, http.MethodDelete:
 			return q.Get("restype") == ""
 		case http.MethodGet, http.MethodHead:
-			// GET|HEAD /{queue}?comp=metadata — queue properties. Blob container
+			// GET|HEAD /{queue}?comp=metadata: queue properties. Blob container
 			// metadata carries restype=container, so this is unambiguous.
 			return q.Get("comp") == compMetadata && q.Get("restype") == ""
 		}
@@ -470,7 +470,7 @@ func (h *Handler) dequeueMessages(r *http.Request, url string, maxMsgs, visTimeo
 	})
 }
 
-// peek handles GET /{queue}/messages?peekonly=true — a non-destructive read
+// peek handles GET /{queue}/messages?peekonly=true: a non-destructive read
 // that leaves message visibility unchanged and issues no pop receipts.
 func (h *Handler) peek(w http.ResponseWriter, r *http.Request, queue string) {
 	svc, ok := h.mq.(mqdriver.AzureQueueStorage)
@@ -553,7 +553,7 @@ func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request, queue st
 
 	if err := h.mq.DeleteMessage(r.Context(), url, popReceipt); err != nil {
 		// The queue was already resolved, so a NotFound here means the message or
-		// its pop receipt did not match — Azure returns 404 MessageNotFound.
+		// its pop receipt did not match: Azure returns 404 MessageNotFound.
 		if cerrors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, "MessageNotFound", cerrors.Message(err))
 			return
@@ -694,8 +694,8 @@ func parseMessageTTL(w http.ResponseWriter, raw string) (int, bool) {
 	return v, true
 }
 
-// displayExpiry returns t, or — for a message that never expires (the zero
-// time.Time internal marker) — a far-future timestamp so the wire response's
+// displayExpiry returns t, or, for a message that never expires (the zero
+// time.Time internal marker), a far-future timestamp so the wire response's
 // ExpirationTime element reads as "effectively unbounded" rather than
 // formatting the zero time as year 0001 (which would look already expired).
 func displayExpiry(t time.Time) time.Time {

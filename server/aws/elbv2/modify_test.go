@@ -453,7 +453,7 @@ func TestSDKSetSecurityGroupsAndSubnets(t *testing.T) {
 // TestSDKTargetHealthAdvances proves a freshly registered target reports
 // "initial" (with the AWS reason code) and then advances to "healthy".
 // TestSDKTargetHealthDefaultsToHealthy proves that outside AsyncSettle a
-// registered target reports healthy immediately — the synchronous default
+// registered target reports healthy immediately. That is the synchronous default
 // every resource in cloudemu uses unless a caller opts into realistic
 // intermediate states. See TestAsyncSettleWireELBv2TargetHealth for the
 // initial->healthy->draining->removed progression under AsyncSettle.

@@ -66,7 +66,7 @@ func TestGRPCListenerOptIn(t *testing.T) {
 				t.Fatalf("gcp-grpc listener present = %v, want %v (servers: %v)", got, tc.wantGRPC, names)
 			}
 
-			// The REST GCP endpoint is present regardless — the gRPC transport is
+			// The REST GCP endpoint is present regardless; the gRPC transport is
 			// additive, never a replacement.
 			if !hasName(names, "gcp") {
 				t.Fatalf("gcp REST listener missing (servers: %v)", names)

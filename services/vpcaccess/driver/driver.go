@@ -1,5 +1,5 @@
 // Package driver defines the portable interface for the Google Serverless VPC
-// Access control plane (vpcaccess.googleapis.com/v1). It is control-plane only —
+// Access control plane (vpcaccess.googleapis.com/v1). It is control-plane only:
 // the single region-scoped resource collection a Terraform google provider or a
 // real google.golang.org/api/vpcaccess client CRUDs is modeled:
 //
@@ -10,8 +10,8 @@
 //
 //	projects/{p}/locations/{region}/operations/{op}
 //
-// The connector uses EITHER ipCidrRange+network OR a subnet{name,projectId} — the
-// network/subnet oneof — and both are carried verbatim as Fields, so neither is
+// The connector uses EITHER ipCidrRange+network OR a subnet{name,projectId}, the
+// network/subnet oneof, and both are carried verbatim as Fields, so neither is
 // forced. IAM policy verbs and any real data-plane traffic routing are out of
 // scope (see BUILDOUT_BACKLOG.md).
 //
@@ -21,7 +21,7 @@
 // (seeded READY), connectedProjects, and the API-defaulted numeric fields
 // (minInstances, maxInstances, minThroughput, maxThroughput, and the machineType
 // default) are minted once at create and stored, so a client that omits them
-// reads the same values the real API fills — the classic connector drift point.
+// reads the same values the real API fills: the classic connector drift point.
 // Every other caller-supplied body key (network, ipCidrRange, subnet, labels, …)
 // is carried as Fields verbatim, matching the datastream/certificatemanager
 // raw-passthrough model, so deep sub-blocks need not be enumerated and cannot
@@ -38,7 +38,7 @@ import (
 // separately so the full resource name and location scoping can be rebuilt
 // without re-parsing. CreateTime/UpdateTime are derived deterministically and
 // stay stable across reads. Fields holds every caller-supplied, non-computed
-// body key verbatim — plus the computed body values seeded once at create
+// body key verbatim, plus the computed body values seeded once at create
 // (state, connectedProjects, the defaulted min/max instances and throughput),
 // which then round-trip as stable passthrough values.
 type Resource struct {

@@ -139,7 +139,7 @@ func (m *Mock) recordClusterEvent(clusterName, message string) {
 }
 
 // describeByName returns all values (when names is empty) or the named ones,
-// each cloned, from a store — the shared shape of every Describe* method.
+// each cloned, from a store, the shared shape of every Describe* method.
 func describeByName[T any](
 	store *memstore.Store[T], names []string, clone func(*T) T, notFound func(string) error,
 ) ([]T, error) {

@@ -66,7 +66,7 @@ func (m *Mock) emitMetric(topicName string, metrics map[string]float64) {
 			Namespace:  "Microsoft.NotificationHubs/namespaces",
 			MetricName: name,
 			Value:      value,
-			Unit:       "None",
+			Unit:       "Count", // every metric here is a Count in Azure Monitor
 			Dimensions: map[string]string{"topicName": topicName},
 			Timestamp:  now,
 		})
@@ -176,7 +176,7 @@ func (m *Mock) ListTopics(_ context.Context, filter scope.Scope) ([]driver.Topic
 	return topics, nil
 }
 
-// UpdateTopic replaces the mutable fields of an existing topic — ARM
+// UpdateTopic replaces the mutable fields of an existing topic, using ARM
 // CreateOrUpdate-on-existing semantics (display name and tags come from the
 // request; identity is preserved).
 func (m *Mock) UpdateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.TopicInfo, error) {

@@ -5,16 +5,16 @@
 //
 // Supported operations:
 //
-//	POST   /Tables                                        — create table
-//	GET    /Tables                                        — list tables
-//	DELETE /Tables('name')                                — delete table
-//	POST   /{table}                                       — insert entity
-//	GET    /{table}(PartitionKey='p',RowKey='r')          — get entity
-//	PUT    /{table}(PartitionKey='p',RowKey='r')          — replace entity
-//	MERGE|PATCH /{table}(PartitionKey='p',RowKey='r')     — merge entity
-//	DELETE /{table}(PartitionKey='p',RowKey='r')          — delete entity
-//	GET    /{table}()?$filter=…                           — query entities
-//	POST   /$batch                                        — entity group transaction
+//	POST   /Tables                                        : create table
+//	GET    /Tables                                        : list tables
+//	DELETE /Tables('name')                                : delete table
+//	POST   /{table}                                       : insert entity
+//	GET    /{table}(PartitionKey='p',RowKey='r')          : get entity
+//	PUT    /{table}(PartitionKey='p',RowKey='r')          : replace entity
+//	MERGE|PATCH /{table}(PartitionKey='p',RowKey='r')     : merge entity
+//	DELETE /{table}(PartitionKey='p',RowKey='r')          : delete entity
+//	GET    /{table}()?$filter=…                           : query entities
+//	POST   /$batch                                        : entity group transaction
 //
 // Access policies are out of scope. Upsert (a PUT or MERGE with no If-Match
 // header against a missing row) is supported as an insert-or-replace/merge,
@@ -62,10 +62,10 @@ func New(ts driver.TableStorage) *Handler {
 // Matches returns true for Azure Table Storage data-plane requests. The
 // detection signals are disjoint from every other Azure handler:
 //
-//   - The path is /Tables or /Tables('name') — the table lifecycle surface,
+//   - The path is /Tables or /Tables('name'): the table lifecycle surface,
 //     which no other service uses.
 //   - The path's first segment carries an OData key predicate: it contains a
-//     "(" — either "()" (query entities) or
+//     "(": either "()" (query entities) or
 //     "(PartitionKey='…',RowKey='…')" (entity CRUD). Blob/Queue paths never
 //     contain parentheses, and ARM paths start with /subscriptions/, so this
 //     is unambiguous.
@@ -81,7 +81,7 @@ func (*Handler) Matches(r *http.Request) bool {
 
 	path := strings.TrimPrefix(r.URL.Path, "/")
 
-	// /$batch — entity group transactions.
+	// /$batch: entity group transactions.
 	if path == pathBatch {
 		return true
 	}
@@ -128,7 +128,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "Tables("):
 		h.deleteTable(w, r, tableNameFromDelete(path))
 	case r.Method == http.MethodPost && !strings.ContainsRune(path, '('):
-		// POST /{table} — insert entity into a bare table path.
+		// POST /{table}: insert entity into a bare table path.
 		h.insertEntity(w, r, path)
 	default:
 		h.entityOp(w, r, path)
@@ -320,7 +320,7 @@ func (h *Handler) insertEntity(w http.ResponseWriter, r *http.Request, table str
 		return
 	}
 
-	// Default (no Prefer header): return-content — echo the entity with 201.
+	// Default (no Prefer header): return-content, echoing the entity with 201.
 	out := entityToJSON(ent)
 	out["odata.metadata"] = fmt.Sprintf("%s://%s/$metadata#%s/@Element", scheme(r), r.Host, table)
 	out[etagProp] = etag

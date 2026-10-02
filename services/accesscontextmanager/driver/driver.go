@@ -1,5 +1,5 @@
 // Package driver defines the portable interface for the Google Access Context
-// Manager control plane (accesscontextmanager.googleapis.com/v1) — the VPC
+// Manager control plane (accesscontextmanager.googleapis.com/v1): the VPC
 // Service Controls surface a Terraform google provider or a real
 // google.golang.org/api/accesscontextmanager client CRUDs. It is control-plane
 // only, and its resource grammar is organization-scoped, not the usual
@@ -19,8 +19,8 @@
 // raw-passthrough model, so deep loosely-typed sub-blocks cannot drift.
 //
 // The long-running operations these mutating RPCs return are
-// organization-scoped and live at the service root — /v1/operations/{id}, NOT
-// under projects/locations — so they do not share the space the shared GCP LRO
+// organization-scoped and live at the service root (/v1/operations/{id}, not
+// under projects/locations), so they don't share the space the shared GCP LRO
 // poller owns; a policy's own handler resolves them.
 //
 // IAM policy verbs (get/set/testIamPermissions), the accessLevels:replaceAll

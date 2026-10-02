@@ -44,7 +44,7 @@ func (m *Mock) ResultTokenForRule(ruleName string) (string, bool) {
 // PutEvaluations records evaluations reported by a custom rule and rolls the
 // rule's aggregate compliance up from them. The resultToken is a large opaque
 // token the emulator issued for a rule (at create time or via
-// StartConfigRulesEvaluation) — never the rule name. An unknown or malformed
+// StartConfigRulesEvaluation); it is never the rule name. An unknown or malformed
 // token is an InvalidResultTokenException. Returns any evaluations that failed
 // (always empty here). In testMode nothing is persisted (real Config behavior).
 func (m *Mock) PutEvaluations(
@@ -256,7 +256,7 @@ func (m *Mock) GetComplianceSummaryByConfigRule(_ context.Context) (compliant, n
 }
 
 // GetComplianceSummaryByResourceType tallies compliant vs non-compliant
-// resources (synthesized from recorded PutResourceConfig items — all counted as
+// resources (synthesized from recorded PutResourceConfig items; all counted as
 // compliant unless an evaluation marks them otherwise).
 func (m *Mock) GetComplianceSummaryByResourceType(
 	_ context.Context, resourceTypes []string,

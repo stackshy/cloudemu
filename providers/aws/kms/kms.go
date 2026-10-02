@@ -138,8 +138,8 @@ func (m *Mock) now() time.Time {
 	return m.opts.Clock.Now().UTC()
 }
 
-// resolveKeyID turns any accepted key reference — key ID, key ARN, alias name
-// ("alias/foo"), or alias ARN — into the underlying key ID.
+// resolveKeyID turns any accepted key reference (key ID, key ARN, alias name
+// ("alias/foo"), or alias ARN) into the underlying key ID.
 func (m *Mock) resolveKeyID(ref string) (string, error) {
 	switch {
 	case strings.HasPrefix(ref, "arn:"):

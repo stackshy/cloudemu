@@ -1,4 +1,4 @@
-// streams_test.go — real-user-journey tests that drive the genuine
+// streams_test.go: real-user-journey tests that drive the genuine
 // aws-sdk-go-v2 DynamoDB and DynamoDB Streams clients against the emulator's
 // HTTP server (httptest). A table is created with a stream enabled, items are
 // written through the real DynamoDB client, and the change records are read back
@@ -465,7 +465,7 @@ func TestStreamsRouteDisjointFromControlPlane(t *testing.T) {
 
 // TestStreamsShardIDMeetsRealAWSShapeMinLength guards against a regression
 // where the emulator's ShardId is too short for the AWS SDK/CLI's own
-// client-side request-shape validation — real DynamoDB Streams requires a
+// client-side request-shape validation. Real DynamoDB Streams requires a
 // ShardId of at least 28 characters
 // ("shardId-<20-digit-epoch-ms>-<8-hex-char-suffix>"). A too-short ShardId
 // round-trips fine through this in-process test (which, unlike a real

@@ -1,4 +1,4 @@
-// Package gcp_test —  suite cell STORAGE / gcp / sdk-compat.
+// Package gcp_test: suite cell STORAGE / gcp / sdk-compat.
 //
 // These tests drive the REAL cloud.google.com/go/storage SDK against the
 // emulator's GCP HTTP server (httptest), asserting on SDK-decoded responses
@@ -210,7 +210,7 @@ func TestStorageFullLifecycle(t *testing.T) {
 	putObject(t, ctx, src, "empty.bin", "application/octet-stream", empty, nil)
 	putObject(t, ctx, src, "blobs/big.bin", "application/octet-stream", big, nil)
 
-	// Stat (HeadObject equivalent) — size, content type, metadata, sha256 ETag.
+	// Stat (HeadObject equivalent): size, content type, metadata, sha256 ETag.
 	attrs, err := src.Object("docs/hello.txt").Attrs(ctx)
 	if err != nil {
 		t.Fatalf("object Attrs: %v", err)
@@ -255,7 +255,7 @@ func TestStorageFullLifecycle(t *testing.T) {
 		t.Errorf("empty object Attrs.Size = %d, want 0", eattrs.Size)
 	}
 
-	// List everything — keys sorted lexically.
+	// List everything: keys sorted lexically.
 	keys, _ := listAll(t, ctx, src, nil)
 
 	wantKeys := []string{"blobs/big.bin", "docs/hello.txt", "empty.bin"}

@@ -12,7 +12,7 @@ import (
 //
 // Three is the meaningful number, not an arbitrary one: it is the minimum real
 // AWS regions offer, and it is what makes multi-AZ provisioning paths
-// exercisable. A subnet group spanning two AZs — which RDS requires — cannot be
+// exercisable. A subnet group spanning two AZs, which RDS requires, cannot be
 // built against a region that reports fewer, so anything less would make
 // datastore provisioning untestable rather than merely approximate.
 const azCount = 3
@@ -20,7 +20,7 @@ const azCount = 3
 // regionFromRequest reads the region out of the SigV4 credential scope
 // ("Credential=AK/20260727/us-east-1/ec2/aws4_request"). The query API carries
 // no region parameter, and the signature is the only place a caller states
-// which region it believes it is talking to — so deriving it here keeps the
+// which region it believes it is talking to, so deriving it here keeps the
 // answer consistent with what the caller asked for rather than pinning every
 // caller to one hard-coded region.
 func regionFromRequest(r *http.Request) string {
@@ -58,7 +58,7 @@ type describeAZResponseXML struct {
 // describeAvailabilityZones answers ec2:DescribeAvailabilityZones.
 //
 // Provisioning a VPC is the first step of almost every datastore plan, and
-// picking subnets requires knowing the region's zones — so without this action
+// picking subnets requires knowing the region's zones, so without this action
 // the very first step of a datastore job fails with "unknown action", before
 // any of the VPC/subnet/RDS behavior the emulator does implement is reached.
 //

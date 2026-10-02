@@ -111,6 +111,7 @@ func TestSDKEKSDescribeAndListUpdates(t *testing.T) {
 
 	if _, err := client.CreateCluster(ctx, &awseks.CreateClusterInput{
 		Name:               aws.String("u1"),
+		Version:            aws.String("1.35"),
 		RoleArn:            aws.String("arn:aws:iam::123456789012:role/eks"),
 		ResourcesVpcConfig: &ekstypes.VpcConfigRequest{SubnetIds: []string{"subnet-1"}},
 	}); err != nil {
@@ -119,7 +120,7 @@ func TestSDKEKSDescribeAndListUpdates(t *testing.T) {
 
 	upd, err := client.UpdateClusterVersion(ctx, &awseks.UpdateClusterVersionInput{
 		Name:    aws.String("u1"),
-		Version: aws.String("1.30"),
+		Version: aws.String("1.36"),
 	})
 	if err != nil {
 		t.Fatalf("UpdateClusterVersion: %v", err)

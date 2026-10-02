@@ -15,7 +15,7 @@ import (
 // TestSDKChangesCreateConcurrentSameAdditionExactlyOneWins locks
 // changes.create's atomicity for the SAME name+type record set: two callers
 // racing to add it must not both succeed (Cloud DNS rejects the loser with
-// alreadyExists), and the zone must end up with exactly one record set —
+// alreadyExists), and the zone must end up with exactly one record set,
 // never zero (lost) and never duplicated. Note this same-key case is actually
 // guaranteed by CreateRecord's atomic SetIfAbsent (providers/gcp/clouddns)
 // regardless of applyMu, since both additions land on the same store key; see
@@ -93,7 +93,7 @@ func TestSDKChangesCreateConcurrentSameAdditionExactlyOneWins(t *testing.T) {
 // targets a deleted zone), never a zone deleted while a record the check
 // should have seen silently disappears without a trace. This scenario is
 // covered by applyMu but does not reliably falsify on its own if applyMu is
-// removed — see TestSDKChangesCreateConcurrentCNAMEExclusivityAcrossKeys for
+// removed: see TestSDKChangesCreateConcurrentCNAMEExclusivityAcrossKeys for
 // the test that does.
 func TestSDKDeleteZoneConcurrentWithChangesCreateNeverLosesRecord(t *testing.T) {
 	svc := newDNSService(t)
@@ -167,13 +167,13 @@ func TestSDKDeleteZoneConcurrentWithChangesCreateNeverLosesRecord(t *testing.T) 
 // actually falsifies on a reverted applyMu. A CNAME addition and an A
 // addition for the SAME name land on different dns driver store keys
 // (recordKey folds in the record type), so CreateRecord's per-key
-// SetIfAbsent — which is what protects the same-key case above — cannot see
+// SetIfAbsent, which is what protects the same-key case above, cannot see
 // or prevent this collision. Cloud DNS forbids a name from carrying both a
 // CNAME and any other record type; checkCNAME enforces that by reading the
 // zone's current records before a batch applies. Without applyMu serializing
 // changes.create's validate-then-apply span, two concurrent batches (one
-// adding the CNAME, one adding the A) can each read the pre-change state —
-// neither sees the other's not-yet-applied addition — conclude there's no
+// adding the CNAME, one adding the A) can each read the pre-change state
+// (neither sees the other's not-yet-applied addition), conclude there's no
 // conflict, and both apply, leaving the zone with both. With applyMu in
 // place, the second batch to run always observes the first's already-applied
 // record and is rejected.

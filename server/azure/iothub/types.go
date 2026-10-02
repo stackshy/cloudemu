@@ -49,8 +49,8 @@ type policyWire struct {
 	Rights       string `json:"rights,omitempty"`
 }
 
-// hubResponse is the ARM representation of an IoT hub. Keys are never echoed here
-// — the plain GET/PUT/PATCH response omits authorizationPolicies, matching real
+// hubResponse is the ARM representation of an IoT hub. Keys are never echoed here:
+// the plain GET/PUT/PATCH response omits authorizationPolicies, matching real
 // IoT Hub behavior where keys are retrieved only via the listkeys actions.
 type hubResponse struct {
 	ID         string            `json:"id"`
@@ -87,7 +87,7 @@ type eventHubRespWire struct {
 	Endpoint            string   `json:"endpoint"`
 }
 
-// hubListResponse is the ARM hub list envelope. nextLink is omitted — the
+// hubListResponse is the ARM hub list envelope. nextLink is omitted: the
 // emulator returns a single page.
 type hubListResponse struct {
 	Value []hubResponse `json:"value"`
@@ -180,7 +180,7 @@ func policiesToDriver(in []policyWire) []iothub.SharedAccessPolicy {
 }
 
 // toHubResponse projects a stored hub onto the ARM wire representation. The
-// shared-access-policy keys are deliberately omitted — only the listkeys actions
+// shared-access-policy keys are deliberately omitted: only the listkeys actions
 // surface them.
 func toHubResponse(h *iothub.Hub) hubResponse {
 	return hubResponse{

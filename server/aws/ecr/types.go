@@ -17,7 +17,7 @@ type imageScanningConfigJSON struct {
 
 // encryptionConfigJSON mirrors ECR's EncryptionConfiguration object. Real ECR
 // reports an encryptionConfiguration on every repository (default AES256), and
-// Terraform's aws_ecr_repository reads it back on every refresh — omitting it
+// Terraform's aws_ecr_repository reads it back on every refresh. Omitting it
 // makes an explicit encryption_configuration block drift and force replacement.
 type encryptionConfigJSON struct {
 	EncryptionType string `json:"encryptionType"`
@@ -60,7 +60,7 @@ type imageDetailJSON struct {
 
 // imageScanStatusJSON mirrors ECR's ImageScanStatus object, echoed on
 // DescribeImages once an image has scan results (from scanOnPush or an
-// explicit StartImageScan) — omitted, as in real ECR, when no scan has run.
+// explicit StartImageScan). As in real ECR, it is omitted when no scan has run.
 type imageScanStatusJSON struct {
 	Status string `json:"status"`
 }
@@ -208,7 +208,7 @@ func toImageDetailJSON(d *crdriver.ImageDetail) imageDetailJSON {
 	}
 }
 
-// imageReference picks the digest if present, otherwise the tag — the form the
+// imageReference picks the digest if present, otherwise the tag, the form the
 // driver's findImage resolves.
 func imageReference(id imageIDJSON) string {
 	if id.ImageDigest != "" {

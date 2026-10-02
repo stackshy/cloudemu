@@ -23,7 +23,7 @@ const noRetries = -1
 // (ACR data-plane catalog API) against CloudEmu's in-process wire server and
 // records one compat result per portable containerregistry op the SDK exercises.
 //
-// ACR's data plane is list/get/delete oriented — repositories appear on push,
+// ACR's data plane is list/get/delete oriented: repositories appear on push,
 // so there is no data-plane create. Repositories and images are seeded through
 // the driver directly (as the SDK offers no data-plane push), then the SDK
 // lists repositories, reads repository properties, lists tags, and deletes.
@@ -47,7 +47,7 @@ func TestAzureContainerRegistryCompat(t *testing.T) {
 	ctx := context.Background()
 	reg := cloud.ACR
 
-	// Seed a repository with two tags via the driver — the data plane has no
+	// Seed a repository with two tags via the driver: the data plane has no
 	// push surface, so this stands in for a `docker push`.
 	if _, err := reg.CreateRepository(ctx, crdriver.RepositoryConfig{Name: "app"}); err != nil {
 		t.Fatalf("seed CreateRepository: %v", err)

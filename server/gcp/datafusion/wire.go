@@ -26,7 +26,7 @@ const (
 // tenantProjectId, p4ServiceAccount, serviceAccount, version) on every read.
 // version is BOTH an input and an output field: a caller-supplied version is
 // carried verbatim in Fields and echoed; only when absent is a deterministic
-// default injected — so version is intentionally NOT in this strip set.
+// default injected, so version is intentionally not in this strip set.
 //
 //nolint:gochecknoglobals // immutable lookup set
 var outputKeys = map[string]bool{
@@ -142,7 +142,19 @@ func decodeBody(w http.ResponseWriter, r *http.Request) (fields map[string]json.
 // (serviceEndpoint, apiEndpoint, gcsBucket, tenantProjectId, p4ServiceAccount,
 // serviceAccount, and a default version when none was supplied).
 func toInstanceJSON(r *dfdriver.Resource) (json.RawMessage, error) {
-	m := make(map[string]json.RawMessage, len(r.Fields)+len(computedOutputs(r)))
+	// r.Fields is populated from the request body. Guard the raw field count
+	// against a cap that leaves headroom for the injected computed fields. There
+	// is no runtime arithmetic on the request-derived value, so nothing for an
+	// overflow check to flag, and the guard bounds the allocation. The map still
+	// grows to hold every entry; this only sizes the initial hint.
+	const maxResourceFields = 10000
+
+	capHint := len(r.Fields)
+	if capHint > maxResourceFields-minComputedFields {
+		capHint = maxResourceFields - minComputedFields
+	}
+
+	m := make(map[string]json.RawMessage, capHint)
 	for k, v := range r.Fields {
 		m[k] = v
 	}

@@ -55,7 +55,7 @@ func versionKey(blob, versionID string) string {
 
 // cloneBlobObject deep-copies a blob's content, metadata, and system properties
 // into a standalone immutable record for the versions store. The live lease
-// state and the object mutex are intentionally excluded — a version is a
+// state and the object mutex are intentionally excluded: a version is a
 // point-in-time content snapshot, not a leasable live blob.
 func cloneBlobObject(obj *blobObject) *blobObject {
 	return &blobObject{
@@ -163,7 +163,7 @@ func (m *Mock) DeleteBlobVersion(_ context.Context, container, blob, versionID s
 
 // ListBlobVersions returns every version (current and previous) of the blobs
 // matching opts, sorted by blob name then version id (so the current version,
-// which carries the newest id, sorts last within a name — matching Azure).
+// which carries the newest id, sorts last within a name, matching Azure).
 func (m *Mock) ListBlobVersions(_ context.Context, container string, opts driver.ListOptions) (*driver.VersionListResult, error) {
 	ctr, ok := m.containers.Get(container)
 	if !ok {

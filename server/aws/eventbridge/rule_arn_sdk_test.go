@@ -17,7 +17,7 @@ import (
 )
 
 // ruleARNTestAccountID and ruleARNTestRegion are threaded explicitly into
-// Drivers so the tests below can assert against an exact ARN string — the
+// Drivers so the tests below can assert against an exact ARN string. The
 // package's other helpers (e.g. newEventBridgeClient) leave AccountID/Region
 // blank, which is fine for existence checks but not for exact-format ones.
 const (
@@ -108,7 +108,7 @@ func TestSDKEventBridgeDefaultBusRuleARNOmitsBusSegment(t *testing.T) {
 }
 
 // TestSDKEventBridgeExplicitDefaultBusRuleARNOmitsBusSegment is the same as
-// above but with EventBusName explicitly set to "default" — the fix's
+// above but with EventBusName explicitly set to "default", the fix's
 // bus == defaultBusName branch, distinct from the bus == "" branch.
 func TestSDKEventBridgeExplicitDefaultBusRuleARNOmitsBusSegment(t *testing.T) {
 	client := newEBClientWithIdentity(t)

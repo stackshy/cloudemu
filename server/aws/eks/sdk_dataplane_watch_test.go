@@ -1,5 +1,5 @@
 // Wave 2 Phase 4 end-to-end test: real client-go Informer over the
-// in-memory K8s API. Proves Watch streaming works end-to-end — the
+// in-memory K8s API. Proves Watch streaming works end-to-end. The
 // Reflector / SharedIndexInformer machinery requires List + Watch to
 // behave correctly together, including initial-state replay and
 // mutation events.
@@ -37,7 +37,7 @@ import (
 // Each step bounded by a short context deadline so a regression on
 // Watch never deadlocks the test binary.
 //
-//nolint:funlen // single Informer scenario — splitting hurts readability.
+//nolint:funlen // single Informer scenario; splitting hurts readability.
 func TestSDKEKSDataPlane_InformerObservesAddAndDelete(t *testing.T) {
 	cloud := cloudemu.NewAWS()
 
@@ -132,7 +132,7 @@ func TestSDKEKSDataPlane_InformerObservesAddAndDelete(t *testing.T) {
 		t.Fatal("informer never synced")
 	}
 
-	// Mutate AFTER sync — the watch stream should fire ADDED and DELETED.
+	// Mutate AFTER sync. The watch stream should fire ADDED and DELETED.
 	if _, err := cs.CoreV1().ConfigMaps("default").Create(ctx, &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: "live"},
 		Data:       map[string]string{"k": "v"},
@@ -144,7 +144,7 @@ func TestSDKEKSDataPlane_InformerObservesAddAndDelete(t *testing.T) {
 		t.Fatalf("Delete preexisting: %v", err)
 	}
 
-	// Give the watch channel a moment to drain — bounded by ctx deadline.
+	// Give the watch channel a moment to drain, bounded by the ctx deadline.
 	deadline := time.Now().Add(3 * time.Second)
 
 	for time.Now().Before(deadline) {

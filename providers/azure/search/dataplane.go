@@ -130,7 +130,7 @@ func (m *Mock) IndexDocuments(_ context.Context, service, index string, actions 
 			if !m.mergeInto(storeKey, act.Document) {
 				m.documents.Set(storeKey, copyDoc(act.Document))
 			}
-		default: // upload — full replace.
+		default: // upload: full replace.
 			m.documents.Set(storeKey, copyDoc(act.Document))
 		}
 

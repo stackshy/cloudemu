@@ -11,7 +11,7 @@ import (
 )
 
 // TestSnapshotRestoreRoundTrip proves the EventBridge mock serializes its entire
-// state — buses, rules, targets, and tags — and restores it into a fresh mock
+// state (buses, rules, targets, and tags) and restores it into a fresh mock
 // identity-preservingly.
 func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	ctx := context.Background()

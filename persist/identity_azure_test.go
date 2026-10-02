@@ -18,7 +18,7 @@ import (
 // identity guarantee: after a full Export→JSON→Restore into a FRESH Azure
 // provider, resource identifiers and id-string cross-references survive
 // unchanged. In particular a virtual machine keeps the SAME instance id and its
-// security-group reference — the thing the old driver-replay compute path could
+// security-group reference, the thing the old driver-replay compute path could
 // not do (it minted a fresh id via RunInstances).
 func TestIdentityPreservedAcrossRestoreAzure(t *testing.T) {
 	ctx := context.Background()
@@ -99,7 +99,7 @@ func TestIdentityPreservedAcrossRestoreAzure(t *testing.T) {
 
 	// The restored instance is still a live, transitionable resource: the state
 	// machine was re-registered, so a Stop succeeds (it would fail if only the
-	// record — not the FSM state — had been restored).
+	// record, not the FSM state, had been restored).
 	if err := dst.VirtualMachines.StopInstances(ctx, []string{wantInstanceID}); err != nil {
 		t.Fatalf("stop restored instance: %v", err)
 	}
@@ -133,8 +133,8 @@ func TestIdentityPreservedAcrossRestoreAzure(t *testing.T) {
 }
 
 // TestRoleAssignmentsSurviveRestoreAzure confirms an Azure RBAC role
-// assignment (Microsoft.Authorization/roleAssignments) — a wire-model concept
-// with no AWS-shaped driver.IAM equivalent — round-trips through a full
+// assignment (Microsoft.Authorization/roleAssignments), a wire-model concept
+// with no AWS-shaped driver.IAM equivalent, round-trips through a full
 // Export→JSON→Restore into a fresh provider under the SAME assignment id, and
 // that a role definition it references is still blocked from deletion after
 // restore, exactly as before the snapshot.

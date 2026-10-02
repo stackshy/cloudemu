@@ -96,8 +96,8 @@ type createSecretRequest struct {
 }
 
 // patchSecretRequest is the body of secrets.patch; the update mask names which
-// fields to apply. Etag is a top-level optimistic-concurrency precondition —
-// not gated by the update mask — honored whenever the caller supplies one.
+// fields to apply. Etag is a top-level optimistic-concurrency precondition,
+// not gated by the update mask, honored whenever the caller supplies one.
 type patchSecretRequest struct {
 	Labels         map[string]string `json:"labels"`
 	Annotations    map[string]string `json:"annotations"`
@@ -171,7 +171,7 @@ func versionName(project, id, version string) string {
 	return secretName(project, id) + "/" + versionsSeg + "/" + version
 }
 
-// driverVersion maps the URL version segment to the driver's version key —
+// driverVersion maps the URL version segment to the driver's version key:
 // "latest" resolves to the current version (empty key).
 func driverVersion(v string) string {
 	if v == latestAlias {

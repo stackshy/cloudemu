@@ -43,7 +43,7 @@ type vertexaiSnapshot struct {
 	Operations     json.RawMessage `json:"operations,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // Vertex AI holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap vertexaiSnapshot

@@ -91,7 +91,7 @@ func (h *Handler) dispatchSAVerb(w http.ResponseWriter, r *http.Request, rt *rou
 // caller holds. The emulator has no request-principal identity, so it grants
 // exactly the permissions named in the SA's bound roles' includedPermissions
 // (custom roles) plus any granted directly in the SA resource policy bindings.
-// With no matching policy every requested permission is held — real GCP grants
+// With no matching policy every requested permission is held. Real GCP grants
 // what the caller actually has; here the "caller" is the resource owner.
 func (h *Handler) testSAIamPermissions(w http.ResponseWriter, r *http.Request, email string) {
 	var body struct {
@@ -138,7 +138,7 @@ func (h *Handler) heldPermissions(r *http.Request, email string) map[string]bool
 
 	for i := range pol.Bindings {
 		roleName := pol.Bindings[i].Role
-		// Custom roles are "projects/{p}/roles/{id}" — resolve their perms.
+		// Custom roles are "projects/{p}/roles/{id}". Resolve their perms.
 		id := roleName[strings.LastIndex(roleName, "/")+1:]
 
 		dr, err := h.iam.GetRole(r.Context(), id)
@@ -241,7 +241,7 @@ func (h *Handler) getSAIamPolicy(w http.ResponseWriter, email string) {
 
 // setSAIamPolicy enforces optimistic concurrency. If a policy already exists,
 // the request's policy.etag must match the stored etag or the write is
-// rejected with 409 ABORTED — mirroring real GCP's read-modify-write contract.
+// rejected with 409 ABORTED, mirroring real GCP's read-modify-write contract.
 // Each accepted write bumps a per-SA version so successive states get distinct
 // etags (the old base64(email+bindingCount) scheme collided across states).
 func (h *Handler) setSAIamPolicy(w http.ResponseWriter, r *http.Request, email string) {

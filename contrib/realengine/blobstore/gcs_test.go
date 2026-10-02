@@ -22,7 +22,7 @@ import (
 const gcsProject = "cloudemu-blob-project"
 
 // newGCSClient builds a real cloud.google.com/go/storage client pointed at the
-// in-process emulator. The /storage/v1/ suffix is required — the SDK appends
+// in-process emulator. The /storage/v1/ suffix is required: the SDK appends
 // /b/... directly to the endpoint.
 func newGCSClient(ctx context.Context, t *testing.T, ts *httptest.Server) *storage.Client {
 	t.Helper()
@@ -43,7 +43,7 @@ func newGCSClient(ctx context.Context, t *testing.T, ts *httptest.Server) *stora
 
 // TestGCSBlobstoreEngineE2E drives a full GCS object lifecycle through the real
 // cloud.google.com/go/storage client against CloudEmu backed by the filesystem
-// blobstore engine — no Docker, no cloud account. It proves object bytes flow
+// blobstore engine (no Docker, no cloud account). It proves object bytes flow
 // through the engine (the real file on disk holds them) while the emulator
 // keeps metadata: create bucket → write → read → attrs → copy → read copy →
 // delete → confirm NotExist → assert the on-disk file matches.
@@ -152,7 +152,7 @@ func TestGCSBlobstoreEngineE2E(t *testing.T) {
 }
 
 // assertEngineFileMatches walks the engine root and confirms exactly one file
-// holds the expected bytes — proof the object bytes really landed on disk.
+// holds the expected bytes, proof the object bytes really landed on disk.
 func assertEngineFileMatches(t *testing.T, eng *blobstore.Store, bucket, key string, want []byte) {
 	t.Helper()
 

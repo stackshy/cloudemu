@@ -24,7 +24,7 @@ import (
 // (PostgreSQL-compatible): create a DB cluster with master credentials, add a
 // db.r6g instance to it, read the CLUSTER endpoint + port the SDK reports,
 // connect a real Postgres client to the cluster endpoint using the cluster's
-// master credentials, run SQL, then delete — all against CloudEmu backed by a
+// master credentials, run SQL, then delete, all against CloudEmu backed by a
 // real embedded Postgres (no Docker, no cloud account). The client connects
 // using ONLY the SDK-reported cluster endpoint + port.
 //
@@ -57,7 +57,7 @@ func TestAuroraPostgresE2E(t *testing.T) {
 		password   = "Aurora-Secret-Pw"
 	)
 
-	// 1. Create the cluster — like `aws rds create-db-cluster`. The master creds
+	// 1. Create the cluster, like `aws rds create-db-cluster`. The master creds
 	//    live on the CLUSTER, not the instance.
 	if _, err := client.CreateDBCluster(ctx, &rds.CreateDBClusterInput{
 		DBClusterIdentifier: aws.String(clusterID),
@@ -68,7 +68,7 @@ func TestAuroraPostgresE2E(t *testing.T) {
 		t.Fatalf("CreateDBCluster: %v", err)
 	}
 
-	// 2. Add a db.r6g instance to the cluster — it carries no master creds.
+	// 2. Add a db.r6g instance to the cluster: it carries no master creds.
 	if _, err := client.CreateDBInstance(ctx, &rds.CreateDBInstanceInput{
 		DBInstanceIdentifier: aws.String(instanceID),
 		DBClusterIdentifier:  aws.String(clusterID),
@@ -78,7 +78,7 @@ func TestAuroraPostgresE2E(t *testing.T) {
 		t.Fatalf("CreateDBInstance: %v", err)
 	}
 
-	// 3. Read the CLUSTER endpoint + port the SDK reports — the real embedded
+	// 3. Read the CLUSTER endpoint + port the SDK reports: the real embedded
 	//    Postgres address. Connect using ONLY these SDK-reported values.
 	desc, err := client.DescribeDBClusters(ctx, &rds.DescribeDBClustersInput{
 		DBClusterIdentifier: aws.String(clusterID),
@@ -126,7 +126,7 @@ func TestAuroraPostgresE2E(t *testing.T) {
 
 	_ = db.Close()
 
-	// 5. Delete the member, then the cluster — the shared database is torn down.
+	// 5. Delete the member, then the cluster: the shared database is torn down.
 	if _, err := client.DeleteDBInstance(ctx, &rds.DeleteDBInstanceInput{
 		DBInstanceIdentifier: aws.String(instanceID),
 		SkipFinalSnapshot:    aws.Bool(true),

@@ -22,8 +22,8 @@ import (
 // TestSDKResourceGraph_SQLVirtualMachineDiscovery pins issue #913: the SQL VM
 // overlay is a management view on a compute VM. A VM tagged cloudemu:sqlvm=true
 // gets one microsoft.sqlvirtualmachine/sqlvirtualmachines row that shares the
-// VM's name, resource group, location and (user-visible) tags — differing only
-// in the provider segment of its id — and an untagged VM gets none.
+// VM's name, resource group, location and (user-visible) tags (differing only
+// in the provider segment of its id), and an untagged VM gets none.
 func TestSDKResourceGraph_SQLVirtualMachineDiscovery(t *testing.T) {
 	ctx := context.Background()
 	cloudP := cloudemu.NewAzure()

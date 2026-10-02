@@ -1,12 +1,12 @@
 // Package kmscrypto routes Secrets Manager and SSM SecureString values through
 // real KMS envelope encryption so their at-rest form is genuine ciphertext and
 // their KMS-failure paths are real: a disabled or deleted key makes a read fail
-// exactly as it does in AWS.
+// as it does in AWS.
 //
 // Encrypt asks KMS for a data key (wrapped under the addressed KMS key), seals
 // the value locally with AES-256-GCM under that data key, and returns a
 // self-describing blob carrying the wrapped key. Decrypt unwraps the data key
-// back through KMS — the step that surfaces a disabled/deleted key — then opens
+// back through KMS, the step that surfaces a disabled/deleted key, then opens
 // the AES-GCM ciphertext. KMS's own crypto (providers/aws/kms) is used as-is and
 // never modified.
 package kmscrypto
@@ -17,6 +17,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/binary"
+	"strings"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -30,11 +31,14 @@ const (
 	blobMagic  = 0x01
 	nonceSize  = 12
 	headerSize = 5 // magic(1) + wrappedKeyLen(4)
+
+	// reservedAliasPrefix marks the AWS-managed aliases KMS won't let callers create.
+	reservedAliasPrefix = "alias/aws/"
 )
 
 // KMS is the slice of the KMS backend this package needs. The KMS mock
 // (*kms.Mock) satisfies it; a data key is minted per value and unwrapped on
-// read, and an unresolvable managed-key reference is created on demand.
+// read, and a reserved AWS-managed alias is backed by a key created on demand.
 type KMS interface {
 	DescribeKey(ctx context.Context, keyID string) (*kmsdriver.KeyMetadata, error)
 	CreateKey(ctx context.Context, in kmsdriver.CreateKeyInput) (*kmsdriver.KeyMetadata, error)
@@ -47,10 +51,9 @@ type Envelope struct {
 	kms KMS
 
 	mu sync.Mutex
-	// managed caches a key reference (typically the reserved
-	// alias/aws/secretsmanager or alias/aws/ssm managed-key aliases, which KMS
-	// won't let callers create) to the customer-managed key created on demand for
-	// it, so every value under one reference shares a single key.
+	// managed maps a reserved AWS-managed alias (alias/aws/ssm,
+	// alias/aws/secretsmanager, ...) to the key created on demand for it, so
+	// every value under one alias shares a single key.
 	managed map[string]string
 }
 
@@ -66,29 +69,36 @@ func (e *Envelope) DescribeKey(ctx context.Context, keyID string) (*kmsdriver.Ke
 }
 
 // resolveKeyID turns a key reference (key id, ARN, or alias) into a usable key
-// id. A reference KMS already resolves is used directly; one it does not (the
-// reserved AWS-managed aliases, or an SSM key id that was never validated) gets
-// a customer-managed key created and cached on demand.
+// id. A reference KMS already resolves is used directly. A reserved AWS-managed
+// alias (alias/aws/ssm, alias/aws/secretsmanager, ...) can't be created by
+// callers, so it gets a customer-managed key created and cached on demand. Any
+// other reference that KMS can't resolve is NotFound, and no key is created.
 func (e *Envelope) resolveKeyID(ctx context.Context, keyRef string) (string, error) {
-	if md, err := e.kms.DescribeKey(ctx, keyRef); err == nil {
+	md, err := e.kms.DescribeKey(ctx, keyRef)
+	if err == nil {
 		return md.KeyID, nil
+	}
+
+	alias, ok := ReservedAlias(keyRef)
+	if !ok {
+		return "", errors.Newf(errors.NotFound, "key %q not found", keyRef)
 	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if id, ok := e.managed[keyRef]; ok {
-		if _, err := e.kms.DescribeKey(ctx, id); err == nil {
+	if id, cached := e.managed[alias]; cached {
+		if _, derr := e.kms.DescribeKey(ctx, id); derr == nil {
 			return id, nil
 		}
 	}
 
-	md, err := e.kms.CreateKey(ctx, kmsdriver.CreateKeyInput{Description: "cloudemu managed key for " + keyRef})
+	md, err = e.kms.CreateKey(ctx, kmsdriver.CreateKeyInput{Description: "cloudemu managed key for " + alias})
 	if err != nil {
 		return "", err
 	}
 
-	e.managed[keyRef] = md.KeyID
+	e.managed[alias] = md.KeyID
 
 	return md.KeyID, nil
 }
@@ -134,7 +144,7 @@ func (e *Envelope) Encrypt(ctx context.Context, keyRef string, plaintext []byte)
 
 // Decrypt opens an envelope blob produced by Encrypt. Unwrapping the data key
 // goes back through KMS, so a disabled or deleted key surfaces the KMS error
-// here — matching a real Secrets Manager / SSM read against a broken key.
+// here, matching a real Secrets Manager / SSM read against a broken key.
 func (e *Envelope) Decrypt(ctx context.Context, blob []byte) ([]byte, error) {
 	if len(blob) < headerSize || blob[0] != blobMagic {
 		return nil, errInvalidBlob()
@@ -169,6 +179,24 @@ func (e *Envelope) Decrypt(ctx context.Context, blob []byte) ([]byte, error) {
 	}
 
 	return pt, nil
+}
+
+// ReservedAlias reports whether keyRef names an AWS-managed alias, either as
+// alias/aws/<name> or as an alias ARN ending in :alias/aws/<name>. It returns
+// the alias/aws/<name> form so both forms share one key. Encrypt always
+// accepts such a reference, so callers need not check it with DescribeKey.
+func ReservedAlias(keyRef string) (string, bool) {
+	if strings.HasPrefix(keyRef, reservedAliasPrefix) {
+		return keyRef, true
+	}
+
+	if strings.HasPrefix(keyRef, "arn:") {
+		if i := strings.Index(keyRef, ":"+reservedAliasPrefix); i >= 0 {
+			return keyRef[i+1:], true
+		}
+	}
+
+	return "", false
 }
 
 // errInvalidBlob is the error for a malformed, truncated, or tampered blob.

@@ -1,18 +1,18 @@
 package memorystore
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-// createInstance handles POST .../instances?instanceId={i} — Create. The
+// createInstance handles POST .../instances?instanceId={i}: Create. The
 // operation completes inline, so a done=true Operation carrying the new
 // Instance is returned.
 func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, rt route) {
@@ -23,7 +23,7 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, rt rout
 	}
 
 	var body instanceJSON
-	if !gcprest.DecodeJSON(w, r, &body) {
+	if !gcpenum.DecodeJSON(w, r, &body, instanceEnums) {
 		return
 	}
 
@@ -44,7 +44,7 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, rt rout
 
 	inst := toInstanceJSON(rt.project, rt.location, instanceID, info)
 
-	raw, mErr := json.Marshal(inst)
+	raw, mErr := instanceResponseAny(inst)
 	if mErr != nil {
 		gcprest.WriteError(w, http.StatusInternalServerError, "internalError", mErr.Error())
 		return
@@ -55,7 +55,7 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, rt rout
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 
-// getInstance handles GET .../instances/{i} — Get. The instance id is unique
+// getInstance handles GET .../instances/{i}: Get. The instance id is unique
 // per (project, location), so an id that exists in a different location or
 // project is reported as not found here rather than surfacing the wrong resource.
 func (h *Handler) getInstance(w http.ResponseWriter, r *http.Request, rt route) {
@@ -81,7 +81,7 @@ func writeInstanceNotFound(w http.ResponseWriter, rt route) {
 		"instance "+instanceResourceName(rt.project, rt.location, rt.name)+" not found")
 }
 
-// listInstances handles GET .../instances — List, scoped to the request's
+// listInstances handles GET .../instances: List, scoped to the request's
 // project. It honors the pageSize/pageToken/filter query parameters and
 // advertises a nextPageToken when the result set is truncated.
 func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, rt route) {
@@ -205,7 +205,7 @@ func instanceFieldValue(inst *instanceJSON, field string) (value string, known b
 	return "", false
 }
 
-// patchInstance handles PATCH .../instances/{i} — Update. Real clients change
+// patchInstance handles PATCH .../instances/{i}: Update. Real clients change
 // memorySizeGb, displayName, labels, redisConfigs, and replicaCount here, scoped
 // by the updateMask: a field outside the mask is left untouched.
 func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, rt route) {
@@ -221,7 +221,7 @@ func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, rt route
 	}
 
 	var body instanceJSON
-	if !gcprest.DecodeJSON(w, r, &body) {
+	if !gcpenum.DecodeJSON(w, r, &body, instanceEnums) {
 		return
 	}
 
@@ -245,7 +245,7 @@ func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, rt route
 
 	inst := toInstanceJSON(rt.project, rt.location, shortInstanceID(updated.Name), updated)
 
-	raw, mErr := json.Marshal(inst)
+	raw, mErr := instanceResponseAny(inst)
 	if mErr != nil {
 		gcprest.WriteError(w, http.StatusInternalServerError, "internalError", mErr.Error())
 		return
@@ -254,8 +254,9 @@ func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, rt route
 	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt.project, rt.location, "update-"+rt.name, raw))
 }
 
-// deleteInstance handles DELETE .../instances/{i} — Delete. The operation
-// completes inline, so a done=true Operation with an empty response is returned.
+// deleteInstance handles DELETE .../instances/{i}: Delete. The operation
+// completes inline, so a done=true Operation with a google.protobuf.Empty
+// response is returned.
 func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, rt route) {
 	existing, err := h.cache.GetCache(r.Context(), rt.name)
 	if err != nil {
@@ -273,7 +274,7 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, rt rout
 		return
 	}
 
-	op := h.doneOperation(rt.project, rt.location, "delete-"+rt.name, json.RawMessage("{}"))
+	op := h.doneOperation(rt.project, rt.location, "delete-"+rt.name, emptyResponse)
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }

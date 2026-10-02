@@ -22,7 +22,7 @@ import (
 )
 
 // Drivers bundles the per-service drivers the engine reads from. Any field
-// may be nil — the matching walker is skipped in that case. This keeps the
+// may be nil: the matching walker is skipped in that case. This keeps the
 // engine usable in partial test wirings and during the staged rollout of
 // per-service walkers in later phases.
 type Drivers struct {
@@ -50,7 +50,7 @@ type Drivers struct {
 	Monitoring   monitoringdriver.Monitoring
 	IAM          iamdriver.IAM
 
-	// Taggers maps an AWS service token (segment 3 of an ARN — e.g. "kms",
+	// Taggers maps an AWS service token (segment 3 of an ARN, e.g. "kms",
 	// "ecs", "elasticloadbalancing") to an adapter that tags/untags a resource
 	// of that service by its full ARN. It extends the Resource Groups Tagging
 	// API (TagResourceByARN/UntagResourceByARN) to services that are not reached
@@ -66,8 +66,8 @@ type Drivers struct {
 }
 
 // ARNTagger tags and untags a resource addressed by its full ARN (or, for
-// services whose Resource Groups Tagging identifier is not an arn:aws string —
-// e.g. a Route 53 hosted-zone id — that identifier). Each provider wires one per
+// services whose Resource Groups Tagging identifier is not an arn:aws string,
+// e.g. a Route 53 hosted-zone id, that identifier). Each provider wires one per
 // taggable service that the shared driver interfaces do not already cover; the
 // adapter bridges the RGT ARN to whatever key the service's own tag store uses
 // (full ARN, bare name, or id) and calls the service's real tag method, so the
@@ -79,7 +79,7 @@ type ARNTagger interface {
 }
 
 // GenericResources lets a provider project arbitrary services/resources into
-// the inventory when there is no shared services/*/driver interface to walk —
+// the inventory when there is no shared services/*/driver interface to walk:
 // the provider adapter does the projection and returns fully-formed rows.
 type GenericResources interface {
 	DiscoverResources(ctx context.Context) ([]DiscoveredResource, error)
@@ -99,7 +99,7 @@ type DiscoveredResource struct {
 }
 
 // AppServicePlans is the discovery capability for App Service plans (Azure
-// serverfarms) — the resource that carries the SKU/tier an App Service or
+// serverfarms): the resource that carries the SKU/tier an App Service or
 // Function App is billed on. Provider-projected, like the other adapters.
 type AppServicePlans interface {
 	DiscoverAppServicePlans(ctx context.Context) ([]DiscoveredAppServicePlan, error)
@@ -135,7 +135,7 @@ type DiscoveredScaleSet struct {
 }
 
 // RelationalDatabases is the discovery capability for managed relational
-// database servers/instances — RDS/Aurora, Azure SQL, Azure MySQL/PostgreSQL
+// database servers/instances: RDS/Aurora, Azure SQL, Azure MySQL/PostgreSQL
 // Flexible Server, Cloud SQL. Like KubernetesClusters, each cloud's relational
 // mock lives in its provider package, so a thin adapter in the provider
 // projects its databases onto DiscoveredDatabase rather than inverting the
@@ -181,11 +181,11 @@ type Attributes struct {
 	Properties  map[string]any
 }
 
-// KubernetesClusters is the discovery capability for managed Kubernetes —
+// KubernetesClusters is the discovery capability for managed Kubernetes:
 // EKS, GKE, and AKS. Each cloud's cluster mock lives in its provider package
 // (there is no shared services/*/driver for it, unlike the portable services),
-// so rather than import providers here — which would invert the package
-// layering — each provider wires in a thin adapter that projects its clusters
+// so rather than import providers here (which would invert the package
+// layering) each provider wires in a thin adapter that projects its clusters
 // onto DiscoveredCluster.
 type KubernetesClusters interface {
 	DiscoverClusters(ctx context.Context) ([]DiscoveredCluster, error)
@@ -198,7 +198,7 @@ type KubernetesClusters interface {
 // Region and ResourceGroup feed the per-provider ARN/ID so the identifier
 // matches the resource's real location rather than the engine default (GCP
 // self-links embed the region; Azure IDs embed the resource group). Both may
-// be empty — the walker then falls back to the engine's defaults.
+// be empty; the walker then falls back to the engine's defaults.
 //
 // ARN, when set, is used verbatim as the cluster's identifier (e.g. the EKS
 // mock's own ARN) instead of a rebuilt best-effort one; empty means build it.
@@ -286,7 +286,7 @@ func (e *Engine) ListAll(ctx context.Context) ([]Resource, error) {
 }
 
 // List walks every configured driver and returns resources matching q.
-// Filtering happens after collection — walkers always return their full set
+// Filtering happens after collection: walkers always return their full set
 // so tag/region resolution is consistent regardless of query shape.
 //
 //nolint:gocritic // q is the public Query filter, taken by value by API contract

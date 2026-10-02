@@ -360,7 +360,7 @@ func secretKey(namespace, name string) string {
 
 // mergeStringData implements the apiserver's convenience-field behavior: any
 // keys in StringData are byte-encoded and copied into Data, overwriting on
-// conflict. StringData is then cleared from the persisted object — clients
+// conflict. StringData is then cleared from the persisted object, so clients
 // reading the Secret back see everything in Data, base64-encoded on the
 // wire by encoding/json's default []byte handling.
 func mergeStringData(sec *corev1.Secret) {

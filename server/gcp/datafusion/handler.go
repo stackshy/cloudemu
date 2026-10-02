@@ -5,15 +5,15 @@
 // hashicorp/google provider serves from the v1 base path) hit this handler
 // unchanged.
 //
-// Coverage (v1 REST — instance control plane):
+// Coverage (v1 REST, instance control plane):
 //
-//	POST   /v1/…/instances?instanceId={i}          — Create (LRO)
-//	GET    /v1/…/instances/{i}                      — Get
-//	GET    /v1/…/instances                          — List
-//	PATCH  /v1/…/instances/{i}?updateMask=          — Patch (LRO)
-//	DELETE /v1/…/instances/{i}                      — Delete (LRO)
-//	POST   /v1/…/instances/{i}:restart             — Restart (LRO)
-//	GET    /v1/…/operations/{op}                    — Operations.Get (shared poller)
+//	POST   /v1/…/instances?instanceId={i}          : Create (LRO)
+//	GET    /v1/…/instances/{i}                      : Get
+//	GET    /v1/…/instances                          : List
+//	PATCH  /v1/…/instances/{i}?updateMask=          : Patch (LRO)
+//	DELETE /v1/…/instances/{i}                      : Delete (LRO)
+//	POST   /v1/…/instances/{i}:restart             : Restart (LRO)
+//	GET    /v1/…/operations/{op}                    : Operations.Get (shared poller)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting instance embedded in `response` as a typed Any, so an SDK or
@@ -24,15 +24,15 @@
 //
 // Data Fusion, Memorystore for Redis (redis.googleapis.com), and Filestore
 // (file.googleapis.com) are distinct real APIs on distinct hosts that share the
-// EXACT same path grammar — /v1/projects/{p}/locations/{l}/instances[/{i}]. A
+// exact same path grammar: /v1/projects/{p}/locations/{l}/instances[/{i}]. A
 // custom-endpoint client sends the emulator's own host, so they CANNOT be told
 // apart by URL or Host. Following the Filestore/Spanner content+ownership
 // pattern, this handler claims only genuinely-Data-Fusion traffic:
 //
 //   - Create POST: claimed only when the body carries a Data Fusion `type`
-//     (BASIC/ENTERPRISE/DEVELOPER) — a Redis (memorySizeGb/tier) or Filestore
+//     (BASIC/ENTERPRISE/DEVELOPER). A Redis (memorySizeGb/tier) or Filestore
 //     (fileShares/tier) create body has no top-level `type` and falls through.
-//   - The :restart custom verb: claimed unconditionally — it is Data Fusion's
+//   - The :restart custom verb: claimed unconditionally. It is Data Fusion's
 //     alone, so a restart of a missing instance 404s here as Data Fusion.
 //   - Item GET/PATCH/DELETE: claimed only when THIS store owns the instance, so
 //     Redis/Filestore item traffic falls through.
@@ -52,6 +52,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	dfdriver "github.com/stackshy/cloudemu/v2/services/datafusion/driver"
 )
@@ -65,8 +66,8 @@ const (
 	restartVerb      = "restart"
 	minResourceParts = 4 // [projects, {p}, locations, {l}]
 
-	restCollection = 1 // [instances]         — the collection
-	restItem       = 2 // [instances, {name}] — a named item (possibly :verb)
+	restCollection = 1 // [instances]         : the collection
+	restItem       = 2 // [instances, {name}] : a named item (possibly :verb)
 
 	instanceTypeURL = "type.googleapis.com/google.cloud.datafusion.v1.Instance"
 )
@@ -158,7 +159,15 @@ func (h *Handler) Matches(r *http.Request) bool {
 		return h.ops == nil
 	}
 
-	// The :restart custom verb is Data Fusion's alone — claim it unconditionally
+	if sharedpath.Yield(r, sharedpath.DataFusion, sharedpath.File, sharedpath.Redis, sharedpath.SecureSourceManager) {
+		return false
+	}
+
+	if sharedpath.Is(r, sharedpath.DataFusion) {
+		return true
+	}
+
+	// The :restart custom verb is Data Fusion's alone. Claim it unconditionally
 	// so a restart of a missing instance 404s here rather than falling through.
 	if rt.verb == restartVerb {
 		return true

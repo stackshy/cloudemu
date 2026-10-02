@@ -24,7 +24,7 @@ func TestModifyVPCAttributePartialUpdate(t *testing.T) {
 	}
 
 	// The real API takes one attribute per call, so setting hostnames must not
-	// disturb DNS support — a nil pointer means "unchanged", not "false".
+	// disturb DNS support: a nil pointer means "unchanged", not "false".
 	on := true
 	if err := m.ModifyVPCAttribute(ctx, v.ID, driver.VPCAttributeUpdate{
 		EnableDNSHostnames: &on,

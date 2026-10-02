@@ -1,13 +1,13 @@
 // Package streamanalytics provides an in-memory mock of Azure Stream Analytics
-// (Microsoft.StreamAnalytics/streamingjobs) — the ARM control plane only. It
+// (Microsoft.StreamAnalytics/streamingjobs), the ARM control plane only. It
 // manages the streaming-job lifecycle (create/replace, get, patch, delete,
 // list-by-group, list-by-subscription), the job start/stop/scale actions and
 // their jobState state machine, and the nested transformation / inputs /
 // outputs / functions child resources (create-or-replace, get, update, delete,
 // list plus the test / RetrieveDefaultDefinition actions).
 //
-// The Stream Analytics data plane — the streaming query engine that ingests
-// input events, evaluates the SQL query and writes to outputs — is out of
+// The Stream Analytics data plane (the streaming query engine that ingests
+// input events, evaluates the SQL query and writes to outputs) is out of
 // scope; this surface is the management-plane resource provider only. No events
 // are processed and no query is executed; a "running" job is a state label, not
 // a live pipeline.

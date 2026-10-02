@@ -6,12 +6,12 @@
 //
 // Coverage (metastore service control plane):
 //
-//	POST   /v1/…/services?serviceId=      — CreateService (LRO)
-//	GET    /v1/…/services                 — ListServices
-//	GET    /v1/…/services/{id}            — GetService
-//	PATCH  /v1/…/services/{id}?updateMask= — PatchService (LRO)
-//	DELETE /v1/…/services/{id}            — DeleteService (LRO)
-//	GET    /v1/…/operations/{op}          — Operations.Get (shared poller)
+//	POST   /v1/…/services?serviceId=      : CreateService (LRO)
+//	GET    /v1/…/services                 : ListServices
+//	GET    /v1/…/services/{id}            : GetService
+//	PATCH  /v1/…/services/{id}?updateMask= : PatchService (LRO)
+//	DELETE /v1/…/services/{id}            : DeleteService (LRO)
+//	GET    /v1/…/operations/{op}          : Operations.Get (shared poller)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting service embedded in `response` as an Any typed
@@ -19,7 +19,7 @@
 // LRO wait terminates on the first poll instead of hanging.
 //
 // Location-scoped operations: a service's operations live under
-// /v1/projects/{p}/locations/{l}/operations — the SAME space the shared GCP LRO
+// /v1/projects/{p}/locations/{l}/operations, the same space the shared GCP LRO
 // poller owns. Matches returns false for operation paths when a shared registry
 // is wired, letting that poller win; a standalone package server (no registry)
 // serves its own polls. The services resource-type guard keeps this handler

@@ -7,8 +7,8 @@ import (
 )
 
 // chaosAzureAI wraps an Azure AI service. It consults the engine on the calls
-// most worth failing in tests — account/workspace and deployment/job creation,
-// the inference and scoring runtimes — and delegates every other operation
+// most worth failing in tests (account/workspace and deployment/job creation,
+// the inference and scoring runtimes) and delegates every other operation
 // through the embedded driver.AzureAI unchanged.
 type chaosAzureAI struct {
 	driver.AzureAI

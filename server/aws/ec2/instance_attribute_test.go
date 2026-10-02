@@ -60,8 +60,8 @@ func runOneInstance(t *testing.T, c *ec2.Client) string {
 // TestModifyDisableApiTerminationTakesEffect pins that
 // ModifyInstanceAttribute(DisableApiTermination=true) is honored: it is
 // verifiable via DescribeInstanceAttribute and blocks TerminateInstances with
-// OperationNotPermitted (previously accepted-and-discarded — a false success
-// dangerous for IaC termination protection).
+// OperationNotPermitted. It was previously accepted and discarded, a false
+// success that is dangerous for IaC termination protection.
 func TestModifyDisableApiTerminationTakesEffect(t *testing.T) {
 	ctx := context.Background()
 	c := newEC2Client(t)

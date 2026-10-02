@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/driver"
@@ -13,21 +14,26 @@ import (
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // cwSnapshot is the full serialized state of the CloudWatch mock. The alarm,
-// composite-alarm, dashboard, metric-stream, and notification-channel stores
+// composite-alarm, dashboard, metric-stream, notification-channel and
+// anomaly-detector stores
 // hold value types whose fields are all exported, so they round-trip through
 // the generic memstore helper. The metric buffer is keyed by a struct
-// (metricKey) — which json cannot serialize as a map key — so it is promoted
+// (metricKey), which json cannot serialize as a map key, so it is promoted
 // to a deterministically-ordered slice. The alarm-history slice is captured
-// in order. The mutex, the wired SNS
-// action publisher, and *config.Options are intentionally not captured.
+// in order. The mutexes, the wired SNS and EventBridge
+// publishers, and *config.Options are intentionally not captured.
 type cwSnapshot struct {
-	Metrics         []metricEntrySnapshot      `json:"metrics,omitempty"`
-	Alarms          json.RawMessage            `json:"alarms,omitempty"`
-	CompositeAlarms json.RawMessage            `json:"compositeAlarms,omitempty"`
-	Dashboards      json.RawMessage            `json:"dashboards,omitempty"`
-	MetricStreams   json.RawMessage            `json:"metricStreams,omitempty"`
-	Channels        json.RawMessage            `json:"channels,omitempty"`
-	History         []driver.AlarmHistoryEntry `json:"history,omitempty"`
+	Metrics          []metricEntrySnapshot      `json:"metrics,omitempty"`
+	Alarms           json.RawMessage            `json:"alarms,omitempty"`
+	CompositeAlarms  json.RawMessage            `json:"compositeAlarms,omitempty"`
+	Dashboards       json.RawMessage            `json:"dashboards,omitempty"`
+	MetricStreams    json.RawMessage            `json:"metricStreams,omitempty"`
+	Channels         json.RawMessage            `json:"channels,omitempty"`
+	AnomalyDetectors json.RawMessage            `json:"anomalyDetectors,omitempty"`
+	History          []driver.AlarmHistoryEntry `json:"history,omitempty"`
+	// LastReceived is when each series last had data put, keyed by its
+	// namespace, name and canonical dimensions.
+	LastReceived map[string]time.Time `json:"lastReceived,omitempty"`
 }
 
 // metricEntrySnapshot promotes one (metricKey -> datapoints) entry to an
@@ -38,13 +44,20 @@ type metricEntrySnapshot struct {
 	Data []driver.MetricDatum `json:"data,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// CloudWatch holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. CloudWatch holds no
+// bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap cwSnapshot
 
 	m.mu.RLock()
 	snap.Metrics = snapshotMetrics(m.metrics)
+
+	if len(m.lastReceived) > 0 {
+		snap.LastReceived = make(map[string]time.Time, len(m.lastReceived))
+		for k, v := range m.lastReceived {
+			snap.LastReceived[k] = v
+		}
+	}
 
 	if len(m.history) > 0 {
 		snap.History = make([]driver.AlarmHistoryEntry, len(m.history))
@@ -52,7 +65,11 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	}
 	m.mu.RUnlock()
 
-	if err := m.snapshotStores(&snap); err != nil {
+	m.alarmMu.Lock()
+	err := m.snapshotStores(&snap)
+	m.alarmMu.Unlock()
+
+	if err != nil {
 		return nil, err
 	}
 
@@ -96,6 +113,7 @@ func (m *Mock) snapshotStores(snap *cwSnapshot) error {
 		{&snap.Dashboards, m.dashboards.Snapshot},
 		{&snap.MetricStreams, m.metricStreams.Snapshot},
 		{&snap.Channels, m.channels.Snapshot},
+		{&snap.AnomalyDetectors, m.anomalyDetectors.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -120,15 +138,33 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		return fmt.Errorf("cloudwatch: parse snapshot: %w", err)
 	}
 
+	now := m.opts.Clock.Now()
+
 	m.mu.Lock()
+	for k, v := range snap.LastReceived {
+		m.lastReceived[k] = v
+	}
+
+	// A snapshot from before receipt times were kept restores its series as
+	// received now, so ListMetrics still shows them.
 	for _, e := range snap.Metrics {
 		m.metrics[e.Key] = e.Data
+
+		for i := range e.Data {
+			sig := seriesSig(e.Key, e.Data[i].Dimensions)
+			if _, ok := m.lastReceived[sig]; !ok {
+				m.lastReceived[sig] = now
+			}
+		}
 	}
 
 	if len(snap.History) > 0 {
 		m.history = append(m.history, snap.History...)
 	}
 	m.mu.Unlock()
+
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
 
 	return m.restoreStores(&snap)
 }
@@ -143,6 +179,7 @@ func (m *Mock) restoreStores(snap *cwSnapshot) error {
 		{snap.Dashboards, m.dashboards.LoadSnapshot},
 		{snap.MetricStreams, m.metricStreams.LoadSnapshot},
 		{snap.Channels, m.channels.LoadSnapshot},
+		{snap.AnomalyDetectors, m.anomalyDetectors.LoadSnapshot},
 	}
 
 	for _, l := range loads {

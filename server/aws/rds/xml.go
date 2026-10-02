@@ -220,7 +220,7 @@ type dbClusterSnapshotXML struct {
 	TagList                     *tagListXML `xml:"TagList,omitempty"`
 }
 
-// Result wrappers — one per Action. Action-name + "Response" is the outer
+// Result wrappers, one per Action. Action-name + "Response" is the outer
 // envelope; Action-name + "Result" is the payload child.
 
 type createDBInstanceResponse struct {
@@ -425,8 +425,8 @@ type describeDBClusterSnapshotsResponse struct {
 //
 // resolvedSubnetGroup, when non-nil, is the fully resolved DB subnet group the
 // instance is placed in. Real RDS reports the association as a nested complex
-// <DBSubnetGroup> element (name, description, VpcId, status, Subnets) — not a
-// scalar <DBSubnetGroupName> — so the aws-sdk-go-v2 DBInstance.DBSubnetGroup
+// <DBSubnetGroup> element (name, description, VpcId, status, Subnets), not a
+// scalar <DBSubnetGroupName>, so the aws-sdk-go-v2 DBInstance.DBSubnetGroup
 // field (and Terraform's db_subnet_group_name off it) has something to bind.
 func toInstanceXML(inst *rdsdriver.Instance, resolvedSubnetGroup *dbSubnetGroupXML) dbInstanceXML {
 	x := dbInstanceXML{

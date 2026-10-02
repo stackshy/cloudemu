@@ -34,7 +34,7 @@ import (
 
 // argCostClient wires an Azure Resource Graph handler over the provider's
 // discovery engine and returns a real armresourcegraph client pointed at it.
-// It supplies every driver the cost-field tests need — the blob/cosmos drivers
+// It supplies every driver the cost-field tests need: the blob/cosmos drivers
 // for the storage tests and ResourceDiscovery for everything else.
 func argCostClient(t *testing.T, cloudP *azureprovider.Provider) *armresourcegraph.Client {
 	t.Helper()
@@ -143,7 +143,7 @@ func TestARGCostFields_Compute(t *testing.T) {
 		props := rowProps(t, row)
 		sku := rowSKU(t, row)
 
-		// JSON numbers decode as float64 — assert with EqualValues.
+		// JSON numbers decode as float64; assert with EqualValues.
 		assert.EqualValues(t, 5000, props["diskIOPSReadWrite"])
 		assert.EqualValues(t, 200, props["diskMBpsReadWrite"])
 		assert.Equal(t, "P10", props["tier"])

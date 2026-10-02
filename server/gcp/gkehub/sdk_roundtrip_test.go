@@ -244,7 +244,7 @@ func TestSDKFleetLifecycle(t *testing.T) {
 	parent := "projects/" + project + "/locations/global"
 	name := parent + "/fleets/default"
 
-	// Fleet is the singleton "default" — create takes no fleetId.
+	// Fleet is the singleton "default". Create takes no fleetId.
 	op, err := svc.Projects.Locations.Fleets.Create(parent, &gkehub.Fleet{DisplayName: "prod fleet"}).Context(ctx).Do()
 	if err != nil {
 		t.Fatalf("Fleets.Create: %v", err)

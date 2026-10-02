@@ -13,7 +13,7 @@ import (
 // TestSDKStorageAccountIdentitySystemAssigned proves a system-assigned managed
 // identity survives create -> get with a synthesized principalId/tenantId. The
 // identity block is a top-level ARM sibling of properties, which the
-// echo-properties overlay (properties-only) does not preserve — so before it
+// echo-properties overlay (properties-only) does not preserve, so before it
 // was modeled here a Terraform user with identity { type = "SystemAssigned" }
 // saw the block vanish on every refresh (perpetual drift).
 func TestSDKStorageAccountIdentitySystemAssigned(t *testing.T) {

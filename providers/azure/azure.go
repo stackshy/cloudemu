@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/acr"
 	"github.com/stackshy/cloudemu/v2/providers/azure/ai"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/apimanagement"
 	"github.com/stackshy/cloudemu/v2/providers/azure/appconfiguration"
 	"github.com/stackshy/cloudemu/v2/providers/azure/applicationgateway"
 	"github.com/stackshy/cloudemu/v2/providers/azure/bastion"
@@ -41,6 +42,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loadtesting"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loganalytics"
+	"github.com/stackshy/cloudemu/v2/providers/azure/logic"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedcassandra"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedgrafana"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedidentity"
@@ -206,7 +208,9 @@ type Provider struct {
 	StreamAnalytics    *streamanalytics.Mock
 	RecoveryServices   *recoveryservices.Mock
 	IoTHub             *iothub.Mock
+	Logic              *logic.Mock
 	HealthcareApis     *healthcareapis.Mock
+	APIManagement      *apimanagement.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -288,7 +292,9 @@ func New(opts ...config.Option) *Provider {
 		StreamAnalytics:    streamanalytics.New(o),
 		RecoveryServices:   recoveryservices.New(o),
 		IoTHub:             iothub.New(o),
+		Logic:              logic.New(o),
 		HealthcareApis:     healthcareapis.New(o),
+		APIManagement:      apimanagement.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -342,7 +348,9 @@ func New(opts ...config.Option) *Provider {
 				streamAnalyticsDiscovery{p.StreamAnalytics},
 				recoveryServicesDiscovery{p.RecoveryServices},
 				iotHubDiscovery{p.IoTHub},
+				logicWorkflowDiscovery{p.Logic},
 				healthcareApisDiscovery{p.HealthcareApis},
+				apiManagementDiscovery{p.APIManagement},
 			},
 		},
 	)
@@ -393,9 +401,16 @@ func wireCrossService(p *Provider) {
 	p.Search.SetMonitoring(p.Monitor)
 }
 
+// Tickables returns the services that do time-driven work. The serve
+// background ticker calls each one on its interval. New time-driven services
+// register here.
+func (p *Provider) Tickables() []config.Tickable {
+	return []config.Tickable{p.Monitor}
+}
+
 // Close tears down any real engines wired into the provider via
 // config.With<X>Engine, stopping the Docker containers or subprocesses they
-// own. It is a no-op when no engine is wired — the in-memory default — and is
+// own. It is a no-op when no engine is wired (the in-memory default), and is
 // safe to call more than once, since engine Close is idempotent.
 func (p *Provider) Close() error {
 	var errs []error
@@ -413,7 +428,7 @@ func (p *Provider) Close() error {
 // preserving snapshotting, keyed by a stable lowercased field-name service key
 // (e.g. "blobstorage", "cosmosdb", "virtualmachines"). persist iterates this
 // map, so the persisted surface automatically tracks whichever services
-// implement snapshot.Snapshottable — no hand-kept registry to drift.
+// implement snapshot.Snapshottable: no hand-kept registry to drift.
 func (p *Provider) SnapshotServices() map[string]snapshot.Snapshottable {
 	return snapshot.Discover(p)
 }
@@ -589,7 +604,7 @@ func (a appServicePlanDiscovery) DiscoverAppServicePlans(
 // prefix in both the current ("Standard_B1ms") and legacy ("B_Gen5_1") naming.
 // The prefix list is known-incomplete on purpose: a name outside the listed
 // families (e.g. Standard_F*) returns "" as an intentional best-effort fallback
-// — a pricing consumer then falls back to sku.name — so an empty tier here is
+// (a pricing consumer then falls back to sku.name), so an empty tier here is
 // deliberate, not a bug, and this is not meant to enumerate every Azure family.
 func flexTier(skuName string) string {
 	switch {
@@ -646,7 +661,7 @@ func appendFlexServers(
 // bag only holds attributes the resource actually has: it drops empty strings,
 // zero ints, nil values, and nested map[string]any entries that are (or become,
 // after their own recursive pruning) empty. Bools are intentionally preserved
-// as-is, including false — real Azure ARG genuinely surfaces properties such as
+// as-is, including false: real Azure ARG genuinely surfaces properties such as
 // properties.zoneRedundant as a bool including false, so emitting false is
 // faithful. Returns nil for an empty result.
 func nonEmptyProps(m map[string]any) map[string]any {
@@ -661,7 +676,7 @@ func nonEmptyProps(m map[string]any) map[string]any {
 				delete(m, k)
 			}
 		case map[string]any:
-			// An inner map that prunes down to nothing carries no cost info —
+			// An inner map that prunes down to nothing carries no cost info:
 			// drop it so an empty currentSku/storage object isn't emitted.
 			if nonEmptyProps(val) == nil {
 				delete(m, k)

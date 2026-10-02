@@ -113,17 +113,17 @@ func (m *Mock) ListTagsForResource(_ context.Context, resourceARN string) (map[s
 func (m *Mock) EnableEnhancedMonitoring(
 	_ context.Context, name, arn string, metrics []string,
 ) (current, desired []string, err error) {
-	return m.setMonitoring(name, arn, metrics, true)
+	return m.setEnhancedMonitoring(name, arn, metrics, true)
 }
 
 // DisableEnhancedMonitoring turns off shard-level metrics.
 func (m *Mock) DisableEnhancedMonitoring(
 	_ context.Context, name, arn string, metrics []string,
 ) (current, desired []string, err error) {
-	return m.setMonitoring(name, arn, metrics, false)
+	return m.setEnhancedMonitoring(name, arn, metrics, false)
 }
 
-func (m *Mock) setMonitoring(name, arn string, metrics []string, enable bool) (before, after []string, err error) {
+func (m *Mock) setEnhancedMonitoring(name, arn string, metrics []string, enable bool) (before, after []string, err error) {
 	sd, err := m.resolve(name, arn)
 	if err != nil {
 		return nil, nil, err

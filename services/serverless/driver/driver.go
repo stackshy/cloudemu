@@ -131,7 +131,7 @@ type LayerVersion struct {
 // policy, added via AddLayerVersionPermission. It grants another account (or an
 // organization, or all accounts) permission to use a published layer version.
 // Layer version permissions are an AWS Lambda-only concept (no Azure Functions
-// or GCP Cloud Functions equivalent), so — like PermissionStatement — the data
+// or GCP Cloud Functions equivalent), so, like PermissionStatement, the data
 // struct lives on the shared driver package but the methods that manage it are
 // exposed through an AWS-only optional interface (type-asserted by the AWS
 // Lambda server handler) rather than the portable Serverless interface.
@@ -152,7 +152,7 @@ type ConcurrencyConfig struct {
 
 // ProvisionedConcurrencyConfig is a function's provisioned-concurrency
 // configuration (AWS Lambda PutProvisionedConcurrencyConfig), scoped to a
-// published version or alias via Qualifier ($LATEST/unqualified is rejected —
+// published version or alias via Qualifier ($LATEST/unqualified is rejected:
 // provisioned concurrency can only be attached to an immutable qualifier). It
 // has no Azure Functions or GCP Cloud Functions equivalent, so it is kept off
 // the portable Serverless interface and applied/read through an AWS-only
@@ -248,7 +248,7 @@ type EventInvokeConfig struct {
 }
 
 // EphemeralStorage is a function's /tmp size in MB (AWS Lambda EphemeralStorage).
-// Real Lambda accepts 512–10240 and defaults to 512 when the client omits it.
+// Real Lambda accepts 512-10240 and defaults to 512 when the client omits it.
 type EphemeralStorage struct {
 	Size int
 }
@@ -261,7 +261,7 @@ type FunctionLayer struct {
 	CodeSize int64
 }
 
-// AWSFunctionConfig bundles the AWS Lambda-only function settings — VpcConfig,
+// AWSFunctionConfig bundles the AWS Lambda-only function settings: VpcConfig,
 // DeadLetterConfig, TracingConfig, Architectures, EphemeralStorage and the
 // imported Layers. These have no Azure Functions or GCP Cloud Functions
 // equivalent, so they are kept off the shared FunctionConfig/FunctionInfo structs

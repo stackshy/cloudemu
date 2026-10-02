@@ -11,9 +11,9 @@ import (
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // vpclatticeSnapshot is the full serialized state of the AWS VPC Lattice mock.
-// Every memstore store holds a fully-exported value type — a *driver pointer type
+// Every memstore store holds a fully-exported value type: a *driver pointer type
 // for each resource, or a plain []driver.RegisteredTarget / string /
-// map[string]string for the targets, resource-policy, and tag stores — so each
+// map[string]string for the targets, resource-policy, and tag stores, so each
 // round-trips through the generic memstore helper under its exact key. The keys
 // are the resource ids and ARNs (targets keyed by target-group id, resource
 // policies and tags by resource ARN), so the id/ARN cross-references records hold
@@ -69,8 +69,8 @@ func (m *Mock) storeRefs(snap *vpclatticeSnapshot) []struct {
 	}
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// VPC Lattice is control-plane only and holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. VPC Lattice is
+// control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

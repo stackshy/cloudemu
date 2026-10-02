@@ -15,7 +15,7 @@ var _ rdsdriver.SubnetGroups = (*Mock)(nil)
 // SubnetResolver is the slice of the networking mock this package needs to
 // derive a subnet group's VPC. Real RDS infers VpcId from the member subnets
 // rather than taking it as input, and callers tearing a VPC down list subnet
-// groups and match on that field — so it has to be resolved, not left blank.
+// groups and match on that field, so it has to be resolved, not left blank.
 type SubnetResolver interface {
 	DescribeSubnets(ctx context.Context, ids []string) ([]netdriver.SubnetInfo, error)
 }
@@ -66,7 +66,7 @@ func (m *Mock) CreateDBSubnetGroup(
 }
 
 // ModifyDBSubnetGroup replaces the group's subnet membership and (when
-// non-empty) its description, then re-resolves VpcId from the new members —
+// non-empty) its description, then re-resolves VpcId from the new members,
 // mirroring CreateDBSubnetGroup, since real RDS lets the members move to a
 // different VPC's subnets.
 func (m *Mock) ModifyDBSubnetGroup(

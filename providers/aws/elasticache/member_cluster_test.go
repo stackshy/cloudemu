@@ -72,7 +72,7 @@ func TestReplicationGroupMembersDescribable(t *testing.T) {
 
 // TestCreateCacheRejectsMemberIDCollision guards that a create whose id collides
 // with an existing replication-group member node ("<groupId>-001", …) is rejected
-// with AlreadyExists — real ElastiCache returns CacheClusterAlreadyExists. Without
+// with AlreadyExists. Real ElastiCache returns CacheClusterAlreadyExists. Without
 // the guard the standalone cluster and the synthesized member share an id and both
 // surface through DescribeCacheClusters (a duplicate).
 func TestCreateCacheRejectsMemberIDCollision(t *testing.T) {

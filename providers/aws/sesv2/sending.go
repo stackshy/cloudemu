@@ -85,7 +85,7 @@ func verifiedForSending(d *identityData) error {
 	return nil
 }
 
-// messageRejected builds a MessageRejected-tagged error — real SES v2's
+// messageRejected builds a MessageRejected-tagged error: real SES v2's
 // rejection path when the sending identity isn't a verified identity.
 func messageRejected(format string, args ...any) error {
 	return &driver.APIError{

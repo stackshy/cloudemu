@@ -1,7 +1,7 @@
 // Package sagemaker provides a portable Amazon SageMaker AI API with
 // cross-cutting concerns. It wraps a driver.Service (the control plane plus the
 // inference runtime) with recording, metrics, rate limiting, error injection,
-// and latency simulation — the same middle layer every other service ships
+// and latency simulation, the same middle layer every other service ships
 // (see bedrock/bedrock.go) so SageMaker participates in the three-layer design.
 //
 // The wrapper implements driver.Service, so it is a drop-in replacement for the

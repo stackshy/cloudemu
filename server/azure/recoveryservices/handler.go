@@ -28,7 +28,9 @@ import (
 const (
 	providerName = "Microsoft.RecoveryServices"
 	vaultType    = "vaults"
-	vaultArmType = providerName + "/" + vaultType
+
+	childMaxDepth = 3 // vaults/{v}/{child}/{name}
+	vaultArmType  = providerName + "/" + vaultType
 
 	configArmType        = vaultArmType + "/backupconfig"
 	storageConfigArmType = vaultArmType + "/backupstorageconfig"
@@ -103,6 +105,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// vaults/{v}/{child}/{name} is the deepest route.
+	if azurearm.TooDeep(w, r, &rp, childMaxDepth) {
+		return
+	}
+
 	switch strings.ToLower(rp.SubResource) {
 	case recoveryservices.PolicySegment:
 		h.servePolicy(w, r, &rp)
@@ -111,7 +118,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case recoveryservices.StorageConfigSegment:
 		h.serveStorageConfig(w, r, &rp)
 	default:
-		azurearm.WriteError(w, http.StatusNotFound, "InvalidResourceType", "unknown sub-resource "+rp.SubResource)
+		azurearm.WriteUnknownType(w, r, &rp)
 	}
 }
 

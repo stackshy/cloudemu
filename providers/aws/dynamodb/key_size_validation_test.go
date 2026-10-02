@@ -72,7 +72,7 @@ func TestBatchPutOversizedRejected(t *testing.T) {
 		t.Fatalf("want InvalidArgument for oversized batch item, got %v", err)
 	}
 
-	// The oversized batch must be rejected wholesale — the valid item must not
+	// The oversized batch must be rejected wholesale. The valid item must not
 	// have been written either.
 	if _, getErr := m.GetItem(context.Background(), "t", map[string]any{"pk": "ok"}); getErr == nil {
 		t.Fatal("valid item should not persist when the batch is rejected")

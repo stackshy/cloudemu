@@ -22,7 +22,7 @@ func newSDKClient(t *testing.T) *awseks.Client {
 	cloud := cloudemu.NewAWS()
 	srv := awsserver.New(awsserver.Drivers{
 		EKS: cloud.EKS,
-		// S3 included so we exercise routing precedence — EKS must claim
+		// S3 included so we exercise routing precedence: EKS must claim
 		// /clusters paths before the catch-all S3 handler sees them.
 		S3: cloud.S3,
 	})
@@ -51,7 +51,7 @@ func TestSDKEKSClusterLifecycle(t *testing.T) {
 
 	out, err := client.CreateCluster(ctx, &awseks.CreateClusterInput{
 		Name:    aws.String("c1"),
-		Version: aws.String("1.30"),
+		Version: aws.String("1.32"),
 		RoleArn: aws.String("arn:aws:iam::123456789012:role/eks-cluster"),
 		ResourcesVpcConfig: &ekstypes.VpcConfigRequest{
 			SubnetIds: []string{"subnet-1", "subnet-2"},
@@ -83,7 +83,7 @@ func TestSDKEKSClusterLifecycle(t *testing.T) {
 		t.Fatalf("DescribeCluster: %v", err)
 	}
 
-	if aws.ToString(got.Cluster.Version) != "1.30" {
+	if aws.ToString(got.Cluster.Version) != "1.32" {
 		t.Fatalf("got version %q, want 1.30", aws.ToString(got.Cluster.Version))
 	}
 
@@ -98,7 +98,7 @@ func TestSDKEKSClusterLifecycle(t *testing.T) {
 
 	upd, err := client.UpdateClusterVersion(ctx, &awseks.UpdateClusterVersionInput{
 		Name:    aws.String("c1"),
-		Version: aws.String("1.31"),
+		Version: aws.String("1.33"),
 	})
 	if err != nil {
 		t.Fatalf("UpdateClusterVersion: %v", err)
@@ -113,7 +113,7 @@ func TestSDKEKSClusterLifecycle(t *testing.T) {
 		t.Fatalf("DescribeCluster after update: %v", err)
 	}
 
-	if aws.ToString(got.Cluster.Version) != "1.31" {
+	if aws.ToString(got.Cluster.Version) != "1.33" {
 		t.Fatalf("version did not apply: got %q", aws.ToString(got.Cluster.Version))
 	}
 
@@ -145,7 +145,7 @@ func TestSDKEKSNodegroupLifecycle(t *testing.T) {
 
 	if _, err := client.CreateCluster(ctx, &awseks.CreateClusterInput{
 		Name:    aws.String("c1"),
-		Version: aws.String("1.30"),
+		Version: aws.String("1.32"),
 		RoleArn: aws.String("arn:aws:iam::1:role/r"),
 		ResourcesVpcConfig: &ekstypes.VpcConfigRequest{
 			SubnetIds: []string{"subnet-1"},
@@ -211,7 +211,7 @@ func TestSDKEKSNodegroupLifecycle(t *testing.T) {
 	if _, err := client.UpdateNodegroupVersion(ctx, &awseks.UpdateNodegroupVersionInput{
 		ClusterName:   aws.String("c1"),
 		NodegroupName: aws.String("ng1"),
-		Version:       aws.String("1.31"),
+		Version:       aws.String("1.32"),
 	}); err != nil {
 		t.Fatalf("UpdateNodegroupVersion: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestSDKEKSFargateProfileLifecycle(t *testing.T) {
 
 	if _, err := client.CreateCluster(ctx, &awseks.CreateClusterInput{
 		Name:               aws.String("c1"),
-		Version:            aws.String("1.30"),
+		Version:            aws.String("1.32"),
 		RoleArn:            aws.String("arn:aws:iam::1:role/r"),
 		ResourcesVpcConfig: &ekstypes.VpcConfigRequest{SubnetIds: []string{"subnet-1"}},
 	}); err != nil {
@@ -288,7 +288,7 @@ func TestSDKEKSAddonLifecycle(t *testing.T) {
 
 	if _, err := client.CreateCluster(ctx, &awseks.CreateClusterInput{
 		Name:               aws.String("c1"),
-		Version:            aws.String("1.30"),
+		Version:            aws.String("1.32"),
 		RoleArn:            aws.String("arn:aws:iam::1:role/r"),
 		ResourcesVpcConfig: &ekstypes.VpcConfigRequest{SubnetIds: []string{"subnet-1"}},
 	}); err != nil {
@@ -298,7 +298,7 @@ func TestSDKEKSAddonLifecycle(t *testing.T) {
 	out, err := client.CreateAddon(ctx, &awseks.CreateAddonInput{
 		ClusterName:  aws.String("c1"),
 		AddonName:    aws.String("vpc-cni"),
-		AddonVersion: aws.String("v1.0.0"),
+		AddonVersion: aws.String("v1.20.4-eksbuild.2"),
 	})
 	if err != nil {
 		t.Fatalf("CreateAddon: %v", err)
@@ -316,8 +316,8 @@ func TestSDKEKSAddonLifecycle(t *testing.T) {
 		t.Fatalf("DescribeAddon: %v", err)
 	}
 
-	if aws.ToString(got.Addon.AddonVersion) != "v1.0.0" {
-		t.Fatalf("got version %q, want v1.0.0", aws.ToString(got.Addon.AddonVersion))
+	if aws.ToString(got.Addon.AddonVersion) != "v1.20.4-eksbuild.2" {
+		t.Fatalf("got version %q, want v1.20.4-eksbuild.2", aws.ToString(got.Addon.AddonVersion))
 	}
 
 	list, err := client.ListAddons(ctx, &awseks.ListAddonsInput{ClusterName: aws.String("c1")})
@@ -332,7 +332,7 @@ func TestSDKEKSAddonLifecycle(t *testing.T) {
 	if _, err := client.UpdateAddon(ctx, &awseks.UpdateAddonInput{
 		ClusterName:  aws.String("c1"),
 		AddonName:    aws.String("vpc-cni"),
-		AddonVersion: aws.String("v2.0.0"),
+		AddonVersion: aws.String("v1.23.1-eksbuild.1"),
 	}); err != nil {
 		t.Fatalf("UpdateAddon: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestSDKEKSAddonLifecycle(t *testing.T) {
 		t.Fatalf("DescribeAddon after update: %v", err)
 	}
 
-	if aws.ToString(got.Addon.AddonVersion) != "v2.0.0" {
+	if aws.ToString(got.Addon.AddonVersion) != "v1.23.1-eksbuild.1" {
 		t.Fatalf("update did not apply: got %q", aws.ToString(got.Addon.AddonVersion))
 	}
 
@@ -358,7 +358,7 @@ func TestSDKEKSAddonLifecycle(t *testing.T) {
 }
 
 // Sanity check: when both EKS and S3 are wired, an S3 request still reaches
-// the S3 handler — EKS's Matches must be rooted at /clusters specifically.
+// the S3 handler. EKS's Matches must be rooted at /clusters specifically.
 func TestSDKEKSRoutingDoesNotShadowS3(t *testing.T) {
 	cloud := cloudemu.NewAWS()
 	srv := awsserver.New(awsserver.Drivers{EKS: cloud.EKS, S3: cloud.S3})

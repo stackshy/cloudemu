@@ -392,7 +392,7 @@ func maskHas(mask []string, field string) bool {
 
 // maskHasPrefix reports whether any mask path equals prefix or is nested under
 // it (so "config.softwareConfig.airflowConfigOverrides.core-foo" selects the
-// whole airflowConfigOverrides map — TF sends the full map anyway).
+// whole airflowConfigOverrides map; TF sends the full map anyway).
 func maskHasPrefix(mask []string, prefix string) bool {
 	for _, p := range mask {
 		if p == prefix || strings.HasPrefix(p, prefix+".") {

@@ -56,7 +56,7 @@ type TableConfig struct {
 	// key; a describe echoes them so an IaC-declared LSI round-trips.
 	LSIs []LSIConfig
 	// Attributes carries the attribute definitions (name + type) so a describe
-	// echoes them back — an IaC client compares them and otherwise sees a diff.
+	// echoes them back; an IaC client compares them and otherwise sees a diff.
 	Attributes []AttributeDef
 	// BillingMode is "PROVISIONED" (default) or "PAY_PER_REQUEST".
 	BillingMode string
@@ -325,7 +325,7 @@ type AccountAttributes struct {
 	OfferType      string            // databaseAccountOfferType (Standard)
 	EnableFreeTier bool              // free-tier flag (cost)
 	Capabilities   []string          // e.g. EnableServerless (cost)
-	Location       string            // creation region (e.g. eastus) — first/write location
+	Location       string            // creation region (e.g. eastus), first/write location
 	ResourceGroup  string            // owning resource group (for byRG listing)
 	Tags           map[string]string // user-supplied resource tags
 	// Locations is the full multi-region topology declared at create time (or
@@ -506,7 +506,7 @@ func SortByFields(items []map[string]any, fields ...string) {
 
 // PageByKey slices one page out of a stably-ordered result set using
 // key-based continuation: the page starts after the item whose identity
-// matches startKey. A startKey that matches no item is an error — silently
+// matches startKey. A startKey that matches no item is an error: silently
 // restarting from the beginning would re-serve consumed items.
 func PageByKey(
 	items []map[string]any,
@@ -542,7 +542,7 @@ func PageByKey(
 	return items[start:end], end < len(items), nil
 }
 
-// KeyAttributes extracts the named fields from an item — the shape handed
+// KeyAttributes extracts the named fields from an item: the shape handed
 // back as LastEvaluatedKey. Empty field names are skipped.
 func KeyAttributes(item map[string]any, fields ...string) map[string]any {
 	out := make(map[string]any, len(fields))
@@ -559,7 +559,7 @@ func KeyAttributes(item map[string]any, fields ...string) map[string]any {
 
 // PageOrdered is the one paging path for query/scan results: it stably
 // orders matched items by the table keys, optionally reverses for
-// descending queries, then slices one page — key-based continuation when
+// descending queries, then slices one page: key-based continuation when
 // startKey is set, offset tokens otherwise. LastEvaluatedKey is populated
 // whenever more items remain, on both paths.
 // orderPK/orderSK are the fields to order by (the index keys for GSI
@@ -610,7 +610,7 @@ func PageOrdered(
 
 // cloneItems shallow-copies each result item so callers mutating top-level
 // keys of what they receive cannot corrupt the store. Nested map/slice
-// values are still shared — deep-copying arbitrary attribute trees is a
+// values are still shared; deep-copying arbitrary attribute trees is a
 // deliberate non-goal (documented limitation).
 func cloneItems(items []map[string]any) []map[string]any {
 	out := make([]map[string]any, len(items))

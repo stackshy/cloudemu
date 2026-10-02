@@ -5,10 +5,10 @@ import (
 )
 
 // namespacesSegment is the URL segment that introduces a namespaced
-// resource in Kubernetes REST paths — e.g. /api/v1/namespaces/{ns}/pods.
+// resource in Kubernetes REST paths, e.g. /api/v1/namespaces/{ns}/pods.
 const namespacesSegment = "namespaces"
 
-// apiVersionV1 is the only API version Wave 2 Phase 1 supports — both for
+// apiVersionV1 is the only API version Wave 2 Phase 1 supports, both for
 // core (/api/v1) and apps (/apis/apps/v1).
 const apiVersionV1 = "v1"
 
@@ -78,7 +78,7 @@ func parseRoute(path string) *Route {
 
 // parseCoreRoute handles /api/v1/... after "api" has been stripped.
 //
-// parts[0] is the version, the rest is the resource path.
+// parts[0] is the version and the rest is the resource path.
 func parseCoreRoute(parts []string) *Route {
 	if len(parts) < pathSegsCoreCollection {
 		return nil

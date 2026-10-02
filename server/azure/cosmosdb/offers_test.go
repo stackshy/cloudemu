@@ -104,7 +104,7 @@ func TestSDKContainerThroughput(t *testing.T) {
 }
 
 // TestSDKContainerThroughputAbsent asserts that a container created without
-// provisioned throughput has no dedicated offer, so ReadThroughput 404s — the
+// provisioned throughput has no dedicated offer, so ReadThroughput 404s: the
 // same behavior the real service exposes for shared/serverless containers.
 func TestSDKContainerThroughputAbsent(t *testing.T) {
 	ctx := context.Background()

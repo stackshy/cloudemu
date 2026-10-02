@@ -120,11 +120,11 @@ func renderMatrix(services []*Service) string {
 	return b.String()
 }
 
-// matrixCell links a provider's native name to its page, or "—" if unsupported.
+// matrixCell links a provider's native name to its page, or "-" if unsupported.
 func matrixCell(prov string, svc *Service) string {
 	native := svc.Providers[prov]
 	if native == "" {
-		return "—"
+		return "-"
 	}
 
 	return fmt.Sprintf("[%s](./%s/%s.md)", native, prov, pageBase(native))
@@ -135,9 +135,9 @@ func matrixCell(prov string, svc *Service) string {
 func renderProviderNotes(b *strings.Builder, services []*Service) {
 	for i, prov := range providerOrder {
 		if len(providerServices(prov, services)) == 0 {
-			fmt.Fprintf(b, "\n> **%s**: foundation only — the provider scaffold exists "+
+			fmt.Fprintf(b, "\n> **%s**: foundation only. The provider scaffold exists "+
 				"(identity, IDs, wire layer) but no services are implemented yet, so every "+
-				"row above is `—`. See [%s/](./%s/).\n", providerTitles()[i], prov, prov)
+				"row above is `-`. See [%s/](./%s/).\n", providerTitles()[i], prov, prov)
 		}
 	}
 }
@@ -168,7 +168,7 @@ func renderProviderIndex(prov string, owned []*Service) string {
 
 		portable := "`" + svc.Name + "`"
 		if svc.Interface == providerNativeInterface {
-			portable = "— (provider-native)"
+			portable = "(provider-native)"
 		}
 
 		fmt.Fprintln(&b, tableRow([]string{
@@ -212,7 +212,7 @@ func renderProviderPage(outDir, prov, native string, svc *Service) string {
 // provider is credited only when its mock has every method of the capability's
 // interface (a satisfied type assertion), so a provider page never claims a
 // capability it does not implement (e.g. OCI's VCN page must not list AWS-only
-// TransitGateways/IPAM). A single overlapping method is not enough — several
+// TransitGateways/IPAM). A single overlapping method is not enough: several
 // interfaces share a name like DeleteNetworkInterface.
 func renderCapabilities(b *strings.Builder, prov string, svc *Service) {
 	methods := svc.providerMethods[prov]

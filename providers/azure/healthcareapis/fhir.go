@@ -68,7 +68,7 @@ type FhirInput struct {
 }
 
 // CreateOrUpdateFhir creates a new FHIR service or updates an existing one under
-// its parent workspace. The parent workspace must exist — otherwise it returns a
+// its parent workspace. The parent workspace must exist: otherwise it returns a
 // NotFound error (the wire layer maps it to ParentResourceNotFound). The computed
 // etag, provisioningState, identity ids and authentication defaults are minted
 // once at create and preserved across updates. It returns the stored service and

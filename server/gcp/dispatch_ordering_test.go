@@ -13,7 +13,7 @@ package gcp_test
 // These tests drive the FULL production server (NewFromProvider) with those
 // ambiguous /v1/projects/ paths and assert the specific handler served (HTTP
 // 200 plus the service's list marker). If Firestore caught them it would fail
-// to parse the path and answer 404 NOT_FOUND — so moving Firestore earlier (or
+// to parse the path and answer 404 NOT_FOUND. So moving Firestore earlier (or
 // alphabetizing registrations) makes these tests fail.
 
 import (
@@ -49,6 +49,7 @@ func TestSpecificHandlersWinBeforeFirestore(t *testing.T) {
 	}{
 		{"pubsub_topics_before_firestore", "/v1/projects/demo/topics", "topics"},
 		{"cloudfunctions_before_firestore", "/v1/projects/demo/locations/us-central1/functions", "functions"},
+		{"backupdr_vaults_before_firestore", "/v1/projects/demo/locations/us-central1/backupVaults", "backupVaults"},
 		{"iam_serviceaccounts_before_firestore", "/v1/projects/demo/serviceAccounts", "accounts"},
 		{"secretmanager_before_firestore", "/v1/projects/demo/secrets", "secrets"},
 	}

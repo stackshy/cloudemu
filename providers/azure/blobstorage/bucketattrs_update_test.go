@@ -30,7 +30,7 @@ func TestUpdateBucketAttributes_SeedsDefaultsWhenAbsent(t *testing.T) {
 
 // TestUpdateBucketAttributes_PreservesUntouchedFields verifies a partial
 // update via fn only changes what fn changes, leaving every other seeded
-// field intact — the non-destructive PATCH semantics the ARM handler relies
+// field intact, the non-destructive PATCH semantics the ARM handler relies
 // on.
 func TestUpdateBucketAttributes_PreservesUntouchedFields(t *testing.T) {
 	ctx := context.Background()
@@ -61,7 +61,7 @@ func TestUpdateBucketAttributes_PreservesUntouchedFields(t *testing.T) {
 
 // TestUpdateBucketAttributes_ConcurrentNoLostUpdates drives many concurrent
 // updates through UpdateBucketAttributes and asserts every one of them is
-// reflected in the end state — proving the atomic Update-based
+// reflected in the end state, proving the atomic Update-based
 // read-modify-write doesn't lose writes the way a Get-then-Set pair would
 // under concurrent access.
 func TestUpdateBucketAttributes_ConcurrentNoLostUpdates(t *testing.T) {
@@ -143,7 +143,7 @@ func TestBlobServiceProperties_RoundTrip(t *testing.T) {
 }
 
 // TestBlobServiceProperties_SetIsFullReplace verifies a second Set call
-// wholesale replaces the first — Azure's Set Blob Service Properties takes a
+// wholesale replaces the first: Azure's Set Blob Service Properties takes a
 // complete document each call, not a merge patch.
 func TestBlobServiceProperties_SetIsFullReplace(t *testing.T) {
 	ctx := context.Background()

@@ -64,10 +64,10 @@ func TestSDKECRPutImageTagMutability(t *testing.T) {
 	}
 
 	// The setting takes effect: moving the tag to different image content now
-	// fails. (Re-pushing the byte-identical manifest is a distinct case — real
+	// fails. (Re-pushing the byte-identical manifest is a distinct case, real
 	// ECR's ImageAlreadyExistsException, covered by
-	// TestSDKECRPutImageIdenticalRepushAlreadyExists below — since nothing
-	// would actually change.)
+	// TestSDKECRPutImageIdenticalRepushAlreadyExists below, since nothing
+	// would change.)
 	_, err = client.PutImage(ctx, &awsecr.PutImageInput{
 		RepositoryName: aws.String("mut-repo"),
 		ImageManifest:  aws.String(sampleManifest + " "),
@@ -81,7 +81,7 @@ func TestSDKECRPutImageTagMutability(t *testing.T) {
 
 	// Flip back to MUTABLE; moving the tag to different image content succeeds
 	// again (the earlier IMMUTABLE push was rejected, so v1 still points at the
-	// original sampleManifest digest here — sampleManifest+" " is a new digest).
+	// original sampleManifest digest here; sampleManifest+" " is a new digest).
 	if _, err := client.PutImageTagMutability(ctx, &awsecr.PutImageTagMutabilityInput{
 		RepositoryName:     aws.String("mut-repo"),
 		ImageTagMutability: ecrtypes.ImageTagMutabilityMutable,
@@ -101,7 +101,7 @@ func TestSDKECRPutImageTagMutability(t *testing.T) {
 // TestSDKECRPutImageIdenticalRepushAlreadyExists exercises real ECR's
 // ImageAlreadyExistsException: re-pushing the byte-identical manifest under a
 // tag it already carries is a no-op push and is rejected, regardless of the
-// repository's tag mutability setting — it is distinct from
+// repository's tag mutability setting. It is distinct from
 // ImageTagAlreadyExistsException, which fires only when the tag is being
 // moved to a DIFFERENT digest on an IMMUTABLE repository.
 func TestSDKECRPutImageIdenticalRepushAlreadyExists(t *testing.T) {

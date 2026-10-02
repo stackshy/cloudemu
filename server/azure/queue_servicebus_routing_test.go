@@ -11,7 +11,7 @@ package azure_test
 //
 // The fix narrows Service Bus's Matches so it claims a flat "/{entity}/messages"
 // request only when {entity} resolves to a Service Bus queue or topic it holds.
-// These tests drive the FULL production server (NewFromProvider — the same
+// These tests drive the FULL production server (NewFromProvider, the same
 // wiring `cloudemu serve` uses) with the real azqueue/azblob/aztables SDKs plus
 // the Service Bus REST data plane, proving both planes work simultaneously.
 

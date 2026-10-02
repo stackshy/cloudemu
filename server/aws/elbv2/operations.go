@@ -100,7 +100,7 @@ func (h *Handler) resolveLBArns(r *http.Request) ([]string, error) {
 	}
 
 	// A Names filter that resolves to nothing must not fall through to the
-	// driver's "empty means all" behavior — real ELBv2 returns
+	// driver's "empty means all" behavior. Real ELBv2 returns
 	// LoadBalancerNotFound for a name that doesn't exist.
 	if len(arns) == 0 {
 		return nil, cerrors.Newf(cerrors.NotFound, "load balancer %q not found", names[0])
@@ -357,8 +357,8 @@ func (h *Handler) describeRules(w http.ResponseWriter, r *http.Request) {
 
 	// ListenerArn and RuleArns are alternative, both-optional filters (mirroring
 	// DescribeListeners' LoadBalancerArn/ListenerArns pair above). A
-	// DescribeRules called with only RuleArns — as Terraform's
-	// aws_lb_listener_rule read does — must resolve those rules directly by
+	// DescribeRules called with only RuleArns, as Terraform's
+	// aws_lb_listener_rule read does, must resolve those rules directly by
 	// ARN, not fall through to a listener existence check on an empty ARN.
 	var (
 		rules []lbdriver.RuleInfo
@@ -627,7 +627,7 @@ func parseFixedResponseConfig(form url.Values, base string) *lbdriver.FixedRespo
 }
 
 // parseCertificates parses a listener Certificates member list. The listener's
-// create certificate is its default, so the first entry is marked IsDefault —
+// create certificate is its default, so the first entry is marked IsDefault,
 // matching what real ELBv2 reports on DescribeListeners.
 func parseCertificates(form url.Values, prefix string) []lbdriver.Certificate {
 	indices := awsquery.CollectIndices(form, prefix)

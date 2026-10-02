@@ -55,7 +55,7 @@ func TestSDKAKSClusterPUTPreservesStandalonePool(t *testing.T) {
 		t.Fatalf("pool PollUntilDone: %v", err)
 	}
 
-	// PUT the cluster bumping ONLY kubernetesVersion — no agentPoolProfiles, no
+	// PUT the cluster bumping ONLY kubernetesVersion: no agentPoolProfiles, no
 	// networkProfile, no identity. This is the version-only full PUT that used
 	// to wipe every pool.
 	createDriftCluster(t, clusters, armcontainerservice.ManagedCluster{
@@ -130,7 +130,7 @@ func TestSDKAKSClusterPUTNilPropertiesPreservesFields(t *testing.T) {
 		},
 	})
 
-	// Full PUT carrying only tags — no properties block at all.
+	// Full PUT carrying only tags: no properties block at all.
 	createDriftCluster(t, clusters, armcontainerservice.ManagedCluster{
 		Location: to.Ptr("eastus"),
 		Tags:     map[string]*string{"team": to.Ptr("infra")},

@@ -181,7 +181,7 @@ func copyZipFile(zw *zip.Writer, f *zip.File, name string) error {
 
 // stripLayerPrefix trims a runtime-specific layer root so overlaid modules land
 // alongside the function code where the subprocess engine can import them.
-// Only the language root is stripped — NOT "nodejs/node_modules/": a real Node
+// Only the language root is stripped, NOT "nodejs/node_modules/". A real Node
 // layer entry "nodejs/node_modules/express/index.js" must land at
 // "node_modules/express/index.js" so Node's own resolver finds it from the
 // function dir (the engine sets cmd.Dir but no NODE_PATH). Python "python/…"

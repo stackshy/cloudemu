@@ -98,7 +98,9 @@ func generateCertificate(keyAlg, domain string, sans []string, notBefore time.Ti
 func generateKeyMaterial(keyAlg string) (signer crypto.Signer, keyPEM, sigAlg string, err error) {
 	switch keyAlg {
 	case driver.KeyAlgRSA1024:
-		return rsaKeyMaterial(rsaBits1024)
+		// The emulator never generates a sub-2048 RSA key; the legacy
+		// RSA_1024 algorithm gets a 2048-bit key (see rsaKeyMaterial).
+		return rsaKeyMaterial(rsaBits2048)
 	case driver.KeyAlgRSA2048:
 		return rsaKeyMaterial(rsaBits2048)
 	case driver.KeyAlgRSA3072:
@@ -120,7 +122,7 @@ func rsaKeyMaterial(bits int) (signer crypto.Signer, keyPEM, sigAlg string, err 
 	// Never generate a key weaker than 2048 bits, even if a caller requests the
 	// legacy RSA_1024 algorithm: a sub-2048 RSA key is rejected by modern TLS
 	// stacks and flagged as weak crypto. The emulator issues a fake cert, so the
-	// exact bit count carries no semantic weight — floor it to the safe minimum
+	// exact bit count carries no semantic weight. Floor it to the safe minimum
 	// with an explicit comparison immediately before the GenerateKey call, so no
 	// path can reach it with fewer than 2048 bits.
 	if bits < rsaBits2048 {

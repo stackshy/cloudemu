@@ -12,7 +12,7 @@ import (
 
 // TestSnapshotRestoreRoundTrip seeds a VCN, subnet, NSG, gateway and public IP,
 // snapshots, restores into a fresh mock and asserts each resource comes back
-// under its original OCID with cross-references intact — the subnet still points
+// under its original OCID with cross-references intact: the subnet still points
 // at its VCN, and the recorded scope/creation time survive.
 func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	ctx := t.Context()

@@ -26,7 +26,7 @@ func (s *ClusterState) serveConfigMaps(w http.ResponseWriter, r *http.Request, r
 	}
 
 	if route.Namespace == "" {
-		// All-namespaces collection — only GET is meaningful.
+		// All-namespaces collection: only GET is meaningful.
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w, "k8s api: configmaps cluster-wide: method not allowed: "+r.Method)
 

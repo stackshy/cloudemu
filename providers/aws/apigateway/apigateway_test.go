@@ -290,13 +290,13 @@ func TestInvokeRouteLiteralBeatsGreedy(t *testing.T) {
 	health, _ := m.CreateResource(ctx(), api.ID, api.RootResourceID, "health")
 	_, _ = m.PutMethod(ctx(), api.ID, health.ID, "GET", driver.PutMethodInput{})
 	_, _ = m.PutIntegration(ctx(), api.ID, health.ID, "GET", driver.PutIntegrationInput{
-		Type: driver.IntegrationAWSProxy, URI: lambdaURI,
+		Type: driver.IntegrationAWSProxy, IntegrationHTTPMethod: "POST", URI: lambdaURI,
 	})
 
 	proxy, _ := m.CreateResource(ctx(), api.ID, api.RootResourceID, "{proxy+}")
 	_, _ = m.PutMethod(ctx(), api.ID, proxy.ID, "ANY", driver.PutMethodInput{})
 	_, _ = m.PutIntegration(ctx(), api.ID, proxy.ID, "ANY", driver.PutIntegrationInput{
-		Type: driver.IntegrationAWSProxy, URI: lambdaURI,
+		Type: driver.IntegrationAWSProxy, IntegrationHTTPMethod: "POST", URI: lambdaURI,
 	})
 
 	_, _ = m.CreateDeployment(ctx(), api.ID, driver.CreateDeploymentInput{StageName: "prod"})
@@ -351,7 +351,7 @@ func TestInvokeRouteUnknownStageForbidden(t *testing.T) {
 }
 
 func TestInvokeRouteNilLambdaIsBadGateway(t *testing.T) {
-	m := newMock(t) // no SetLambdaInvoker — nil-safe fallback
+	m := newMock(t) // no SetLambdaInvoker set; falls back safely
 
 	apiID, _, _ := deployProxyAPI(t, m, "hello", "GET", lambdaURI)
 
@@ -411,7 +411,7 @@ func TestCreateResourceRejectsSecondVariableSibling(t *testing.T) {
 
 // TestDeleteMethodAndIntegration proves DeleteIntegration clears just the
 // integration (the method survives), and a subsequent DeleteMethod removes the
-// method entirely — the lifecycle a Terraform destroy of
+// method entirely. That's the lifecycle a Terraform destroy of
 // aws_api_gateway_integration then aws_api_gateway_method drives.
 func TestDeleteMethodAndIntegration(t *testing.T) {
 	m := newMock(t)

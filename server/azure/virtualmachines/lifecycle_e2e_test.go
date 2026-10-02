@@ -210,7 +210,7 @@ func TestVMInstanceView(t *testing.T) {
 }
 
 // TestVMLifecycleIdempotent verifies repeating the same power action over the
-// wire — exactly what Terraform/az cli commonly re-issues — succeeds
+// wire (what Terraform/az cli commonly re-issues) succeeds
 // idempotently (200/202) instead of the 409 real Azure never documents for
 // Start/PowerOff/Deallocate (MS Learn: rest/api/compute/virtual-machines/
 // start, .../power-off, .../deallocate list only 200/202 as responses).

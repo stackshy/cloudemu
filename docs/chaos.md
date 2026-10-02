@@ -1,14 +1,12 @@
 # Chaos Engineering
 
-CloudEmu can deliberately fail or slow down services in controlled, time-bounded ways — so the parts of your app that handle cloud failure can actually be exercised in tests.
-
-This is something real cloud can't do (you can't ask AWS to fail S3 for 5 seconds) and existing emulators don't do well.
+CloudEmu can make services fail or slow down for a set period of time. This lets your tests exercise the code that handles cloud failures.
 
 ## How it works
 
-Wrap any driver with the chaos engine before handing it to the portable API or the SDK-compat HTTP server. Then declare scenarios at runtime and the chaos applies to every call that hits the wrapped driver — Go API or SDK.
+Wrap a driver with the chaos engine before you pass it to the portable API or the SDK-compat HTTP server. Then apply scenarios at runtime. Each scenario affects every call that reaches the wrapped driver, whether it comes from the Go API or an SDK.
 
-Chaos is wired **in-process** (library mode): you wrap the driver in Go, so scenarios apply whether calls arrive through the typed Go API or an in-process SDK-compat server. This is distinct from how you integrate cloudemu with a running app — that's [server mode plus an SDK endpoint override](integration.md), the default for integration and E2E, which doesn't expose chaos. The `httptest.NewServer` below is that in-process wiring, not an instruction to spin cloudemu up in a `_test.go` for integration.
+Chaos is set up in-process (library mode), because you wrap the driver in Go. That is different from integrating cloudemu with a running app, which uses [server mode and an SDK endpoint override](integration.md) and does not expose chaos. The `httptest.NewServer` below is the in-process wiring. It is not a suggestion to start cloudemu from a `_test.go` file for integration tests.
 
 ```go
 import (
@@ -32,7 +30,7 @@ ts  := httptest.NewServer(srv)
 engine.Apply(chaos.ServiceOutage("storage", 5*time.Second))
 ```
 
-## Scenarios shipped today
+## Scenarios
 
 | Scenario | What it does |
 |---|---|
@@ -42,15 +40,11 @@ engine.Apply(chaos.ServiceOutage("storage", 5*time.Second))
 | `Throttle(svc, op, qps, duration)` | Returns `Throttled` once `qps` calls/sec is exceeded |
 | `Composite(scenarios...)` | Combines several scenarios; latencies sum, first error wins |
 
-Each call to `engine.Apply` returns an `*Active` handle with `.Stop()` to cancel before the natural expiry.
+`engine.Apply` returns an `*Active` handle. Call `.Stop()` on it to end the scenario before it expires.
 
-## What's wrapped today
+## Supported drivers
 
-Chaos wrapping spans the portable service layer — 20 `Wrap*` helpers cover
-storage, compute, database, cache, DNS, IAM, container registry, logging, event
-bus, load balancer, message queue, monitoring, networking, notification,
-secrets, serverless, and the ML/GenAI surfaces (SageMaker, Vertex AI, Azure AI,
-Azure Search):
+There are 20 `Wrap*` helpers in the portable service layer. They cover storage, compute, database, cache, DNS, IAM, container registry, logging, event bus, load balancer, message queue, monitoring, networking, notification, secrets, serverless, and the ML/GenAI services (SageMaker, Vertex AI, Azure AI, Azure Search):
 
 `WrapBucket`, `WrapCompute`, `WrapDatabase`, `WrapCache`, `WrapDNS`, `WrapIAM`,
 `WrapContainerRegistry`, `WrapLogging`, `WrapEventBus`, `WrapLoadBalancer`,
@@ -65,10 +59,10 @@ events := engine.Recorded()  // every Effect that was applied
 engine.Reset()               // clear the buffer between test phases
 ```
 
-## Coming next
+## Planned
 
 - `SlowDegradation` (latency ramps up over a window)
 - `BurstFailure` (N consecutive failures)
 - `NetworkPartition` (cross-service: A → B fails, B → A is fine)
-- Pre-built scenarios based on real cloud incidents (e.g. AWS US-East-1 2017 S3 outage)
+- Pre-built scenarios based on real cloud incidents (e.g. the 2017 AWS us-east-1 S3 outage)
 - Cascade failures via the dependency graph

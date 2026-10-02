@@ -27,6 +27,10 @@ const (
 //
 //nolint:gocritic,dupl // rp is request-scoped; mirrors routeVNetPeering over a distinct sub-resource by design
 func (h *Handler) routeSecurityRule(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, &rp, childMaxDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
@@ -177,7 +181,7 @@ func (h *Handler) customRules(ctx context.Context, nsgDriverID string) []netdriv
 }
 
 // validateSecurityRuleBatch applies validateSecurityRule to every rule in a
-// whole-NSG PUT body against its siblings in the same body — the
+// whole-NSG PUT body against its siblings in the same body: the
 // createNSG/whole-NSG-replace counterpart of putSecurityRule's single-rule
 // check against the already-stored rules.
 func validateSecurityRuleBatch(rules []netdriver.AzureNSGRule) error {

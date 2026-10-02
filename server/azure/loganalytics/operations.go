@@ -1,6 +1,8 @@
 package loganalytics
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -11,7 +13,7 @@ import (
 
 // createOrUpdateWorkspace maps Workspaces.CreateOrUpdate onto the logging
 // driver: create when absent, otherwise apply the request's mutable fields
-// (retention, tags) via UpdateLogGroup — ARM PUT semantics, so the caller's
+// (retention, tags) via UpdateLogGroup, per ARM PUT semantics, so the caller's
 // changes are never silently discarded. The Azure-only fields (location, sku)
 // and the assigned customerId GUID are tracked in the wire handler's metadata.
 func (h *Handler) createOrUpdateWorkspace(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -81,6 +83,35 @@ func (h *Handler) deleteWorkspace(w http.ResponseWriter, r *http.Request, rp *az
 	h.children.deleteWorkspace(rp.ResourceName)
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// PurgeResourceGroup deletes every workspace recorded under the resource
+// group, with its metadata and child resources, backing the resource-group
+// cascade. Groups with no scope (such as the FunctionAppLogs sink) are never
+// selected.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	infos, err := h.logs.ListLogGroups(ctx, scope.Scope{})
+	if err != nil {
+		return err
+	}
+
+	var errs []error
+
+	for i := range infos {
+		if !infos[i].Scope.InResourceGroup(subscription, resourceGroup) {
+			continue
+		}
+
+		if err := h.logs.DeleteLogGroup(ctx, infos[i].Name); err != nil && !cerrors.IsNotFound(err) {
+			errs = append(errs, err)
+			continue
+		}
+
+		h.meta.delete(infos[i].Name)
+		h.children.deleteWorkspace(infos[i].Name)
+	}
+
+	return errors.Join(errs...)
 }
 
 func (h *Handler) listWorkspaces(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

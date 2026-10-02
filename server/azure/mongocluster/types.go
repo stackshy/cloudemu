@@ -5,7 +5,7 @@ import (
 )
 
 // clusterRequest is the ARM mongo-cluster PUT/PATCH body. mongoClusters is a
-// TrackedResource: only location, tags and properties are writable — there is no
+// TrackedResource: only location, tags and properties are writable; there is no
 // top-level sku or identity.
 type clusterRequest struct {
 	Location   string                    `json:"location"`
@@ -54,7 +54,7 @@ type clusterPropertiesRequest struct {
 	PreviewFeatures     []string              `json:"previewFeatures,omitempty"`
 }
 
-// administratorResponse is the read projection of the administrator block — only
+// administratorResponse is the read projection of the administrator block: only
 // userName is echoed; the password secret is dropped.
 type administratorResponse struct {
 	UserName string `json:"userName,omitempty"`
@@ -88,7 +88,7 @@ type clusterPropertiesResponse struct {
 	ConnectionString    string                 `json:"connectionString,omitempty"`
 }
 
-// clusterListResponse is the ARM cluster list envelope. nextLink is omitted — the
+// clusterListResponse is the ARM cluster list envelope. nextLink is omitted: the
 // emulator returns a single page.
 type clusterListResponse struct {
 	Value []clusterResponse `json:"value"`
@@ -148,7 +148,7 @@ func clusterInputFromRequest(req *clusterRequest) mongocluster.ClusterInput {
 }
 
 // toClusterResponse projects a stored cluster onto its ARM wire representation. The
-// administrator password is never included — only the userName round-trips.
+// administrator password is never included: only the userName round-trips.
 func toClusterResponse(c *mongocluster.Cluster) clusterResponse {
 	out := clusterResponse{
 		ID:       c.ARMID(),

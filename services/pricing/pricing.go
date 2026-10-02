@@ -1,7 +1,7 @@
 // Package pricing turns a discovered cloud resource into an approximate monthly
 // USD cost, using per-SKU compute/DB rates, per-region multipliers, and flat
 // rates for always-on provisioned resources. Values are representative on-demand
-// prices (not a live pricing-API feed) — a preview to catch cost surprises
+// prices (not a live pricing-API feed): a preview to catch cost surprises
 // early, not a billing-accurate figure.
 package pricing
 
@@ -224,7 +224,7 @@ var flatHourly = map[string]float64{
 }
 
 // storageGBMonth holds per-GB-month disk rates, keyed by provider disk SKU.
-// Only block-volume disks are priced here — object storage (S3/Blob/GCS) is
+// Only block-volume disks are priced here; object storage (S3/Blob/GCS) is
 // usage-based (per-GB *stored*), which discovery can't observe, so buckets are
 // left to the usage-based $0 path rather than given a misleading flat estimate.
 // Rates are approximate on-demand prices (not a live feed), ~2 significant figs.
@@ -247,7 +247,7 @@ var storageGBMonth = map[string]float64{
 // ComputeInstanceBillable reports whether a compute instance in the given
 // lifecycle state should be billed for compute. Real clouds bill compute only
 // while an instance is running (or briefly pending): a stopping, stopped,
-// shutting-down, or terminated instance bills $0 for compute — a stopped
+// shutting-down, or terminated instance bills $0 for compute. A stopped
 // instance still pays for its attached block storage, which is priced
 // separately as a compute/Volume resource.
 //

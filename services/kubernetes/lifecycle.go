@@ -8,13 +8,13 @@ import (
 )
 
 // Opt-in staged Pod lifecycle (#874). With progression OFF (the default), a
-// directly-created Pod is driven straight to Running — the synchronous behavior
+// directly-created Pod is driven straight to Running, the synchronous behavior
 // every existing test relies on. With progression ON, a bare Pod starts Pending
 // and advances Pending -> ContainerCreating -> Running (and, on delete,
 // Terminating -> gone) one stage per Tick(), each stage a distinct RV-bumping
 // write + watch event + kubelet Event, all on the cluster clock so it stays
 // deterministic under a FakeClock. Controller-materialized Pods (Deployment/RS/
-// STS/DS) still come up Running immediately — only client-created Pods stage —
+// STS/DS) still come up Running immediately; only client-created Pods stage,
 // so a `kubectl scale` still shows Running replicas at once.
 
 const (
@@ -43,7 +43,7 @@ func (s *ClusterState) initPendingPodLocked(pod *corev1.Pod) {
 
 	if !s.scheduleNodeLocked(pod) {
 		// No node can accept it (multi-node: nodeSelector/taints/requests). Leave
-		// it Pending/Unschedulable with no staged progression — there is no
+		// it Pending/Unschedulable with no staged progression: there is no
 		// rescheduling loop, matching the fixed-at-seed simplification.
 		markPodUnschedulableLocked(pod, now)
 
@@ -99,7 +99,7 @@ func (s *ClusterState) Tick() bool {
 	}
 
 	// A Pod reaching Running (or being reaped) changes which addresses back a
-	// Service — refresh endpoints in every namespace we touched.
+	// Service: refresh endpoints in every namespace we touched.
 	for ns := range touched {
 		s.resyncEndpointsForNamespaceLocked(ns)
 	}

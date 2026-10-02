@@ -16,7 +16,7 @@ type snapshotState struct {
 	Clusters json.RawMessage `json:"clusters,omitempty"`
 }
 
-// Snapshot captures every mongo cluster. includeAssets is unused — these
+// Snapshot captures every mongo cluster. includeAssets is unused: these
 // resources hold no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()

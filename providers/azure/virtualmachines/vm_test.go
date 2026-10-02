@@ -1702,7 +1702,7 @@ func TestCreateImage(t *testing.T) {
 }
 
 // TestSnapshotRestoreDiskImageFields verifies the disk-sourced image fields
-// (OSDiskID/OSType/OSState/DiskSizeGB) survive a snapshot/restore round trip —
+// (OSDiskID/OSType/OSState/DiskSizeGB) survive a snapshot/restore round trip:
 // the images store is already in the mock's dumps list, so the new exported
 // ImageInfo fields must persist without an extra store entry.
 func TestSnapshotRestoreDiskImageFields(t *testing.T) {

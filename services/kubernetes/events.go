@@ -14,7 +14,7 @@ import (
 // involvedObject/reason/type field selectors); this file adds the emission the
 // controllers were missing. cloudemu reconciles synchronously, so emitted events
 // are deduplicated by (involvedObject, reason, message, type) into a single
-// aggregated Event whose count/lastTimestamp advance — otherwise a hot reconcile
+// aggregated Event whose count/lastTimestamp advance; otherwise a hot reconcile
 // would spam identical events. The store is capped so it can never grow
 // unbounded. Every timestamp comes from the cluster clock (config.Clock) so a
 // FakeClock keeps them deterministic.
@@ -33,7 +33,7 @@ const (
 // recordEventLocked emits (or aggregates) a Normal core/v1 Event about involved.
 // A repeated (involvedObject, reason, message) increments the existing Event's
 // count and lastTimestamp; a new combination creates a fresh Event. Every event
-// the emulator emits today is Normal (there are no failure paths — scheduling and
+// the emulator emits today is Normal (there are no failure paths: scheduling and
 // image "pulls" always succeed); Warning emission is a follow-up. Callers hold
 // s.mu.
 //
@@ -172,7 +172,7 @@ func objectReferenceForPod(p *corev1.Pod) corev1.ObjectReference {
 }
 
 // objectReferenceForOwner builds an ObjectReference for a controller from the
-// OwnerReference its Pods carry — used when a controller emits an event (e.g.
+// OwnerReference its Pods carry; used when a controller emits an event (e.g.
 // SuccessfulCreate) about itself while materializing Pods.
 //
 //nolint:gocritic // hugeParam: k8s OwnerReference, copy is intentional.

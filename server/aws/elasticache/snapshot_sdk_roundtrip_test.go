@@ -52,7 +52,7 @@ func mustCreateCluster(t *testing.T, c *awselasticache.Client, id string) {
 }
 
 // TestCreateSnapshotMemcachedUnsupported guards that snapshotting a Memcached
-// cluster is rejected — real ElastiCache snapshots are "valid for Valkey or
+// cluster is rejected. Real ElastiCache snapshots are "valid for Valkey or
 // Redis OSS only" and return SnapshotFeatureNotSupportedFault.
 func TestCreateSnapshotMemcachedUnsupported(t *testing.T) {
 	ctx := context.Background()

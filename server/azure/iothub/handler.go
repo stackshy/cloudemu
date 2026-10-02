@@ -1,5 +1,5 @@
 // Package iothub serves the Azure IoT Hub ARM API
-// (Microsoft.Devices/IotHubs) — the management-plane resource provider, the
+// (Microsoft.Devices/IotHubs): the management-plane resource provider, the
 // listkeys / getKeysForKeyName shared-access-key actions, and the nested
 // event-hub consumer groups. Real armdeviceprovisioningservices / azure-sdk
 // IotHubResourceClient and terraform-provider-azurerm requests hit this handler
@@ -303,8 +303,8 @@ func writeDeleteStatus(w http.ResponseWriter, existed bool) {
 // path is deeper (eventHubEndpoints/events/ConsumerGroups/{name}), so the tail is
 // recovered directly from the raw path. It anchors forward on the IotHubs/{hub}
 // pair (both matched case-insensitively) so a hub or consumer group whose name
-// collides with a later path segment — e.g. a group named after its hub, or a hub
-// literally named "events" — still resolves to the correct tail.
+// collides with a later path segment (e.g. a group named after its hub, or a hub
+// literally named "events") still resolves to the correct tail.
 func hubTail(urlPath, hub string) []string {
 	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
 	for i := 0; i+1 < len(parts); i++ {

@@ -6,7 +6,7 @@ import (
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
-// chaosSecrets wraps a secrets driver. All ops are wrapped — the surface is
+// chaosSecrets wraps a secrets driver. All ops are wrapped: the surface is
 // small and every call is data-plane.
 type chaosSecrets struct {
 	secretsdriver.Secrets

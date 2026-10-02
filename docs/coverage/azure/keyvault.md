@@ -83,7 +83,7 @@ KeyVaultSecrets is the Azure Key Vault-specific secret surface: per-version
 
 ### KeyVaultVaults
 
-KeyVaultVaults is the Azure Key Vault control-plane (ARM) surface —
+KeyVaultVaults is the Azure Key Vault control-plane (ARM) surface
 
 | Operation | Description |
 | --- | --- |
@@ -91,6 +91,8 @@ KeyVaultVaults is the Azure Key Vault control-plane (ARM) surface —
 | `DeleteVault` | DeleteVault removes a vault by name. |
 | `GetVault` | GetVault returns the vault by name, regardless of scope. Scope enforcement |
 | `ListVaults` | ListVaults returns the vaults visible under the given scope filter (a zero |
+| `UpdateVault` | UpdateVault atomically applies mutate to a copy of the stored vault |
+| `UpdateVaultAccessPolicies` | UpdateVaultAccessPolicies atomically adds, replaces or removes access |
 
 ## Not in scope
 

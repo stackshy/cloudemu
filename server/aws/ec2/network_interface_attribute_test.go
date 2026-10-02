@@ -62,7 +62,7 @@ func TestCreateNetworkInterfaceDefaults(t *testing.T) {
 
 // TestModifyNetworkInterfaceSourceDestCheck pins that
 // ModifyNetworkInterfaceAttribute(SourceDestCheck=false) is honored and readable
-// back — the required step for a NAT-instance / firewall / router VM.
+// back, the required step for a NAT-instance / firewall / router VM.
 func TestModifyNetworkInterfaceSourceDestCheck(t *testing.T) {
 	ctx := context.Background()
 	c := newRoutingEdgeEC2(t)
@@ -199,7 +199,7 @@ func TestDeleteAttachedNetworkInterfaceCode(t *testing.T) {
 
 // TestReattachNetworkInterfaceCode pins that attaching an ENI that is already
 // attached to an instance answers InvalidNetworkInterface.InUse with a clean
-// message — no "InvalidNetworkInterface.InUse:" prefix leaked from the
+// message, with no "InvalidNetworkInterface.InUse:" prefix leaked from the
 // internal error type.
 func TestReattachNetworkInterfaceCode(t *testing.T) {
 	ctx := context.Background()

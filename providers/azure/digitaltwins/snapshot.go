@@ -12,7 +12,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // Snapshot captures every Digital Twins instance keyed by its (lowercased)
 // resource id. The estate tenant id is deterministic (minted from a fixed seed
-// in New), so it needs no persistence. includeAssets is unused — instances hold
+// in New), so it needs no persistence. includeAssets is unused: instances hold
 // no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()

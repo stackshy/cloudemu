@@ -30,7 +30,7 @@ func TestSDKServiceTaskDefinitionNormalizedToARN(t *testing.T) {
 	td := registerNginx(t, client, ctx)
 	wantARN := aws.ToString(td.TaskDefinitionArn)
 
-	// Create the service by bare family — AWS still echoes the full ARN.
+	// Create the service by bare family; AWS still echoes the full ARN.
 	created, err := client.CreateService(ctx, &awsecs.CreateServiceInput{
 		Cluster:        aws.String("prod"),
 		ServiceName:    aws.String("web-svc"),

@@ -7,8 +7,8 @@
 // networking, rbac, storage, autoscaling, discovery, and policy groups under
 // /apis) is served below that prefix, with /scale and /status subresources and
 // ?watch=true streaming. A synchronous reconcile engine runs on every write so
-// controllers materialize Running Pods, Services get Endpoints, and PVCs bind —
-// a minikube-like always-converged cluster. This makes a `client-go` round-trip
+// controllers materialize Running Pods, Services get Endpoints, and PVCs bind,
+// giving a minikube-like always-converged cluster. This makes a `client-go` round-trip
 // against a cloudemu-emulated EKS/AKS/GKE cluster work end-to-end.
 package kubernetes
 
@@ -33,8 +33,8 @@ const pathPrefix = "/k8s/"
 //
 // One APIServer instance is wired into all three SDK-compat cloud servers
 // (awsserver, azureserver, gcpserver) so kubeconfigs from any provider land
-// on the same backend — exactly mirroring real-world Kubernetes, where the
-// API is identical across EKS, AKS, and GKE.
+// on the same backend, mirroring real-world Kubernetes, where the API is
+// identical across EKS, AKS, and GKE.
 type APIServer struct {
 	mu       sync.RWMutex
 	clusters map[string]*ClusterState
@@ -82,7 +82,7 @@ func (s *APIServer) SetClock(c config.Clock) {
 
 // RegisterCluster allocates fresh state for a new cluster and returns its
 // generated UID. The UID is the path segment that goes into the kubeconfig's
-// server URL — kubeconfig "server" becomes "<base>/k8s/<uid>".
+// server URL: kubeconfig "server" becomes "<base>/k8s/<uid>".
 func (s *APIServer) RegisterCluster() (string, *ClusterState) {
 	uid := newUID()
 
@@ -109,7 +109,7 @@ func (s *APIServer) SetLifecycleProgression(enabled bool) {
 
 // SetNodeCount sets how many synthetic Nodes clusters registered after the call
 // seed. Default (0 or 1) is a single control-plane node onto which every Pod
-// schedules — the historical behavior every single-node test relies on. N>1
+// schedules, the historical behavior every single-node test relies on. N>1
 // seeds one control-plane node (tainted NoSchedule) plus N-1 workers and turns
 // on the deterministic first-fit scheduler (nodeSelector/taints/tolerations/
 // resource requests). Node count is fixed at cluster creation and immutable for
@@ -121,7 +121,7 @@ func (s *APIServer) SetNodeCount(n int) {
 }
 
 // TickAll advances the staged Pod lifecycle for every registered cluster. It
-// snapshots the cluster set under RLock, then Ticks each — the real-time serve
+// snapshots the cluster set under RLock, then Ticks each. The real-time serve
 // ticker calls this on an interval. A no-op for clusters without progression
 // enabled. It returns true when any cluster actually advanced a Pod this tick, so
 // the serve ticker can mark persistence state dirty only on a real change.
@@ -139,7 +139,7 @@ func (s *APIServer) TickAll() bool {
 
 	for _, st := range states {
 		// CronJob firing is opt-in time-driven behavior like the staged Pod
-		// lifecycle — both are gated on progression (Tick and TickCronJobs
+		// lifecycle: both are gated on progression (Tick and TickCronJobs
 		// self-gate), so the real-time serve ticker drives them together.
 		st.TickCronJobs()
 
@@ -154,7 +154,7 @@ func (s *APIServer) TickAll() bool {
 // SetAdmissionEnabled turns the admission webhook chain on or off for
 // clusters registered after the call. Default is false: MutatingWebhook/
 // ValidatingWebhookConfiguration objects still store and round-trip through
-// `kubectl apply`, but are never invoked — a create/update/patch behaves
+// `kubectl apply`, but are never invoked: a create/update/patch behaves
 // exactly as before. Outbound HTTPS calls to webhook endpoints fight
 // cloudemu's zero-network, deterministic-by-default pillar, so this is
 // opt-in rather than derived from the presence of webhook configs.
@@ -190,7 +190,7 @@ func (s *APIServer) Lookup(uid string) *ClusterState {
 	return s.clusters[uid]
 }
 
-// SetBaseURL records the URL at which the APIServer is reachable — typically
+// SetBaseURL records the URL at which the APIServer is reachable, typically
 // the URL of the httptest server it's registered on. Control-plane handlers
 // (EKS/AKS/GKE) read this back via BaseURL() when rendering kubeconfigs so
 // the kubeconfig's "server:" field points at a host that actually answers.

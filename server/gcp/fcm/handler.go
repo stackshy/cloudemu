@@ -10,7 +10,7 @@
 //
 //	POST /v1/projects/{project}/messages:send   →  Notification.Publish
 //
-// FCM has no CreateTopic / Subscribe / ListTopics equivalents — an app
+// FCM has no CreateTopic / Subscribe / ListTopics equivalents. An app
 // publishes to a topic string (e.g. "weather") and devices subscribe to topics
 // out-of-band through the client SDKs, not through this REST surface. This
 // handler therefore implements ONLY messages:send. It does not fabricate topic
@@ -73,7 +73,7 @@ func New(n notifdriver.Notification) *Handler {
 	return &Handler{notif: n}
 }
 
-// Matches claims /v1/projects/{p}/messages:send — disjoint from the other
+// Matches claims /v1/projects/{p}/messages:send, disjoint from the other
 // /v1/projects/ GCP handlers (Firestore's databases/…, PubSub's
 // topics|subscriptions/…, IAM's serviceAccounts|roles/…), which never use the
 // messages:send suffix. Registered before Firestore's permissive /v1/projects/

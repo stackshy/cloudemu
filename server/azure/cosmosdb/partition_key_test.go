@@ -137,7 +137,7 @@ func TestSDKCustomPartitionKeyPointOps(t *testing.T) {
 }
 
 // TestSDKIDPartitionKeyPointOps exercises a container whose partition key is
-// /id — the value and the document id coincide — proving that path still reads
+// /id (the value and the document id coincide), proving that path still reads
 // and deletes correctly.
 func TestSDKIDPartitionKeyPointOps(t *testing.T) {
 	ctx := context.Background()

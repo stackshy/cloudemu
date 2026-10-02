@@ -3,9 +3,9 @@ package cloudwatch
 // This file adds the classic AWS query-protocol path (form-encoded POST,
 // Action=..., XML responses) for the CloudWatch metric-stream operations and
 // their tags, so `aws cloudwatch ...` and Terraform's aws_cloudwatch_metric_stream
-// resource — both of which still speak query protocol for CloudWatch, unlike
-// the modern rpc-v2-cbor path used by current aws-sdk-go-v2 — work against the
-// emulator. See query.go for the shared query-protocol plumbing.
+// resource work against the emulator. Both still speak query protocol for
+// CloudWatch, unlike current aws-sdk-go-v2, which uses rpc-v2-cbor. See query.go
+// for the shared query-protocol plumbing.
 
 import (
 	"context"
@@ -22,15 +22,13 @@ import (
 
 // writeMetricStreamQueryDriverErr is the query-protocol counterpart of
 // writeMetricStreamDriverErr (see metric_streams.go): it maps a metric-stream
-// driver error to CloudWatch's real ResourceNotFoundException /
-// InvalidParameterValueException error codes rather than the shorter names
-// the shared writeQueryDriverErr uses for the older alarm operations.
+// driver error to ResourceNotFoundException / InvalidParameterValue.
 func writeMetricStreamQueryDriverErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
 		writeQueryError(w, http.StatusNotFound, "ResourceNotFoundException", err.Error())
 	case cerrors.IsInvalidArgument(err):
-		writeQueryError(w, http.StatusBadRequest, "InvalidParameterValueException", err.Error())
+		writeQueryError(w, http.StatusBadRequest, errInvalidParameterValue, cerrors.Message(err))
 	default:
 		writeQueryDriverErr(w, err)
 	}
@@ -109,7 +107,13 @@ func (h *Handler) queryListMetricStreams(w http.ResponseWriter, r *http.Request)
 		size = v
 	}
 
-	from, to, next := pageWindow(len(entries), decodeOffsetToken(r.Form.Get("NextToken")), size)
+	offset, err := offsetFromToken(r.Form.Get("NextToken"), errInvalidNextToken)
+	if err != nil {
+		writeMetricStreamQueryDriverErr(w, err)
+		return
+	}
+
+	from, to, next := pageWindow(len(entries), offset, size)
 
 	members := make([]metricStreamEntryXML, 0, to-from)
 
@@ -186,7 +190,7 @@ var errTaggingUnsupported = errors.New("tagging not supported")
 
 // queryTagResource, queryUntagResource, and queryListTagsForResource route to
 // the metric-stream tagger when ResourceARN names a metric stream, and to the
-// alarm tagger otherwise — mirroring the rpc-v2-cbor tagResource/untagResource/
+// alarm tagger otherwise, mirroring the rpc-v2-cbor tagResource/untagResource/
 // listTagsForResource dispatch in metric_data_ops.go. Each delegates to a
 // small ARN-routing helper so the two resource kinds' near-identical bodies
 // aren't duplicated per operation.
@@ -194,7 +198,7 @@ func (h *Handler) queryTagResource(w http.ResponseWriter, r *http.Request) {
 	arn := r.Form.Get("ResourceARN")
 
 	if err := h.addResourceTagsByARN(r.Context(), arn, queryTagPairs(r, "Tags.member.")); err != nil {
-		writeTagRouteQueryErr(w, arn, err)
+		writeTagRouteQueryErr(w, err)
 		return
 	}
 
@@ -205,7 +209,7 @@ func (h *Handler) queryUntagResource(w http.ResponseWriter, r *http.Request) {
 	arn := r.Form.Get("ResourceARN")
 
 	if err := h.removeResourceTagsByARN(r.Context(), arn, queryStringList(r, "TagKeys.member.")); err != nil {
-		writeTagRouteQueryErr(w, arn, err)
+		writeTagRouteQueryErr(w, err)
 		return
 	}
 
@@ -217,7 +221,7 @@ func (h *Handler) queryListTagsForResource(w http.ResponseWriter, r *http.Reques
 
 	tags, err := h.resourceTagsByARN(r.Context(), arn)
 	if err != nil {
-		writeTagRouteQueryErr(w, arn, err)
+		writeTagRouteQueryErr(w, err)
 		return
 	}
 
@@ -285,20 +289,28 @@ func (h *Handler) resourceTagsByARN(ctx context.Context, arn string) (map[string
 
 // writeTagRouteQueryErr writes the query-protocol response for a tag-routing
 // error: an unsupported-capability error becomes InvalidAction, and any other
-// error is mapped by the metric-stream or alarm driver-error mapper depending
-// on which resource kind arn routed to.
-func writeTagRouteQueryErr(w http.ResponseWriter, arn string, err error) {
+// error is mapped by tagRouteErr.
+func writeTagRouteQueryErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, errTaggingUnsupported) {
 		writeQueryError(w, http.StatusBadRequest, "InvalidAction", err.Error())
 		return
 	}
 
-	if _, ok := metricStreamNameFromARN(arn); ok {
-		writeMetricStreamQueryDriverErr(w, err)
-		return
+	writeQueryDriverErr(w, tagRouteErr(err))
+}
+
+// tagRouteErr maps a tagging error to the codes TagResource, UntagResource
+// and ListTagsForResource document: a missing alarm or metric stream is a
+// 404 ResourceNotFoundException, and a bad value is InvalidParameterValue.
+func tagRouteErr(err error) error {
+	switch {
+	case cerrors.IsNotFound(err):
+		return newNotFoundError(errResourceNotFoundException, cerrors.Message(err))
+	case cerrors.IsInvalidArgument(err):
+		return newWireError(errInvalidParameterValue, cerrors.Message(err))
 	}
 
-	writeQueryDriverErr(w, err)
+	return err
 }
 
 // ---- form parsing helpers ----
@@ -401,9 +413,9 @@ func toTagMemberXMLs(tags map[string]string) []tagMemberXML {
 
 // emptyQueryResult renders a nameless <XxxResult/> element for an operation
 // whose response carries no fields. The query-protocol deserializer still
-// requires that element to be present — e.g. DeleteMetricStream fails to
-// deserialize a response with no DeleteMetricStreamResult node at all — even
-// though the operation returns no data.
+// requires that element to be present even though the operation returns no
+// data; DeleteMetricStream, for example, fails to deserialize a response with no
+// DeleteMetricStreamResult node.
 func emptyQueryResult(name string) any {
 	return struct {
 		XMLName xml.Name

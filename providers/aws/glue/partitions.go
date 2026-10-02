@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/glue/driver"
 )
 
@@ -256,7 +257,7 @@ func (m *Mock) BatchCreatePartition(
 	for i := range ps {
 		if err := m.CreatePartition(context.Background(), cat, dbName, tblName, ps[i]); err != nil {
 			errs = append(errs, driver.BatchError{
-				Values: copyStrings(ps[i].Values), ErrorCode: driver.ExAlreadyExists, ErrorMessage: err.Error(),
+				Values: copyStrings(ps[i].Values), ErrorCode: driver.ExAlreadyExists, ErrorMessage: cerrors.Message(err),
 			})
 		}
 	}
@@ -280,7 +281,7 @@ func (m *Mock) BatchDeletePartition(
 	for i := range values {
 		if err := m.DeletePartition(context.Background(), catalogID, dbName, tblName, values[i]); err != nil {
 			errs = append(errs, driver.BatchError{
-				Values: copyStrings(values[i]), ErrorCode: driver.ExEntityNotFound, ErrorMessage: err.Error(),
+				Values: copyStrings(values[i]), ErrorCode: driver.ExEntityNotFound, ErrorMessage: cerrors.Message(err),
 			})
 		}
 	}
@@ -308,7 +309,7 @@ func (m *Mock) BatchUpdatePartition(
 		if err != nil {
 			errs = append(errs, driver.BatchError{
 				Values:    copyStrings(entries[i].PartitionValueList),
-				ErrorCode: driver.ExEntityNotFound, ErrorMessage: err.Error(),
+				ErrorCode: driver.ExEntityNotFound, ErrorMessage: cerrors.Message(err),
 			})
 		}
 	}

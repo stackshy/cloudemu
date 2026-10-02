@@ -225,8 +225,8 @@ func privateFromZoneType(zt string) bool {
 // toZoneJSON converts a driver zone into its ARM element for the given path
 // scope. Azure DNS zones are always "global" location.
 func toZoneJSON(rp *azurearm.ResourcePath, info *dnsdriver.ZoneInfo) zoneJSON {
-	// Build the id from the zone's own group, not the request path's — which is
-	// empty on a subscription-scoped list — so the id carries its true
+	// Build the id from the zone's own group, not the request path's (which is
+	// empty on a subscription-scoped list), so the id carries its true
 	// resourceGroups/{rg} segment.
 	rg := info.Scope.ResourceGroup
 	if rg == "" {
@@ -261,9 +261,9 @@ func recordValues(recordType string, props *recordSetProperties) []string {
 
 	switch strings.ToUpper(recordType) {
 	case recTypeA:
-		return mapStrings(props.ARecords, func(a aRecordJSON) string { return a.IPv4Address })
+		return addressValues(props.ARecords, func(a aRecordJSON) string { return a.IPv4Address })
 	case recTypeAAAA:
-		return mapStrings(props.AaaaRecords, func(a aaaaRecordJSON) string { return a.IPv6Address })
+		return addressValues(props.AaaaRecords, func(a aaaaRecordJSON) string { return a.IPv6Address })
 	case recTypeCNAME:
 		if props.CnameRecord != nil && props.CnameRecord.Cname != "" {
 			return []string{props.CnameRecord.Cname}
@@ -559,7 +559,7 @@ func isApexProtectedRecord(name, recordType string) bool {
 // resolveZoneID maps the SDK-facing zone name to the driver's internal zone id
 // by scanning the zone list, scoped to the request's subscription and resource
 // group. Scoping matters because the same zone name can exist in more than one
-// resource group — a name-only scan could resolve to a zone in a different
+// resource group: a name-only scan could resolve to a zone in a different
 // group. Returns a NotFound error if no such zone exists in this scope.
 func (h *Handler) resolveZoneID(ctx context.Context, rp *azurearm.ResourcePath) (string, error) {
 	filter := scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}

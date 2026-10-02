@@ -1,4 +1,4 @@
-// delete_notification_sdk_test.go — real aws-sdk-go-v2 tests proving that
+// delete_notification_sdk_test.go: real aws-sdk-go-v2 tests proving that
 // DeleteObject and the batch DeleteObjects (POST ?delete) endpoints fire
 // s3:ObjectRemoved notifications end-to-end (PutObject -> ObjectCreated already
 // worked; delete never delivered), and that the delivered eventName picks the
@@ -86,7 +86,7 @@ func subscribeQueueToBucket(t *testing.T, s3Client *awss3.Client, sqsClient *sqs
 
 // TestSDKDeleteObjectFiresObjectRemovedDelete proves DeleteObject on an
 // unversioned bucket delivers s3:ObjectRemoved:Delete to a subscribed SQS
-// queue — previously the wire delete path never fired notifications.
+// queue. Previously the wire delete path never fired notifications.
 func TestSDKDeleteObjectFiresObjectRemovedDelete(t *testing.T) {
 	s3Client, sqsClient := newS3SQSSuite(t)
 	ctx := context.Background()

@@ -19,7 +19,7 @@ func routeTableARMID(rg, name string) string {
 }
 
 // TestSDKRouteTableRoundTrip drives the real armnetwork RouteTablesClient
-// through create (with two routes), get (routes echoed) and list — the
+// through create (with two routes), get (routes echoed) and list: the
 // Microsoft.Network/routeTables wire handler that used to 501. Cases (a) + (e).
 func TestSDKRouteTableRoundTrip(t *testing.T) {
 	ts := newVNetServer(t)

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
 
@@ -32,20 +33,15 @@ func TestMemberClustersBounded(t *testing.T) {
 	}
 }
 
-// TestCreateReplicationGroupPathologicalNodeCount proves a pathological
-// NumCacheNodes on CreateReplicationGroup can't drive an unbounded
-// MemberClusters allocation; the request still succeeds, just clamped.
+// TestCreateReplicationGroupPathologicalNodeCount proves a huge NumCacheNodes
+// is rejected before any member list is built.
 func TestCreateReplicationGroupPathologicalNodeCount(t *testing.T) {
 	m := New(config.NewOptions())
 
-	rg, err := m.CreateReplicationGroup(context.Background(), driver.ReplicationGroupConfig{
+	_, err := m.CreateReplicationGroup(context.Background(), driver.ReplicationGroupConfig{
 		ID: "rg-huge", Engine: "redis", NumCacheNodes: maxReplicationGroupNodes + 1000000,
 	})
-	if err != nil {
-		t.Fatalf("CreateReplicationGroup: %v", err)
-	}
-
-	if len(rg.MemberClusters) != maxReplicationGroupNodes {
-		t.Fatalf("MemberClusters len = %d, want %d", len(rg.MemberClusters), maxReplicationGroupNodes)
+	if !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("CreateReplicationGroup err = %v, want InvalidArgument", err)
 	}
 }

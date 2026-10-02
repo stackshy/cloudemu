@@ -5,12 +5,12 @@
 //
 // Coverage (cluster control plane only):
 //
-//	POST   /v1/projects/{p}/regions/{r}/clusters              — CreateCluster (LRO)
-//	GET    /v1/projects/{p}/regions/{r}/clusters              — ListClusters
-//	GET    /v1/projects/{p}/regions/{r}/clusters/{c}          — GetCluster
-//	PATCH  /v1/projects/{p}/regions/{r}/clusters/{c}          — UpdateCluster (LRO, updateMask query param)
-//	DELETE /v1/projects/{p}/regions/{r}/clusters/{c}          — DeleteCluster (LRO)
-//	GET    /v1/projects/{p}/regions/{r}/operations/{op}       — poll (always done)
+//	POST   /v1/projects/{p}/regions/{r}/clusters              : CreateCluster (LRO)
+//	GET    /v1/projects/{p}/regions/{r}/clusters              : ListClusters
+//	GET    /v1/projects/{p}/regions/{r}/clusters/{c}          : GetCluster
+//	PATCH  /v1/projects/{p}/regions/{r}/clusters/{c}          : UpdateCluster (LRO, updateMask query param)
+//	DELETE /v1/projects/{p}/regions/{r}/clusters/{c}          : DeleteCluster (LRO)
+//	GET    /v1/projects/{p}/regions/{r}/operations/{op}       : poll (always done)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting cluster embedded in `response`, and a created cluster is RUNNING

@@ -343,8 +343,8 @@ func TestCosmosTypedErrors(t *testing.T) {
 }
 
 // TestCosmosWriteDivergences pins down the emulator's write semantics: the
-// (partition key, id) identity model — duplicate create 409s, an upsert of the
-// same id succeeds, and same-pk/different-id documents coexist — plus
+// (partition key, id) identity model: duplicate create 409s, an upsert of the
+// same id succeeds, and same-pk/different-id documents coexist, plus
 // optimistic concurrency (a stale If-Match is 412) and a 404 on deleting a
 // missing document. The one remaining knowing divergence is that PATCH is not
 // routed (405).
@@ -430,7 +430,7 @@ func TestCosmosReplaceSemantics(t *testing.T) {
 	createDoc(ctx, t, cc, "books", map[string]any{"id": "i1", "pk": "books", "title": "Dune"})
 
 	// Replacing the document with a body that changes the partition key value
-	// is rejected 400 — the partition key is immutable.
+	// is rejected 400: the partition key is immutable.
 	moved, _ := json.Marshal(map[string]any{"id": "i1", "pk": "movies", "title": "Dune"})
 
 	_, err := cc.ReplaceItem(ctx, azcosmos.NewPartitionKeyString("books"), "i1", moved, nil)
@@ -507,7 +507,7 @@ func TestCosmosQueryAndPagination(t *testing.T) {
 		t.Errorf("query on empty container returned %d items, want 0", n)
 	}
 
-	// Insert 30 documents: 15 in part-a, 15 in part-b. Track the part-a ids —
+	// Insert 30 documents: 15 in part-a, 15 in part-b. Track the part-a ids:
 	// only those should match the WHERE clause below.
 	expected := map[string]bool{}
 
@@ -615,7 +615,7 @@ func TestCosmosUnicode(t *testing.T) {
 // TestCosmosTTL exercises TTL expiry deterministically with the
 // injectable fake clock. TTL configuration is driver-only (no Cosmos HTTP
 // endpoint), so the config calls go through provider.CosmosDB directly, while
-// document writes/reads flow through the real SDK — expiry is SDK-visible as
+// document writes/reads flow through the real SDK: expiry is SDK-visible as
 // a 404. Also pins BatchGetItems skipping the TTL check (documented).
 func TestCosmosTTL(t *testing.T) {
 	ctx := context.Background()

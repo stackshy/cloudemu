@@ -13,7 +13,7 @@ import (
 )
 
 // GCP Compute Load Balancing resources that the portable LoadBalancer model
-// can't express — healthChecks and urlMaps (global) and targetPools (regional).
+// can't express: healthChecks and urlMaps (global) and targetPools (regional).
 // They are stored verbatim through the GCPComputeResourceStore optional
 // capability and re-emitted with server-injected identity so every field the
 // client sent round-trips (create → read/list → delete), which is all Terraform
@@ -31,6 +31,8 @@ var resourceKind = map[string]string{
 	resourceHealthChecks:         "compute#healthCheck",
 	resourceTargetPools:          "compute#targetPool",
 	resourceURLMaps:              "compute#urlMap",
+	resourceBackendBuckets:       "compute#backendBucket",
+	resourceServiceAttachments:   "compute#serviceAttachment",
 	resourceTargetHTTPProxies:    "compute#targetHttpProxy",
 	resourceTargetHTTPSProxies:   "compute#targetHttpsProxy",
 	resourceSslCertificates:      "compute#sslCertificate",
@@ -70,6 +72,11 @@ func (h *Handler) routeGCPResource(w http.ResponseWriter, r *http.Request, rp gc
 			gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
 		}
 
+		return
+	}
+
+	if r.Method == http.MethodPost && rp.ResourceType == resourceURLMaps && rp.Action == actionInvalidateCache {
+		h.invalidateURLMapCache(w, r, rp)
 		return
 	}
 
@@ -215,6 +222,14 @@ func (h *Handler) listGCPResource(w http.ResponseWriter, r *http.Request, rp gcp
 		return
 	}
 
+	writeGCPResourceList(w, r, rp, items)
+}
+
+// writeGCPResourceList filters (name), sorts, paginates (maxResults/pageToken)
+// and writes a compute#…List envelope over items of rp's collection.
+//
+//nolint:gocritic // rp is a request-scoped value
+func writeGCPResourceList(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, items []lbdriver.GCPResource) {
 	filter := r.URL.Query().Get("filter")
 
 	matched := make([]lbdriver.GCPResource, 0, len(items))
@@ -266,7 +281,7 @@ func (h *Handler) deleteGCPResource(w http.ResponseWriter, r *http.Request, rp g
 
 	// Real GCP refuses to delete a resource still referenced by another (400
 	// resourceInUseByAnotherResource); deleting it here would orphan the
-	// dependent — a backend service pointing at a missing health check, a target
+	// dependent: a backend service pointing at a missing health check, a target
 	// proxy at a missing url-map, an https proxy at a missing certificate, a
 	// backend service at a missing instance group, or a forwarding rule at a
 	// missing proxy.
@@ -291,11 +306,13 @@ func (h *Handler) deleteGCPResource(w http.ResponseWriter, r *http.Request, rp g
 //
 //nolint:gocritic // rp is a request-scoped value
 func gcpResourceJSON(res *lbdriver.GCPResource, rp gcprest.ResourcePath, host string) map[string]any {
-	out := make(map[string]any, len(res.Body)+internalFieldCount)
+	// Size hint from the body alone: adding to a caller-sized length is an
+	// unchecked addition, and the map grows for the few server-injected members.
+	out := make(map[string]any, len(res.Body))
 
 	for k, v := range res.Body {
 		// Reserved internal members (e.g. instance-group membership) are stored in
-		// the body but must never leak onto the wire — they are not real GCP fields.
+		// the body but must never leak onto the wire. They are not real GCP fields.
 		if strings.HasPrefix(k, reservedBodyPrefix) {
 			continue
 		}
@@ -325,14 +342,10 @@ func gcpResourceJSON(res *lbdriver.GCPResource, rp gcprest.ResourcePath, host st
 	return out
 }
 
-// internalFieldCount is the number of server-injected members gcpResourceJSON
-// adds on top of the stored body (kind, id, name, creationTimestamp, selfLink,
-// region/zone, size).
-const internalFieldCount = 7
-
-// healthCheckInUse returns the name of a same-scope backend service whose
-// healthChecks[] references the health check being deleted, or "" when none
-// does.
+// healthCheckInUse returns the name of a backend service whose healthChecks[]
+// references the health check being deleted, or "" when none does. Refs are
+// matched on the scope they name, so a regional backend service using a global
+// check pins it, and a same-named check in another scope does not.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) healthCheckInUse(ctx context.Context, rp gcprest.ResourcePath) string {
@@ -344,17 +357,13 @@ func (h *Handler) healthCheckInUse(ctx context.Context, rp gcprest.ResourcePath)
 	scope := scopeKeyOf(rp)
 
 	for i := range tgs {
-		if tgs[i].Tags[bsScopeTag] != scope {
-			continue
-		}
-
 		refs := tgs[i].Tags[bsHealthChecksTag]
 		if refs == "" {
 			continue
 		}
 
 		for _, ref := range strings.Split(refs, ",") {
-			if lastPathSegment(ref) == rp.ResourceName {
+			if lastPathSegment(ref) == rp.ResourceName && hcRefScope(ref, tgs[i].Tags[bsScopeTag]) == scope {
 				return displayName(tgs[i].Tags, bsNameTag, tgs[i].Name)
 			}
 		}

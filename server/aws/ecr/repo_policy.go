@@ -60,7 +60,7 @@ func (h *Handler) getRepositoryPolicy(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deleteRepositoryPolicy(w http.ResponseWriter, r *http.Request) {
 	// A repository with no policy is RepositoryPolicyNotFoundException, a missing
-	// repository is RepositoryNotFoundException — both carried by the provider's
+	// repository is RepositoryNotFoundException. Both are carried by the provider's
 	// tagged error and surfaced by writeErr.
 	h.runRepoPolicyOp(w, r, repoPolicyManager.DeleteRepositoryPolicy)
 }

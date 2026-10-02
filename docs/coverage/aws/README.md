@@ -7,35 +7,35 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | --- | --- | --- |
 | [ACM](./acm.md) | `acm` | 17 |
 | [AOSS](./aoss.md) | `aoss` | 18 |
-| [APIGateway](./apigateway.md) | `apigateway` | 29 |
-| [APIGatewayV2](./apigatewayv2.md) | `apigatewayv2` | 20 |
+| [APIGateway](./apigateway.md) | `apigateway` | 50 |
+| [APIGatewayV2](./apigatewayv2.md) | `apigatewayv2` | 28 |
 | [APS](./aps.md) | `aps` | 21 |
 | [AppFlow](./appflow.md) | `appflow` | 14 |
 | [AppRunner](./apprunner.md) | `apprunner` | 29 |
 | [AppSync](./appsync.md) | `appsync` | 17 |
-| [Athena](./athena.md) | `athena` | 21 |
+| [Athena](./athena.md) | `athena` | 26 |
 | [Backup](./backup.md) | `backup` | 25 |
 | [Batch](./batch.md) | `batch` | 14 |
 | [Bedrock](./bedrock.md) | `bedrock` | 65 |
-| [BedrockAgent](./bedrockagent.md) | `bedrockagent` | 29 |
+| [BedrockAgent](./bedrockagent.md) | `bedrockagent` | 32 |
 | [BedrockAgentRuntime](./bedrockagentruntime.md) | `bedrockagentruntime` | 3 |
-| [CloudFormation](./cloudformation.md) | — (provider-native) | 9 |
+| [CloudFormation](./cloudformation.md) | (provider-native) | 22 |
 | [CloudFront](./cloudfront.md) | `cloudfront` | 11 |
 | [CloudTrail](./cloudtrail.md) | `cloudtrail` | 60 |
 | [CloudWatch](./cloudwatch.md) | `monitoring` | 12 |
 | [CloudWatchLogs](./cloudwatchlogs.md) | `logging` | 17 |
 | [CodeArtifact](./codeartifact.md) | `codeartifact` | 15 |
-| [Cognito](./cognito.md) | `cognito` | 18 |
+| [Cognito](./cognito.md) | `cognito` | 29 |
 | [Config](./config.md) | `configservice` | 102 |
-| [CostExplorer](./costexplorer.md) | — (provider-native) | 4 |
+| [CostExplorer](./costexplorer.md) | (provider-native) | 4 |
 | [DynamoDB](./dynamodb.md) | `database` | 24 |
 | [EC2](./ec2.md) | `compute` | 37 |
 | [ECR](./ecr.md) | `containerregistry` | 15 |
-| [ECS](./ecs.md) | `ecs` | 37 |
+| [ECS](./ecs.md) | `ecs` | 41 |
 | [EFS](./efs.md) | `efs` | 27 |
-| [EKS](./eks.md) | — (provider-native) | 29 |
+| [EKS](./eks.md) | (provider-native) | 40 |
 | [ELB](./elb.md) | `loadbalancer` | 19 |
-| [EMR](./emr.md) | — (provider-native) | 19 |
+| [EMR](./emr.md) | (provider-native) | 22 |
 | [ElastiCache](./elasticache.md) | `cache` | 17 |
 | [EventBridge](./eventbridge.md) | `eventbus` | 16 |
 | [FIS](./fis.md) | `fis` | 12 |
@@ -58,10 +58,10 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [MemoryDB](./memorydb.md) | `memorydb` | 33 |
 | [NetworkFirewall](./networkfirewall.md) | `networkfirewall` | 23 |
 | [OpenSearch](./opensearch.md) | `opensearch` | 96 |
-| [RDS](./rds.md) | — (provider-native) | 21 |
+| [RDS](./rds.md) | (provider-native) | 21 |
 | [Redshift](./redshift.md) | `relationaldb` | 21 |
-| [Resourceexplorer2](./resourceexplorer2.md) | — (provider-native) | 10 |
-| [Resourcegroupstaggingapi](./resourcegroupstaggingapi.md) | — (provider-native) | 5 |
+| [Resourceexplorer2](./resourceexplorer2.md) | (provider-native) | 10 |
+| [Resourcegroupstaggingapi](./resourcegroupstaggingapi.md) | (provider-native) | 5 |
 | [Route53](./route53.md) | `dns` | 16 |
 | [Route53Resolver](./route53resolver.md) | `route53resolver` | 72 |
 | [S3](./s3.md) | `storage` | 35 |
@@ -70,12 +70,12 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [SNS](./sns.md) | `notification` | 9 |
 | [SQS](./sqs.md) | `messagequeue` | 14 |
 | [SSM](./ssm.md) | `parameterstore` | 9 |
-| [STS](./sts.md) | — (provider-native) | 8 |
+| [STS](./sts.md) | (provider-native) | 8 |
 | [SageMaker](./sagemaker.md) | `sagemaker` | 121 |
-| [SavingsPlans](./savingsplans.md) | — (provider-native) | 9 |
+| [SavingsPlans](./savingsplans.md) | (provider-native) | 9 |
 | [Scheduler](./scheduler.md) | `eventbridgescheduler` | 12 |
 | [SecretsManager](./secretsmanager.md) | `secrets` | 7 |
-| [ServiceQuotas](./servicequotas.md) | — (provider-native) | 6 |
+| [ServiceQuotas](./servicequotas.md) | (provider-native) | 6 |
 | [TimestreamWrite](./timestreamwrite.md) | `timestreamwrite` | 13 |
 | [Transfer](./transfer.md) | `transfer` | 17 |
 | [VPC](./vpc.md) | `networking` | 57 |

@@ -185,7 +185,7 @@ func TestSDKLambdaInvoke(t *testing.T) {
 		t.Fatalf("FunctionError = %q, want empty", *resp.FunctionError)
 	}
 
-	// Read+exhaust to simulate a real client clean-up — guards against any
+	// Read+exhaust to simulate a real client clean-up. This guards against any
 	// surprises if Invoke ever returns a streaming body.
 	_, _ = io.ReadAll(bytes.NewReader(resp.Payload))
 }
@@ -294,7 +294,7 @@ func TestSDKLambdaConcurrencyRoundtrip(t *testing.T) {
 
 	// After delete the function still exists with no reserved concurrency, so
 	// GetFunctionConcurrency is HTTP 200 with an empty body (nil executions), not
-	// a 404 — only a missing function is NotFound.
+	// a 404. Only a missing function is NotFound.
 	after, err := client.GetFunctionConcurrency(ctx, &awslambda.GetFunctionConcurrencyInput{
 		FunctionName: aws.String("busy"),
 	})
@@ -676,7 +676,7 @@ func TestSDKCreateAliasRoutingConfigValidation(t *testing.T) {
 	}
 
 	// The alias's own FunctionVersion cannot be $LATEST when a routing config is
-	// present — a weighted alias's primary target must be a published version.
+	// present. A weighted alias's primary target must be a published version.
 	_, err = client.CreateAlias(ctx, &awslambda.CreateAliasInput{
 		FunctionName:    aws.String("routed"),
 		Name:            aws.String("bad-primary-latest"),

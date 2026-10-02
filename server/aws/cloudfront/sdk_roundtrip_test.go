@@ -193,7 +193,7 @@ func TestCloudFrontLifecycle(t *testing.T) {
 // Logging, Restrictions, ViewerCertificate, and the DefaultCacheBehavior
 // TrustedSigners/TrustedKeyGroups/AllowedMethods/Function+Lambda associations)
 // must read back COMPLETE. Real CloudFront always returns those blocks, and the
-// provider dereferences them without a nil check — a missing block segfaults it.
+// provider dereferences them without a nil check, so a missing block segfaults it.
 func TestCloudFrontMinimalConfigNormalized(t *testing.T) {
 	ctx := context.Background()
 	c := newCloudFrontClient(t)

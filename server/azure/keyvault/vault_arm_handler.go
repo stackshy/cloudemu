@@ -11,15 +11,16 @@
 //
 // Coverage:
 //
-//	PUT    .../providers/Microsoft.KeyVault/vaults/{name}   — Vaults.BeginCreateOrUpdate (LRO, completes inline)
-//	GET    .../providers/Microsoft.KeyVault/vaults/{name}   — Vaults.Get
-//	PATCH  .../providers/Microsoft.KeyVault/vaults/{name}   — Vaults.Update (partial merge, not a full replace)
-//	DELETE .../providers/Microsoft.KeyVault/vaults/{name}   — Vaults.Delete
-//	GET    .../resourceGroups/{rg}/providers/Microsoft.KeyVault/vaults — Vaults.ListByResourceGroup
-//	GET    .../subscriptions/{sub}/providers/Microsoft.KeyVault/vaults  — Vaults.ListBySubscription
+//	PUT    .../providers/Microsoft.KeyVault/vaults/{name}   : Vaults.BeginCreateOrUpdate (LRO, completes inline)
+//	GET    .../providers/Microsoft.KeyVault/vaults/{name}   : Vaults.Get
+//	PATCH  .../providers/Microsoft.KeyVault/vaults/{name}   : Vaults.Update (partial merge, not a full replace)
+//	DELETE .../providers/Microsoft.KeyVault/vaults/{name}   : Vaults.Delete
+//	GET    .../resourceGroups/{rg}/providers/Microsoft.KeyVault/vaults : Vaults.ListByResourceGroup
+//	GET    .../subscriptions/{sub}/providers/Microsoft.KeyVault/vaults  : Vaults.ListBySubscription
 package keyvault
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -37,6 +38,12 @@ func NewVaultARM(v secretsdriver.KeyVaultVaults) *VaultARMHandler {
 	return &VaultARMHandler{vaults: v}
 }
 
+// PurgeResourceGroup deletes every vault in the resource group, with its access
+// policies, secrets, keys and certificates, backing the resource-group cascade.
+func (h *VaultARMHandler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	return azurearm.PurgeVia(ctx, h.vaults, subscription, resourceGroup)
+}
+
 // Matches claims ARM URLs targeting Microsoft.KeyVault/vaults. The provider name
 // is unique among Azure handlers, so registration order is unconstrained; it
 // registers before the permissive BlobStorage fallback.
@@ -46,7 +53,7 @@ func (*VaultARMHandler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	return rp.Provider == vaultProviderName && rp.ResourceType == vaultResourceType
+	return rp.Provider == vaultProviderName && (rp.ResourceType == vaultResourceType || isDeletedVaultsPath(&rp))
 }
 
 // ServeHTTP routes on the parsed path shape and method.
@@ -54,6 +61,11 @@ func (h *VaultARMHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "malformed ARM path")
+		return
+	}
+
+	if isDeletedVaultsPath(&rp) {
+		serveDeletedVaults(w, r, &rp)
 		return
 	}
 
@@ -66,6 +78,17 @@ func (h *VaultARMHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		h.listVaults(w, r, &rp)
 
+		return
+	}
+
+	if isAccessPolicyPath(&rp) {
+		h.serveAccessPolicy(w, r, &rp)
+		return
+	}
+
+	// Real Key Vault has these vault children; cloudemu does not model them
+	// over ARM, so they never reach (and never overwrite) the vault.
+	if azurearm.GuardLeaf(w, r, &rp, "secrets", "keys", "privateEndpointConnections") {
 		return
 	}
 

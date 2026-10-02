@@ -6,8 +6,8 @@
 //
 // Registration / shadowing: this handler shares the /compute/v1/projects/…
 // URL space with the existing compute (server/gcp/compute) and networks
-// (server/gcp/networks) handlers, but claims a disjoint set of resource types —
-// backendServices / forwardingRules — whereas compute claims instances /
+// (server/gcp/networks) handlers, but claims a disjoint set of resource types
+// (backendServices / forwardingRules), whereas compute claims instances /
 // operations / disks / snapshots / images and networks claims networks /
 // subnetworks / firewalls. Because gcprest.ParsePath keys dispatch on the
 // resource-type segment, first-match-wins routing is unambiguous and the three
@@ -15,7 +15,7 @@
 // unnecessary since there is no route overlap. NOTE: mutating operations return
 // compute#operation envelopes the SDK polls at
 // /compute/v1/projects/{p}/global/operations/{name}, which the compute handler
-// serves — so wire the Compute handler alongside this one when the SDK's
+// serves. So wire the Compute handler alongside this one when the SDK's
 // Insert/Delete pollers are exercised.
 //
 // Driver-abstraction mapping (GCP → loadbalancer driver):
@@ -62,6 +62,9 @@ type Handler struct {
 	// resolves a real operation and 404s a bogus one. Nil in a package-level
 	// server (every operation poll answered DONE, legacy behavior).
 	ops *gcprest.OperationRegistry
+	// buckets, when set, lets backendBuckets reject a bucketName that names no
+	// existing Cloud Storage bucket.
+	buckets BucketLister
 }
 
 // New returns a GCP load balancer handler backed by lb.
@@ -74,7 +77,8 @@ func New(lb lbdriver.LoadBalancer) *Handler {
 // the compute handler's /operations poll route.
 func (h *Handler) SetOperationRegistry(reg *gcprest.OperationRegistry) { h.ops = reg }
 
-// Matches returns true for the load-balancing resource types — backendServices,
+// Matches returns true for the load-balancing resource types: backendServices,
+// backendBuckets (Cloud CDN),
 // forwardingRules, healthChecks, targetPools, urlMaps, the L7 front-end chain
 // (targetHttpProxies, targetHttpsProxies, sslCertificates) and instanceGroups /
 // regionInstanceGroups. Disjoint from the compute (instances/operations/disks/…)
@@ -94,7 +98,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case resourceBackendServices, resourceForwardingRules,
+	case resourceBackendServices, resourceForwardingRules, resourceBackendBuckets, resourceServiceAttachments,
 		resourceHealthChecks, resourceTargetPools, resourceURLMaps,
 		resourceTargetHTTPProxies, resourceTargetHTTPSProxies, resourceSslCertificates,
 		resourceInstanceGroups, resourceRegionInstanceGroups:
@@ -117,6 +121,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeBackendServices(w, r, rp)
 	case resourceForwardingRules:
 		h.routeForwardingRules(w, r, rp)
+	case resourceBackendBuckets:
+		h.routeBackendBuckets(w, r, rp)
+	case resourceServiceAttachments:
+		h.routeServiceAttachments(w, r, rp)
 	case resourceHealthChecks, resourceTargetPools, resourceURLMaps:
 		h.routeGCPResource(w, r, rp)
 	case resourceTargetHTTPProxies, resourceTargetHTTPSProxies, resourceSslCertificates,
@@ -149,6 +157,11 @@ func (h *Handler) routeBackendServices(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
+	if r.Method == http.MethodPost && isSignedURLKeyAction(rp.Action) {
+		h.backendServiceSignedURLKey(w, r, rp)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.getBackendService(w, r, rp)
@@ -176,9 +189,21 @@ func (h *Handler) routeForwardingRules(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
+	if r.Method == http.MethodPost && rp.Action == actionSetLabels {
+		h.setForwardingRuleLabels(w, r, rp)
+		return
+	}
+
+	if rp.Action != "" {
+		gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.getForwardingRule(w, r, rp)
+	case http.MethodPatch:
+		h.patchForwardingRule(w, r, rp)
 	case http.MethodDelete:
 		h.deleteForwardingRule(w, r, rp)
 	default:

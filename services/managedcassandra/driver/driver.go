@@ -1,6 +1,6 @@
 // Package driver defines the portable interface for Azure Managed Instance for
 // Apache Cassandra (Microsoft.DocumentDB/cassandraClusters). It is control-plane
-// only — clusters and their datacenters — so it is independent of the
+// only, clusters and their datacenters, so it is independent of the
 // relational/database drivers.
 package driver
 

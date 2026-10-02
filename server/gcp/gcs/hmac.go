@@ -72,7 +72,7 @@ func (h *Handler) projectRoute(w http.ResponseWriter, r *http.Request, parts []s
 	}
 }
 
-// hmacCollection serves /projects/{project}/hmacKeys — POST creates a key, GET
+// hmacCollection serves /projects/{project}/hmacKeys: POST creates a key, GET
 // lists keys.
 func (h *Handler) hmacCollection(w http.ResponseWriter, r *http.Request, project string) {
 	if h.hmac == nil {
@@ -90,7 +90,7 @@ func (h *Handler) hmacCollection(w http.ResponseWriter, r *http.Request, project
 	}
 }
 
-// hmacResource serves /projects/{project}/hmacKeys/{accessId} — GET metadata,
+// hmacResource serves /projects/{project}/hmacKeys/{accessId}: GET metadata,
 // PUT state update, DELETE.
 func (h *Handler) hmacResource(w http.ResponseWriter, r *http.Request, project, accessID string) {
 	if h.hmac == nil {

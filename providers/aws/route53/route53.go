@@ -26,6 +26,11 @@ type Mock struct {
 	healthChecks *memstore.Store[driver.HealthCheckInfo]
 	opts         *config.Options
 
+	// createMu makes CreateZone's CallerReference check and the zone insert
+	// one atomic step, so concurrent creates sharing a CallerReference yield
+	// exactly one zone and HostedZoneAlreadyExists for the rest.
+	createMu sync.Mutex
+
 	tagsMu   sync.Mutex
 	tagsByID map[string]map[string]string // ResourceId -> tags
 }
@@ -67,7 +72,7 @@ func (m *Mock) ChangeResourceTags(_ context.Context, resourceID string, add map[
 // syncZoneTags mirrors a hosted zone's authoritative tag store (tagsByID, the
 // target of ChangeTagsForResource / the Resource Groups Tagging API) onto the
 // zone's own Tags field, which discovery (ListZones) reads. Without this the
-// two stores drift — a tag applied via the tagging API would be invisible to
+// two stores drift. A tag applied via the tagging API would be invisible to
 // Resource Explorer / GetResources. A no-op when resourceID is not a zone (the
 // same tag API also addresses health checks). Callers hold m.tagsMu.
 func (m *Mock) syncZoneTags(resourceID string) {
@@ -138,10 +143,25 @@ func newHostedZoneID() string {
 	return "Z" + string(buf)
 }
 
-// CreateZone creates a new DNS hosted zone.
+// CreateZone creates a new DNS hosted zone. A CallerReference already carried
+// by an existing zone is rejected as HostedZoneAlreadyExists: real Route 53
+// treats a reused CallerReference as a retry of that create and reports the
+// conflict rather than minting a second zone.
 func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.ZoneInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "zone name is required")
+	}
+
+	if err := validateZoneName(cfg.Name); err != nil {
+		return nil, err
+	}
+
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
+
+	if m.callerReferenceInUse(cfg.CallerReference) {
+		return nil, errors.Newf(errors.AlreadyExists,
+			"a hosted zone with caller reference %q already exists", cfg.CallerReference)
 	}
 
 	id := newHostedZoneID()
@@ -188,6 +208,20 @@ func (m *Mock) seedZoneTags(id string, tags map[string]string) {
 	defer m.tagsMu.Unlock()
 
 	m.tagsByID[id] = seeded
+}
+
+// callerReferenceInUse reports whether any live zone was created with ref. The
+// zones themselves are the source of truth, so the check survives snapshot
+// restore and frees the reference once its zone is deleted. An empty ref (the
+// in-process driver API does not require one) never collides.
+func (m *Mock) callerReferenceInUse(ref string) bool {
+	if ref == "" {
+		return false
+	}
+
+	return len(m.zones.Filter(func(_ string, z driver.ZoneInfo) bool {
+		return z.CallerReference == ref
+	})) > 0
 }
 
 // DeleteZone deletes a DNS hosted zone by ID.
@@ -239,7 +273,7 @@ func (m *Mock) ListZones(_ context.Context, filter scope.Scope) ([]driver.ZoneIn
 }
 
 // UpdateZone applies the mutable fields (tags, scope) of an existing hosted
-// zone, matching the zone by name — ARM CreateOrUpdate-on-existing semantics.
+// zone, matching the zone by name, ARM CreateOrUpdate-on-existing semantics.
 func (m *Mock) UpdateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.ZoneInfo, error) {
 	var (
 		id    string
@@ -276,7 +310,7 @@ func (m *Mock) UpdateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 	return &result, nil
 }
 
-// UpdateZoneComment updates a hosted zone's Comment by id — the AWS-only
+// UpdateZoneComment updates a hosted zone's Comment by id, the AWS-only
 // UpdateHostedZoneComment operation, addressed by id rather than name (unlike
 // UpdateZone's ARM-style match-by-name). The server package picks this method
 // up via an optional interface assertion, the same pattern DeleteRecordSet
@@ -385,6 +419,10 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 		return nil, errors.New(errors.InvalidArgument, "record type is required")
 	}
 
+	if err := driver.ValidateAddresses(cfg.Type, cfg.Values); err != nil {
+		return nil, err
+	}
+
 	key := recordKey(cfg.ZoneID, cfg.Name, cfg.Type, cfg.SetID)
 
 	if m.records.Has(key) {
@@ -415,7 +453,7 @@ func (m *Mock) DeleteRecord(ctx context.Context, zoneID, name, recordType string
 
 // DeleteRecordSet deletes the single record set identified by
 // zoneID+name+type+setID. It never touches sibling record sets that share the
-// same name+type but carry a different SetIdentifier — a DELETE of one
+// same name+type but carry a different SetIdentifier. A DELETE of one
 // weighted/latency/failover/geo record must leave its siblings intact.
 func (m *Mock) DeleteRecordSet(_ context.Context, zoneID, name, recordType, setID string) error {
 	if _, ok := m.zones.Get(zoneID); !ok {
@@ -474,7 +512,7 @@ func (m *Mock) ListRecords(_ context.Context, zoneID string) ([]driver.RecordInf
 
 	// SortedValues gives a stable order keyed by zoneID:name:type[:setID];
 	// filter to this zone in that order so ListRecords is deterministic
-	// (map iteration order must never reach the wire — #259).
+	// (map iteration order must never reach the wire, #259).
 	all := m.records.SortedValues()
 
 	records := make([]driver.RecordInfo, 0, len(all))
@@ -493,6 +531,10 @@ func (m *Mock) ListRecords(_ context.Context, zoneID string) ([]driver.RecordInf
 func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver.RecordInfo, error) {
 	if _, ok := m.zones.Get(cfg.ZoneID); !ok {
 		return nil, errors.Newf(errors.NotFound, "zone %q not found", cfg.ZoneID)
+	}
+
+	if err := driver.ValidateAddresses(cfg.Type, cfg.Values); err != nil {
+		return nil, err
 	}
 
 	key := recordKey(cfg.ZoneID, cfg.Name, cfg.Type, cfg.SetID)

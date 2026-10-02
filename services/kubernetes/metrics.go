@@ -13,7 +13,7 @@ import (
 // metrics-server addon, not the core apiserver), so it doesn't fit the
 // registry-backed resourceDef model: it has no persisted objects, only a
 // point-in-time synthesis over live Pods and the synthetic Node. `kubectl
-// top` is the primary consumer — without this endpoint it fails discovery
+// top` is the primary consumer: without this endpoint it fails discovery
 // before ever issuing a request.
 
 const (
@@ -32,7 +32,7 @@ const (
 
 // serveMetrics answers every /apis/metrics.k8s.io/v1beta1/... request: the
 // group-version's own APIResourceList, and the pods/nodes metrics endpoints
-// kubectl top reads. Values are fixed synthetic constants — there is no real
+// kubectl top reads. Values are fixed synthetic constants: there is no real
 // resource usage to sample in an in-memory emulator.
 func (s *ClusterState) serveMetrics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -113,7 +113,7 @@ func parseNamespacedPodMetricsPath(parts []string) (namespace, name string, ok b
 	}
 }
 
-// metricsAPIResourceList answers GET /apis/metrics.k8s.io/v1beta1 — the
+// metricsAPIResourceList answers GET /apis/metrics.k8s.io/v1beta1: the
 // group-version discovery document naming the two resources this endpoint
 // serves.
 func metricsAPIResourceList() map[string]any {

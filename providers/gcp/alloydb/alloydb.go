@@ -40,11 +40,11 @@ const (
 	defaultDatabaseVersion = "POSTGRES_15"
 	defaultCPUCount        = 2
 	metricsNamespace       = "alloydb.googleapis.com"
-	cpuMetricRunning       = 0.25 // GCP reports CPU as a 0.0–1.0 fraction.
+	cpuMetricRunning       = 0.25 // GCP reports CPU as a fraction between 0.0 and 1.0.
 	connRunning            = 5.0
 
 	// syntheticInstanceIP is the ipAddress reported when no real database engine
-	// backs the instance — preserving the historical behavior of always surfacing
+	// backs the instance, preserving the historical behavior of always surfacing
 	// an IP. When an engine is wired in, provisionInstanceEngine overrides it with
 	// the real reachable host.
 	syntheticInstanceIP = "10.0.0.2"
@@ -200,7 +200,7 @@ func cloneStrings(s []string) []string {
 	return append([]string(nil), s...)
 }
 
-//nolint:gocritic // value copy is intentional — the result must not alias the store.
+//nolint:gocritic // value copy is intentional: the result must not alias the store.
 func cloneCluster(c rdsdriver.Cluster) rdsdriver.Cluster {
 	c.Tags = copyTags(c.Tags)
 	c.VPCSecurityGroups = cloneStrings(c.VPCSecurityGroups)
@@ -209,7 +209,7 @@ func cloneCluster(c rdsdriver.Cluster) rdsdriver.Cluster {
 	return c
 }
 
-//nolint:gocritic // value copy is intentional — the result must not alias the store.
+//nolint:gocritic // value copy is intentional: the result must not alias the store.
 func cloneInstance(inst rdsdriver.Instance) rdsdriver.Instance {
 	inst.Tags = copyTags(inst.Tags)
 	inst.VPCSecurityGroups = cloneStrings(inst.VPCSecurityGroups)
@@ -218,7 +218,7 @@ func cloneInstance(inst rdsdriver.Instance) rdsdriver.Instance {
 	return inst
 }
 
-//nolint:gocritic // value copy is intentional — the result must not alias the store.
+//nolint:gocritic // value copy is intentional: the result must not alias the store.
 func cloneClusterSnapshot(s rdsdriver.ClusterSnapshot) rdsdriver.ClusterSnapshot {
 	s.Tags = copyTags(s.Tags)
 

@@ -1,25 +1,25 @@
 // Package bigquery implements the bigquery.googleapis.com v2 REST metadata
 // control plane (datasets + tables) as a server.Handler. Real
 // google.golang.org/api/bigquery/v2 clients, gcloud, and the Terraform
-// google_bigquery_dataset / google_bigquery_table resources — pointed at this
-// server with an endpoint that keeps the /bigquery/v2/ path prefix — CRUD and
+// google_bigquery_dataset / google_bigquery_table resources, pointed at this
+// server with an endpoint that keeps the /bigquery/v2/ path prefix, CRUD and
 // list datasets and tables, with full schema round-trip, end to end against the
 // shared bigquery driver.
 //
-// Coverage (v2 REST, all synchronous — BigQuery metadata has no LRO):
+// Coverage (v2 REST, all synchronous: BigQuery metadata has no LRO):
 //
-//	POST   /bigquery/v2/projects/{p}/datasets                       — Insert dataset
-//	GET    /bigquery/v2/projects/{p}/datasets/{d}                   — Get dataset
-//	GET    /bigquery/v2/projects/{p}/datasets                       — List datasets
-//	PATCH  /bigquery/v2/projects/{p}/datasets/{d}                   — Patch dataset (merge)
-//	PUT    /bigquery/v2/projects/{p}/datasets/{d}                   — Update dataset (replace)
-//	DELETE /bigquery/v2/projects/{p}/datasets/{d}?deleteContents=   — Delete dataset
-//	POST   /bigquery/v2/projects/{p}/datasets/{d}/tables           — Insert table
-//	GET    /bigquery/v2/projects/{p}/datasets/{d}/tables/{t}       — Get table
-//	GET    /bigquery/v2/projects/{p}/datasets/{d}/tables           — List tables
-//	PATCH  /bigquery/v2/projects/{p}/datasets/{d}/tables/{t}       — Patch table (merge)
-//	PUT    /bigquery/v2/projects/{p}/datasets/{d}/tables/{t}       — Update table (replace)
-//	DELETE /bigquery/v2/projects/{p}/datasets/{d}/tables/{t}       — Delete table
+//	POST   /bigquery/v2/projects/{p}/datasets                       : Insert dataset
+//	GET    /bigquery/v2/projects/{p}/datasets/{d}                   : Get dataset
+//	GET    /bigquery/v2/projects/{p}/datasets                       : List datasets
+//	PATCH  /bigquery/v2/projects/{p}/datasets/{d}                   : Patch dataset (merge)
+//	PUT    /bigquery/v2/projects/{p}/datasets/{d}                   : Update dataset (replace)
+//	DELETE /bigquery/v2/projects/{p}/datasets/{d}?deleteContents=   : Delete dataset
+//	POST   /bigquery/v2/projects/{p}/datasets/{d}/tables           : Insert table
+//	GET    /bigquery/v2/projects/{p}/datasets/{d}/tables/{t}       : Get table
+//	GET    /bigquery/v2/projects/{p}/datasets/{d}/tables           : List tables
+//	PATCH  /bigquery/v2/projects/{p}/datasets/{d}/tables/{t}       : Patch table (merge)
+//	PUT    /bigquery/v2/projects/{p}/datasets/{d}/tables/{t}       : Update table (replace)
+//	DELETE /bigquery/v2/projects/{p}/datasets/{d}/tables/{t}       : Delete table
 //
 // Query job execution, streaming inserts, ML models, routines, and data
 // transfer are out of scope; a view's SQL round-trips as metadata but is never

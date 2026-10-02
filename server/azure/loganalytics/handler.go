@@ -11,7 +11,7 @@
 // (provisioningState, customerId, sku, location) live in the wire handler's
 // per-workspace metadata. Workspace child resources (savedSearches, tables,
 // dataExports) and the sharedKeys action are served from the handler's own
-// in-memory stores — they have no portable equivalent.
+// in-memory stores: they have no portable equivalent.
 //
 // Microsoft.OperationalInsights is a distinct ARM provider name from every
 // other Azure handler (compute, network, DNS, sql, …), so registration order is
@@ -19,16 +19,16 @@
 //
 // Coverage:
 //
-//	PUT    .../workspaces/{w}                                — Workspaces.BeginCreateOrUpdate (LRO, completes inline)
-//	GET    .../workspaces/{w}                                — Workspaces.Get
-//	DELETE .../workspaces/{w}                                — Workspaces.BeginDelete (LRO, completes inline)
-//	GET    .../providers/Microsoft.OperationalInsights/workspaces — Workspaces.NewListPager (subscription scope)
-//	GET    .../resourceGroups/{rg}/…/workspaces             — Workspaces.NewListByResourceGroupPager
-//	PUT/GET/DELETE .../workspaces/{w}/savedSearches/{id}     — SavedSearchesClient
-//	GET    .../workspaces/{w}/savedSearches                  — SavedSearchesClient.ListByWorkspace
-//	PUT/GET/DELETE .../workspaces/{w}/tables/{name}          — TablesClient
-//	PUT/GET/DELETE .../workspaces/{w}/dataExports/{name}     — DataExportsClient
-//	POST   .../workspaces/{w}/sharedKeys                     — SharedKeysClient.GetSharedKeys
+//	PUT    .../workspaces/{w}                                : Workspaces.BeginCreateOrUpdate (LRO, completes inline)
+//	GET    .../workspaces/{w}                                : Workspaces.Get
+//	DELETE .../workspaces/{w}                                : Workspaces.BeginDelete (LRO, completes inline)
+//	GET    .../providers/Microsoft.OperationalInsights/workspaces : Workspaces.NewListPager (subscription scope)
+//	GET    .../resourceGroups/{rg}/…/workspaces             : Workspaces.NewListByResourceGroupPager
+//	PUT/GET/DELETE .../workspaces/{w}/savedSearches/{id}     : SavedSearchesClient
+//	GET    .../workspaces/{w}/savedSearches                  : SavedSearchesClient.ListByWorkspace
+//	PUT/GET/DELETE .../workspaces/{w}/tables/{name}          : TablesClient
+//	PUT/GET/DELETE .../workspaces/{w}/dataExports/{name}     : DataExportsClient
+//	POST   .../workspaces/{w}/sharedKeys                     : SharedKeysClient.GetSharedKeys
 package loganalytics
 
 import (
@@ -49,6 +49,9 @@ const (
 	subTables        = "tables"
 	subDataExports   = "dataExports"
 	subSharedKeys    = "sharedKeys"
+
+	// childMaxDepth is the deepest child route: workspaces/{w}/{child}/{name}.
+	childMaxDepth = 3
 )
 
 // Handler serves Microsoft.OperationalInsights/workspaces ARM requests against
@@ -131,13 +134,17 @@ func (h *Handler) serveWorkspace(w http.ResponseWriter, r *http.Request, rp *azu
 // action verb. An unknown sub-resource is a 404 rather than the old bug where
 // every child was misrouted to createOrUpdateWorkspace and echoed the workspace.
 func (h *Handler) serveSubResource(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, rp, childMaxDepth) {
+		return
+	}
+
 	switch rp.SubResource {
 	case subSharedKeys:
 		h.getSharedKeys(w, r, rp)
 	case subSavedSearches, subTables, subDataExports:
 		h.serveChild(w, r, rp)
 	default:
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unknown workspace sub-resource: "+rp.SubResource)
+		azurearm.WriteUnknownType(w, r, rp)
 	}
 }
 

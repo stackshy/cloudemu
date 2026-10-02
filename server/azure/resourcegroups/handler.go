@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 
@@ -26,9 +27,9 @@ import (
 
 // templateAPIVersion is the apiVersion stamped onto every resource entry in an
 // exported template. Real ARM resolves this per resource type from the
-// provider's registered API versions; the emulator has no such registry, so —
+// provider's registered API versions; the emulator has no such registry, so,
 // mirroring the same fixed-apiVersion approach the VM capture template already
-// uses (server/azure/virtualmachines/instances.go's captureResult) — every
+// uses (server/azure/virtualmachines/instances.go's captureResult), every
 // entry gets one reasonable, recent Resource Manager API version rather than a
 // second per-type table to maintain.
 const templateAPIVersion = "2021-04-01"
@@ -46,13 +47,61 @@ const (
 // ResourceGroupPurger deletes every resource one service handler owns in a given
 // resource group. It backs the resource-group cascade delete: an RG is a pure
 // container, so deleting it must delete the resources created under it rather
-// than leaving them as globally addressable orphans. Each per-service ARM
-// handler that stores its resources resource-group-scoped (compute, networking,
-// load balancing, storage today) implements it; a handler that does not is
-// simply not passed to New, so its resource type is not cascaded (a documented,
-// extensible gap).
+// than leaving them as globally addressable orphans. Every registered handler
+// that implements it is collected by CollectPurgers, so a new service joins the
+// cascade by implementing the method; server/azure's completeness test fails
+// for a handler that neither implements it nor has a recorded exemption.
 type ResourceGroupPurger interface {
 	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+}
+
+// PurgePhaser is the optional ordering hook for a ResourceGroupPurger. Purgers
+// run in ascending phase order; a purger without the method runs at
+// PhaseDefault.
+type PurgePhaser interface {
+	PurgePhase() int
+}
+
+// Purge phases. A consumer must be torn down before the resource it holds a
+// reference to, otherwise the dependency guard on the referenced resource
+// blocks its delete.
+const (
+	// PhaseCompute runs first: deleting VMs detaches their NICs and disks.
+	PhaseCompute = 10
+	// PhaseDefault is every purger that declares no phase.
+	PhaseDefault = 50
+	// PhaseNetworkConsumers holds load balancers, application gateways,
+	// firewalls, bastion hosts and Front Door, which reference public IPs and
+	// subnets.
+	PhaseNetworkConsumers = 80
+	// PhaseNetwork runs last: it releases public IPs and deletes virtual
+	// networks, subnets and private DNS zones.
+	PhaseNetwork = 90
+)
+
+// CollectPurgers returns every handler in handlers that implements
+// ResourceGroupPurger, stably sorted by PurgePhase. Ties keep registration
+// order, so the result is deterministic.
+func CollectPurgers[H any](handlers []H) []ResourceGroupPurger {
+	var out []ResourceGroupPurger
+
+	for _, h := range handlers {
+		if p, ok := any(h).(ResourceGroupPurger); ok {
+			out = append(out, p)
+		}
+	}
+
+	sort.SliceStable(out, func(i, j int) bool { return purgePhase(out[i]) < purgePhase(out[j]) })
+
+	return out
+}
+
+func purgePhase(p ResourceGroupPurger) int {
+	if ph, ok := p.(PurgePhaser); ok {
+		return ph.PurgePhase()
+	}
+
+	return PhaseDefault
 }
 
 // Handler serves the resource-group collection and its members.
@@ -67,7 +116,7 @@ type Handler struct {
 	// enumerating "what's in this group" means walking the same cross-service
 	// inventory Resource Graph and the generic resources listing already read
 	// from. Nil disables exportTemplate's resource enumeration (it still
-	// returns a valid, empty template) — callers that don't wire discovery.
+	// returns a valid, empty template): callers that don't wire discovery.
 	engine *resourcediscovery.Engine
 	// purgers cascade a resource-group delete into the resources it contains.
 	purgers []ResourceGroupPurger
@@ -80,6 +129,15 @@ type Handler struct {
 // that own resource-group-scoped resources.
 func New(engine *resourcediscovery.Engine, purgers ...ResourceGroupPurger) *Handler {
 	return &Handler{groups: map[string]map[string]map[string]any{}, engine: engine, purgers: purgers}
+}
+
+// SetPurgers replaces the purgers a group delete cascades into. The server
+// calls it once every handler is registered, with CollectPurgers' result.
+func (h *Handler) SetPurgers(purgers []ResourceGroupPurger) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.purgers = purgers
 }
 
 // routeKind classifies a resource-group request path.
@@ -128,7 +186,7 @@ func parse(urlPath string) (kind routeKind, sub, name string) {
 
 // Matches claims resource-group requests and the delete operation-result poll.
 // A path that continues into /providers/... is a resource inside the group (and
-// a .../resources path is the generic resources list) — both belong elsewhere.
+// a .../resources path is the generic resources list); both belong elsewhere.
 func (*Handler) Matches(r *http.Request) bool {
 	kind, _, _ := parse(r.URL.Path)
 
@@ -266,7 +324,7 @@ func (h *Handler) get(w http.ResponseWriter, sub, name string) {
 
 // checkExistence answers a HEAD request (armresources'
 // ResourceGroupsClient.CheckExistence): real ARM replies 204 with no body
-// when the group exists and 404 with no body otherwise — the SDK's response
+// when the group exists and 404 with no body otherwise: the SDK's response
 // handler only accepts those two codes and errors on any other status,
 // including a 200 carrying a JSON body.
 func (h *Handler) checkExistence(w http.ResponseWriter, sub, name string) {
@@ -328,7 +386,11 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request, sub, name strin
 // purger error is swallowed (there is no channel to report it on an async
 // fire-and-forget delete, and a partial teardown must not block the rest).
 func (h *Handler) cascade(ctx context.Context, sub, name string) {
-	for _, p := range h.purgers {
+	h.mu.RLock()
+	purgers := h.purgers
+	h.mu.RUnlock()
+
+	for _, p := range purgers {
 		_ = p.PurgeResourceGroup(ctx, sub, name)
 	}
 }
@@ -399,7 +461,7 @@ func decodeExportRequest(r *http.Request) exportTemplateRequest {
 // membership store: group ownership is read off the same resource-group
 // segment already embedded in every resource's id, via the cross-service
 // discovery engine that Resource Graph and the generic resources listing
-// (GET .../resourceGroups/{rg}/resources) already read from — so exportTemplate
+// (GET .../resourceGroups/{rg}/resources) already read from, so exportTemplate
 // stays consistent with what those two report the group contains. A nil
 // engine (discovery not wired) yields an empty slice, matching the previous
 // always-empty behavior for callers who don't opt in to discovery.
@@ -450,7 +512,7 @@ func wantsAllResources(resources []string) bool {
 	return false
 }
 
-// containsFold reports whether want is present in list, case-insensitively —
+// containsFold reports whether want is present in list, case-insensitively:
 // ARM resource IDs are case-insensitive.
 func containsFold(list []string, want string) bool {
 	for _, s := range list {
@@ -465,7 +527,7 @@ func containsFold(list []string, want string) bool {
 // exportResourceEntry renders one discovered resource as an ARM template
 // resource entry: type + apiVersion + name + location + properties, the
 // fields every real exportTemplate response carries (id/subscriptionId are
-// not part of a template resource — a template is meant to be redeployable
+// not part of a template resource: a template is meant to be redeployable
 // under any subscription/resource group). properties defaults to an empty
 // object rather than being omitted, matching the shape of a real response.
 func exportResourceEntry(r *resourcediscovery.Resource) map[string]any {

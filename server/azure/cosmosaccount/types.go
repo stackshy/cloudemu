@@ -36,7 +36,7 @@ type armCapability struct {
 
 // armAccountUpdate is the ARM databaseAccounts PATCH body
 // (DatabaseAccountUpdateParameters). Unlike armAccountCreate, every field must
-// be optional and distinguishable from "not present" on decode — real Azure's
+// be optional and distinguishable from "not present" on decode: real Azure's
 // update type has no "kind" field at all (kind is immutable after create), and
 // EnableMultipleWriteLocations/ConsistencyPolicy/etc. use pointers here so a
 // PATCH that omits them doesn't reset them.
@@ -71,8 +71,8 @@ type armAccount struct {
 type armAccountProps struct {
 	DatabaseAccountOfferType string `json:"databaseAccountOfferType,omitempty"`
 	// The boolean/network toggles carry no omitempty: real Azure always returns
-	// them (as false / "Enabled" defaults), and a caller — Terraform in
-	// particular — reads them back on every refresh. Emitting them from the
+	// them (as false / "Enabled" defaults), and a caller (Terraform in
+	// particular) reads them back on every refresh. Emitting them from the
 	// handler makes them authoritative, so the property-echo overlay never has to
 	// synthesize them (and can no longer leave a stale value behind when one is
 	// PATCHed back to its zero value).

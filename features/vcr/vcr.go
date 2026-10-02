@@ -58,7 +58,7 @@ type VCR struct {
 }
 
 // New builds a VCR. In replay mode the cassette is loaded from CassettePath now
-// (a missing/invalid file is a hard error — replay against nothing is a bug). In
+// (a missing/invalid file is a hard error: replay against nothing is a bug). In
 // record mode a fresh cassette is created and stamped with Clock.Now(); it is
 // persisted by Flush.
 func New(opts Options) (*VCR, error) {
@@ -224,16 +224,30 @@ type captureWriter struct {
 	wroteHeader bool
 }
 
+// WriteHeader records the status and, like writeRecorded, makes sure the live
+// response carries a concrete content type (a non-active default when the
+// handler set none) and nosniff, so a browser cannot read it as HTML.
 func (c *captureWriter) WriteHeader(code int) {
 	if !c.wroteHeader {
 		c.status = code
 		c.wroteHeader = true
+
+		hdr := c.ResponseWriter.Header()
+		if hdr.Get("Content-Type") == "" {
+			hdr.Set("Content-Type", "application/octet-stream")
+		}
+
+		hdr.Set("X-Content-Type-Options", "nosniff")
 	}
 
 	c.ResponseWriter.WriteHeader(code)
 }
 
 func (c *captureWriter) Write(b []byte) (int, error) {
+	if !c.wroteHeader {
+		c.WriteHeader(http.StatusOK)
+	}
+
 	c.body.Write(b)
 
 	return c.ResponseWriter.Write(b)

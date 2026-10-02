@@ -128,7 +128,7 @@ func TestVerifyContentSHA256BodySwap(t *testing.T) {
 		}
 
 		// A real S3 client sends x-amz-content-sha256 as a signed header, so the
-		// canonical request binds to the header value, not the live body — the
+		// canonical request binds to the header value, not the live body: the
 		// exact condition a body swap exploits.
 		sum := sha256.Sum256(original)
 		r.Header.Set("X-Amz-Content-Sha256", hex.EncodeToString(sum[:]))

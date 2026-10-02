@@ -1,6 +1,6 @@
 // Direct broadcaster + streamWatch unit tests. The HTTP-level end-to-end
 // path is exercised by TestSDKEKSDataPlane_InformerObservesAddAndDelete in
-// server/aws/eks — that's where the full real-client-go Watch scenario
+// server/aws/eks; that's where the full real-client-go Watch scenario
 // runs. These tests bypass HTTP entirely and hit the in-package primitives,
 // which keeps them fast (~1ms each) and avoids the chunked-transfer
 // teardown races that http.Server.Close() exhibits when subscribers don't
@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // httpClient and newRequestWithContext are tiny helpers used by the
@@ -140,7 +142,7 @@ func TestBroadcaster_DropsOnFullChannel(t *testing.T) {
 		case <-sub.ch:
 			drained++
 		default:
-			// Channel drained — verify we got exactly the buffer's worth
+			// Channel drained; verify we got exactly the buffer's worth
 			// (publisher dropped the overflow rather than blocking).
 			if drained != watchSubscriberBuffer {
 				t.Fatalf("drained %d events, want %d (= buffer size)", drained, watchSubscriberBuffer)
@@ -223,7 +225,7 @@ func TestBroadcaster_ConcurrentPublishersAndSubscribers(t *testing.T) {
 }
 
 // TestWatchHandlersOverHTTP exercises each watchXxx dispatcher through
-// the full HTTP stack — keeps per-function coverage honest. The tight
+// the full HTTP stack, keeping per-function coverage honest. The tight
 // context deadline (100ms) makes streamWatch return via ctx.Done() before
 // httptest.Server.Close() needs to wait for it.
 func TestWatchHandlersOverHTTP(t *testing.T) {
@@ -267,7 +269,7 @@ func TestWatchHandlersOverHTTP(t *testing.T) {
 
 			resp, err := httpClient().Do(req)
 			if err != nil {
-				// context deadline tripped before headers came back — also acceptable
+				// context deadline tripped before headers came back; also acceptable
 				return
 			}
 
@@ -292,7 +294,7 @@ func TestWatchHandlersOverHTTP(t *testing.T) {
 }
 
 // TestStreamWatch_NoFlusher500s exercises the defensive
-// flusher-not-supported branch — a ResponseWriter that doesn't implement
+// flusher-not-supported branch: a ResponseWriter that doesn't implement
 // http.Flusher must error out before headers are set so the caller gets
 // a proper 500 status.
 func TestStreamWatch_NoFlusher500s(t *testing.T) {
@@ -315,7 +317,7 @@ func TestStreamWatch_NoFlusher500s(t *testing.T) {
 }
 
 // TestStreamWatch_EncodeErrorReturns exercises the path where the
-// underlying writer fails mid-stream — streamWatch must return without
+// underlying writer fails mid-stream: streamWatch must return without
 // trying to encode further events.
 func TestStreamWatch_EncodeErrorReturns(t *testing.T) {
 	b := newBroadcaster()
@@ -371,7 +373,7 @@ func TestStreamWatch_InitialSnapshotAndLiveEvents(t *testing.T) {
 		t.Fatal("streamWatch did not return after ctx cancel")
 	}
 
-	// Decode the recorded body — should be 3 JSON objects on separate
+	// Decode the recorded body: should be 3 JSON objects on separate
 	// lines (newline added by json.Encoder).
 	body := rec.Body.String()
 	dec := json.NewDecoder(strings.NewReader(body))
@@ -445,4 +447,62 @@ func tryReceive(sub *subscriber, deadline time.Duration) (watchEvent, bool) {
 	case <-time.After(deadline):
 		return watchEvent{}, false
 	}
+}
+
+// The ERROR event must carry the metav1.Status as the event object itself
+// (kind Status, code 410, reason Expired), the shape client-go's reflector
+// turns into a relist.
+func TestWatch_ErrorEventCarriesStatusObject(t *testing.T) {
+	b := newBroadcaster()
+	sub := b.subscribe("")
+
+	for i := 0; i < watchSubscriberBuffer+1; i++ {
+		b.publish(EventAdded, "", unstructuredNode("n"))
+	}
+
+	rec := httptest.NewRecorder()
+	streamWatch[unstructured.Unstructured](context.Background(), rec, sub, nil, nil, watchOpts{})
+
+	// The stream always ends with the ERROR event, whichever order the select
+	// drains the buffered events and the overflow signal in.
+	lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
+
+	var ev struct {
+		Type   string `json:"type"`
+		Object struct {
+			Kind   string `json:"kind"`
+			Code   int    `json:"code"`
+			Reason string `json:"reason"`
+		} `json:"object"`
+	}
+
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &ev); err != nil {
+		t.Fatalf("decode last event: %v", err)
+	}
+
+	if ev.Type != EventError || ev.Object.Kind != "Status" || ev.Object.Code != http.StatusGone || ev.Object.Reason != "Expired" {
+		t.Fatalf("ERROR event: %+v", ev)
+	}
+}
+
+// An unstructured.Unstructured value (how registry kinds publish) must encode
+// as the resource JSON itself, not as its Go field {"Object":{...}}.
+func TestWatchEvent_UnstructuredValueEncodesAsResource(t *testing.T) {
+	b, err := json.Marshal(watchEvent{Type: EventAdded, Object: unstructuredNode("n")})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	want := `{"type":"ADDED","object":{"apiVersion":"v1","kind":"Node","metadata":{"name":"n"}}}`
+	if string(b) != want {
+		t.Fatalf("event JSON:\n got %s\nwant %s", b, want)
+	}
+}
+
+func unstructuredNode(name string) unstructured.Unstructured {
+	return unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Node",
+		"metadata":   map[string]any{"name": name},
+	}}
 }

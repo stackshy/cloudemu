@@ -2,6 +2,7 @@ package route53
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +34,13 @@ func TestCreateZone(t *testing.T) {
 		{name: "success", cfg: driver.ZoneConfig{Name: "example.com"}},
 		{name: "private zone", cfg: driver.ZoneConfig{Name: "internal.com", Private: true}},
 		{name: "empty name", cfg: driver.ZoneConfig{}, expectErr: true},
+		{name: "punctuation allowed", cfg: driver.ZoneConfig{Name: "foo!!.com."}},
+		{name: "space in name", cfg: driver.ZoneConfig{Name: "not a domain!!"}, expectErr: true},
+		{name: "empty label", cfg: driver.ZoneConfig{Name: "a..com"}, expectErr: true},
+		{name: "label over 63", cfg: driver.ZoneConfig{Name: strings.Repeat("a", 64) + ".com"}, expectErr: true},
+		{name: "name over 255", cfg: driver.ZoneConfig{Name: strings.Repeat("abcdefghi.", 26) + "com"}, expectErr: true},
+		{name: "leading wildcard", cfg: driver.ZoneConfig{Name: "*.example.com"}, expectErr: true},
+		{name: "non-ASCII", cfg: driver.ZoneConfig{Name: "caf\u00e9.com"}, expectErr: true},
 	}
 
 	for _, tc := range tests {

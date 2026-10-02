@@ -1,8 +1,8 @@
 // Package serveflags is the shared, dependency-light source of truth for the
 // standalone emulator's command-line flags.
 //
-// Both serve entrypoints — the lean cmd/cloudemu binary and the
-// batteries-included contrib/server (the :engines image) — register their common
+// Both serve entrypoints (the lean cmd/cloudemu binary and the
+// batteries-included contrib/server, the :engines image) register their common
 // flags from here and build the same serverkit.Config, so the ~30 flags cannot
 // drift between the two mains. The engine selectors are a single shared list
 // (EngineFlags) both sides range over.
@@ -33,6 +33,10 @@ const defaultShutdownTimeout = 10 * time.Second
 // --k8s-progression is on and no interval is given.
 const defaultK8sProgressionInterval = time.Second
 
+// defaultTickInterval is how often serve calls the services' Tick when no
+// interval is given.
+const defaultTickInterval = time.Second
+
 var (
 	// ErrTLSPairRequired is returned when only one of --tls-cert/--tls-key is set.
 	ErrTLSPairRequired = errors.New("--tls-cert and --tls-key must be given together")
@@ -44,6 +48,8 @@ var (
 	ErrUnknownProvider = errors.New("unknown provider (want aws, azure, gcp, or oci)")
 	// ErrVCRCassetteRequired is returned when --vcr is set without --vcr-cassette.
 	ErrVCRCassetteRequired = errors.New("--vcr requires --vcr-cassette")
+	// ErrNegativeTickInterval is returned for a --tick-interval below zero.
+	ErrNegativeTickInterval = errors.New("--tick-interval must be 0 or more")
 )
 
 // StringList is a repeatable string flag (e.g. --tls-host a --tls-host b).
@@ -58,7 +64,7 @@ func (s *StringList) Set(v string) error {
 }
 
 // CommonConfig is the full set of serve flags shared by both entrypoints. Only
-// the engine selectors (EngineFlags) live outside it — those are registered by
+// the engine selectors (EngineFlags) live outside it; those are registered by
 // contrib/server and stubbed by the lean binary.
 type CommonConfig struct {
 	Providers     string
@@ -86,6 +92,7 @@ type CommonConfig struct {
 	LogRequests   bool
 	Quiet         bool
 	EnforceAuth   bool
+	AsyncSettle   bool
 
 	ShutdownTimeout time.Duration
 
@@ -100,6 +107,8 @@ type CommonConfig struct {
 	K8sProgression         bool
 	K8sProgressionInterval time.Duration
 	K8sNodes               int
+
+	TickInterval time.Duration
 
 	VCRMode     string
 	VCRCassette string
@@ -139,9 +148,13 @@ func RegisterCommon(fs *flag.FlagSet, c *CommonConfig, getenv func(string) strin
 	fs.BoolVar(&c.Quiet, "quiet", false, "suppress the startup banner")
 	fs.DurationVar(&c.ShutdownTimeout, "shutdown-timeout", defaultShutdownTimeout, "grace period for in-flight requests on shutdown")
 	fs.StringVar(&c.InitDir, "init-dir", "", "apply every *.json seed fixture in this directory on startup")
+	fs.BoolVar(&c.AsyncSettle, "async-settle", envBoolOr(getenv, "CLOUDEMU_ASYNC_SETTLE", false),
+		"resources report a realistic transient state (pending/creating/initiating/...) for a short settle window "+
+			"before their final state (default off = terminal state immediately; env CLOUDEMU_ASYNC_SETTLE)")
 
 	registerPersistFlags(fs, c, getenv)
 	registerK8sProgressionFlags(fs, c, getenv)
+	registerTickFlag(fs, c, getenv)
 	registerEnforceAuthFlag(fs, c)
 	registerVCRFlags(fs, c)
 }
@@ -168,6 +181,13 @@ func registerPersistFlags(fs *flag.FlagSet, c *CommonConfig, getenv func(string)
 		"save cadence for --persist-strategy=scheduled (env CLOUDEMU_PERSIST_INTERVAL)")
 }
 
+// registerTickFlag registers the cadence of the services' background tick.
+func registerTickFlag(fs *flag.FlagSet, c *CommonConfig, getenv func(string) string) {
+	fs.DurationVar(&c.TickInterval, "tick-interval",
+		envDurationOr(getenv, "CLOUDEMU_TICK_INTERVAL", defaultTickInterval),
+		"how often time-driven work runs, such as CloudWatch alarm evaluation; 0 turns it off (env CLOUDEMU_TICK_INTERVAL)")
+}
+
 // registerK8sProgressionFlags registers the KWOK-style staged Pod lifecycle knobs.
 func registerK8sProgressionFlags(fs *flag.FlagSet, c *CommonConfig, getenv func(string) string) {
 	fs.BoolVar(&c.K8sProgression, "k8s-progression", envBoolOr(getenv, "CLOUDEMU_K8S_PROGRESSION", false),
@@ -187,11 +207,12 @@ func registerK8sProgressionFlags(fs *flag.FlagSet, c *CommonConfig, getenv func(
 func registerEnforceAuthFlag(fs *flag.FlagSet, c *CommonConfig) {
 	fs.BoolVar(&c.EnforceAuth, "enforce-auth", false,
 		"require authentication on each request; off by default. AWS: verify the SigV4 signature against a registered IAM access "+
-			"key (403 on failure) and enforce IAM authorization — long-term (AKIA) keys are verified, STS temporary (ASIA) "+
-			"credentials are accepted unverified for now, authorization is enforced for JSON-RPC services only, and applies only to "+
-			"principals that have IAM policies. Azure: validate each request's Bearer token claims (accepted audience, expiry, a "+
-			"principal claim) and reject missing/malformed/expired/wrong-audience tokens with 401 — the token SIGNATURE is NOT "+
-			"verified (no Azure AD signing key), so this is claims-based authentication only; RBAC authorization is a follow-up")
+			"key or an STS temporary (ASIA) credential (403 on failure). ASIA credentials are verified against the secret STS "+
+			"recorded when it issued them, and unknown or expired sessions are rejected. IAM authorization is then enforced for "+
+			"long-term (AKIA) keys on JSON-RPC services only, and applies only to principals that have IAM policies. Azure: "+
+			"validate each request's Bearer token claims (accepted audience, expiry, a principal claim) and reject "+
+			"missing/malformed/expired/wrong-audience tokens with 401. The token signature is not verified (no Azure AD signing "+
+			"key), so this is claims-based authentication only; RBAC authorization is a follow-up")
 }
 
 // Validate checks the cross-field constraints both entrypoints share: --tls-cert
@@ -203,6 +224,10 @@ func (c *CommonConfig) Validate() error {
 
 	if c.Persist && c.StateFile == "" {
 		return ErrStateFileRequired
+	}
+
+	if c.TickInterval < 0 {
+		return ErrNegativeTickInterval
 	}
 
 	if c.VCRMode != "" {
@@ -238,6 +263,7 @@ func (c *CommonConfig) ToServerkitConfig(providers []string) serverkit.Config {
 		K8sProgression:         c.K8sProgression,
 		K8sProgressionInterval: c.K8sProgressionInterval,
 		K8sNodes:               c.K8sNodes,
+		TickInterval:           c.TickInterval,
 		AzureSubscription:      c.AzureSubscription,
 		Admin:                  c.Admin,
 		Persist:                c.Persist,
@@ -253,6 +279,7 @@ func (c *CommonConfig) ToServerkitConfig(providers []string) serverkit.Config {
 		LogRequests:            c.LogRequests,
 		Quiet:                  c.Quiet,
 		EnforceAuth:            c.EnforceAuth,
+		AsyncSettle:            c.AsyncSettle,
 		EndpointsFile:          c.EndpointsFile,
 		ShutdownTimeout:        c.ShutdownTimeout,
 		VCRMode:                c.VCRMode,

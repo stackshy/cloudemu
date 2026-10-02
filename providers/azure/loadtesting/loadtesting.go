@@ -1,5 +1,5 @@
 // Package loadtesting provides an in-memory mock of Azure Load Testing
-// (Microsoft.LoadTestService/loadTests) — the ARM control plane only. It manages
+// (Microsoft.LoadTestService/loadTests), the ARM control plane only. It manages
 // the load-test resource lifecycle (create/update/get/delete/list); the data
 // plane (uploading test plans, running load tests, streaming results) is out of
 // scope.
@@ -13,7 +13,7 @@
 //     ids, captured by callers to grant RBAC role assignments.
 //
 // All three are derived deterministically from the resource identity, so the
-// same resource always reports the same values — across gets, patches and a
+// same resource always reports the same values, across gets, patches and a
 // snapshot/restore.
 package loadtesting
 
@@ -42,7 +42,7 @@ const (
 	// real Azure emits "<guid>.<region>.cnt-prod.loadtesting.azure.com".
 	dataPlaneSuffix = "cnt-prod.loadtesting.azure.com"
 	// defaultRegion is the fallback data-plane region segment when a resource has
-	// no location (never in practice — location is required).
+	// no location (never in practice: location is required).
 	defaultRegion = "eastus"
 )
 

@@ -5,15 +5,15 @@
 //
 // Supported operations (parity with AWS S3):
 //
-//	GET    /?comp=list                                  — list containers
-//	PUT    /{container}?restype=container               — create container
-//	DELETE /{container}?restype=container               — delete container
-//	GET    /{container}?restype=container&comp=list     — list blobs
-//	PUT    /{container}/{blob}                          — put blob (BlockBlob)
-//	PUT    /{container}/{blob} (x-ms-copy-source)       — copy blob
-//	GET    /{container}/{blob}                          — get blob
-//	HEAD   /{container}/{blob}                          — head blob
-//	DELETE /{container}/{blob}                          — delete blob
+//	GET    /?comp=list                                  : list containers
+//	PUT    /{container}?restype=container               : create container
+//	DELETE /{container}?restype=container               : delete container
+//	GET    /{container}?restype=container&comp=list     : list blobs
+//	PUT    /{container}/{blob}                          : put blob (BlockBlob)
+//	PUT    /{container}/{blob} (x-ms-copy-source)       : copy blob
+//	GET    /{container}/{blob}                          : get blob
+//	HEAD   /{container}/{blob}                          : head blob
+//	DELETE /{container}/{blob}                          : delete blob
 //
 // When account-level versioning is enabled, every blob write mints a new
 // version (x-ms-version-id); versions are readable/deletable via ?versionid= and
@@ -111,8 +111,13 @@ func (*Handler) Matches(r *http.Request) bool {
 
 // ServeHTTP routes the request based on path shape and query params.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	container, blob := parseBlobPath(r.URL.Path)
+	account, path := h.resolveAccount(r, r.URL.Path, r.URL.Query())
+	container, blob := parseBlobPath(path)
 	q := r.URL.Query()
+
+	if container != "" {
+		container = storagedriver.AzureContainerKey(account, container)
+	}
 
 	w.Header().Set("X-Ms-Version", xmsVersion)
 
@@ -122,9 +127,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case container == "" && q.Get("comp") == compList:
-		h.listContainers(w, r)
+		h.listContainers(w, r, account)
 	case container == "" && q.Get("comp") == compBlobs:
-		h.findBlobsByTags(w, r, "")
+		h.findBlobsByTags(w, r, account, "")
 	case container == "":
 		writeError(w, http.StatusNotImplemented, "NotImplemented", "operation not supported on root")
 	case blob == "" && q.Get("restype") == "container":
@@ -135,6 +140,51 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		h.blobOp(w, r, container, blob)
 	}
+}
+
+// resolveAccount applies the path-style account peel used by azblob's
+// IP-endpoint style (https://host:port/{account}/...): the leading segment is
+// read as a storage account, and the rest of the path is returned, only when
+// the segment names an existing ARM storage account, no default-namespace
+// container of that name exists (so legacy containers keep their URLs), and
+// either the path continues past it (a second segment or a trailing slash) or
+// the request is an account-level operation (no restype=container), such as
+// azblob's List Containers "GET /{account}?comp=list". So
+// "PUT /{name}?restype=container" stays a default-namespace container create.
+// Otherwise the request belongs to the default account ("").
+func (h *Handler) resolveAccount(r *http.Request, path string, q url.Values) (account, rest string) {
+	accounts, ok := h.bucket.(storagedriver.AzureStorageAccounts)
+	if !ok {
+		return "", path
+	}
+
+	trimmed := strings.TrimPrefix(path, "/")
+
+	i := strings.IndexByte(trimmed, '/')
+	if i < 0 && trimmed != "" && q.Get("restype") != "container" {
+		i = len(trimmed)
+	}
+
+	if i <= 0 {
+		return "", path
+	}
+
+	name := trimmed[:i]
+
+	if _, err := accounts.GetStorageAccount(r.Context(), name); err != nil {
+		return "", path
+	}
+
+	if _, exists := h.containerCreatedAt(r, name); exists {
+		return "", path
+	}
+
+	rest = trimmed[i:]
+	if rest == "" {
+		rest = "/"
+	}
+
+	return name, rest
 }
 
 // parseBlobPath splits "/container/key/with/slashes" into ("container",
@@ -175,7 +225,8 @@ func (h *Handler) containerOp(w http.ResponseWriter, r *http.Request, container 
 		case compList:
 			h.listBlobs(w, r, container, q)
 		case compBlobs:
-			h.findBlobsByTags(w, r, container)
+			account, _ := storagedriver.SplitAzureContainerKey(container)
+			h.findBlobsByTags(w, r, account, container)
 		case compACL:
 			h.getContainerACL(w, r, container)
 		default:
@@ -329,8 +380,8 @@ func (h *Handler) dispatchBlobComp(
 	return true
 }
 
-func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request) {
-	buckets, err := h.bucket.ListBuckets(r.Context())
+func (h *Handler) listContainers(w http.ResponseWriter, r *http.Request, account string) {
+	buckets, err := h.accountContainers(r, account)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -380,20 +431,45 @@ func (h *Handler) createContainer(w http.ResponseWriter, r *http.Request, contai
 
 // containerCreatedAt looks up a container's creation time from the driver.
 func (h *Handler) containerCreatedAt(r *http.Request, container string) (string, bool) {
-	buckets, err := h.bucket.ListBuckets(r.Context())
+	account, name := storagedriver.SplitAzureContainerKey(container)
+
+	buckets, err := h.accountContainers(r, account)
 	if err != nil {
 		return "", false
 	}
 	for _, b := range buckets {
-		if b.Name == container {
+		if b.Name == name {
 			return b.CreatedAt, true
 		}
 	}
 	return "", false
 }
 
+// accountContainers lists one account's containers by bare name: the default
+// namespace for the default account (""), otherwise the named ARM account's
+// containers.
+func (h *Handler) accountContainers(r *http.Request, account string) ([]storagedriver.BucketInfo, error) {
+	if account == "" {
+		return h.bucket.ListBuckets(r.Context())
+	}
+
+	accounts, ok := h.bucket.(storagedriver.AzureStorageAccounts)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "storage account %q not found", account)
+	}
+
+	return accounts.ListAccountContainers(r.Context(), account)
+}
+
+// bareContainerName strips the account qualifier from a container key, for
+// the ContainerName a response reports.
+func bareContainerName(container string) string {
+	_, name := storagedriver.SplitAzureContainerKey(container)
+	return name
+}
+
 // containerETag derives a stable per-container ETag from the container's
-// name and creation time — unique even for containers created within the
+// name and creation time; unique even for containers created within the
 // same clock second (which is every container under a pinned fake clock).
 func containerETag(name, createdAt string) string {
 	sum := crc32.ChecksumIEEE([]byte(name + "|" + createdAt))
@@ -487,7 +563,7 @@ func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container st
 	}
 
 	out := listBlobsResult{
-		ContainerName: container,
+		ContainerName: bareContainerName(container),
 		Prefix:        opts.Prefix,
 		Marker:        opts.PageToken,
 		Delimiter:     opts.Delimiter,
@@ -633,7 +709,7 @@ func (*Handler) listBlobVersions(
 	}
 
 	out := listBlobsResult{
-		ContainerName: container,
+		ContainerName: bareContainerName(container),
 		Prefix:        q.Get("prefix"),
 		Marker:        q.Get("marker"),
 		NextMarker:    page.NextPageToken,
@@ -727,7 +803,7 @@ func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blo
 	}
 
 	// The driver's ETag is the hex sha256 of the body; if a concurrent
-	// delete races the read-back, fall back to computing it — a successful
+	// delete races the read-back, fall back to computing it: a successful
 	// PUT must never answer 404.
 	etag := fmt.Sprintf("%x", sha256.Sum256(data))
 	lastModified := ""
@@ -957,7 +1033,7 @@ func (h *Handler) getBlob(w http.ResponseWriter, r *http.Request, container, blo
 // Content with a Content-Range header and only the requested slice; a
 // syntactically invalid or unsatisfiable range returns 416 with
 // Content-Range: bytes * /total, matching Azure. (x-ms-range-get-content-md5 is
-// not honored — cloudemu does not compute the per-range MD5.)
+// not honored: cloudemu does not compute the per-range MD5.)
 func serveBlobContent(w http.ResponseWriter, r *http.Request, info *storagedriver.ObjectInfo, data []byte) {
 	total := int64(len(data))
 
@@ -1293,7 +1369,7 @@ func (h *Handler) deleteBlob(w http.ResponseWriter, r *http.Request, container, 
 
 // deleteBlobVersion serves DELETE /{container}/{blob}?versionid=… permanently
 // removing one version. Deleting the base blob itself (no versionid) leaves the
-// existing versions intact — that path runs through the normal deleteBlob flow.
+// existing versions intact; that path runs through the normal deleteBlob flow.
 func (h *Handler) deleteBlobVersion(w http.ResponseWriter, r *http.Request, container, blob, versionID string) {
 	ext, ok := h.bucket.(storagedriver.AzureVersionedBlob)
 	if !ok {
@@ -1340,7 +1416,7 @@ func (h *Handler) copyBlob(w http.ResponseWriter, r *http.Request, container, bl
 	}
 
 	src := r.Header.Get("X-Ms-Copy-Source")
-	srcBucket, srcKey := extractCopySource(src)
+	srcBucket, srcKey := h.extractCopySource(r, src)
 
 	if srcBucket == "" || srcKey == "" {
 		writeError(w, http.StatusBadRequest, "InvalidInput", "invalid x-ms-copy-source")
@@ -1388,13 +1464,20 @@ func (h *Handler) performCopy(r *http.Request, container, blob string, src stora
 
 // extractCopySource parses x-ms-copy-source which is a full URL like
 // "https://account.blob.core.windows.net/{container}/{blob}".
-func extractCopySource(src string) (container, blob string) {
+func (h *Handler) extractCopySource(r *http.Request, src string) (container, blob string) {
 	u, err := url.Parse(src)
 	if err != nil {
 		return "", ""
 	}
 
-	return parseBlobPath(u.Path)
+	account, path := h.resolveAccount(r, u.Path, u.Query())
+	container, blob = parseBlobPath(path)
+
+	if container == "" {
+		return "", ""
+	}
+
+	return storagedriver.AzureContainerKey(account, container), blob
 }
 
 func extractMetadata(h http.Header) map[string]string {
@@ -1423,7 +1506,7 @@ func httpDate(s string) string {
 }
 
 // writeXML writes an XML response body. Every wire operation that returns an
-// XML document (list/get) does so with 200 OK on success — a write that needs
+// XML document (list/get) does so with 200 OK on success; a write that needs
 // a different success status (201/202) sets headers and writes its own body.
 func writeXML(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", contentTypeXML)

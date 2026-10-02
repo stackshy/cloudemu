@@ -10,18 +10,18 @@ import (
 )
 
 // TestMintYieldsDistinctHighEntropyCredentials proves Mint returns unique,
-// well-formed temporary credentials on the crypto/rand success path — the guard
+// well-formed temporary credentials on the crypto/rand success path. This is the guard
 // against the removed predictable fallback, which would have produced identical,
 // forgeable credentials on every call.
 func TestMintYieldsDistinctHighEntropyCredentials(t *testing.T) {
 	store := sts.NewSessionStore(config.NewFakeClock(time.Unix(0, 0)))
 
-	a, err := store.Mint(time.Hour)
+	a, err := store.Mint(time.Hour, sts.SessionOwner{})
 	if err != nil {
 		t.Fatalf("Mint: %v", err)
 	}
 
-	b, err := store.Mint(time.Hour)
+	b, err := store.Mint(time.Hour, sts.SessionOwner{})
 	if err != nil {
 		t.Fatalf("Mint: %v", err)
 	}

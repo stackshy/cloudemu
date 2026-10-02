@@ -51,7 +51,7 @@ func ttlContainer(ctx context.Context, t *testing.T, e *cosmosEnv, db, name stri
 }
 
 // TestSDKContainerDefaultTTLEchoed asserts a container created with
-// DefaultTimeToLive echoes it back on Read — the HIGH bug: defaultTtl was
+// DefaultTimeToLive echoes it back on Read: the HIGH bug is that defaultTtl was
 // silently dropped and never persisted.
 func TestSDKContainerDefaultTTLEchoed(t *testing.T) {
 	ctx := context.Background()

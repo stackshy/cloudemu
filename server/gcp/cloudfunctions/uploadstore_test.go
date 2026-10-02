@@ -41,7 +41,7 @@ func TestUploadStagingEvictsOldest(t *testing.T) {
 func TestUploadStagingReplaceKeepsOneSlot(t *testing.T) {
 	s := newUploadStaging()
 	s.stage("t1", nil)           // generateUploadUrl stages an empty slot
-	s.stage("t1", []byte("zip")) // uploadSource replaces it — not a new slot
+	s.stage("t1", []byte("zip")) // uploadSource replaces it, not a new slot
 
 	code, ok := s.take("t1")
 	if !ok || string(code) != "zip" {

@@ -51,7 +51,7 @@ const operationStatusDone = "done"
 
 // managedZoneJSON is the Cloud DNS ManagedZone resource. The SDK unmarshals
 // `id` as a uint64 (via a `,string` tag), so it must serialize as a numeric
-// string — see numericID for how the driver's zone-<uuid> id is folded down.
+// string; see numericID for how the driver's zone-<uuid> id is folded down.
 type managedZoneJSON struct {
 	Kind         string            `json:"kind"`
 	Name         string            `json:"name"`
@@ -285,7 +285,7 @@ const nameServersPerZone = 4
 
 // nameServersFor returns the four authoritative name servers Cloud DNS assigns
 // to a zone, e.g. ns-cloud-e1.googledomains.com. … ns-cloud-e4.googledomains.com.
-// Real Cloud DNS picks one of five letter pools (a–e) per zone; we derive it
+// Real Cloud DNS picks one of five letter pools (a-e) per zone; we derive it
 // deterministically from the zone id so a given zone always reports the same
 // delegation NS set on every create/get and in its apex NS record.
 func nameServersFor(zoneID string) []string {

@@ -8,7 +8,7 @@ import (
 
 // resyncEndpointsForNamespaceLocked runs for every Service on every Pod change
 // in the namespace. A Service whose endpoint set does not change must not have
-// its ResourceVersion bumped or emit a MODIFIED event — otherwise an informer
+// its ResourceVersion bumped or emit a MODIFIED event, otherwise an informer
 // on Endpoints sees a spurious event for every Service on unrelated Pod churn.
 func TestEndpoints_NoSpuriousBumpOnUnrelatedPodChange(t *testing.T) {
 	base, cleanup := newFixture(t)

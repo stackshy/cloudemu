@@ -20,7 +20,7 @@ var endpointStateNames = []string{"", "CREATING", "READY", "DELETING", "UPDATING
 
 // scalarEnumFields names the JSON fields whose scalar value is an enum, so a
 // numeric value is rewritten to its canonical name. severity is caller-supplied;
-// state is output-only, so a client never sends it — but a GAPIC roundtrip that
+// state is output-only, so a client never sends it, but a GAPIC roundtrip that
 // marshals an explicit State as a protojson integer is normalized defensively.
 //
 //nolint:gochecknoglobals // immutable lookup set
@@ -30,7 +30,7 @@ var scalarEnumFields = map[string][]string{
 }
 
 // validateSeverity enforces that a create carries a valid, non-unspecified
-// severity — the one required enum on the resource. The value has already been
+// severity, the one required enum on the resource. The value has already been
 // normalized to its canonical name by decodeBody. A missing or empty severity, or
 // one outside the enum, is a 400 (invalidArgument). The returned message is used
 // only when valid is false.

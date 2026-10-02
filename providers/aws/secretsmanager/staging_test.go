@@ -77,8 +77,8 @@ func TestUpdateSecretVersionStagePromotes(t *testing.T) {
 	require.NoError(t, err)
 
 	// Promoting AWSCURRENT onto the pending version auto-removes its AWSPENDING
-	// label (as the real service does at finishSecret), so it carries AWSCURRENT
-	// exactly — AWSPENDING must not ride forward onto the current version.
+	// label (as the real service does at finishSecret), so it carries AWSCURRENT.
+	// AWSPENDING must not ride forward onto the current version.
 	stages, err := m.SecretVersionStages(ctx, "s")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"AWSCURRENT"}, stages[pending.VersionID])

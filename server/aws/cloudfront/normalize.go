@@ -150,7 +150,7 @@ type cookiesModel struct {
 // normalizeConfigXML returns the inner XML of a <DistributionConfig> with every
 // server-side default block real CloudFront guarantees filled in, so unmodified
 // SDK/CLI/Terraform readers that dereference those blocks don't fault. Caller
-// values are preserved exactly — only wholly-absent blocks are added. On any
+// values are preserved as-is; only wholly-absent blocks are added. On any
 // parse or re-encode failure it returns the stored bytes unchanged so a read
 // never fails.
 func normalizeConfigXML(inner []byte) []byte {

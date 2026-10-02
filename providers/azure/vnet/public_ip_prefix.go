@@ -64,7 +64,7 @@ func (m *Mock) PutAzurePublicIPPrefix(
 // allocatePrefixCIDR hands out the next unused /24 from the 10.0.0.0/8 pool and
 // masks it to prefixLength, giving each prefix a distinct, aligned CIDR. The
 // counter is monotonic (deterministic, no randomness) and, since Azure IPv4
-// public-IP prefixes are /24–/31, the host bits always fit inside the last octet
+// public-IP prefixes are /24-/31, the host bits always fit inside the last octet
 // so the .0 base is aligned. Caller holds prefixMu.
 func (m *Mock) allocatePrefixCIDR(prefixLength int32) string {
 	block := m.nextPrefixBlock

@@ -15,7 +15,7 @@ import (
 //	tag.<key>:              → Query.Tags[key] = "" (key-only match)
 //
 // Tokens are whitespace-separated. Unknown tokens are tolerated and
-// ignored — matches Resource Explorer's permissive parser behavior for a
+// ignored, as Resource Explorer's permissive parser does, for a
 // minimal-impact-on-real-callers SDK round-trip.
 func parseFilter(query string) resourcediscovery.Query {
 	q := resourcediscovery.Query{}

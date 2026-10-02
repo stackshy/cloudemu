@@ -8,11 +8,11 @@ import (
 
 // DenyAssignments are a read-only RBAC surface in real Azure: they are created
 // only by Azure itself (Blueprints, Managed Applications, system-protected
-// assignments) — there is no customer-facing create/update/delete API, only
+// assignments); there is no customer-facing create/update/delete API, only
 // Get and List. We therefore back them with an in-handler store that starts
 // empty and expose only the read verbs. Listing an account with no deny
 // assignments returns an empty (but correctly enveloped) collection, and Get
-// on any id returns 404 — exactly what a real subscription with no deny
+// on any id returns 404, exactly what a real subscription with no deny
 // assignments returns.
 const (
 	denyAssignmentsSuffix    = "denyassignments"
@@ -105,7 +105,7 @@ func (s *denyAssignmentStore) listAtScope(scope string) []denyAssignmentEnvelope
 }
 
 // serveDenyAssignments dispatches GET (Get or List). All other verbs are
-// rejected — deny assignments are read-only over the wire.
+// rejected: deny assignments are read-only over the wire.
 func (h *Handler) serveDenyAssignments(w http.ResponseWriter, r *http.Request, scope, id string) {
 	if r.Method != http.MethodGet {
 		writeARMError(w, http.StatusMethodNotAllowed, "MethodNotAllowed",

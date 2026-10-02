@@ -93,7 +93,7 @@ func TestDetachInternetGatewayNotAttached(t *testing.T) {
 }
 
 // TestDetachInternetGatewayWrongVpc pins that detaching an attached internet
-// gateway while naming the wrong VPC also returns Gateway.NotAttached — the
+// gateway while naming the wrong VPC also returns Gateway.NotAttached: the
 // gateway is not attached to the VPC the caller specified.
 func TestDetachInternetGatewayWrongVpc(t *testing.T) {
 	ctx := context.Background()
@@ -170,7 +170,7 @@ func TestDeleteInternetGatewayWhileAttachedIsDependencyViolation(t *testing.T) {
 }
 
 // TestEC2ErrorMessagesHaveNoInternalPrefix pins that EC2 wire error messages
-// carry only the human sentence — no "FailedPrecondition:" / "DependencyViolation:"
+// carry only the human sentence, no "FailedPrecondition:" / "DependencyViolation:"
 // taxonomy prefix leaked from the internal error type.
 func TestEC2ErrorMessagesHaveNoInternalPrefix(t *testing.T) {
 	ctx := context.Background()
@@ -202,7 +202,7 @@ func TestEC2ErrorMessagesHaveNoInternalPrefix(t *testing.T) {
 }
 
 // TestDeleteVolumeAttachedNoLeakedPrefix pins that DeleteVolume on an
-// attached volume answers VolumeInUse with a clean message — no
+// attached volume answers VolumeInUse with a clean message, no
 // "FailedPrecondition:" prefix leaked from the internal error type.
 func TestDeleteVolumeAttachedNoLeakedPrefix(t *testing.T) {
 	ctx := context.Background()
@@ -254,7 +254,7 @@ func TestDeleteVolumeAttachedNoLeakedPrefix(t *testing.T) {
 }
 
 // TestCreateKeyPairDuplicateNoLeakedPrefix pins that a duplicate CreateKeyPair
-// answers InvalidKeyPair.Duplicate with a clean message — no "AlreadyExists:"
+// answers InvalidKeyPair.Duplicate with a clean message, no "AlreadyExists:"
 // prefix leaked from the internal error type.
 func TestCreateKeyPairDuplicateNoLeakedPrefix(t *testing.T) {
 	ctx := context.Background()

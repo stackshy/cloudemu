@@ -9,7 +9,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
-// A real GKE cluster and node pool must appear in Cloud Asset inventory —
+// A real GKE cluster and node pool must appear in Cloud Asset inventory: this
 // exercises the gkeDiscovery adapter end to end.
 func TestResourceDiscoverySurfacesGKE(t *testing.T) {
 	ctx := context.Background()
@@ -54,7 +54,7 @@ func TestResourceDiscoverySurfacesGKE(t *testing.T) {
 }
 
 // Two clusters with the same name in different regions must get distinct
-// canonical ARNs — each embedding its own location, not the engine default.
+// canonical ARNs, each embedding its own location, not the engine default.
 // A substring/single-scope check can't catch a collision here.
 func TestResourceDiscoveryGKESameNameDistinctARNs(t *testing.T) {
 	ctx := context.Background()

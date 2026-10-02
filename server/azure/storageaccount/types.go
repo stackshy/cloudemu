@@ -23,7 +23,7 @@ type armAccountUpdate struct {
 	Properties *armAccountPropsReq `json:"properties,omitempty"`
 }
 
-// armIdentity is the ARM managed-identity block — a top-level sibling of
+// armIdentity is the ARM managed-identity block: a top-level sibling of
 // properties/sku/kind on a storage account (armstorage.Identity). On a request
 // only Type and the userAssignedIdentities keys are meaningful; the response
 // synthesizes the system-assigned principal/tenant ids and each user-assigned
@@ -44,7 +44,7 @@ type armUserAssignedIdentity struct {
 }
 
 // armAccountPropsReq is the settable subset of properties on a create or
-// update request body — shared because AccountPropertiesCreateParameters and
+// update request body, shared because AccountPropertiesCreateParameters and
 // AccountPropertiesUpdateParameters marshal accessTier/encryption identically.
 type armAccountPropsReq struct {
 	AccessTier string            `json:"accessTier,omitempty"`
@@ -54,7 +54,7 @@ type armAccountPropsReq struct {
 	MinimumTLSVersion   string `json:"minimumTlsVersion,omitempty"`
 	PublicNetworkAccess string `json:"publicNetworkAccess,omitempty"`
 	// SupportsHTTPSTrafficOnly / AllowBlobPublicAccess / AllowSharedKeyAccess are
-	// pointers so a PATCH can tell "omitted" (nil) from "explicitly false" — the
+	// pointers so a PATCH can tell "omitted" (nil) from "explicitly false": the
 	// distinction the echo-properties overlay drops for zero-valued scalars, which
 	// is why these must be modeled here rather than left to the overlay.
 	SupportsHTTPSTrafficOnly *bool `json:"supportsHttpsTrafficOnly,omitempty"`
@@ -109,7 +109,7 @@ type armAccountProps struct {
 	// The account security toggles are always rendered (with real-Azure defaults
 	// when unset) so a create that omits them still reads back the values real
 	// Azure reports, and an explicit "false" is never dropped. The bools carry no
-	// omitempty — false is a meaningful, must-be-serialized value here.
+	// omitempty: false is a meaningful, must-be-serialized value here.
 	MinimumTLSVersion        string `json:"minimumTlsVersion,omitempty"`
 	PublicNetworkAccess      string `json:"publicNetworkAccess,omitempty"`
 	SupportsHTTPSTrafficOnly bool   `json:"supportsHttpsTrafficOnly"`
@@ -117,7 +117,7 @@ type armAccountProps struct {
 	AllowSharedKeyAccess     bool   `json:"allowSharedKeyAccess"`
 	// SecondaryLocation/StatusOfSecondary are populated for GRS/RA-GRS/GZRS/
 	// RA-GZRS SKUs; SecondaryEndpoints only for the read-access (RA-*) variants
-	// — matching real Azure (see armstorage AccountProperties doc comments).
+	// matching real Azure (see armstorage AccountProperties doc comments).
 	SecondaryLocation  string         `json:"secondaryLocation,omitempty"`
 	StatusOfSecondary  string         `json:"statusOfSecondary,omitempty"`
 	SecondaryEndpoints *armEndpoints  `json:"secondaryEndpoints,omitempty"`

@@ -9,7 +9,7 @@
 // AWS Backup routes by HTTP verb + path (e.g. PUT /backup-vaults/{name},
 // POST /backup/plans, GET /backup/plans/{id}/versions); there is no
 // X-Amz-Target header and no version prefix. Matches claims the /backup-vaults
-// and /backup/plans trees — distinctive to AWS Backup — and the shared /tags
+// and /backup/plans trees (distinctive to AWS Backup) and the shared /tags
 // and /untag paths only when the ARN names a Backup (:backup:) resource, so it
 // runs before the S3 catch-all and never shadows a sibling service's tag
 // operations.
@@ -20,6 +20,7 @@
 package backup
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -147,9 +148,9 @@ func atoiDefault(s string) int32 {
 	}
 
 	n, err := strconv.Atoi(s)
-	if err != nil || n < 0 {
+	if err != nil || n < 0 || n > math.MaxInt32 {
 		return 0
 	}
 
-	return int32(n) //nolint:gosec // bounded by request query length; overflow not reachable in practice.
+	return int32(n) //nolint:gosec // explicitly range-checked against math.MaxInt32 above; gosec's G109 can't see the guard.
 }

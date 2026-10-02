@@ -407,7 +407,7 @@ func toLoadBalancerXML(lb *lbdriver.LBInfo) loadBalancerXML {
 
 // zoneNameForSubnet returns the availability-zone name reported for subnet s.
 // When the networking driver resolved s's real zone (azs, keyed by subnet ID)
-// it is used; otherwise this falls back to the region's first zone — enough to
+// it is used; otherwise this falls back to the region's first zone. That is enough to
 // populate the non-empty ZoneName real ELBv2 returns even with no resolver
 // wired.
 func zoneNameForSubnet(azs map[string]string, s string) string {

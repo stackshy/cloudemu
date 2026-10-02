@@ -118,7 +118,7 @@ func TestSDKResourceGraph(t *testing.T) {
 		// The emulator serves one estate and the management plane accepts any
 		// subscription on create (echoing it into the resource id). So a scoped
 		// Resource Graph query returns that estate rendered under whichever
-		// subscription the caller used — "create under sub X, discover under
+		// subscription the caller used: "create under sub X, discover under
 		// sub X" stays consistent for a real client that picked its own GUID.
 		out, err := client.Resources(ctx, armresourcegraph.QueryRequest{
 			Query:         to.Ptr("Resources"),

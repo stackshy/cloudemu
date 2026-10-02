@@ -13,13 +13,14 @@ import (
 	fistypes "github.com/aws/aws-sdk-go-v2/service/fis/types"
 
 	"github.com/stackshy/cloudemu/v2"
+	"github.com/stackshy/cloudemu/v2/config"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
-func newClient(t *testing.T) *fisapi.Client {
+func newClient(t *testing.T, opts ...config.Option) *fisapi.Client {
 	t.Helper()
 
-	cloud := cloudemu.NewAWS()
+	cloud := cloudemu.NewAWS(opts...)
 	srv := awsserver.New(awsserver.Drivers{FIS: cloud.FIS})
 
 	ts := httptest.NewServer(srv)

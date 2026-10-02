@@ -29,8 +29,8 @@ type scopedSubPath struct {
 }
 
 // scopedSubRecord is a wire-handler-owned event subscription attached to a
-// non-topic scope. It has no eventbus-driver topic to hang off, so — like
-// systemTopics and domains — the handler owns its state; the raw ARM
+// non-topic scope. It has no eventbus-driver topic to hang off, so, like
+// systemTopics and domains, the handler owns its state; the raw ARM
 // properties round-trip verbatim.
 type scopedSubRecord struct {
 	scope         string
@@ -266,7 +266,7 @@ func (h *Handler) listScopedEventSubscriptions(w http.ResponseWriter, sp *scoped
 // A resource-extension scope (containing a nested /providers/) matches exactly
 // (ListByResource). The global list operations (ListGlobalBySubscription /
 // ListGlobalByResourceGroup) return only global subscription/resource-group
-// scoped subs, never regional resource-scoped ones — so those branches exclude
+// scoped subs, never regional resource-scoped ones, so those branches exclude
 // records whose own scope carries a nested resource /providers/ segment.
 func scopedSubInListScope(rec *scopedSubRecord, sp *scopedSubPath) bool {
 	if strings.Contains(sp.scope, "/providers/") {

@@ -14,7 +14,7 @@ import (
 )
 
 // Reserved Instance lifecycle states (a subset of the ReservedInstanceState
-// enum). State is never frozen at purchase time — it is derived from the clock
+// enum). State is never frozen at purchase time. It is derived from the clock
 // on every read (effectiveState): queued before start, active in [start, end),
 // retired at or after end. A source RI retired by a modification is terminally
 // retired and short-circuits the time rule.
@@ -37,7 +37,7 @@ const (
 	offeringClassConvertible = "convertible"
 )
 
-// Offering types (OfferingTypeValues enum) — the modern payment-option-named
+// Offering types (OfferingTypeValues enum): the modern payment-option-named
 // offering types.
 const (
 	offeringTypeAllUpfront     = "All Upfront"
@@ -68,8 +68,8 @@ const (
 const defaultRIRegion = "us-east-1"
 
 // reservedInstance is one purchased Reserved Instance. State lives only in the
-// wire server (no portable driver represents RIs — it is a billing instrument,
-// not a compute resource), so the EC2 handler owns this shape directly, exactly
+// wire server (no portable driver represents RIs; it is a billing instrument,
+// not a compute resource), so the EC2 handler owns this shape directly, just
 // as the Savings Plans handler owns its plan shape.
 type reservedInstance struct {
 	id                 string
@@ -144,7 +144,7 @@ type pricingTier struct {
 }
 
 // riModification is one recorded ModifyReservedInstances request. The emulator
-// settles instantly, so a recorded modification lands "fulfilled" immediately —
+// settles instantly, so a recorded modification lands "fulfilled" immediately and
 // no request lingers in "processing".
 type riModification struct {
 	id            string
@@ -360,7 +360,7 @@ type targetConfig struct {
 // each target configuration mints a new active reservation (inheriting the
 // source terms, with the AZ/count/type/platform/scope overrides applied) and the
 // source reservations are terminally retired. The net hourly commitment is
-// preserved — the new reservations replace the retired sources in the
+// preserved: the new reservations replace the retired sources in the
 // Commitments feed. A repeated clientToken is idempotent.
 func (s *riStore) modify(in *modifyInput) (string, error) {
 	if len(in.reservedIDs) == 0 || len(in.targetConfigs) == 0 {
@@ -512,7 +512,7 @@ func (s *riStore) describeModifications(ids, clientTokens []string) []*riModific
 // whose clock-derived effective state at instant at is active, normalized to the
 // provider-agnostic cost.Commitment shape the billing engine amortizes. The
 // hourly commitment is the reservation's recurring hourly charge times its
-// instance count — the effective dollar commitment per hour. State is resolved
+// instance count, i.e. the effective dollar commitment per hour. State is resolved
 // from at (not purchase), so an RI bought with a future purchaseTime starts
 // feeding commitments once at reaches its start, and an expired reservation
 // drops out at its end. A later Cost Explorer coverage/utilization handler

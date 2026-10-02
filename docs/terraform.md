@@ -1,20 +1,19 @@
 # Terraform / OpenTofu
 
-CloudEmu speaks the real cloud wire protocols, so **real Terraform and OpenTofu
-run against it** — `init`, `apply`, `plan`, `destroy` — with no Terraform
-plugins or shims. You point the provider's endpoints at a running CloudEmu and
-apply unmodified resources. The HCL is identical on Terraform and OpenTofu.
+CloudEmu speaks the real cloud wire protocols, so Terraform and OpenTofu run
+against it as they are (`init`, `apply`, `plan`, `destroy`), with no extra
+plugins or shims. Point the provider's endpoints at a running CloudEmu and apply
+your resources unchanged. The HCL is the same for Terraform and OpenTofu.
 
-> This is continuously proven: `contrib/terraform` drives a real `tofu` binary
-> through `apply → plan → destroy` against CloudEmu in CI, asserting the
-> post-apply plan is empty (no perpetual diff). See
-> [What's verified](#whats-verified).
+> CI checks this on every run: `contrib/terraform` drives a real `tofu` binary
+> through `apply → plan → destroy` against CloudEmu and asserts that the plan
+> after apply is empty (no perpetual diff). See [What's verified](#whats-verified).
 
 ## Fastest path: the `cloudemu-tf` wrapper
 
-`contrib/terraform/cloudemu-tf` is a drop-in wrapper (the CloudEmu equivalent of
-LocalStack's `tflocal`). It writes a provider override pointing at CloudEmu and
-supplies dummy credentials, then execs the real `tofu`/`terraform`:
+`contrib/terraform/cloudemu-tf` is a wrapper similar to LocalStack's `tflocal`.
+It writes a provider override that points at CloudEmu, supplies dummy
+credentials, and then runs the real `tofu`/`terraform`:
 
 ```sh
 # 1. start CloudEmu (AWS on :4566)
@@ -28,7 +27,7 @@ cloudemu-tf init
 cloudemu-tf apply
 ```
 
-Your config needs only an empty provider block — no endpoints, credentials or
+Your config only needs an empty provider block, with no endpoints, credentials or
 skip flags:
 
 ```hcl
@@ -43,13 +42,13 @@ Configure the wrapper with env vars:
 | `AWS_REGION` | `us-east-1` | region to report |
 | `CLOUDEMU_TF_BIN` | `tofu`, then `terraform` | binary to run |
 
-The wrapper leaves a `cloudemu_providers_override.tf` next to your config; it is
-regenerated each run and safe to delete or `.gitignore`.
+The wrapper leaves a `cloudemu_providers_override.tf` next to your config. It is
+regenerated on each run, so you can delete it or add it to `.gitignore`.
 
 ## Manual provider config (AWS)
 
-If you'd rather not use the wrapper, add the endpoints yourself. This is the
-same block LocalStack and floci use:
+Without the wrapper, add the endpoints yourself. It is the same block you would
+use for LocalStack or floci:
 
 ```hcl
 provider "aws" {
@@ -80,8 +79,8 @@ CloudEmu serves Azure on `:4568` (HTTPS) and GCP on `:4569`. The HTTPS ports use
 a self-signed cert, so point your client at the CloudEmu CA or disable
 verification for local use.
 
-**GCP** — the `google` provider accepts a per-service `*_custom_endpoint`, so
-point each service you use at the GCP port:
+GCP: the `google` provider accepts a per-service `*_custom_endpoint`, so point
+each service you use at the GCP port:
 
 ```hcl
 provider "google" {
@@ -90,19 +89,82 @@ provider "google" {
 }
 ```
 
-**Azure** — the `azurerm` provider has no per-service endpoint override. Instead
-it resolves every endpoint from an Azure *metadata* document and mints a bearer
-token from an AAD OAuth2 endpoint. CloudEmu serves both, so an **unmodified**
-`azurerm` provider bootstraps against the emulator by pointing
-`ARM_METADATA_HOSTNAME` at the Azure port — the metadata document CloudEmu
-returns references itself, so Resource Manager and token traffic route straight
-back to the emulator.
+### Shared REST paths and the API alias
 
-The `azurerm` provider is a Go binary and verifies TLS with no skip-verify flag,
-so it must trust CloudEmu's cert. Run the Azure port with a cert you generate,
-then hand the same cert to Terraform via `SSL_CERT_FILE` (honored by Go's TLS
-stack on Linux; on macOS run Terraform in a Linux container or add the cert to
-the system keychain):
+Some GCP services serve identical REST paths on different hosts. GKE and Managed
+Kafka both serve `/v1/projects/{p}/locations/{l}/clusters`, and Filestore,
+Memorystore for Redis, Data Fusion and Secure Source Manager all serve
+`.../locations/{l}/instances`. On a single port CloudEmu tells them apart by
+the body, the path shape and which service owns the id. A collection list in a
+location where two of them own resources cannot be told apart that way.
+
+To name the API explicitly, put its googleapis host as the first path segment of
+the endpoint. CloudEmu strips that segment before routing. Always end the
+endpoint with the version segment the provider expects (`/v1/`), as with any
+custom endpoint:
+
+```hcl
+provider "google" {
+  container_custom_endpoint     = "http://localhost:4569/container.googleapis.com/v1/"
+  managed_kafka_custom_endpoint = "http://localhost:4569/managedkafka.googleapis.com/v1/"
+  filestore_custom_endpoint     = "http://localhost:4569/file.googleapis.com/v1/"
+  redis_custom_endpoint         = "http://localhost:4569/redis.googleapis.com/v1/"
+}
+```
+
+Go clients take the same form without the version, which they append:
+`option.WithEndpoint("http://localhost:4569/managedkafka.googleapis.com")`.
+A `Host: <api>.googleapis.com` header (from a proxy, `/etc/hosts` or
+`curl -H`) works the same way.
+
+| Alias host | Shared path it disambiguates |
+|---|---|
+| `container.googleapis.com`, `alloydb.googleapis.com`, `managedkafka.googleapis.com` | `locations/{l}/clusters` |
+| `file.googleapis.com`, `redis.googleapis.com`, `datafusion.googleapis.com`, `securesourcemanager.googleapis.com` | `locations/{l}/instances` |
+| `securesourcemanager.googleapis.com`, `artifactregistry.googleapis.com`, `dataform.googleapis.com` | `locations/{l}/repositories` |
+| `ids.googleapis.com`, `us-central1-aiplatform.googleapis.com` (region named literally) | `locations/{l}/endpoints` |
+| `gkebackup.googleapis.com`, `backupdr.googleapis.com` | `locations/{l}/backupPlans` |
+| `spanner.googleapis.com`, `sqladmin.googleapis.com` | `/v1/projects/{p}/instances` |
+
+Without a hint, these pairs are told apart by body, path shape and ownership:
+a Cloud IDS create carries `severity`/`network` and no `displayName`; a
+Filestore create carries a Filestore tier, and zonal locations are Filestore's;
+a Backup and DR plan carries `backupVault`/`backupRules`/`resourceType`; a
+Dataform repository carries Dataform fields and no `format`; and a v1 instance
+list is Spanner's only when it pages with `pageSize` or Spanner owns an
+instance in the project. In a project that has both Spanner and Cloud SQL
+instances, list Cloud SQL through `/sqladmin.googleapis.com/v1/`.
+
+Any other `*.googleapis.com` first segment is stripped and otherwise ignored, so
+`http://localhost:4569/storage.googleapis.com/storage/v1/` is the same as
+`http://localhost:4569/storage/v1/`.
+
+AlloyDB creates, reads, updates and deletes work without the alias, so a plain
+`alloydb_custom_endpoint = "http://localhost:4569/v1/"` serves Terraform. An
+AlloyDB *list* (a data source, `gcloud`, or an SDK `ListClusters`) needs the
+alias, since unhinted cluster lists are GKE's. GKE and AlloyDB clusters cannot
+share a name, in any location; the second create gets 409 `ALREADY_EXISTS`.
+Managed Kafka and AlloyDB may reuse a cluster id; unhinted item calls then reach
+Managed Kafka. Use the alias to address the AlloyDB cluster.
+
+Without the alias, a list in a location
+where two services own resources goes to the first registered owner (GKE for
+clusters). URLs CloudEmu returns in responses, such as an operation `selfLink`,
+do not carry the alias; clients poll operations by name, so this does not affect
+them.
+
+Azure: the `azurerm` provider has no per-service endpoint override. It reads
+every endpoint from an Azure metadata document and gets a bearer token from an
+AAD OAuth2 endpoint. CloudEmu serves both. Set `ARM_METADATA_HOSTNAME` to the
+Azure port and the unmodified `azurerm` provider starts up against the emulator.
+The metadata document CloudEmu returns points back at itself, so Resource Manager
+and token requests also go to the emulator.
+
+The `azurerm` provider is a Go binary that always verifies TLS (there is no
+skip-verify flag), so it has to trust CloudEmu's cert. Run the Azure port with a
+cert you generate, then give the same cert to Terraform through `SSL_CERT_FILE`.
+Go's TLS stack honors that on Linux; on macOS, run Terraform in a Linux container
+or add the cert to the system keychain:
 
 ```sh
 # 1. a cert whose SANs cover the host Terraform dials
@@ -118,7 +180,7 @@ cloudemu serve -providers=azure -azure-port 4568 \
 ```
 
 ```sh
-# 3. Terraform env — any credentials work (CloudEmu never verifies them)
+# 3. Terraform env: any credentials work (CloudEmu doesn't verify them by default)
 export ARM_METADATA_HOSTNAME=127.0.0.1:4568
 export ARM_SUBSCRIPTION_ID=00000000-0000-0000-0000-0000000000ab
 export ARM_TENANT_ID=11111111-1111-1111-1111-111111111111
@@ -136,29 +198,29 @@ provider "azurerm" {
 }
 ```
 
-`init → apply → plan(no-diff) → destroy` then runs unmodified — verified with
-`azurerm` v4 against `azurerm_resource_group` and `azurerm_storage_account`.
+`init → apply → plan(no-diff) → destroy` then runs unchanged. This was checked
+with `azurerm` v4 against `azurerm_resource_group` and `azurerm_storage_account`.
 
-> AWS is the most exercised surface today, and the only one with an automated
-> idempotency suite. The GCP block above works but is not yet suite-covered, and
-> the Azure recipe above is proven by hand but not yet suite-covered —
-> contributions of fixtures for either are welcome.
+> AWS is the most tested provider today and the only one with an automated
+> idempotency suite. The GCP block above works, and the Azure recipe was tested
+> by hand, but neither is covered by the suite yet. Fixtures for either are
+> welcome.
 
 ## What's verified
 
-The `contrib/terraform` suite asserts `apply → plan(no-diff) → destroy` against a
-real Terraform binary. Currently covered:
+The `contrib/terraform` suite checks `apply → plan(no-diff) → destroy` against a
+real Terraform binary. It currently covers:
 
-- **S3** — `aws_s3_bucket`
-- **DynamoDB** — `aws_dynamodb_table` (`PAY_PER_REQUEST` and `PROVISIONED`)
-- **IAM** — `aws_iam_role`
-- **Networking** — `aws_vpc`, `aws_subnet`, `aws_security_group`,
+- S3: `aws_s3_bucket`
+- DynamoDB: `aws_dynamodb_table` (`PAY_PER_REQUEST` and `PROVISIONED`)
+- IAM: `aws_iam_role`
+- Networking: `aws_vpc`, `aws_subnet`, `aws_security_group`,
   `aws_route_table`, `aws_route_table_association`
-- **The wrapper** — the same flow through `cloudemu-tf` with only an empty
+- The wrapper: the same flow through `cloudemu-tf` with only an empty
   provider block
 
-`contrib/terraform/README.md` tracks the exact known limits (which sub-resources
-are not yet persisted, etc.). To run the suite locally:
+`contrib/terraform/README.md` lists the known limits (for example, which
+sub-resources are not persisted yet). To run the suite locally:
 
 ```sh
 cd contrib/terraform

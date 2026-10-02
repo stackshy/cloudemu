@@ -73,7 +73,7 @@ func newVaultData() *vaultData {
 // driver interface (CreateSecret, GetSecret, PutSecretValue, ...), which has
 // no notion of a vault. A caller that reaches the Key Vault data-plane API
 // under this vault name (the wire layer's host-extraction fallback for a
-// request whose Host carries no recognizable vault subdomain — see
+// request whose Host carries no recognizable vault subdomain, see
 // vaultFromRequest in server/azure/keyvault) sees the exact same secrets and
 // keys the portable API manages, preserving pre-multi-vault behavior. Any
 // other vault name gets its own fully isolated namespace.
@@ -296,7 +296,7 @@ func (m *Mock) PutSecretValue(_ context.Context, name string, value []byte) (*dr
 
 	// PutSecretValue is the shared cross-cloud rotate-value path. Like AWS
 	// Secrets Manager PutSecretValue and GCP AddSecretVersion, adding a version
-	// must not touch resource-level tags — those are managed by separate tag
+	// must not touch resource-level tags: those are managed by separate tag
 	// APIs. Preserve the secret's existing tags rather than clearing them.
 	v := m.appendVersionLocked(sd, driver.KVSetParams{Value: value, Attributes: driver.KVAttributes{Enabled: true}}, false)
 

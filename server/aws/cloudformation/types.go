@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
@@ -35,20 +36,50 @@ func createInput(form url.Values) cfn.CreateStackInput {
 	return cfn.CreateStackInput{
 		StackName:    form.Get("StackName"),
 		TemplateBody: form.Get("TemplateBody"),
+		TemplateURL:  form.Get("TemplateURL"),
 		Parameters:   parseParameters(form),
 		Tags:         parseTags(form),
 		Capabilities: awsquery.ListStrings(form, "Capabilities.member"),
+
+		NotificationARNs: awsquery.ListStrings(form, "NotificationARNs.member"),
+
+		OnFailure:                   form.Get("OnFailure"),
+		DisableRollback:             formBool(form, "DisableRollback"),
+		EnableTerminationProtection: formBool(form, "EnableTerminationProtection"),
+		RetainExceptOnCreate:        formBool(form, "RetainExceptOnCreate"),
 	}
+}
+
+// formBool reads a boolean form field. Absent is false.
+func formBool(form url.Values, key string) bool {
+	return strings.EqualFold(form.Get(key), "true")
 }
 
 func updateInput(form url.Values) cfn.UpdateStackInput {
 	return cfn.UpdateStackInput{
 		StackName:    form.Get("StackName"),
 		TemplateBody: form.Get("TemplateBody"),
+		TemplateURL:  form.Get("TemplateURL"),
 		Parameters:   parseParameters(form),
 		Tags:         parseTags(form),
 		Capabilities: awsquery.ListStrings(form, "Capabilities.member"),
+
+		UsePreviousTemplate:  formBool(form, "UsePreviousTemplate"),
+		DisableRollback:      formBool(form, "DisableRollback"),
+		RetainExceptOnCreate: formBool(form, "RetainExceptOnCreate"),
+		NotificationARNs:     updateNotificationARNs(form),
 	}
+}
+
+// updateNotificationARNs reads UpdateStack's topics. An empty list, which the
+// SDK sends as a bare "NotificationARNs=", removes them. Absent keeps them.
+func updateNotificationARNs(form url.Values) []string {
+	arns := awsquery.ListStrings(form, "NotificationARNs.member")
+	if arns == nil && form.Has("NotificationARNs") {
+		return []string{}
+	}
+
+	return arns
 }
 
 func parseParameters(form url.Values) []cfn.Parameter {
@@ -67,7 +98,10 @@ func parseParameters(form url.Values) []cfn.Parameter {
 			continue
 		}
 
-		out = append(out, cfn.Parameter{Key: key, Value: form.Get(base + ".ParameterValue")})
+		out = append(out, cfn.Parameter{
+			Key: key, Value: form.Get(base + ".ParameterValue"),
+			UsePreviousValue: strings.EqualFold(form.Get(base+".UsePreviousValue"), "true"),
+		})
 	}
 
 	return out
@@ -113,6 +147,13 @@ type updateStackResponse struct {
 	Meta    responseMetadata `xml:"ResponseMetadata"`
 }
 
+type continueUpdateRollbackResponse struct {
+	XMLName xml.Name         `xml:"ContinueUpdateRollbackResponse"`
+	Xmlns   string           `xml:"xmlns,attr"`
+	Result  struct{}         `xml:"ContinueUpdateRollbackResult"`
+	Meta    responseMetadata `xml:"ResponseMetadata"`
+}
+
 type deleteStackResponse struct {
 	XMLName xml.Name         `xml:"DeleteStackResponse"`
 	Xmlns   string           `xml:"xmlns,attr"`
@@ -122,6 +163,7 @@ type deleteStackResponse struct {
 type parameterXML struct {
 	ParameterKey   string `xml:"ParameterKey"`
 	ParameterValue string `xml:"ParameterValue"`
+	ResolvedValue  string `xml:"ResolvedValue,omitempty"`
 }
 
 type outputXML struct {
@@ -150,6 +192,12 @@ type stackXML struct {
 	Outputs           []outputXML    `xml:"Outputs>member,omitempty"`
 	Tags              []tagXML       `xml:"Tags>member,omitempty"`
 	Capabilities      []string       `xml:"Capabilities>member,omitempty"`
+	NotificationARNs  []string       `xml:"NotificationARNs>member,omitempty"`
+	ChangeSetID       string         `xml:"ChangeSetId,omitempty"`
+
+	EnableTerminationProtection bool   `xml:"EnableTerminationProtection"`
+	RetainExceptOnCreate        bool   `xml:"RetainExceptOnCreate"`
+	DeletionMode                string `xml:"DeletionMode,omitempty"`
 }
 
 type describeStacksResponse struct {
@@ -249,18 +297,65 @@ type getTemplateResponse struct {
 	Meta responseMetadata `xml:"ResponseMetadata"`
 }
 
+type templateParameterXML struct {
+	ParameterKey string  `xml:"ParameterKey"`
+	DefaultValue *string `xml:"DefaultValue,omitempty"`
+	NoEcho       bool    `xml:"NoEcho"`
+	Description  string  `xml:"Description,omitempty"`
+}
+
+type validateTemplateResponse struct {
+	XMLName xml.Name `xml:"ValidateTemplateResponse"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Result  struct {
+		Description        string                 `xml:"Description,omitempty"`
+		Parameters         []templateParameterXML `xml:"Parameters>member"`
+		Capabilities       []string               `xml:"Capabilities>member,omitempty"`
+		CapabilitiesReason string                 `xml:"CapabilitiesReason,omitempty"`
+		DeclaredTransforms []string               `xml:"DeclaredTransforms>member"`
+	} `xml:"ValidateTemplateResult"`
+	Meta responseMetadata `xml:"ResponseMetadata"`
+}
+
+type parameterDeclarationXML struct {
+	ParameterKey  string  `xml:"ParameterKey"`
+	DefaultValue  *string `xml:"DefaultValue,omitempty"`
+	ParameterType string  `xml:"ParameterType"`
+	NoEcho        bool    `xml:"NoEcho"`
+	Description   string  `xml:"Description,omitempty"`
+}
+
+type getTemplateSummaryResponse struct {
+	XMLName xml.Name `xml:"GetTemplateSummaryResponse"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Result  struct {
+		Parameters         []parameterDeclarationXML `xml:"Parameters>member"`
+		Description        string                    `xml:"Description,omitempty"`
+		Capabilities       []string                  `xml:"Capabilities>member,omitempty"`
+		CapabilitiesReason string                    `xml:"CapabilitiesReason,omitempty"`
+		ResourceTypes      []string                  `xml:"ResourceTypes>member"`
+		Version            string                    `xml:"Version,omitempty"`
+		DeclaredTransforms []string                  `xml:"DeclaredTransforms>member"`
+	} `xml:"GetTemplateSummaryResult"`
+	Meta responseMetadata `xml:"ResponseMetadata"`
+}
+
 // --- mapping helpers ---
 
 func toStackXML(s *cfn.Stack) stackXML {
 	x := stackXML{
 		StackID: s.ID, StackName: s.Name, Description: s.Description,
 		CreationTime: isoTime(s.CreationTime), LastUpdatedTime: isoTime(s.LastUpdated),
-		StackStatus: s.Status, StackStatusReason: s.StatusReason,
-		Capabilities: s.Capabilities,
+		StackStatus: s.Status, StackStatusReason: s.StatusReason, DisableRollback: s.DisableRollback,
+		Capabilities: s.Capabilities, NotificationARNs: s.NotificationARNs, ChangeSetID: s.ChangeSetID,
+		DeletionTime: isoTime(s.DeletionTime), EnableTerminationProtection: s.EnableTerminationProtection,
+		RetainExceptOnCreate: s.RetainExceptOnCreate, DeletionMode: s.DeletionMode,
 	}
 
 	for _, p := range s.Parameters {
-		x.Parameters = append(x.Parameters, parameterXML{ParameterKey: p.Key, ParameterValue: p.Value})
+		x.Parameters = append(x.Parameters, parameterXML{
+			ParameterKey: p.Key, ParameterValue: p.Value, ResolvedValue: p.ResolvedValue,
+		})
 	}
 
 	for _, o := range s.Outputs {

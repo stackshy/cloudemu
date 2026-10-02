@@ -8,8 +8,8 @@
 // control-plane only: the emulator never fires a schedule at its target. A
 // schedule and a group are created directly usable, so an IaC apply that reads
 // the resource back never blocks. The computed fields clients and IaC tools
-// read back — a schedule's Arn, CreationDate and LastModificationDate, and a
-// group's Arn, CreationDate, LastModificationDate and State — are minted once at
+// read back (a schedule's Arn, CreationDate and LastModificationDate, and a
+// group's Arn, CreationDate, LastModificationDate and State) are minted once at
 // create and stored, so repeated GetSchedule/GetScheduleGroup/List reads and a
 // later UpdateSchedule never drift. The schedule's Target, FlexibleTimeWindow,
 // StartDate and EndDate are carried verbatim as json.RawMessage so their nested

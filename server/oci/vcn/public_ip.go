@@ -209,7 +209,7 @@ func (h *Handler) moveAssignment(ctx context.Context, info *netdriver.ElasticIP,
 // it is already assigned elsewhere.
 //
 // AssociateAddress refuses a private IP that already holds one, so the detach
-// has to be undone when the move fails — otherwise a rejected reassign leaves
+// has to be undone when the move fails. Otherwise a rejected reassign leaves
 // the address bound to nothing.
 func (h *Handler) reassign(ctx context.Context, info *netdriver.ElasticIP, privateIPID string) error {
 	if info.AssociationID == privateIPID {

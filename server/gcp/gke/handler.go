@@ -34,7 +34,7 @@
 //
 // All mutating endpoints return Operation envelopes with status=DONE so SDK
 // pollers terminate on the first response. Cluster.Endpoint and
-// MasterAuth.ClusterCaCertificate carry stub values — see provider/gcp/gke
+// MasterAuth.ClusterCaCertificate carry stub values: see provider/gcp/gke
 // for the Wave-2 deferral note.
 //
 // The /v1/projects/{p}/locations/{l}/ prefix is shared with Cloud Functions
@@ -47,6 +47,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gke"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 )
 
 const (
@@ -59,6 +60,15 @@ const (
 	resourceOperations   = "operations"
 	resourceServerConfig = "serverConfig"
 	locationsSeg         = "locations"
+
+	// Cluster sub-resources. Any other segment after clusters/{c} is not a GKE
+	// path, so it fails to parse and falls through.
+	subJWKS      = "jwks"
+	subWellKnown = ".well-known"
+
+	// AlloyDB-only cluster sub-collections.
+	alloySubInstances = "instances"
+	alloySubUsers     = "users"
 
 	// actionResX values tag the resource an action applies to.
 	actionResCluster    = "cluster"
@@ -74,6 +84,8 @@ type Handler struct {
 	// pool's instanceGroupUrls resolve to a targetSize == node count. Nil when no
 	// compute driver is wired.
 	migs InstanceGroupManagerRegistrar
+	// alloy (optional) is AlloyDB's ownership view when both are mounted.
+	alloy ClusterOwner
 }
 
 // New returns a GKE handler backed by m.
@@ -96,15 +108,17 @@ func (h *Handler) Matches(r *http.Request) bool {
 	}
 
 	p, ok := parsePath(r.URL.Path)
-	if !ok {
+	if !ok || sharedpath.Yield(r, sharedpath.Container, sharedpath.AlloyDB, sharedpath.ManagedKafka) {
 		return false
 	}
 
 	switch p.resource {
-	case resourceClusters, resourceServerConfig:
+	case resourceClusters:
+		return h.matchesSharedCluster(r, &p)
+	case resourceServerConfig:
 		return true
 	case resourceOperations:
-		// A named operation — a GET poll or a :cancel — is claimed only when
+		// A named operation (a GET poll or a :cancel) is claimed only when
 		// this GKE mock actually recorded it, so a foreign-service operation
 		// (artifactregistry, eventarc, memorystore, …) falls through to the
 		// shared LRO handler instead of being falsely 404'd or canceled here.
@@ -174,6 +188,9 @@ func parsePath(urlPath string) (gkePath, bool) {
 
 	if len(parts) > idxSubRes {
 		out.subRes = parts[idxSubRes]
+		if !knownClusterSub(out.resource, out.subRes) {
+			return gkePath{}, false
+		}
 	}
 
 	if len(parts) > idxSubName {
@@ -181,6 +198,21 @@ func parsePath(urlPath string) (gkePath, bool) {
 	}
 
 	return out, true
+}
+
+// knownClusterSub reports whether sub is a GKE sub-resource of a cluster. The
+// AlloyDB sub-collections are accepted so the shared rules can yield them.
+func knownClusterSub(resource, sub string) bool {
+	if resource != resourceClusters {
+		return true
+	}
+
+	switch sub {
+	case resourceNodePools, subJWKS, subWellKnown, alloySubInstances, alloySubUsers:
+		return true
+	default:
+		return false
+	}
 }
 
 func parseNameSegment(out *gkePath, seg string) {
@@ -259,8 +291,15 @@ func (h *Handler) serveClusters(w http.ResponseWriter, r *http.Request, p *gkePa
 		return
 	}
 
-	if p.subRes == resourceNodePools {
+	switch p.subRes {
+	case resourceNodePools:
 		h.serveNodePools(w, r, p)
+		return
+	case subJWKS, subWellKnown:
+		writeError(w, http.StatusNotImplemented, "UNIMPLEMENTED", p.subRes+" is not implemented")
+		return
+	case alloySubInstances, alloySubUsers:
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "unsupported resource: "+p.subRes)
 		return
 	}
 
@@ -284,7 +323,9 @@ func (h *Handler) serveClusters(w http.ResponseWriter, r *http.Request, p *gkePa
 func (h *Handler) serveClusterCollection(w http.ResponseWriter, r *http.Request, p *gkePath) {
 	switch r.Method {
 	case http.MethodPost:
-		h.createCluster(w, r, p)
+		if !h.sharedCreateConflict(w, r, p, "") {
+			h.createCluster(w, r, p)
+		}
 	case http.MethodGet:
 		h.listClusters(w, r, p)
 	default:

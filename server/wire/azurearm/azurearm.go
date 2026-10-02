@@ -46,6 +46,14 @@ type ResourcePath struct {
 	SubResource       string // e.g. "start", "powerOff", "operationStatuses"
 	SubResourceName   string // e.g. operation GUID for .../operationStatuses/{id}
 	SubResourceAction string // e.g. "failover" for .../failoverGroups/{name}/failover
+	// Depth is the number of segments after {type}: 1 is {type}/{name}, 2 is
+	// .../{child}, 3 is .../{child}/{childName}, and so on. Zero for a
+	// collection path and for hand-built literals, so guards compare with
+	// Depth > max and never route on Depth == n.
+	Depth int
+	// Rest is the "/"-joined segments after SubResourceAction, which ParsePath
+	// used to drop.
+	Rest string
 }
 
 // ParsePath extracts the ARM path components from urlPath. Returns ok=false
@@ -79,6 +87,7 @@ func ParsePath(urlPath string) (ResourcePath, bool) {
 	rp.Provider = parts[i+1]
 	rp.ResourceType = parts[i+2]
 	i += 3
+	rp.Depth = len(parts) - i
 
 	parseTrailing(parts, i, &rp)
 
@@ -126,6 +135,11 @@ func parseTrailing(parts []string, i int, rp *ResourcePath) {
 
 	if i < len(parts) {
 		rp.SubResourceAction = parts[i]
+		i++
+	}
+
+	if i < len(parts) {
+		rp.Rest = strings.Join(parts[i:], "/")
 	}
 }
 
@@ -173,7 +187,7 @@ func WriteCErr(w http.ResponseWriter, err error) {
 	case cerrors.IsFailedPrecondition(err):
 		WriteError(w, http.StatusConflict, "PreconditionFailed", msg)
 	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
-		// e.g. a subnet with no free private IP — ARM answers 400, not 500.
+		// e.g. a subnet with no free private IP: ARM answers 400, not 500.
 		WriteError(w, http.StatusBadRequest, "InvalidParameter", msg)
 	default:
 		WriteError(w, http.StatusInternalServerError, "InternalError", msg)

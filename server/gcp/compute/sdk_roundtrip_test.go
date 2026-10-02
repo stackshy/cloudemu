@@ -15,7 +15,7 @@ import (
 )
 
 // newSDKInstancesClient builds a real google-cloud-go InstancesRESTClient
-// pointing at the given test server. Authentication is disabled — our
+// pointing at the given test server. Authentication is disabled. Our
 // handler ignores credential headers, and the SDK is happy without an
 // Application Default Credential when WithoutAuthentication is set.
 func newSDKInstancesClient(t *testing.T, ts *httptest.Server) *gcpcompute.InstancesClient {
@@ -91,7 +91,7 @@ func TestSDKGCEInstanceRoundTrip(t *testing.T) {
 		t.Errorf("machineType=%s", got.GetMachineType())
 	}
 
-	// List in the zone — we should see our VM.
+	// List in the zone. We should see our VM.
 	it := client.List(ctx, &computepb.ListInstancesRequest{
 		Project: testProject, Zone: testZone,
 	})
@@ -248,7 +248,7 @@ func TestSDKGCEImageFromScratch(t *testing.T) {
 	}
 }
 
-// ptr helpers — computepb fields are pointers because the protocol uses
+// ptr helpers. computepb fields are pointers because the protocol uses
 // proto3-with-presence and the SDK marshalers care about the distinction
 // between unset and zero-value.
 func ptrStr(s string) *string { return &s }

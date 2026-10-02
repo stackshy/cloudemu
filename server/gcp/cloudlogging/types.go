@@ -16,7 +16,7 @@ import (
 // logEntryJSON is the subset of the Cloud Logging LogEntry resource we model.
 // The driver stores only a message string, so the structured fields
 // (severity, jsonPayload, labels, insertId) are JSON-enveloped into it on
-// write and reconstructed on read — see encode/decodeEntryPayload.
+// write and reconstructed on read; see encode/decodeEntryPayload.
 type logEntryJSON struct {
 	LogName          string             `json:"logName,omitempty"`
 	Timestamp        string             `json:"timestamp,omitempty"`

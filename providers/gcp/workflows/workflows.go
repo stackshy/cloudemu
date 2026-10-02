@@ -6,7 +6,7 @@
 //
 // A workflow's revisionId is derived deterministically from its
 // revision-defining fields (sourceContents, serviceAccount) and bumps only when
-// one of them changes on a Patch — matching real GCP, where "modifying
+// one of them changes on a Patch, matching real GCP, where "modifying
 // source_contents or service_account results in a new workflow revision". Every
 // other computed field (state, createTime, updateTime) is minted once and stays
 // stable across reads so a Terraform refresh never drifts.

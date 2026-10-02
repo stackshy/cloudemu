@@ -66,8 +66,8 @@ type versionModel struct {
 }
 
 // store is the in-memory Cloud KMS control-plane backing state. Cloud KMS has
-// no portable driver in cloudemu, so — like the project-IAM and Cloud Billing
-// handlers — the handler owns its state here, keyed by full resource name.
+// no portable driver in cloudemu, so, like the project-IAM and Cloud Billing
+// handlers, the handler owns its state here, keyed by full resource name.
 type store struct {
 	mu       sync.RWMutex
 	clock    config.Clock

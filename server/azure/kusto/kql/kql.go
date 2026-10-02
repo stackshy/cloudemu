@@ -3,7 +3,7 @@
 // and the Kusto scalar-type mapping shared by the control-command dispatcher and
 // the wire-frame encoders.
 //
-// It is the Azure-only analog of services/database/driver/expr — a standalone
+// It is the Azure-only analog of services/database/driver/expr: a standalone
 // stdlib library its one consumer (server/azure/kusto) can test in isolation.
 // This first increment carries only the data model and schema parsing; the KQL
 // lexer, recursive-descent parser and pipeline evaluator (where/project/
@@ -55,8 +55,8 @@ type Table struct {
 // DataType() fallback for an unrecognized ColumnType.
 const dotNetString = "String"
 
-// ParseColumnType maps a Kusto scalar type name — or one of the .NET / CLR
-// aliases real Kusto accepts (Int64, System.String, ...) — to its canonical
+// ParseColumnType maps a Kusto scalar type name, or one of the .NET / CLR
+// aliases real Kusto accepts (Int64, System.String, ...), to its canonical
 // ColumnType. ok is false for an unknown type.
 func ParseColumnType(name string) (ColumnType, bool) {
 	aliases := map[string]ColumnType{

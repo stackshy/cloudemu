@@ -17,7 +17,7 @@ const (
 
 // policy mirrors the cloudresourcemanager v1 Policy resource. Every field is
 // stored verbatim so a getIamPolicy → modify → setIamPolicy round-trips
-// bindings (with conditions) and audit configs unchanged — what
+// bindings (with conditions) and audit configs unchanged, what
 // google_project_iam_member / _binding / _policy / _audit_config all rely on.
 type policy struct {
 	Version      int           `json:"version,omitempty"`

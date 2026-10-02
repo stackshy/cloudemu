@@ -20,8 +20,8 @@ type transferSnapshot struct {
 	Tags    map[string]map[string]string `json:"tags,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// Transfer holds no bulk object bodies (this is a control-plane emulator).
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Transfer holds no
+// bulk object bodies (this is a control-plane emulator).
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := transferSnapshot{
 		Servers: deepCopyMap(m.servers.All(), copyServer),

@@ -160,7 +160,7 @@ func (s *instanceAdminServer) UpdateCluster(ctx context.Context, req *adminpb.Cl
 	return doneOp(op, toProtoCluster(c))
 }
 
-// PartialUpdateCluster applies only the masked scaling fields — this is the RPC
+// PartialUpdateCluster applies only the masked scaling fields. This is the RPC
 // the terraform google provider uses to change a cluster's node count. An
 // unmasked serve_nodes/autoscaling is dropped so the store preserves it rather
 // than switching the cluster's scaling mode as a side effect.

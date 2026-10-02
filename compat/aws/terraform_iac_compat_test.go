@@ -24,7 +24,7 @@ import (
 // `terraform apply/plan/destroy` against the hashicorp/aws provider fail. They
 // drive the real aws-sdk-go-v2 clients (the SDK Terraform uses) against the
 // in-process wire server. They intentionally do NOT record compat-matrix cells
-// (no sess.Op) — they assert the exact shapes the provider depends on.
+// (no sess.Op); they assert the exact shapes the provider depends on.
 
 // TestTerraformEC2InstanceAttributes covers the aws_instance apply blocker: the
 // provider reads DescribeInstanceAttribute for instanceInitiatedShutdownBehavior,

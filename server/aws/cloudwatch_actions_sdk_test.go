@@ -42,8 +42,8 @@ func sdkConfig(t *testing.T, url string) aws.Config {
 
 // TestE2ECloudWatchAlarmActionFiresSNSToSQS is the real-user integration for the
 // alarm-action delivery finding: a metric alarm with an SNS AlarmAction must
-// publish to the topic on its OK->ALARM transition, and — with an sqs-protocol
-// subscription — the notification must land in the subscribed queue.
+// publish to the topic on its OK->ALARM transition, and, with an sqs-protocol
+// subscription, the notification must land in the subscribed queue.
 func TestE2ECloudWatchAlarmActionFiresSNSToSQS(t *testing.T) {
 	provider := cloudemu.NewAWS()
 	srv := awsserver.New(awsserver.Drivers{

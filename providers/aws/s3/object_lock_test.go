@@ -106,7 +106,7 @@ func TestObjectLockLegalHoldBlocksDelete(t *testing.T) {
 	requireNoError(t, err)
 	assertEqual(t, true, on)
 
-	// No retention set, yet the delete is blocked by legal hold — even with bypass.
+	// No retention set, yet the delete is blocked by legal hold, even with bypass.
 	_, _, err = m.DeleteObjectVersionWithBypass(ctx, "b", "k", vid, true)
 	assertPermissionDenied(t, err)
 
@@ -119,7 +119,7 @@ func TestObjectLockLegalHoldBlocksDelete(t *testing.T) {
 // setObjectLockForTest stamps lock state directly on a stored object and its
 // current version. Real S3 only allows Object Lock on a versioning-enabled
 // (object-lock-enabled) bucket, so this white-box helper is the only way to
-// construct a locked object on an unversioned/suspended bucket — the exact state
+// construct a locked object on an unversioned/suspended bucket, the exact state
 // the in-place-overwrite and top-level-delete WORM guards defend against (e.g.
 // after a snapshot/restore of a crafted state).
 func setObjectLockForTest(t *testing.T, m *Mock, bucket, key string, l objectLock) {
@@ -170,7 +170,7 @@ func TestObjectLockOverwriteBlocked(t *testing.T) {
 
 // TestObjectLockTopLevelDeleteBlockedUnversioned covers the WORM guard on a
 // top-level (no versionId) delete of an in-place object: it must not destroy a
-// COMPLIANCE-locked or legal-held object's bytes. (Defense-in-depth — real S3
+// COMPLIANCE-locked or legal-held object's bytes. (Defense-in-depth: real S3
 // cannot reach this state, so the lock is crafted white-box.)
 func TestObjectLockTopLevelDeleteBlockedUnversioned(t *testing.T) {
 	m, fc := newLockMock()
@@ -218,7 +218,7 @@ func TestObjectLockTopLevelDeleteBlockedSuspended(t *testing.T) {
 		objectLock{retentionMode: driver.ObjectLockCompliance, retainUntil: fc.Now().Add(time.Hour)})
 
 	// Top-level delete would replace the null version with a null delete marker,
-	// destroying the protected bytes — it must be refused.
+	// destroying the protected bytes. It must be refused.
 	assertPermissionDenied(t, m.DeleteObject(ctx, "b", "k"))
 
 	got, err := m.GetObject(ctx, "b", "k")

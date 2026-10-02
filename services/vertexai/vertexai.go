@@ -1,7 +1,7 @@
 // Package vertexai provides a portable Google Cloud Vertex AI API with
 // cross-cutting concerns. It wraps a driver.VertexAI (the control plane plus the
 // prediction and generateContent runtimes) with recording, metrics, rate
-// limiting, error injection, and latency simulation — the same middle layer
+// limiting, error injection, and latency simulation, the same middle layer
 // every other service ships (see bedrock/bedrock.go, sagemaker/sagemaker.go) so
 // Vertex AI participates in the three-layer design.
 //

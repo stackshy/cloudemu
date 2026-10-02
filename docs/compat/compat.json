@@ -318,6 +318,32 @@
   },
   {
     "service": "cloudformation",
+    "operation": "ContinueUpdateRollback",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "CreateChangeSet",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
     "operation": "CreateStack",
     "providers": {
       "aws": {
@@ -331,7 +357,46 @@
   },
   {
     "service": "cloudformation",
+    "operation": "DeleteChangeSet",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
     "operation": "DeleteStack",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "DescribeAccountLimits",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "DescribeChangeSet",
     "providers": {
       "aws": {
         "native": "CloudFormation",
@@ -383,7 +448,85 @@
   },
   {
     "service": "cloudformation",
+    "operation": "EstimateTemplateCost",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "ExecuteChangeSet",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
     "operation": "GetTemplate",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "GetTemplateSummary",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "ListChangeSets",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "ListExports",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "ListImports",
     "providers": {
       "aws": {
         "native": "CloudFormation",
@@ -423,6 +566,32 @@
   {
     "service": "cloudformation",
     "operation": "UpdateStack",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "UpdateTerminationProtection",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "ValidateTemplate",
     "providers": {
       "aws": {
         "native": "CloudFormation",

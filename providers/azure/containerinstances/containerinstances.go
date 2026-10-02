@@ -1,8 +1,8 @@
 // Package containerinstances provides an in-memory mock of Azure Container
 // Instances (Microsoft.ContainerInstance/containerGroups). When a
 // config.ContainerEngine is wired it runs the group's containers for real via
-// the shared containerengine helper — mirroring how providers/aws/ecs backs its
-// tasks — and reflects the engine's observed states and exit codes into the
+// the shared containerengine helper, mirroring how providers/aws/ecs backs its
+// tasks, and reflects the engine's observed states and exit codes into the
 // group's instanceView. With no engine configured it stays fully synthetic.
 package containerinstances
 
@@ -20,6 +20,12 @@ import (
 
 // Compile-time check that Mock implements driver.ContainerInstances.
 var _ driver.ContainerInstances = (*Mock)(nil)
+
+// Compile-time check for the resource-group purge the ARM wire handler reaches
+// by type assertion.
+var _ interface {
+	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+} = (*Mock)(nil)
 
 const (
 	// ACI restart policies. Never runs the containers to completion once;
@@ -75,11 +81,11 @@ func New(opts *config.Options) *Mock {
 }
 
 // groupKey builds the composite key container groups are stored under. A
-// container group's ARM identity is {subscription, resourceGroup, name} — see
+// container group's ARM identity is {subscription, resourceGroup, name}: see
 // the CreateOrUpdate URI parameters at
 // https://learn.microsoft.com/en-us/rest/api/container-instances/container-groups/create-or-update
 // (subscriptionId, resourceGroupName, and containerGroupName are all required
-// path segments) — so a group named "cg1" in one resource group must never
+// path segments), so a group named "cg1" in one resource group must never
 // collide with (or be overwritten/leaked to) a same-named group in another
 // resource group or subscription.
 func groupKey(subscription, resourceGroup, name string) string {
@@ -249,6 +255,24 @@ func (m *Mock) DeleteContainerGroup(ctx context.Context, subscription, resourceG
 
 	m.stopWorkload(ctx, data)
 	m.groups.Delete(key)
+
+	return nil
+}
+
+// PurgeResourceGroup deletes every container group recorded under the given
+// subscription and resource group, tearing down any engine workload. It backs
+// the ARM resource-group delete cascade. An unscoped group (created through
+// the portable API) is never selected.
+func (m *Mock) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for key, data := range m.groups.All() {
+		if data.group.Scope.InResourceGroup(subscription, resourceGroup) {
+			m.stopWorkload(ctx, data)
+			m.groups.Delete(key)
+		}
+	}
 
 	return nil
 }
