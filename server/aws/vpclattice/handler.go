@@ -206,3 +206,7 @@ func splitPath(p string) []string {
 
 	return strings.Split(p, "/")
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "vpc-lattice" }

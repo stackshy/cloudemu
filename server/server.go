@@ -94,6 +94,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "no handler registered for this request", http.StatusNotImplemented)
 }
 
+// Handlers returns the registered handlers in dispatch order. The slice is a
+// copy, so changing it does not change the server.
+func (s *Server) Handlers() []Handler {
+	return append([]Handler(nil), s.handlers...)
+}
+
 // Match returns the handler that would serve r (the first registered handler
 // whose Matches returns true), or nil when none would. A pre-dispatch hook uses
 // it to bind a decision to the handler that actually runs. Matches may read the

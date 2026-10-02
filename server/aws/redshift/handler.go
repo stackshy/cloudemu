@@ -19,6 +19,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	redshiftprovider "github.com/stackshy/cloudemu/v2/providers/aws/redshift"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsauthz"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
@@ -346,4 +347,15 @@ func alreadyExistsCode(err error) string {
 	default:
 		return "ResourceAlreadyExistsFault"
 	}
+}
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "redshift" }
+
+// IAMChecks names the IAM action of a request from the form Action that
+// ServeHTTP dispatches on. An Action the handler does not know is authorized
+// as such and then answered with InvalidAction, so nothing runs.
+func (h *Handler) IAMChecks(r *http.Request, _ awsauthz.Scope) ([]awsauthz.Check, bool) {
+	return awsauthz.QueryChecks(r, h.IAMService())
 }

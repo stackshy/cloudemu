@@ -291,9 +291,31 @@ func (m *Mock) EvaluatePermission(_ context.Context, req driver.EvalRequest) dri
 func (m *Mock) EvaluateServiceWide(
 	_ context.Context, principal, service string, condCtx map[string]string,
 ) driver.Decision {
+	// A name that is not a service prefix ("", "a:b", "s*") would let a
+	// wildcard Allow match it, so it is never allowed.
+	if !isServicePrefix(service) {
+		return driver.DecisionImplicitDeny
+	}
+
 	q := evalRequest{service: service, cctx: ConditionContext(condCtx)}
 
 	return driver.Decision(m.evaluatePrincipal(principal, q, evalServiceWide))
+}
+
+// isServicePrefix reports whether s has the shape of an IAM service prefix:
+// lower-case letters, digits and hyphens, starting with a letter or digit.
+func isServicePrefix(s string) bool {
+	if s == "" || s[0] == '-' {
+		return false
+	}
+
+	for _, c := range s {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+			return false
+		}
+	}
+
+	return true
 }
 
 // evaluatePrincipal combines a principal's identity policies with its

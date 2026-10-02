@@ -218,10 +218,11 @@ func providerHandlerIndex(
 }
 
 // registeredHandlerPkgs returns the top-level handler packages under
-// server/<prov>/ that the provider's server New() constructs (any pkg.NewXxx
-// call). Handlers registered inside helper functions are intentionally omitted:
-// they are sub-components of a service already counted (e.g. Databricks
-// data-plane handlers), not distinct services.
+// server/<prov>/ that the provider's server factory constructs (any
+// pkg.NewXxx call). The factory is New plus the functions it hands its whole
+// Drivers to (see factoryFuncs). Handlers registered inside other helper
+// functions are intentionally omitted: they are sub-components of a service
+// already counted (e.g. Databricks data-plane handlers), not distinct services.
 func registeredHandlerPkgs(root, prov string) (map[string]bool, error) {
 	factory := filepath.Join(root, "server", prov, prov+".go")
 
@@ -235,20 +236,17 @@ func registeredHandlerPkgs(root, prov string) (map[string]bool, error) {
 	aliases := importAliases(file)
 	out := map[string]bool{}
 
-	fn := findFunc(file, "New")
-	if fn == nil || fn.Body == nil {
-		return out, nil
-	}
-
 	marker := "/server/" + prov + "/"
 
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		if pkg := handlerCallPkg(n, aliases, marker); pkg != "" {
-			out[pkg] = true
-		}
+	for _, fn := range factoryFuncs(file) {
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if pkg := handlerCallPkg(n, aliases, marker); pkg != "" {
+				out[pkg] = true
+			}
 
-		return true
-	})
+			return true
+		})
+	}
 
 	return out, nil
 }

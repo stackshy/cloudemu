@@ -103,21 +103,55 @@ func (*Handler) Matches(r *http.Request) bool {
 	return isJSONRequest(r) || isQueryRequest(r)
 }
 
-// ServeHTTP parses the URL path for the operation name and dispatches.
+// ServeHTTP picks the protocol and operation with cloudwatchOp and dispatches.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	decodeRequestBody(r)
 
+	op, proto, err := cloudwatchOp(r)
+
+	switch proto {
+	case protoJSON:
+		h.serveJSON(w, r, op)
+	case protoQuery:
+		h.serveQuery(w, r, op, err)
+	case protoCBOR:
+		h.serveCBOR(w, r, op)
+	}
+}
+
+// protocol is the wire protocol of one CloudWatch request.
+type protocol int
+
+const (
+	protoCBOR protocol = iota
+	protoJSON
+	protoQuery
+)
+
+// cloudwatchOp returns the operation and protocol of r, in the order
+// ServeHTTP has always used: awsJson1_0 (X-Amz-Target) unless the request is
+// rpc-v2-cbor, then the query protocol (form Action), then rpc-v2-cbor (the
+// operation in the URL path). Both dispatch and IAMChecks call it, so the
+// action the gate authorizes is the one that runs. err is the form parse
+// error of a query request. Call it after decodeRequestBody.
+func cloudwatchOp(r *http.Request) (op string, proto protocol, err error) {
 	if r.Header.Get(protocolHeader) != protocolValue && isJSONRequest(r) {
-		h.serveJSON(w, r)
-		return
+		return jsonOperation(r), protoJSON, nil
 	}
 
 	if isQueryRequest(r) {
-		h.serveQuery(w, r)
-		return
+		if err := r.ParseForm(); err != nil {
+			return "", protoQuery, err
+		}
+
+		return r.Form.Get("Action"), protoQuery, nil
 	}
 
-	op := extractOperation(r.URL.Path)
+	return extractOperation(r.URL.Path), protoCBOR, nil
+}
+
+// serveCBOR handles a CloudWatch rpc-v2-cbor request.
+func (h *Handler) serveCBOR(w http.ResponseWriter, r *http.Request, op string) {
 	if op == "" {
 		writeCBORError(w, http.StatusBadRequest, "InvalidRequest", "missing operation in path")
 		return
@@ -287,3 +321,7 @@ func writeDriverErr(w http.ResponseWriter, err error) {
 		writeCBORError(w, http.StatusInternalServerError, "InternalError", err.Error())
 	}
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "cloudwatch" }

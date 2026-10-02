@@ -393,3 +393,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(v)
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "eks" }
