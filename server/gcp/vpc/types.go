@@ -141,7 +141,7 @@ type subnetworkListResponse struct {
 type firewallRequest struct {
 	Name                  string             `json:"name"`
 	Network               string             `json:"network,omitempty"`
-	Description           string             `json:"description,omitempty"`
+	Description           *string            `json:"description,omitempty"`
 	Priority              *int               `json:"priority,omitempty"`
 	Direction             string             `json:"direction,omitempty"`
 	Allowed               []firewallRule     `json:"allowed,omitempty"`

@@ -95,8 +95,8 @@ func TestGAPICClusterWithNumericEnums(t *testing.T) {
 		t.Fatalf("GetCluster: %v", err)
 	}
 
-	// A cluster created without a rebalanceConfig reports the NO_REBALANCE
-	// default; MODE_UNSPECIFIED (0) is omitted on the wire, so it defaults too.
+	// A cluster created without a rebalanceConfig reports none back;
+	// MODE_UNSPECIFIED (0) is omitted on the wire, so it reads as unset too.
 	defOp, err := c.CreateCluster(ctx, &managedkafkapb.CreateClusterRequest{
 		Parent: parent, ClusterId: "gapic2",
 		Cluster: gapicCluster(managedkafkapb.RebalanceConfig_MODE_UNSPECIFIED),
@@ -106,7 +106,7 @@ func TestGAPICClusterWithNumericEnums(t *testing.T) {
 	}
 
 	def, err := defOp.Wait(ctx)
-	if err != nil || def.GetRebalanceConfig().GetMode() != managedkafkapb.RebalanceConfig_NO_REBALANCE {
+	if err != nil || def.GetRebalanceConfig() != nil {
 		t.Fatalf("default mode = %v, %v", def.GetRebalanceConfig(), err)
 	}
 
