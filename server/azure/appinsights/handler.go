@@ -111,6 +111,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		cs.AppID = existing.AppID
 		cs.TenantID = existing.TenantID
 		cs.CreationDate = existing.CreationDate
+		cs.Billing = existing.Billing
 	} else {
 		id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeComponent, rp.ResourceName)
 		cs.InstrumentationKey = newInstrumentationKey(id)
@@ -121,12 +122,9 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 
 	h.store.set(cs)
 
-	status := http.StatusOK
-	if !existed {
-		status = http.StatusCreated
-	}
-
-	azurearm.WriteJSON(w, status, toResponse(cs))
+	// Real ARM answers 200 for both create and replace of a component, and
+	// azurerm treats any other status on this PUT as a failure.
+	azurearm.WriteJSON(w, http.StatusOK, toResponse(cs))
 }
 
 // patch handles the ARM Update (HTTP PATCH): tags are replaced wholesale when a

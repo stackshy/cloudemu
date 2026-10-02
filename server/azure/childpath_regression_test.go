@@ -104,8 +104,10 @@ func TestDeferredChildrenNeverReachTheParent(t *testing.T) {
 		{"AZOBS-01", ai, put(ai, `{"location":"westus","kind":"web","tags":{"k":"v"},`+
 			`"properties":{"Application_Type":"web","RetentionInDays":30}}`), []cpExpect{
 			{http.MethodGet, "/currentbillingfeatures", http.StatusOK, `"CurrentBillingFeatures":["Basic"]`},
-			{http.MethodPut, "/currentbillingfeatures", http.StatusNotImplemented, ""},
-			{http.MethodDelete, "/currentbillingfeatures", http.StatusNotImplemented, ""},
+			{http.MethodPut, "/currentbillingfeatures", http.StatusOK, `"Cap":100`},
+			{http.MethodDelete, "/currentbillingfeatures", http.StatusMethodNotAllowed, ""},
+			{http.MethodPut, "/ProactiveDetectionConfigs/x", http.StatusNotImplemented, ""},
+			{http.MethodDelete, "/ProactiveDetectionConfigs/x", http.StatusNotImplemented, ""},
 		}},
 		{"AZAPP-01", env, put(env, cpTagged), []cpExpect{
 			{http.MethodPut, "/daprComponents/d1", http.StatusNotImplemented, ""},
