@@ -56,6 +56,16 @@ AccountEncryptionConfig is an OPTIONAL Azure-specific capability,
 | `AccountEncryption` |  |
 | `SetAccountEncryption` |  |
 
+### AccountServiceSettings
+
+AccountServiceSettings is an OPTIONAL Azure-specific capability, discovered
+
+| Operation | Description |
+| --- | --- |
+| `AccountSetting` | AccountSetting returns the stored document, and false when none is set. |
+| `DeleteAccountSetting` | DeleteAccountSetting removes the document and reports whether it existed. |
+| `SetAccountSetting` | SetAccountSetting replaces the account's kind document and stamps its |
+
 ### AzureBlobExtensions
 
 AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,

@@ -210,8 +210,11 @@ type Mock struct {
 	// configuration (Properties.Encryption), for the AccountEncryptionConfig
 	// capability. Kept separate from bucketAttrs so that struct stays small.
 	accountEncryption *memstore.Store[driver.AccountEncryption]
-	opts              *config.Options
-	monitoring        mondriver.Monitoring
+	// acctSettings holds the account-level settings documents (queue, table
+	// and file service properties, management policy) keyed account/kind.
+	acctSettings *memstore.Store[driver.AccountSetting]
+	opts         *config.Options
+	monitoring   mondriver.Monitoring
 	// eventgrid, when wired, receives a Microsoft.Storage.BlobCreated/BlobDeleted
 	// event on every blob write/delete so an Event Grid system-topic subscription
 	// for this account can deliver it. nil in library/typed use, where blob writes
@@ -286,6 +289,7 @@ func New(opts *config.Options) *Mock {
 		accountKeys:       memstore.New[[]driver.AccountKey](),
 		blobServiceProps:  memstore.New[driver.BlobServiceProperties](),
 		accountEncryption: memstore.New[driver.AccountEncryption](),
+		acctSettings:      memstore.New[driver.AccountSetting](),
 		opts:              opts,
 	}
 }

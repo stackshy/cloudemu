@@ -17009,6 +17009,24 @@
         ]
       },
       {
+        "name": "AccountServiceSettings",
+        "doc": "AccountServiceSettings is an OPTIONAL Azure-specific capability, discovered",
+        "operations": [
+          {
+            "name": "AccountSetting",
+            "doc": "AccountSetting returns the stored document, and false when none is set."
+          },
+          {
+            "name": "DeleteAccountSetting",
+            "doc": "DeleteAccountSetting removes the document and reports whether it existed."
+          },
+          {
+            "name": "SetAccountSetting",
+            "doc": "SetAccountSetting replaces the account's kind document and stamps its"
+          }
+        ]
+      },
+      {
         "name": "AzureBlobExtensions",
         "doc": "AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,",
         "operations": [

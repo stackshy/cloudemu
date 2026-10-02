@@ -21,6 +21,12 @@
 //	                                       (versioning/soft-delete/change-feed/CORS)
 //	PUT/GET/PATCH/DELETE .../blobServices/default/containers/{c} : blob containers
 //	GET    .../blobServices/default/containers : list containers
+//	GET/PUT .../{queue,table,file}Services/default : service properties
+//	GET/PUT/DELETE .../managementPolicies/default : lifecycle management policy
+//
+// Every other child path is answered without touching the account: child
+// types real Azure has read as empty or not found and their writes are 501,
+// anything else is 404 InvalidResourceType.
 //
 // Create is a long-running operation in real Azure; the emulator completes it
 // synchronously by returning 200 with the resource body inline so the SDK's LRO
@@ -106,6 +112,7 @@ type Handler struct {
 	keys       storagedriver.StorageAccountKeys      // nil when the driver doesn't expose access keys
 	blobSvc    storagedriver.BlobServiceConfig       // nil when the driver doesn't expose blob service properties
 	encryption storagedriver.AccountEncryptionConfig // nil when the driver doesn't expose account encryption
+	settings   storagedriver.AccountServiceSettings  // nil when the driver doesn't keep account settings
 }
 
 // New returns a storage-account handler backed by b.
@@ -133,6 +140,10 @@ func New(b storagedriver.Bucket) *Handler {
 
 	if e, ok := b.(storagedriver.AccountEncryptionConfig); ok {
 		h.encryption = e
+	}
+
+	if st, ok := b.(storagedriver.AccountServiceSettings); ok {
+		h.settings = st
 	}
 
 	return h
@@ -206,6 +217,13 @@ func (h *Handler) serveNonAccountRoute(w http.ResponseWriter, r *http.Request, r
 		return true
 	}
 
+	// An extension resource (…/storageAccounts/{name}/providers/…) that no
+	// extension handler claimed is never the account.
+	if rp.IsExtension() {
+		azurearm.WriteExtensionNotImplemented(w, rp)
+		return true
+	}
+
 	if route, ok := h.subResourceRoutes()[strings.ToLower(rp.SubResource)]; ok {
 		route(w, r, rp)
 		return true
@@ -213,9 +231,36 @@ func (h *Handler) serveNonAccountRoute(w http.ResponseWriter, r *http.Request, r
 
 	// POST .../storageAccounts/{name}/{action}: key management (listKeys,
 	// regenerateKey). These carry a sub-resource action segment.
-	if r.Method == http.MethodPost && rp.SubResource != "" {
+	if r.Method == http.MethodPost && rp.SubResource != "" && rp.SubResourceName == "" {
 		h.serveAction(w, r, rp)
 		return true
+	}
+
+	// Any other child path is answered here and never falls through to the
+	// account switch, which would overwrite or delete the account.
+	return azurearm.GuardLeaf(w, r, rp, deferredAccountChildren()...)
+}
+
+// deferredAccountChildren are storageAccounts child types real Azure has that
+// cloudemu does not model: reads are empty or not found, writes are 501.
+func deferredAccountChildren() []string {
+	return []string{
+		"inventoryPolicies", "objectReplicationPolicies", "privateEndpointConnections",
+		"privateLinkResources", "encryptionScopes", "localUsers",
+		"networkSecurityPerimeterConfigurations", "storageTaskAssignments",
+	}
+}
+
+// isDeferredAccountAction reports whether action is a storageAccounts POST
+// action real Azure has that cloudemu does not model.
+func isDeferredAccountAction(action string) bool {
+	for _, a := range []string{
+		"failover", "listAccountSas", "listServiceSas", "restoreBlobRanges",
+		"revokeUserDelegationKeys", "hnsonmigration", "aborthnsonmigration", "startAccountMigration",
+	} {
+		if strings.EqualFold(a, action) {
+			return true
+		}
 	}
 
 	return false
@@ -223,10 +268,14 @@ func (h *Handler) serveNonAccountRoute(w http.ResponseWriter, r *http.Request, r
 
 // subResourceRoutes maps a lower-cased account sub-resource segment
 // (…/storageAccounts/{name}/{segment}/…) to its handler. A segment with no row
-// falls through to the POST actions or the account switch.
+// goes to the POST actions or the child guard.
 func (h *Handler) subResourceRoutes() map[string]func(http.ResponseWriter, *http.Request, *azurearm.ResourcePath) {
 	return map[string]func(http.ResponseWriter, *http.Request, *azurearm.ResourcePath){
-		"blobservices": h.serveBlobServiceRoute,
+		"blobservices":       h.serveBlobServiceRoute,
+		kindQueueServices:    h.serveServiceSettings,
+		kindTableServices:    h.serveServiceSettings,
+		kindFileServices:     h.serveServiceSettings,
+		"managementpolicies": h.serveManagementPolicy,
 	}
 }
 
@@ -290,7 +339,12 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp *azurea
 	case "regeneratekey":
 		h.regenerateKey(w, r, rp)
 	default:
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "unknown action "+rp.SubResource)
+		if isDeferredAccountAction(rp.SubResource) {
+			azurearm.WriteChildNotImplemented(w, rp)
+			return
+		}
+
+		azurearm.WriteUnknownType(w, r, rp)
 	}
 }
 
