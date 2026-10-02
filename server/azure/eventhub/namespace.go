@@ -1,6 +1,7 @@
 package eventhub
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"maps"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 func (h *Handler) serveNamespace(w http.ResponseWriter, r *http.Request, ep ehPath) {
@@ -179,6 +181,28 @@ func (h *Handler) deleteNamespace(w http.ResponseWriter, ep ehPath) {
 	h.mu.Unlock()
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// PurgeResourceGroup deletes every namespace recorded under the resource
+// group, with its event hubs, consumer groups and authorization rules (all held
+// on the namespace record), backing the resource-group cascade.
+func (h *Handler) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for _, key := range h.namespaces.Keys() {
+		ns, ok := h.namespaces.Get(key)
+		if !ok {
+			continue
+		}
+
+		sc := scope.Scope{Subscription: ns.Subscription, ResourceGroup: ns.ResourceGroup}
+		if sc.InResourceGroup(subscription, resourceGroup) {
+			h.namespaces.Delete(key)
+		}
+	}
+
+	return nil
 }
 
 func (h *Handler) listNamespaces(w http.ResponseWriter, r *http.Request, ep ehPath) {

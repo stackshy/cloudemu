@@ -20,6 +20,7 @@
 package keyvault
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -35,6 +36,12 @@ type VaultARMHandler struct {
 // NewVaultARM returns a Key Vault ARM (control-plane) handler backed by v.
 func NewVaultARM(v secretsdriver.KeyVaultVaults) *VaultARMHandler {
 	return &VaultARMHandler{vaults: v}
+}
+
+// PurgeResourceGroup deletes every vault in the resource group, with its access
+// policies, secrets, keys and certificates, backing the resource-group cascade.
+func (h *VaultARMHandler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	return azurearm.PurgeVia(ctx, h.vaults, subscription, resourceGroup)
 }
 
 // Matches claims ARM URLs targeting Microsoft.KeyVault/vaults. The provider name

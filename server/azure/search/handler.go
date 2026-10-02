@@ -10,6 +10,7 @@
 package search
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -40,6 +41,12 @@ type ControlHandler struct {
 // NewControl returns a control-plane handler backed by svc.
 func NewControl(svc srchdriver.SearchControl) *ControlHandler {
 	return &ControlHandler{svc: svc}
+}
+
+// PurgeResourceGroup deletes every search service in the resource group, with
+// its keys, links and data-plane objects, backing the resource-group cascade.
+func (h *ControlHandler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	return azurearm.PurgeVia(ctx, h.svc, subscription, resourceGroup)
 }
 
 // Matches claims Microsoft.Search/searchServices ARM paths.

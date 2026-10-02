@@ -115,6 +115,12 @@ func New(fn sdrv.Serverless) *Handler {
 	return &Handler{fn: fn}
 }
 
+// PurgeResourceGroup deletes every site and App Service plan in the resource
+// group, backing the resource-group cascade.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	return azurearm.PurgeVia(ctx, h.fn, subscription, resourceGroup)
+}
+
 // siteStore returns the Azure site surface when the backend provides it.
 func (h *Handler) siteStore() (azureFunctionApps, bool) {
 	s, ok := h.fn.(azureFunctionApps)

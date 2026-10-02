@@ -12,8 +12,10 @@ package cosmospostgresql
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	cpgdriver "github.com/stackshy/cloudemu/v2/services/cosmospostgresql/driver"
 )
@@ -26,6 +28,27 @@ type Handler struct {
 // New returns a Cosmos DB for PostgreSQL handler backed by db.
 func New(db cpgdriver.CosmosPostgreSQL) *Handler {
 	return &Handler{db: db}
+}
+
+// PurgeResourceGroup deletes every cluster in the resource group, with its
+// nodes, roles, firewall rules and configurations, backing the resource-group
+// cascade. Clusters record only their resource group (single estate).
+func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup string) error {
+	clusters, err := h.db.ListClustersByResourceGroup(ctx, resourceGroup)
+	if err != nil {
+		return err
+	}
+
+	var errs []error
+
+	for i := range clusters {
+		if err := h.db.DeleteCluster(ctx, clusters[i].ResourceGroup, clusters[i].Name); err != nil &&
+			!cerrors.IsNotFound(err) {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 // Matches claims ARM Microsoft.DBforPostgreSQL/serverGroupsv2 paths, the

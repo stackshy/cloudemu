@@ -2,11 +2,13 @@ package functions
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // AppServicePlan is an Azure App Service plan (Microsoft.Web/serverfarms), the
@@ -180,6 +182,54 @@ func (m *Mock) DeleteAppServicePlan(_ context.Context, subscription, resourceGro
 	m.plans.Delete(planKey(subscription, resourceGroup, name))
 
 	return nil
+}
+
+// PurgeResourceGroup deletes every site (function app or web app) and then
+// every App Service plan recorded under the resource group. Sites go first so a
+// plan is no longer referenced when it is deleted. A plan still referenced by a
+// site in another resource group stays in place and is reported, as the real
+// Azure delete of that plan fails. It backs the ARM resource-group delete
+// cascade.
+func (m *Mock) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	sites, _ := m.ListSiteMeta(ctx, "", "")
+
+	var errs []error
+
+	for i := range sites {
+		s := &sites[i]
+		if !inGroup(s.Subscription, s.ResourceGroup, subscription, resourceGroup) {
+			continue
+		}
+
+		if err := m.DeleteFunctionScoped(ctx, s.Subscription, s.ResourceGroup, s.Name); err != nil &&
+			!cerrors.IsNotFound(err) {
+			errs = append(errs, err)
+			continue
+		}
+
+		// A site with no deployed function record is not removed above.
+		_ = m.DeleteSiteMeta(ctx, s.Subscription, s.ResourceGroup, s.Name)
+	}
+
+	for _, p := range m.plans.SortedValues() {
+		if !inGroup(p.Subscription, p.ResourceGroup, subscription, resourceGroup) {
+			continue
+		}
+
+		if err := m.DeleteAppServicePlan(ctx, p.Subscription, p.ResourceGroup, p.Name); err != nil &&
+			!cerrors.IsNotFound(err) {
+			errs = append(errs, err)
+		}
+	}
+
+	return stderrors.Join(errs...)
+}
+
+// inGroup reports whether a record's subscription and resource group fall in
+// the purged group. Names compare case-insensitively; an empty subscription on
+// either side matches, as the emulator serves a single estate.
+func inGroup(recSub, recRG, subscription, resourceGroup string) bool {
+	return scope.Scope{Subscription: recSub, ResourceGroup: recRG}.InResourceGroup(subscription, resourceGroup)
 }
 
 // planAssignedSite returns the name of a site still assigned to the named plan
