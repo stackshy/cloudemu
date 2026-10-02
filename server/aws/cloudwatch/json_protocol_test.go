@@ -446,3 +446,39 @@ func TestJSONProtocolEmptyCollections(t *testing.T) {
 		t.Fatalf("empty body: %d %s", r.status, r.raw)
 	}
 }
+
+// TestJSONProtocolSafeHeaders checks that every JSON response, success or
+// error, is typed as awsJson1_0 with nosniff, so a request value reflected in
+// the body is never sniffed as HTML.
+func TestJSONProtocolSafeHeaders(t *testing.T) {
+	ts := newJSONServer(t)
+
+	tests := []struct {
+		name   string
+		op     string
+		body   string
+		status int
+	}{
+		{name: "success", op: "DescribeAlarms", body: `{}`, status: http.StatusOK},
+		{name: "reflected error", op: "GetDashboard", body: `{"DashboardName":"<script>alert(1)</script>"}`, status: http.StatusNotFound},
+		{name: "unknown operation", op: "<img src=x>", body: `{}`, status: http.StatusBadRequest},
+		{name: "malformed json", op: "DescribeAlarms", body: `{"x":`, status: http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := jsonCall(t, ts, tt.op, tt.body)
+			if r.status != tt.status {
+				t.Fatalf("status = %d, want %d: %s", r.status, tt.status, r.raw)
+			}
+
+			if ct := r.header.Get("Content-Type"); ct != "application/x-amz-json-1.0" {
+				t.Fatalf("Content-Type = %q, want application/x-amz-json-1.0", ct)
+			}
+
+			if v := r.header.Get("X-Content-Type-Options"); v != "nosniff" {
+				t.Fatalf("X-Content-Type-Options = %q, want nosniff", v)
+			}
+		})
+	}
+}

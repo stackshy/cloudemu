@@ -427,7 +427,7 @@ func mergeRawJSON(existing, incoming json.RawMessage) json.RawMessage {
 		existingObj = map[string]json.RawMessage{}
 	}
 
-	merged := make(map[string]json.RawMessage, len(existingObj)+len(incomingObj))
+	merged := make(map[string]json.RawMessage, len(existingObj))
 	for k, v := range existingObj {
 		merged[k] = v
 	}

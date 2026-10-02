@@ -1,20 +1,33 @@
 package cognito
 
 import (
+	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/services/cognito/driver"
 )
 
-// Password handling. Only a salted SHA-256 digest is kept; the plaintext is
-// never stored or logged.
+// Password handling. Only a salted PBKDF2-SHA256 hash is kept; the plaintext
+// is never stored or logged.
 const (
 	saltLen              = 16
 	generatedPasswordLen = 16
 	maxPasswordLen       = 256
+)
+
+// Stored hashes look like "pbkdf2-sha256$<iterations>$<hex key>". The prefix
+// tells them apart from hashes written before it existed (older snapshots),
+// which are a bare hex SHA-256 of salt+password, so a sign-in flow can verify
+// both. The iteration count is modest because this is an emulator holding test
+// credentials, and it keeps tests fast.
+const (
+	pbkdf2Prefix     = "pbkdf2-sha256$"
+	pbkdf2Iterations = 10000
+	pbkdf2KeyLen     = 32
 )
 
 // policySymbols is the set of special characters Cognito counts toward the
@@ -76,21 +89,24 @@ func generatePassword(pp driver.PasswordPolicy) string {
 	return b.String()
 }
 
-// hashPassword returns a fresh random salt and the SHA-256 digest of salt+pw,
-// both hex encoded.
+// hashPassword returns a fresh random salt and the PBKDF2-SHA256 hash of the
+// password under it, both encoded for storage.
 //
-//nolint:gocritic // unnamedResult: (salt, digest) reads clearly at the call sites
+//nolint:gocritic // unnamedResult: (salt, hash) reads clearly at the call sites
 func hashPassword(pw string) (string, string) {
 	raw := make([]byte, saltLen)
 	_, _ = rand.Read(raw)
 
 	salt := hex.EncodeToString(raw)
 
-	return salt, digest(salt, pw)
+	return salt, pbkdf2Hash(salt, pw, pbkdf2Iterations)
 }
 
-func digest(salt, pw string) string {
-	sum := sha256.Sum256([]byte(salt + pw))
+func pbkdf2Hash(salt, pw string, iter int) string {
+	key, err := pbkdf2.Key(sha256.New, pw, []byte(salt), iter, pbkdf2KeyLen)
+	if err != nil {
+		return ""
+	}
 
-	return hex.EncodeToString(sum[:])
+	return pbkdf2Prefix + strconv.Itoa(iter) + "$" + hex.EncodeToString(key)
 }
