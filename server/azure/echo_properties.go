@@ -86,19 +86,30 @@ func normalizeOverlayKey(id string) string {
 	return id[:start] + strings.ToLower(id[start:end]) + id[end:]
 }
 
-// evict drops any entry for id. Called when a resource is deleted so the
-// store does not grow without bound across create/delete cycles.
-func (o *propertyOverlay) evict(id string) {
+// evictTree drops the entry for id and every entry nested under it. Called when
+// a resource is deleted, so a resource recreated with the same name does not
+// inherit the deleted one's unmodeled properties: deleting a resource group
+// clears every resource in it, and deleting a resource clears its
+// sub-resources. The comparison is fully lowercased and bounded by a trailing
+// slash, so deleting rg1 never touches rg10. normalizeOverlayKey is not used
+// because its marker is case-sensitive and would miss a /resourcegroups/ path.
+func (o *propertyOverlay) evictTree(id string) {
 	if id == "" {
 		return
 	}
 
-	id = normalizeOverlayKey(id)
+	target := strings.ToLower(strings.TrimRight(id, "/"))
+	prefix := target + "/"
 
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	delete(o.store, id)
+	for key := range o.store {
+		lk := strings.ToLower(key)
+		if lk == target || strings.HasPrefix(lk, prefix) {
+			delete(o.store, key)
+		}
+	}
 }
 
 // echoUnmodeledProperties wraps next so that unmodeled properties on ARM
@@ -108,25 +119,34 @@ func (o *propertyOverlay) evict(id string) {
 // rewritten. Non-JSON responses, error responses, and responses without a
 // top-level id/properties pair pass through untouched.
 func echoUnmodeledProperties(next http.Handler, overlay *propertyOverlay) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/subscriptions/") || isTagsAtScope(r.URL.Path) {
-			next.ServeHTTP(w, r)
-			return
-		}
+	return &overlayHandler{next: next, overlay: overlay}
+}
 
-		reqProps := readRequestProperties(r)
+// overlayHandler is the handler echoUnmodeledProperties returns: next wrapped
+// by the unmodeled-property overlay.
+type overlayHandler struct {
+	next    http.Handler
+	overlay *propertyOverlay
+}
 
-		rec := &captureWriter{ResponseWriter: w}
-		next.ServeHTTP(rec, r)
+func (h *overlayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.URL.Path, "/subscriptions/") || isTagsAtScope(r.URL.Path) {
+		h.next.ServeHTTP(w, r)
+		return
+	}
 
-		if r.Method == http.MethodDelete && rec.status >= 200 && rec.status < 300 {
-			overlay.evict(resourceIDFromPath(r.URL.Path))
-		}
+	reqProps := readRequestProperties(r)
 
-		if !rec.rewrite(w, r, reqProps, overlay) {
-			rec.flush(w)
-		}
-	})
+	rec := &captureWriter{ResponseWriter: w}
+	h.next.ServeHTTP(rec, r)
+
+	if r.Method == http.MethodDelete && rec.status >= 200 && rec.status < 300 {
+		h.overlay.evictTree(deletedIDFromPath(r.URL.Path))
+	}
+
+	if !rec.rewrite(w, r, reqProps, h.overlay) {
+		rec.flush(w)
+	}
 }
 
 // isTagsAtScope reports whether path targets the Tags resource provider
@@ -141,6 +161,26 @@ func isTagsAtScope(path string) bool {
 
 	return len(trimmed) > len(suffix) &&
 		strings.EqualFold(trimmed[len(trimmed)-len(suffix):], suffix)
+}
+
+// deletedIDFromPath returns the id a DELETE of urlPath removes: a resource or
+// named sub-resource (see resourceIDFromPath), or a resource group
+// (/subscriptions/{sub}/resourceGroups/{rg}, either spelling). It returns ""
+// for any other path, in which case nothing is evicted.
+func deletedIDFromPath(urlPath string) string {
+	if id := resourceIDFromPath(urlPath); id != "" {
+		return id
+	}
+
+	const rgPathParts = 4
+
+	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
+	if len(parts) == rgPathParts && strings.EqualFold(parts[0], "subscriptions") &&
+		strings.EqualFold(parts[2], "resourceGroups") && parts[1] != "" && parts[3] != "" {
+		return "/" + strings.Join(parts, "/")
+	}
+
+	return ""
 }
 
 // resourceIDFromPath reconstructs the ARM resource id from a request path so a

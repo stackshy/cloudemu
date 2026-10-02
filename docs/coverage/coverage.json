@@ -183,6 +183,9 @@
         "name": "ListMaintenanceConfigs"
       },
       {
+        "name": "PurgeResourceGroup"
+      },
+      {
         "name": "RotateClusterCertificates"
       },
       {
@@ -4328,6 +4331,15 @@
         ]
       },
       {
+        "name": "AzureResourceGroupPurger",
+        "doc": "AzureResourceGroupPurger is an optional Azure-only capability that tears down",
+        "operations": [
+          {
+            "name": "PurgeComputeResourceGroup"
+          }
+        ]
+      },
+      {
         "name": "AzureSSHKeyUpdater",
         "doc": "AzureSSHKeyUpdater is an optional Azure-only capability for the sshPublicKeys",
         "operations": [
@@ -4360,6 +4372,15 @@
           {
             "name": "UpdateInstance",
             "doc": "UpdateInstance overwrites the mutable configuration of an existing"
+          }
+        ]
+      },
+      {
+        "name": "AzureVMDeleter",
+        "doc": "AzureVMDeleter is an optional Azure-only capability that removes VMs",
+        "operations": [
+          {
+            "name": "DeleteInstances"
           }
         ]
       },

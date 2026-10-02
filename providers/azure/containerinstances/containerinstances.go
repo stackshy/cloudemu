@@ -21,6 +21,12 @@ import (
 // Compile-time check that Mock implements driver.ContainerInstances.
 var _ driver.ContainerInstances = (*Mock)(nil)
 
+// Compile-time check for the resource-group purge the ARM wire handler reaches
+// by type assertion.
+var _ interface {
+	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+} = (*Mock)(nil)
+
 const (
 	// ACI restart policies. Never runs the containers to completion once;
 	// OnFailure re-runs them while a container exits non-zero; Always (the ACI
@@ -249,6 +255,24 @@ func (m *Mock) DeleteContainerGroup(ctx context.Context, subscription, resourceG
 
 	m.stopWorkload(ctx, data)
 	m.groups.Delete(key)
+
+	return nil
+}
+
+// PurgeResourceGroup deletes every container group recorded under the given
+// subscription and resource group, tearing down any engine workload. It backs
+// the ARM resource-group delete cascade. An unscoped group (created through
+// the portable API) is never selected.
+func (m *Mock) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for key, data := range m.groups.All() {
+		if data.group.Scope.InResourceGroup(subscription, resourceGroup) {
+			m.stopWorkload(ctx, data)
+			m.groups.Delete(key)
+		}
+	}
 
 	return nil
 }
