@@ -601,7 +601,12 @@ func New(d Drivers) *server.Server {
 	// instance list), letting every other /v1/projects/{p}/instances request fall
 	// through to Cloud SQL below.
 	if d.Spanner != nil {
-		srv.Register(spannersrv.New(d.Spanner))
+		spannerH := spannersrv.New(d.Spanner)
+		if d.CloudSQL != nil {
+			spannerH.SetSharedPath()
+		}
+
+		srv.Register(spannerH)
 	}
 
 	if d.CloudSQL != nil {
@@ -695,6 +700,10 @@ func New(d Drivers) *server.Server {
 	if d.GKEBackup != nil {
 		gkebackupH := gkebackupsrv.New(d.GKEBackup)
 		gkebackupH.SetOperationRegistry(opsReg)
+
+		if d.BackupDR != nil {
+			gkebackupH.SetSharedPath()
+		}
 		srv.Register(gkebackupH)
 	}
 
@@ -759,6 +768,10 @@ func New(d Drivers) *server.Server {
 	if d.CloudIDS != nil {
 		cloudidsH := cloudidssrv.New(d.CloudIDS)
 		cloudidsH.SetOperationRegistry(opsReg)
+
+		if d.VertexAI != nil {
+			cloudidsH.SetSharedPath()
+		}
 		srv.Register(cloudidsH)
 	}
 
@@ -856,7 +869,12 @@ func New(d Drivers) *server.Server {
 	// unconstrained; registered before Firestore's permissive prefix. CRUD is
 	// synchronous REST: no operation registry is wired.
 	if d.Dataform != nil {
-		srv.Register(dataformsrv.New(d.Dataform))
+		dataformH := dataformsrv.New(d.Dataform)
+		if d.ArtifactRegistry != nil {
+			dataformH.SetSharedPath()
+		}
+
+		srv.Register(dataformH)
 	}
 
 	// API Gateway matches /{v1beta,v1}/projects/{p}/locations/{l}/{apis|gateways}
@@ -988,6 +1006,10 @@ func New(d Drivers) *server.Server {
 	// /v1/projects/ prefix.
 	filestoreH := filestoresrv.New(d.Clock)
 	filestoreH.SetOperationRegistry(opsReg)
+
+	if d.Memorystore != nil {
+		filestoreH.SetSharedPath()
+	}
 	srv.Register(filestoreH)
 
 	// Memorystore matches /v1/projects/{p}/locations/{l}/{instances|operations},
@@ -999,6 +1021,7 @@ func New(d Drivers) *server.Server {
 	// of it; its selective Matches lets Memorystore traffic fall through here.
 	if d.Memorystore != nil {
 		msH := memorystoresrv.New(d.Memorystore)
+		msH.SetSharedPath()
 		msH.SetOperationRegistry(opsReg)
 		srv.Register(msH)
 	}

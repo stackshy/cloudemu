@@ -28,12 +28,15 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
 
 const (
 	pathPrefix       = "/v1/projects/"
 	publishersPrefix = "/v1/publishers/"
+	v1beta1Prefix    = "/v1beta1/projects/"
+	publishersColl   = "publishers"
 	locationsSeg     = "locations"
 	maxBodyBytes     = 6 << 20
 
@@ -100,7 +103,15 @@ func New(svc driver.VertexAI) *Handler {
 // Matches claims the Vertex collection URLs and the publishers generateContent
 // surface.
 func (*Handler) Matches(r *http.Request) bool {
+	if sharedpath.Yield(r, sharedpath.AIPlatform, sharedpath.IntrusionDetection) {
+		return false
+	}
+
 	if strings.HasPrefix(r.URL.Path, publishersPrefix) {
+		return true
+	}
+
+	if _, _, ok := projectPublisherModel(r.URL.Path); ok {
 		return true
 	}
 
@@ -198,6 +209,12 @@ func splitActionPair(seg string) (name, action string) {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, publishersPrefix) {
 		h.servePublishers(w, r)
+
+		return
+	}
+
+	if model, action, ok := projectPublisherModel(r.URL.Path); ok {
+		h.servePublisherModel(w, r, model, action)
 
 		return
 	}

@@ -46,6 +46,7 @@ import (
 
 	sp "google.golang.org/api/spanner/v1"
 
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	spdriver "github.com/stackshy/cloudemu/v2/services/spanner/driver"
 )
@@ -79,6 +80,10 @@ func mapWire[T any, W any](items []T, conv func(*T) W) []W {
 // Handler serves Spanner admin requests against a spanner driver.
 type Handler struct {
 	db spdriver.Spanner
+
+	// shared turns on the rules for a server that also mounts Cloud SQL; see
+	// shared.go.
+	shared bool
 }
 
 // New returns a Spanner admin handler backed by db.
@@ -99,16 +104,18 @@ func (h *Handler) Matches(r *http.Request) bool {
 	parts := trimParts(r.URL.Path)
 
 	const idxResource = 1
-	if len(parts) <= idxResource || parts[idxResource] != segInstances {
+	if len(parts) <= idxResource || parts[idxResource] != segInstances ||
+		sharedpath.Yield(r, sharedpath.Spanner, sharedpath.SQLAdmin) {
 		return false
 	}
 
-	// Collection: /v1/projects/{p}/instances: list is Spanner's; a create POST
-	// is Spanner's only when the body carries the CreateInstanceRequest shape.
+	// Collection: /v1/projects/{p}/instances: a list is Spanner's unless it
+	// is shared with Cloud SQL (see shared.go); a create POST is Spanner's only
+	// when the body carries the CreateInstanceRequest shape.
 	if len(parts) == idxResource+1 {
 		switch r.Method {
 		case http.MethodGet:
-			return true
+			return h.matchesSharedList(r, parts[0])
 		case http.MethodPost:
 			return bodyLooksLikeSpanner(r)
 		default:
@@ -120,12 +127,13 @@ func (h *Handler) Matches(r *http.Request) bool {
 	// instance, so Cloud SQL's own instance traffic falls through.
 	const idxInstanceID = 2
 
-	instanceID := parts[idxInstanceID]
+	instanceID, _, _ := strings.Cut(parts[idxInstanceID], ":")
 	if instanceID == "" {
 		return false
 	}
 
-	return h.ownsInstance(r, parts[0], instanceID)
+	return h.ownsInstance(r, parts[0], instanceID) ||
+		(h.shared && (sharedpath.Is(r, sharedpath.Spanner) || spannerOnlySub(r, parts)))
 }
 
 // ownsInstance reports whether this Spanner store holds the named instance.
