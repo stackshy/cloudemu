@@ -91,7 +91,7 @@ func (h *Handler) deletePackage(w http.ResponseWriter, r *http.Request, rt *rout
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, rt.pkg, nil))
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, nil))
 }
 
 // deleteVersion removes a single version (packages.versions.delete). The version
@@ -113,7 +113,7 @@ func (h *Handler) deleteVersion(w http.ResponseWriter, r *http.Request, rt *rout
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, rt.pkgSubID, nil))
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, nil))
 }
 
 // requireGet writes a 404 (matching the sub-collection's read-only error shape)

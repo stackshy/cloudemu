@@ -90,7 +90,7 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, p *allo
 	}
 
 	info, _ := adb.AlloyDBInstanceInfo(r.Context(), p.clusterID, inst.ID)
-	writeJSON(w, http.StatusOK, h.doneOperation(p, "create-instance", h.toWireInstance(inst, info)))
+	writeJSON(w, http.StatusOK, h.doneOperation(p, "create-instance", instanceTypeURL, h.toWireInstance(inst, info)))
 }
 
 func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, p *alloyPath) {
@@ -163,7 +163,7 @@ func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, p *alloy
 	}
 
 	info, _ := adb.AlloyDBInstanceInfo(r.Context(), p.clusterID, p.subID)
-	writeJSON(w, http.StatusOK, h.doneOperation(p, "update-instance", h.toWireInstance(inst, info)))
+	writeJSON(w, http.StatusOK, h.doneOperation(p, "update-instance", instanceTypeURL, h.toWireInstance(inst, info)))
 }
 
 func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, p *alloyPath) {
@@ -172,7 +172,7 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, p *allo
 		return
 	}
 
-	writeJSON(w, http.StatusOK, h.doneOperation(p, "delete-instance", nil))
+	writeJSON(w, http.StatusOK, h.doneOperation(p, "delete-instance", "", nil))
 }
 
 func (h *Handler) instanceAction(w http.ResponseWriter, r *http.Request, p *alloyPath) {
@@ -199,5 +199,5 @@ func (h *Handler) instanceAction(w http.ResponseWriter, r *http.Request, p *allo
 	}
 
 	info, _ := adb.AlloyDBInstanceInfo(r.Context(), p.clusterID, p.subID)
-	writeJSON(w, http.StatusOK, h.doneOperation(p, p.subAction+"-instance", h.toWireInstance(inst, info)))
+	writeJSON(w, http.StatusOK, h.doneOperation(p, p.subAction+"-instance", instanceTypeURL, h.toWireInstance(inst, info)))
 }

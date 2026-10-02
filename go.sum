@@ -2,6 +2,8 @@ cel.dev/expr v0.25.1 h1:1KrZg61W6TWSxuNZ37Xy49ps13NUovb66QLprthtwi4=
 cel.dev/expr v0.25.1/go.mod h1:hrXvqGP6G6gyx8UAHSHJ5RGk//1Oj5nXQ2NI02Nrsg4=
 cloud.google.com/go v0.123.0 h1:2NAUJwPR47q+E35uaJeYoNhuNEM9kM8SjgRgdeOJUSE=
 cloud.google.com/go v0.123.0/go.mod h1:xBoMV08QcqUGuPW65Qfm1o9Y4zKZBpGS+7bImXLTAZU=
+cloud.google.com/go/alloydb v1.28.0 h1:z2MBLSSMmKS+e6Kx2oCM0Sz9+/6VXQ+AqWDoJ7Vsl8I=
+cloud.google.com/go/alloydb v1.28.0/go.mod h1:kktLNTOKFvYcmfYT2O4SUBt/mv02PmIcMHiXAhSctKo=
 cloud.google.com/go/artifactregistry v1.20.0 h1:j/XQiQfaeTyQeNj3HNk4iDFREVnY/fxkHIjsxpaDs8A=
 cloud.google.com/go/artifactregistry v1.20.0/go.mod h1:0G9wdbGyDFkvrYH+2AlQs9MuTJdbY8Vg45M8VjlI8rc=
 cloud.google.com/go/auth v0.22.0 h1:Xp9wAKkLoeaYb5pYZZoQGz4E9sdPxIbzS3gywZE3ciQ=
@@ -20,6 +22,8 @@ cloud.google.com/go/dataplex v1.28.0 h1:rROI3iqMVI9nXT701ULoFRETQVAOAPC3mPSWFDxX
 cloud.google.com/go/dataplex v1.28.0/go.mod h1:VB+xlYJiJ5kreonXsa2cHPj0A3CfPh/mgiHG4JFhbUA=
 cloud.google.com/go/eventarc v1.18.0 h1:8WWG1/ogInYur1NQjML6EMHQ0ZBzAdMDGlUVpLD56cI=
 cloud.google.com/go/eventarc v1.18.0/go.mod h1:/6SDoqh5+9QNUqCX4/oQcJVK16fG/snHBSXu7lrJtO8=
+cloud.google.com/go/filestore v1.10.3 h1:3KZifUVTqGhNNv6MLeONYth1HjlVM4vDhaH+xrdPljU=
+cloud.google.com/go/filestore v1.10.3/go.mod h1:94ZGyLTx9j+aWKozPQ6Wbq1DuImie/L/HIdGMshtwac=
 cloud.google.com/go/firestore v1.22.0 h1:avooeboIq37vKXobrbPUFhFBxS/c3FqmWoX0xs8dO6E=
 cloud.google.com/go/firestore v1.22.0/go.mod h1:PaM4i7i7ruALSKmlpHXXZaPObcZw0W7ie5UOPr72iTU=
 cloud.google.com/go/functions v1.19.7 h1:7LcOD18euIVGRUPaeCmgO6vfWSLNIsi6STWRQcdANG8=

@@ -403,16 +403,15 @@ func (m *Mock) checkAPIConfigRef(fields map[string]json.RawMessage) error {
 	return nil
 }
 
-// GetOperation returns a (done) long-running operation by name. An unknown name
-// is reported as a done operation: the mock completes synchronously, so any op
-// id an SDK or Terraform poll asks for has already finished.
+// GetOperation returns a recorded (done) long-running operation by name. An
+// operation that was never created is NOT_FOUND, matching real GCP.
 func (m *Mock) GetOperation(_ context.Context, name string) (*agdriver.Operation, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	op, ok := m.operations.Get(name)
 	if !ok {
-		return &agdriver.Operation{Name: name, Done: true}, nil
+		return nil, cerrors.Newf(cerrors.NotFound, "operation %q not found", name)
 	}
 
 	out := op

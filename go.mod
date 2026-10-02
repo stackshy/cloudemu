@@ -3,12 +3,14 @@ module github.com/stackshy/cloudemu/v2
 go 1.25.0
 
 require (
+	cloud.google.com/go/alloydb v1.28.0
 	cloud.google.com/go/artifactregistry v1.20.0
 	cloud.google.com/go/backupdr v1.16.0
 	cloud.google.com/go/bigtable v1.42.0
 	cloud.google.com/go/compute v1.60.0
 	cloud.google.com/go/dataplex v1.28.0
 	cloud.google.com/go/eventarc v1.18.0
+	cloud.google.com/go/filestore v1.10.3
 	cloud.google.com/go/firestore v1.22.0
 	cloud.google.com/go/functions v1.19.7
 	cloud.google.com/go/iam v1.11.0

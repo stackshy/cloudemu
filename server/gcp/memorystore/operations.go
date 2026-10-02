@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/server/gcp/opmeta"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
@@ -50,7 +51,7 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, rt rout
 		return
 	}
 
-	op := h.doneOperation(rt.project, rt.location, "create-"+instanceID, raw)
+	op := h.doneOperation(rt.project, rt.location, opmeta.NewID(h.clock.Now()), raw)
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
@@ -251,7 +252,7 @@ func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, rt route
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt.project, rt.location, "update-"+rt.name, raw))
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt.project, rt.location, opmeta.NewID(h.clock.Now()), raw))
 }
 
 // deleteInstance handles DELETE .../instances/{i}: Delete. The operation
@@ -274,7 +275,7 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, rt rout
 		return
 	}
 
-	op := h.doneOperation(rt.project, rt.location, "delete-"+rt.name, emptyResponse)
+	op := h.doneOperation(rt.project, rt.location, opmeta.NewID(h.clock.Now()), emptyResponse)
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
