@@ -62,6 +62,7 @@ const (
 	segDatabases  = "databases"
 	segOperations = "operations"
 	segDdl        = "ddl"
+	segBackups    = "backups"
 
 	// Path-segment counts below the /v1/projects/ prefix.
 	partsCollection = 2 // {p}/instances
@@ -202,6 +203,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveOperation(w, r)
 	case parts[idxDatabases] == segDatabases:
 		h.serveDatabases(w, r, instanceName(project, parts[2]), parts[partsItem+1:])
+	case len(parts) == partsItem+1 && parts[idxDatabases] == segBackups:
+		h.listBackups(w, r, instanceName(project, parts[2]))
 	default:
 		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unrecognized Spanner path")
 	}

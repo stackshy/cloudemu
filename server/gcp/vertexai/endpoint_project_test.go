@@ -17,29 +17,33 @@ import (
 func TestEndpointCreateUsesPathProject(t *testing.T) {
 	url := newServer(t)
 
-	for name, project := range map[string]string{
-		"other project":  "tf-project",
-		"server project": "mock-project",
+	// v1beta1 (the google-beta provider's base) routes to the same handlers.
+	for _, tc := range []struct{ name, project, version string }{
+		{"other project", "tf-project", "v1"},
+		{"server project", "mock-project", "v1"},
+		{"v1beta1", "beta-project", "v1beta1"},
 	} {
-		t.Run(name, func(t *testing.T) {
+		project := tc.project
+		t.Run(tc.name, func(t *testing.T) {
+			url := url + "/" + tc.version
 			parent := "projects/" + project + "/locations/us-central1"
 			want := parent + "/endpoints/77" + project[:1]
 
-			op := do(t, http.MethodPost, url+"/v1/"+parent+"/endpoints?endpointId=77"+project[:1],
+			op := do(t, http.MethodPost, url+"/"+parent+"/endpoints?endpointId=77"+project[:1],
 				map[string]any{"displayName": "ep"})
 			assert.True(t, strings.HasPrefix(op["name"].(string), parent+"/operations/"), op["name"])
 			assert.Equal(t, want, op["response"].(map[string]any)["name"])
 
-			got := do(t, http.MethodGet, url+"/v1/"+want, nil)
+			got := do(t, http.MethodGet, url+"/"+want, nil)
 			assert.Equal(t, want, got["name"])
 			assert.Equal(t, "ep", got["displayName"])
 
-			do(t, http.MethodPatch, url+"/v1/"+want+"?updateMask=displayName", map[string]any{"displayName": "ep2"})
-			assert.Equal(t, "ep2", do(t, http.MethodGet, url+"/v1/"+want, nil)["displayName"])
+			do(t, http.MethodPatch, url+"/"+want+"?updateMask=displayName", map[string]any{"displayName": "ep2"})
+			assert.Equal(t, "ep2", do(t, http.MethodGet, url+"/"+want, nil)["displayName"])
 
-			do(t, http.MethodDelete, url+"/v1/"+want, nil)
+			do(t, http.MethodDelete, url+"/"+want, nil)
 
-			req, err := http.NewRequest(http.MethodGet, url+"/v1/"+want, http.NoBody)
+			req, err := http.NewRequest(http.MethodGet, url+"/"+want, http.NoBody)
 			require.NoError(t, err)
 
 			resp, err := http.DefaultClient.Do(req)

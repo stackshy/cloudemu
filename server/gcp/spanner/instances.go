@@ -175,3 +175,20 @@ func normalizeMask(mask string) []string {
 
 	return out
 }
+
+// listBackups serves GET .../instances/{i}/backups. The emulator keeps no
+// Spanner backups, so an existing instance lists none (the empty response real
+// Spanner returns); Terraform's force_destroy reads it before deleting.
+func (h *Handler) listBackups(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	if _, err := h.db.GetInstance(r.Context(), name); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, struct{}{})
+}
