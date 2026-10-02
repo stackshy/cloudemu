@@ -6,8 +6,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 
+	"github.com/stackshy/cloudemu/v2/providers/azure/armoverlay"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
 
@@ -17,43 +17,41 @@ import (
 // reads, instead of silently discarding them. Real Azure preserves properties
 // it accepts, and a caller that sets one expects to read it back.
 //
-// The store is per-server: it is created in New alongside the handlers, so the
-// standalone server's reset flow (which rebuilds the whole server) starts each
-// run with an empty overlay.
+// The entries live in a PropertyStore. A served emulator passes the provider's
+// snapshottable store, so they survive a persisted restart; a reset builds a
+// fresh provider and so starts with an empty overlay.
 type propertyOverlay struct {
-	mu    sync.RWMutex
-	store map[string]map[string]any
+	store PropertyStore
 }
 
-func newPropertyOverlay() *propertyOverlay {
-	return &propertyOverlay{store: make(map[string]map[string]any)}
+// PropertyStore holds the overlay entries by resource id.
+// providers/azure/armoverlay.Mock implements it.
+type PropertyStore interface {
+	Capture(id string, props map[string]any)
+	Lookup(id string) map[string]any
+	EvictTree(id string)
+}
+
+// newPropertyOverlay returns an overlay over store; a nil store gets a private
+// in-memory one.
+func newPropertyOverlay(store PropertyStore) *propertyOverlay {
+	if store == nil {
+		store = armoverlay.New(nil)
+	}
+
+	return &propertyOverlay{store: store}
 }
 
 // capture records the unmodeled properties for id, replacing any previous
 // entry. An empty set clears the entry so a resource that no longer carries
 // unmodeled properties (e.g. re-created without them) does not keep stale ones.
 func (o *propertyOverlay) capture(id string, unmodeled map[string]any) {
-	id = normalizeOverlayKey(id)
-
-	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	if len(unmodeled) == 0 {
-		delete(o.store, id)
-		return
-	}
-
-	o.store[id] = unmodeled
+	o.store.Capture(normalizeOverlayKey(id), unmodeled)
 }
 
 // lookup returns the unmodeled properties recorded for id, or nil.
 func (o *propertyOverlay) lookup(id string) map[string]any {
-	id = normalizeOverlayKey(id)
-
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-
-	return o.store[id]
+	return o.store.Lookup(normalizeOverlayKey(id))
 }
 
 // normalizeOverlayKey lowercases the resource-group segment of an ARM resource
@@ -98,18 +96,7 @@ func (o *propertyOverlay) evictTree(id string) {
 		return
 	}
 
-	target := strings.ToLower(strings.TrimRight(id, "/"))
-	prefix := target + "/"
-
-	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	for key := range o.store {
-		lk := strings.ToLower(key)
-		if lk == target || strings.HasPrefix(lk, prefix) {
-			delete(o.store, key)
-		}
-	}
+	o.store.EvictTree(id)
 }
 
 // echoUnmodeledProperties wraps next so that unmodeled properties on ARM

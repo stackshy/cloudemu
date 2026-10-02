@@ -860,11 +860,15 @@ func (m *Mock) PatchInstance(_ context.Context, instanceID string, patch driver.
 		}
 
 		if patch.Tags != nil {
-			armName := inst.Tags[armNameTag]
+			armName, sub := inst.Tags[armNameTag], inst.Tags[subTag]
 			inst.Tags = copyTags(patch.Tags)
 
 			if armName != "" {
 				inst.Tags[armNameTag] = armName
+			}
+
+			if sub != "" {
+				inst.Tags[subTag] = sub
 			}
 		}
 

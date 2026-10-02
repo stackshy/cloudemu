@@ -3,11 +3,16 @@ package persist_test
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	cloudemu "github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/persist"
 	azureiam "github.com/stackshy/cloudemu/v2/providers/azure/iam"
+	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
@@ -203,4 +208,111 @@ func TestRoleAssignmentsSurviveRestoreAzure(t *testing.T) {
 	if len(inUse) != 1 || inUse[0].ID != assignmentID {
 		t.Fatalf("restored reverse lookup = %+v, want the one restored assignment", inUse)
 	}
+}
+
+// TestResourceGroupsSurviveRestoreAzure guards the ARM resource-group store:
+// a group created over the wire must come back after Export, JSON and Restore
+// into a fresh provider, with its tags and location, and a resource inside it
+// must still pass the resource-group gate rather than answer
+// ResourceGroupNotFound.
+func TestResourceGroupsSurviveRestoreAzure(t *testing.T) {
+	ctx := context.Background()
+
+	const (
+		sub   = "00000000-0000-0000-0000-0000000000ab"
+		rgURL = "/subscriptions/" + sub + "/resourceGroups/rg-durable?api-version=2021-04-01"
+		uai   = "/subscriptions/" + sub + "/resourceGroups/rg-durable/providers/" +
+			"Microsoft.ManagedIdentity/userAssignedIdentities/uai-durable?api-version=2023-01-31"
+		vnet = "/subscriptions/" + sub + "/resourceGroups/rg-durable/providers/" +
+			"Microsoft.Network/virtualNetworks/vnet-durable?api-version=2024-05-01"
+	)
+
+	src := cloudemu.NewAzure()
+	srcSrv := httptest.NewServer(azureserver.NewFromProvider(src))
+	t.Cleanup(srcSrv.Close)
+
+	armDo(t, srcSrv.URL, http.MethodPut, rgURL, `{"location":"westeurope","tags":{"env":"prod"}}`, http.StatusCreated)
+	armDo(t, srcSrv.URL, http.MethodPut, uai, `{"location":"westeurope"}`, http.StatusCreated)
+	armDo(t, srcSrv.URL, http.MethodPut, vnet, `{"location":"westeurope","properties":{"addressSpace":`+
+		`{"addressPrefixes":["10.40.0.0/16"]},"privateEndpointVNetPolicies":"Disabled"}}`, http.StatusOK)
+	wantRG := armDo(t, srcSrv.URL, http.MethodGet, rgURL, "", http.StatusOK)
+
+	snap, err := persist.ExportAll(ctx, map[string]persist.Services{"azure": src.SnapshotServices()}, persist.Options{})
+	if err != nil {
+		t.Fatalf("ExportAll: %v", err)
+	}
+
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+
+	var got persist.Snapshot
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal snapshot: %v", err)
+	}
+
+	dst := cloudemu.NewAzure()
+	if err := persist.RestoreAll(ctx, &got, map[string]persist.Services{"azure": dst.SnapshotServices()}); err != nil {
+		t.Fatalf("RestoreAll: %v", err)
+	}
+
+	dstSrv := httptest.NewServer(azureserver.NewFromProvider(dst))
+	t.Cleanup(dstSrv.Close)
+
+	if gotRG := armDo(t, dstSrv.URL, http.MethodGet, rgURL, "", http.StatusOK); gotRG != wantRG {
+		t.Fatalf("restored group = %s, want %s", gotRG, wantRG)
+	}
+
+	var list struct {
+		Value []map[string]any `json:"value"`
+	}
+
+	listURL := "/subscriptions/" + sub + "/resourcegroups?api-version=2021-04-01"
+	if err := json.Unmarshal([]byte(armDo(t, dstSrv.URL, http.MethodGet, listURL, "", http.StatusOK)), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+
+	if len(list.Value) != 1 {
+		t.Fatalf("restored list has %d groups, want 1", len(list.Value))
+	}
+
+	armDo(t, dstSrv.URL, http.MethodGet, uai, "", http.StatusOK)
+
+	// An unmodeled property the client set is still echoed after the restore,
+	// so a Terraform re-plan sees no drift.
+	if got := armDo(t, dstSrv.URL, http.MethodGet, vnet, "", http.StatusOK); !strings.Contains(got,
+		`"privateEndpointVNetPolicies":"Disabled"`) {
+		t.Fatalf("restored vnet lost its echoed property: %s", got)
+	}
+}
+
+// armDo sends one ARM request and returns the response body, failing the test
+// on any status other than want.
+func armDo(t *testing.T, base, method, path, body string, want int) string {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(context.Background(), method, base+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+
+	if resp.StatusCode != want {
+		t.Fatalf("%s %s = %d, want %d: %s", method, path, resp.StatusCode, want, data)
+	}
+
+	return string(data)
 }

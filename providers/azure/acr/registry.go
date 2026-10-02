@@ -10,6 +10,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 const (
@@ -75,6 +76,7 @@ func (m *Mock) CreateOrUpdateRegistry(
 			password2: synthCredential("password2/" + rg + "/" + name),
 		}
 		rd.reg.CreationDate = now
+		rd.reg.Subscription = cfg.Subscription
 	}
 
 	sku := defaultIfEmpty(cfg.SKUName, defaultRegistrySKU)
@@ -220,14 +222,16 @@ func (m *Mock) DeleteRegistry(_ context.Context, rg, name string) error {
 
 // PurgeResourceGroup deletes every registry, with its webhooks and
 // replications, in the resource group. It backs the ARM resource-group delete
-// cascade. Registries record only their resource group (the emulator is
-// single-estate), matched case-insensitively.
-func (m *Mock) PurgeResourceGroup(_ context.Context, _, resourceGroup string) error {
+// cascade. A registry matches on its subscription and resource group,
+// case-insensitively, so a same-named group in another subscription keeps its
+// registries.
+func (m *Mock) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	for _, rd := range m.registries.All() {
-		if strings.EqualFold(rd.reg.ResourceGroup, resourceGroup) {
+		at := scope.Scope{Subscription: rd.reg.Subscription, ResourceGroup: rd.reg.ResourceGroup}
+		if at.InResourceGroup(subscription, resourceGroup) {
 			_ = m.deleteRegistryLocked(rd.reg.ResourceGroup, rd.reg.Name)
 		}
 	}

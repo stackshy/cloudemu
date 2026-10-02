@@ -15,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/apimanagement"
 	"github.com/stackshy/cloudemu/v2/providers/azure/appconfiguration"
 	"github.com/stackshy/cloudemu/v2/providers/azure/applicationgateway"
+	"github.com/stackshy/cloudemu/v2/providers/azure/armoverlay"
 	"github.com/stackshy/cloudemu/v2/providers/azure/bastion"
 	"github.com/stackshy/cloudemu/v2/providers/azure/batch"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
@@ -56,6 +57,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/purview"
 	"github.com/stackshy/cloudemu/v2/providers/azure/recoveryservices"
 	"github.com/stackshy/cloudemu/v2/providers/azure/redisenterprise"
+	"github.com/stackshy/cloudemu/v2/providers/azure/rgstore"
 	"github.com/stackshy/cloudemu/v2/providers/azure/search"
 	"github.com/stackshy/cloudemu/v2/providers/azure/servicebus"
 	"github.com/stackshy/cloudemu/v2/providers/azure/signalr"
@@ -211,6 +213,8 @@ type Provider struct {
 	Logic              *logic.Mock
 	HealthcareApis     *healthcareapis.Mock
 	APIManagement      *apimanagement.Mock
+	ResourceGroups     *rgstore.Mock
+	PropertyOverlay    *armoverlay.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -295,6 +299,8 @@ func New(opts ...config.Option) *Provider {
 		Logic:              logic.New(o),
 		HealthcareApis:     healthcareapis.New(o),
 		APIManagement:      apimanagement.New(o),
+		ResourceGroups:     rgstore.New(o),
+		PropertyOverlay:    armoverlay.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
