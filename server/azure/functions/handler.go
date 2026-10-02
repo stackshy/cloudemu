@@ -89,6 +89,13 @@ type azureFunctionApps interface {
 	UpdateAppSettings(
 		ctx context.Context, subscription, resourceGroup, name string, settings map[string]string,
 	) (*azfunctions.SiteMeta, error)
+	SetSiteConfigBlob(
+		ctx context.Context, subscription, resourceGroup, name, kind string, raw json.RawMessage,
+	) (*azfunctions.SiteMeta, error)
+	SetPublishingPolicy(
+		ctx context.Context, subscription, resourceGroup, name, kind string, allow bool,
+	) (*azfunctions.SiteMeta, error)
+	IsSiteNameTaken(ctx context.Context, name string) bool
 }
 
 // azureScopedSites optionally scopes a site's get/delete to the (subscription,
@@ -144,7 +151,8 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	return rp.ResourceType == resourceType || strings.EqualFold(rp.ResourceType, serverFarmsType)
+	return rp.ResourceType == resourceType || strings.EqualFold(rp.ResourceType, serverFarmsType) ||
+		isCheckNameRequest(rp)
 }
 
 // isInvokeRequest reports whether r addresses the Functions HTTP-invoke surface
@@ -205,6 +213,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "malformed ARM path")
+		return
+	}
+
+	if isCheckNameRequest(rp) {
+		h.serveCheckName(w, r)
 		return
 	}
 
@@ -279,10 +292,18 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxControlBytes)
 
-	var req createSiteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error())
 		return
+	}
+
+	var req createSiteRequest
+	if len(body) > 0 {
+		if uerr := json.Unmarshal(body, &req); uerr != nil {
+			azurearm.WriteError(w, http.StatusBadRequest, "InvalidRequestContent", uerr.Error())
+			return
+		}
 	}
 
 	// Pull the handler entrypoint out of the reserved app setting and drop it
@@ -304,7 +325,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
-	meta := h.upsertSiteMeta(r, rp, req, settings)
+	meta := h.upsertSiteMeta(r, rp, req, settings, rawSiteConfig(body))
 
 	azurearm.WriteJSON(w, http.StatusOK, toSiteResource(rp, info, meta))
 }
@@ -316,6 +337,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 //nolint:gocritic // rp/req travel the dispatch chain once per request.
 func (h *Handler) upsertSiteMeta(
 	r *http.Request, rp azurearm.ResourcePath, req createSiteRequest, settings []nameValue,
+	siteConfig json.RawMessage,
 ) *azfunctions.SiteMeta {
 	store, ok := h.siteStore()
 	if !ok {
@@ -342,6 +364,7 @@ func (h *Handler) upsertSiteMeta(
 		MinTLSVersion:  req.Properties.SiteConfig.MinTLSVersion,
 		Identity:       toSiteMetaIdentity(req.Identity),
 		AppSettings:    appSettingsToMap(settings),
+		SiteConfig:     siteConfig,
 	})
 	if err != nil {
 		return nil
