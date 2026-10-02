@@ -12,13 +12,15 @@ import (
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // pubsubSnapshot is the full serialized state of the Pub/Sub mock: every
-// topic+subscription queue keyed by its URL. queueData is built from unexported
+// topic+subscription queue keyed by its URL, plus the attached handler's
+// native wire state. queueData is built from unexported
 // fields, so it is promoted to an exported snapshot form (its message elements,
 // pubsubMessage, are already all-exported and serialize directly). The mutexes,
 // the wired function triggers, the monitoring backend, and *config.Options are
 // intentionally not captured.
 type pubsubSnapshot struct {
 	Queues map[string]*queueSnapshot `json:"queues,omitempty"`
+	Wire   json.RawMessage            `json:"wire,omitempty"`
 }
 
 // queueSnapshot mirrors queueData, promoting its unexported attribute fields,
@@ -47,6 +49,19 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 
 	if len(snap.Queues) == 0 {
 		snap.Queues = nil
+	}
+
+	m.mu.RLock()
+	ws := m.wire
+	m.mu.RUnlock()
+
+	if ws != nil {
+		wire, err := ws.ExportWire()
+		if err != nil {
+			return nil, err
+		}
+
+		snap.Wire = wire
 	}
 
 	return json.Marshal(snap)
@@ -83,7 +98,23 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		m.queues.Set(url, restoreQueue(qs))
 	}
 
-	return nil
+	if len(snap.Wire) == 0 {
+		return nil
+	}
+
+	m.mu.Lock()
+	ws := m.wire
+
+	if ws == nil {
+		m.pendingWire = snap.Wire
+	}
+	m.mu.Unlock()
+
+	if ws == nil {
+		return nil
+	}
+
+	return ws.ImportWire(snap.Wire)
 }
 
 func restoreQueue(qs *queueSnapshot) *queueData {

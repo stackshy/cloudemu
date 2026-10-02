@@ -3,6 +3,7 @@ package pubsub
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -65,6 +66,36 @@ type Mock struct {
 	mu         sync.RWMutex
 	triggers   map[string]FunctionTrigger // subscriptionURL -> trigger
 	monitoring mondriver.Monitoring
+
+	// wire is the Pub/Sub-native state the REST handler keeps (subscriptions,
+	// topic config, snapshots, message logs), which the SQS-style driver cannot
+	// express. Snapshot and Restore carry it so serve --persist keeps it.
+	// pendingWire holds restored wire state until a handler attaches.
+	wire        WireState
+	pendingWire json.RawMessage
+}
+
+// WireState is implemented by the Pub/Sub REST handler so the provider snapshot
+// includes the handler-held native state.
+type WireState interface {
+	ExportWire() (json.RawMessage, error)
+	ImportWire(data json.RawMessage) error
+}
+
+// AttachWireState registers the handler whose native state Snapshot and Restore
+// carry. Wire state restored before the handler attached is handed over now.
+func (m *Mock) AttachWireState(ws WireState) error {
+	m.mu.Lock()
+	m.wire = ws
+	pending := m.pendingWire
+	m.pendingWire = nil
+	m.mu.Unlock()
+
+	if len(pending) == 0 {
+		return nil
+	}
+
+	return ws.ImportWire(pending)
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.

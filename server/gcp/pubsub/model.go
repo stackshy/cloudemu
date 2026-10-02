@@ -126,8 +126,11 @@ type Handler struct {
 
 // New returns a Pub/Sub handler backed by mq. defaultProject owns calls that
 // name no project.
+//
+// When mq is the provider Pub/Sub mock, the handler attaches to it so the
+// provider snapshot carries the native state held here.
 func New(mq mqdriver.MessageQueue, defaultProject string) *Handler {
-	return &Handler{
+	h := &Handler{
 		mq:             mq,
 		defaultProject: defaultProject,
 		topics:         make(map[string]*topicState),
@@ -135,6 +138,14 @@ func New(mq mqdriver.MessageQueue, defaultProject string) *Handler {
 		snapshots:      make(map[string]*snapState),
 		pushDeliverer:  newHTTPPushDeliverer(),
 	}
+
+	if a, ok := mq.(wireAttacher); ok {
+		// Attach fails only on a corrupt pending snapshot; the handler then
+		// starts empty, the same as before persistence covered it.
+		_ = a.AttachWireState(h)
+	}
+
+	return h
 }
 
 // keyFor is the store key of name in project, or in the default project when
