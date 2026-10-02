@@ -167,8 +167,9 @@ func copyAccessPolicies(in []driver.KVAccessPolicy) []driver.KVAccessPolicy {
 	out := make([]driver.KVAccessPolicy, len(in))
 	for i := range in {
 		out[i] = driver.KVAccessPolicy{
-			TenantID: in[i].TenantID,
-			ObjectID: in[i].ObjectID,
+			TenantID:      in[i].TenantID,
+			ObjectID:      in[i].ObjectID,
+			ApplicationID: in[i].ApplicationID,
 			Permissions: driver.KVAccessPermissions{
 				Keys:         copyStrings(in[i].Permissions.Keys),
 				Secrets:      copyStrings(in[i].Permissions.Secrets),

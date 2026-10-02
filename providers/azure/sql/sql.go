@@ -86,6 +86,10 @@ type Mock struct {
 	databases *memstore.Store[rdsdriver.Database]
 	// transparent-data-encryption records, key = "server/database"
 	tde *memstore.Store[rdsdriver.TransparentDataEncryption]
+	// retention policies, key = "server/database"; connPolicies key = server
+	str          *memstore.Store[rdsdriver.ShortTermRetentionPolicy]
+	ltr          *memstore.Store[rdsdriver.LongTermRetentionPolicy]
+	connPolicies *memstore.Store[string]
 
 	// instSettle overlays a transient Creating / Updating window over a database
 	// instance's stored available state on the portable relationaldb path
@@ -114,6 +118,9 @@ func New(opts *config.Options) *Mock {
 		aadAdmins:        memstore.New[rdsdriver.AADAdmin](),
 		databases:        memstore.New[rdsdriver.Database](),
 		tde:              memstore.New[rdsdriver.TransparentDataEncryption](),
+		str:              memstore.New[rdsdriver.ShortTermRetentionPolicy](),
+		ltr:              memstore.New[rdsdriver.LongTermRetentionPolicy](),
+		connPolicies:     memstore.New[string](),
 		managedInstances: memstore.New[rdsdriver.ManagedInstance](),
 		managedDatabases: memstore.New[rdsdriver.ManagedDatabase](),
 		instSettle:       settle.NewSet(),
@@ -651,12 +658,15 @@ func (m *Mock) deleteChildren(server string) {
 
 	deleteByPrefix(m.databases, prefix)
 	deleteByPrefix(m.tde, prefix)
+	deleteByPrefix(m.str, prefix)
+	deleteByPrefix(m.ltr, prefix)
 	deleteByPrefix(m.firewallRules, prefix)
 	deleteByPrefix(m.vnetRules, prefix)
 	deleteByPrefix(m.elasticPools, prefix)
 	deleteByPrefix(m.failoverGroups, prefix)
 
 	m.aadAdmins.Delete(server)
+	m.connPolicies.Delete(server)
 }
 
 // StartCluster / StopCluster are no-ops on Azure SQL servers. They aren't

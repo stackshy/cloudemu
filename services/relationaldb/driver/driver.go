@@ -900,6 +900,43 @@ type TransparentDataEncryptions interface {
 	ListTransparentDataEncryption(ctx context.Context, server, database string) ([]TransparentDataEncryption, error)
 }
 
+// ShortTermRetentionPolicy is a database's backupShortTermRetentionPolicies/
+// default: point-in-time restore retention and differential backup interval.
+type ShortTermRetentionPolicy struct {
+	Server                    string
+	Database                  string
+	RetentionDays             int
+	DiffBackupIntervalInHours int
+}
+
+// LongTermRetentionPolicy is a database's backupLongTermRetentionPolicies/
+// default. Retentions are ISO-8601 durations, stored verbatim.
+type LongTermRetentionPolicy struct {
+	Server           string
+	Database         string
+	WeeklyRetention  string
+	MonthlyRetention string
+	YearlyRetention  string
+	WeekOfYear       int
+}
+
+// DatabaseRetentionPolicies is an OPTIONAL Azure SQL capability, discovered by
+// type assertion. Every database has both policies; a database that never set
+// one reports the Azure default.
+type DatabaseRetentionPolicies interface {
+	SetShortTermRetention(ctx context.Context, p *ShortTermRetentionPolicy) (*ShortTermRetentionPolicy, error)
+	GetShortTermRetention(ctx context.Context, server, database string) (*ShortTermRetentionPolicy, error)
+	SetLongTermRetention(ctx context.Context, p *LongTermRetentionPolicy) (*LongTermRetentionPolicy, error)
+	GetLongTermRetention(ctx context.Context, server, database string) (*LongTermRetentionPolicy, error)
+}
+
+// ServerConnectionPolicies is an OPTIONAL Azure SQL capability: a server's
+// connectionPolicies/default connection type (Default, Proxy or Redirect).
+type ServerConnectionPolicies interface {
+	SetConnectionPolicy(ctx context.Context, server, connectionType string) (string, error)
+	GetConnectionPolicy(ctx context.Context, server string) (string, error)
+}
+
 // FirewallRuleConfig describes a server firewall rule to create or replace.
 type FirewallRuleConfig struct {
 	Server         string

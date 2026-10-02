@@ -36,9 +36,10 @@ type vaultPermissionsJSON struct {
 
 // vaultAccessPolicyJSON mirrors armkeyvault AccessPolicyEntry.
 type vaultAccessPolicyJSON struct {
-	TenantID    string               `json:"tenantId,omitempty"`
-	ObjectID    string               `json:"objectId,omitempty"`
-	Permissions vaultPermissionsJSON `json:"permissions"`
+	TenantID      string               `json:"tenantId,omitempty"`
+	ObjectID      string               `json:"objectId,omitempty"`
+	ApplicationID string               `json:"applicationId,omitempty"`
+	Permissions   vaultPermissionsJSON `json:"permissions"`
 }
 
 // vaultPropertiesJSON mirrors the subset of armkeyvault VaultProperties the
@@ -111,18 +112,8 @@ func vaultPropertiesFromJSON(p *vaultPropertiesJSON) secretsdriver.KVVaultProper
 		out.SKU = secretsdriver.KVVaultSKU{Family: p.SKU.Family, Name: p.SKU.Name}
 	}
 
-	for i := range p.AccessPolicies {
-		ap := &p.AccessPolicies[i]
-		out.AccessPolicies = append(out.AccessPolicies, secretsdriver.KVAccessPolicy{
-			TenantID: ap.TenantID,
-			ObjectID: ap.ObjectID,
-			Permissions: secretsdriver.KVAccessPermissions{
-				Keys:         ap.Permissions.Keys,
-				Secrets:      ap.Permissions.Secrets,
-				Certificates: ap.Permissions.Certificates,
-				Storage:      ap.Permissions.Storage,
-			},
-		})
+	if len(p.AccessPolicies) > 0 {
+		out.AccessPolicies = accessPoliciesFromJSON(p.AccessPolicies)
 	}
 
 	return out
@@ -169,8 +160,9 @@ func accessPoliciesFromJSON(in []vaultAccessPolicyJSON) []secretsdriver.KVAccess
 	for i := range in {
 		ap := &in[i]
 		out = append(out, secretsdriver.KVAccessPolicy{
-			TenantID: ap.TenantID,
-			ObjectID: ap.ObjectID,
+			TenantID:      ap.TenantID,
+			ObjectID:      ap.ObjectID,
+			ApplicationID: ap.ApplicationID,
 			Permissions: secretsdriver.KVAccessPermissions{
 				Keys:         ap.Permissions.Keys,
 				Secrets:      ap.Permissions.Secrets,
@@ -266,11 +258,21 @@ func toVaultPropertiesJSON(p *secretsdriver.KVVaultProperties) *vaultPropertiesJ
 		ProvisioningState:            provisioningStateSucceeded,
 	}
 
-	for i := range p.AccessPolicies {
-		ap := &p.AccessPolicies[i]
-		out.AccessPolicies = append(out.AccessPolicies, vaultAccessPolicyJSON{
-			TenantID: ap.TenantID,
-			ObjectID: ap.ObjectID,
+	out.AccessPolicies = accessPoliciesToJSON(p.AccessPolicies)
+
+	return out
+}
+
+// accessPoliciesToJSON converts the driver access-policy list to the wire shape.
+func accessPoliciesToJSON(in []secretsdriver.KVAccessPolicy) []vaultAccessPolicyJSON {
+	out := make([]vaultAccessPolicyJSON, 0, len(in))
+
+	for i := range in {
+		ap := &in[i]
+		out = append(out, vaultAccessPolicyJSON{
+			TenantID:      ap.TenantID,
+			ObjectID:      ap.ObjectID,
+			ApplicationID: ap.ApplicationID,
 			Permissions: vaultPermissionsJSON{
 				Keys:         ap.Permissions.Keys,
 				Secrets:      ap.Permissions.Secrets,

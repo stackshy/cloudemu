@@ -46,7 +46,7 @@ func (*VaultARMHandler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	return rp.Provider == vaultProviderName && rp.ResourceType == vaultResourceType
+	return rp.Provider == vaultProviderName && (rp.ResourceType == vaultResourceType || isDeletedVaultsPath(&rp))
 }
 
 // ServeHTTP routes on the parsed path shape and method.
@@ -54,6 +54,11 @@ func (h *VaultARMHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "malformed ARM path")
+		return
+	}
+
+	if isDeletedVaultsPath(&rp) {
+		serveDeletedVaults(w, r, &rp)
 		return
 	}
 
@@ -69,9 +74,14 @@ func (h *VaultARMHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isAccessPolicyPath(&rp) {
+		h.serveAccessPolicy(w, r, &rp)
+		return
+	}
+
 	// Real Key Vault has these vault children; cloudemu does not model them
 	// over ARM, so they never reach (and never overwrite) the vault.
-	if azurearm.GuardLeaf(w, r, &rp, "secrets", "keys", "accessPolicies", "privateEndpointConnections") {
+	if azurearm.GuardLeaf(w, r, &rp, "secrets", "keys", "privateEndpointConnections") {
 		return
 	}
 
