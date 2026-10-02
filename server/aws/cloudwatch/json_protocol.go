@@ -110,7 +110,14 @@ type jsonWriter struct {
 
 func (j *jsonWriter) Header() http.Header { return j.w.Header() }
 
+// Write sends the body. The safe headers are set here as well as in
+// WriteHeader so they sit right next to the body write; once the status is out
+// the extra Set calls are no-ops.
 func (j *jsonWriter) Write(b []byte) (int, error) {
+	hdr := j.w.Header()
+	hdr.Set("Content-Type", jsonContentType)
+	hdr.Set("X-Content-Type-Options", "nosniff")
+
 	if !j.wroteHeader {
 		j.WriteHeader(http.StatusOK)
 	}
