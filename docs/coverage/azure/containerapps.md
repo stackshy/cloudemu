@@ -3,7 +3,7 @@
 
 provider-native `containerapps` wire service (Azure-only) · no portable driver · [Azure index](./README.md)
 
-## Operations (19)
+## Operations (27)
 
 | Operation | Description |
 | --- | --- |
@@ -13,18 +13,26 @@ provider-native `containerapps` wire service (Azure-only) · no portable driver 
 | `CreateOrUpdateEnvironment` |  |
 | `DeactivateRevision` |  |
 | `DeleteApp` |  |
+| `DeleteDaprComponent` |  |
+| `DeleteEnvStorage` |  |
 | `DeleteEnvironment` |  |
 | `DiscoverApps` |  |
 | `DiscoverEnvironments` |  |
 | `GetApp` |  |
+| `GetDaprComponent` |  |
+| `GetEnvStorage` |  |
 | `GetEnvironment` |  |
 | `GetRevision` |  |
 | `ListAppsByResourceGroup` |  |
 | `ListAppsBySubscription` |  |
+| `ListDaprComponents` |  |
+| `ListEnvStorages` |  |
 | `ListEnvironmentsByResourceGroup` |  |
 | `ListEnvironmentsBySubscription` |  |
 | `ListRevisions` |  |
 | `PurgeResourceGroup` |  |
+| `PutDaprComponent` |  |
+| `PutEnvStorage` |  |
 | `RestartRevision` |  |
 
 ## Not in scope

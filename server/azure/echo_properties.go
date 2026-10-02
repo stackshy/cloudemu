@@ -463,8 +463,8 @@ func captureUnmodeled(
 // request-capture path and are correctly left alone.
 //
 // 2. Exact-match keys: the Notification Hubs PNS credential blocks, which
-// carry secrets but do not end in the suffixes, and the API Management
-// delegation validationKey (served only by its listSecrets action). toHubJSON (notificationhubs)
+// carry secrets but do not end in the suffixes, the Container Apps storage
+// accountKey, and the API Management delegation validationKey (served only by its listSecrets action). toHubJSON (notificationhubs)
 // models only name/registrationTtl and drops these; real Azure serves them only
 // via GetPnsCredentials, never the generic hub GET. Each is an object, so
 // denylisting the key skips the whole credential subtree.
@@ -500,7 +500,10 @@ func writeOnlyProperty(parent, key string) bool {
 		"admcredential", "baiducredential", "mpnscredential",
 		// API Management delegation settings: the validation key is accepted on
 		// PUT and served only by portalsettings/delegation/listSecrets.
-		"validationkey":
+		"validationkey",
+		// Container Apps environment storages: azureFile.accountKey is accepted
+		// on PUT and never returned.
+		"accountkey":
 		return true
 	default:
 		return false

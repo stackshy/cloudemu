@@ -108,9 +108,10 @@ func TestDeferredChildrenNeverReachTheParent(t *testing.T) {
 			{http.MethodDelete, "/currentbillingfeatures", http.StatusNotImplemented, ""},
 		}},
 		{"AZAPP-01", env, put(env, cpTagged), []cpExpect{
-			{http.MethodPut, "/daprComponents/d1", http.StatusNotImplemented, ""},
-			{http.MethodDelete, "/storages/s1", http.StatusNotImplemented, ""},
+			{http.MethodPut, "/daprComponents/d1", http.StatusBadRequest, "componentType"},
+			{http.MethodDelete, "/storages/s1", http.StatusNoContent, ""},
 			{http.MethodGet, "/daprComponents", http.StatusOK, `"value":[]`},
+			{http.MethodGet, "/daprComponents/d1/zz", http.StatusNotFound, "InvalidResourceType"},
 			{http.MethodPut, "/certificates/c1", http.StatusNotImplemented, ""},
 		}},
 		{"AZOBS-02", ag, put(ag, `{"location":"global","tags":{"k":"v"},"properties":{"groupShortName":"ag"}}`),

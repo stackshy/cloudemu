@@ -1,5 +1,6 @@
 // Package containerapps serves the Azure Container Apps ARM API
-// (Microsoft.App/managedEnvironments and Microsoft.App/containerApps). Real
+// (Microsoft.App/managedEnvironments, their daprComponents and storages
+// children, and Microsoft.App/containerApps). Real
 // armappcontainers ManagedEnvironmentsClient and ContainerAppsClient requests
 // hit this handler the same way they hit management.azure.com.
 //
@@ -59,6 +60,18 @@ type Store interface {
 	DeactivateRevision(ctx context.Context, sub, rg, app, rev string) error
 	RestartRevision(ctx context.Context, sub, rg, app, rev string) error
 
+	PutDaprComponent(
+		ctx context.Context, sub, rg, env string, c *containerapps.DaprComponent,
+	) (containerapps.DaprComponent, error)
+	GetDaprComponent(ctx context.Context, sub, rg, env, name string) (containerapps.DaprComponent, error)
+	DeleteDaprComponent(ctx context.Context, sub, rg, env, name string) (bool, error)
+	ListDaprComponents(ctx context.Context, sub, rg, env string) ([]containerapps.DaprComponent, error)
+
+	PutEnvStorage(ctx context.Context, sub, rg, env string, s *containerapps.EnvStorage) (containerapps.EnvStorage, error)
+	GetEnvStorage(ctx context.Context, sub, rg, env, name string) (containerapps.EnvStorage, error)
+	DeleteEnvStorage(ctx context.Context, sub, rg, env, name string) (bool, error)
+	ListEnvStorages(ctx context.Context, sub, rg, env string) ([]containerapps.EnvStorage, error)
+
 	PurgeResourceGroup(ctx context.Context, sub, rg string) error
 }
 
@@ -112,7 +125,16 @@ func (h *Handler) serveEnvironment(w http.ResponseWriter, r *http.Request, rp *a
 		return
 	}
 
-	if azurearm.GuardLeaf(w, r, rp, "daprComponents", "storages", "certificates", "managedCertificates") {
+	switch {
+	case strings.EqualFold(rp.SubResource, subResourceDapr):
+		h.serveDapr(w, r, rp)
+		return
+	case strings.EqualFold(rp.SubResource, subResourceStorages):
+		h.serveEnvStorage(w, r, rp)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, rp, "certificates", "managedCertificates") {
 		return
 	}
 

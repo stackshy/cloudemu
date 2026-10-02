@@ -4910,6 +4910,12 @@
         "name": "DeleteApp"
       },
       {
+        "name": "DeleteDaprComponent"
+      },
+      {
+        "name": "DeleteEnvStorage"
+      },
+      {
         "name": "DeleteEnvironment"
       },
       {
@@ -4920,6 +4926,12 @@
       },
       {
         "name": "GetApp"
+      },
+      {
+        "name": "GetDaprComponent"
+      },
+      {
+        "name": "GetEnvStorage"
       },
       {
         "name": "GetEnvironment"
@@ -4934,6 +4946,12 @@
         "name": "ListAppsBySubscription"
       },
       {
+        "name": "ListDaprComponents"
+      },
+      {
+        "name": "ListEnvStorages"
+      },
+      {
         "name": "ListEnvironmentsByResourceGroup"
       },
       {
@@ -4944,6 +4962,12 @@
       },
       {
         "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "PutDaprComponent"
+      },
+      {
+        "name": "PutEnvStorage"
       },
       {
         "name": "RestartRevision"
