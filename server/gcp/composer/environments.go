@@ -8,6 +8,7 @@ import (
 
 	composer "google.golang.org/api/composer/v1"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	cdriver "github.com/stackshy/cloudemu/v2/services/composer/driver"
 )
@@ -37,9 +38,17 @@ type rawEnvelope struct {
 // composer.Environment (for the modeled fields) and as a rawEnvelope (for the
 // verbatim config passthrough and the name).
 func decodeEnvironment(w http.ResponseWriter, r *http.Request) (composer.Environment, rawEnvelope, bool) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
+	in, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
 	if err != nil {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "reading request body: "+err.Error())
+		return composer.Environment{}, rawEnvelope{}, false
+	}
+
+	// The gapic REST client sends enums as numbers; the typed decode and the
+	// config passthrough both need the value names.
+	body, err := gcpenum.Normalize(in, environmentEnums)
+	if err != nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
 		return composer.Environment{}, rawEnvelope{}, false
 	}
 
@@ -158,7 +167,7 @@ func (h *Handler) deleteEnvironment(w http.ResponseWriter, r *http.Request, rt r
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(op.Name, nil))
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(op.Name, emptyResponse))
 }
 
 // writeEnvironment renders a driver environment as composer/v1 wire JSON.
@@ -197,10 +206,14 @@ func (h *Handler) doneOperation(name string, resp json.RawMessage) operationJSON
 }
 
 // operationResponse re-fetches the environment an operation acted on so a
-// standalone poll can replay it. A delete operation (or an environment since
-// removed) yields nil.
+// standalone poll can replay it. A delete operation yields
+// google.protobuf.Empty; an environment since removed yields nil.
 func (h *Handler) operationResponse(r *http.Request, op *cdriver.Operation) json.RawMessage {
-	if op.Type == "delete" || op.TargetName == "" {
+	if op.Type == "delete" {
+		return emptyResponse
+	}
+
+	if op.TargetName == "" {
 		return nil
 	}
 

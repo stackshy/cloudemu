@@ -255,3 +255,32 @@ func TestReadBodyTooLarge(t *testing.T) {
 	assert.False(t, ok)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+func TestName(t *testing.T) {
+	mode := testEnum("test.Mode", "MODE_UNSPECIFIED", "STANDARD", "VIRTUAL")
+
+	tests := []struct {
+		name   string
+		raw    string
+		want   string
+		wantOK bool
+	}{
+		{name: "known string", raw: `"VIRTUAL"`, want: "VIRTUAL", wantOK: true},
+		{name: "unknown string", raw: `"BOGUS"`},
+		{name: "known number", raw: `1`, want: "STANDARD", wantOK: true},
+		{name: "integral exponent", raw: `2e0`, want: "VIRTUAL", wantOK: true},
+		{name: "unknown number", raw: `9`},
+		{name: "fraction", raw: `1.5`},
+		{name: "out of int32", raw: `1e40`},
+		{name: "object", raw: `{"a":1}`},
+		{name: "null", raw: `null`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := gcpenum.Name(json.RawMessage(tt.raw), mode)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

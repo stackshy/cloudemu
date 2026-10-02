@@ -17,6 +17,7 @@
 package cloudfunctions
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -31,6 +32,7 @@ import (
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
@@ -481,7 +483,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, p functionPath)
 	// Real Cloud Functions accepts the function name in either the body or as a
 	// "?functionId=" query parameter. SDKs use the body.
 	var body cloudFunction
-	if !decodeJSON(w, r, &body) {
+	if !decodeJSON(w, r, &body, gen1FunctionEnums) {
 		return
 	}
 
@@ -605,7 +607,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, p functionPath)
 	}
 
 	var body cloudFunction
-	if !decodeJSON(w, r, &body) {
+	if !decodeJSON(w, r, &body, gen1FunctionEnums) {
 		return
 	}
 
@@ -667,8 +669,9 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, p functionPath)
 	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, operation{
-		Name: "operations/delete-" + p.name,
-		Done: true,
+		Name:     "operations/delete-" + p.name,
+		Done:     true,
+		Response: emptyResponse(),
 	})
 }
 
@@ -686,7 +689,7 @@ func (h *Handler) serveCall(w http.ResponseWriter, r *http.Request, p functionPa
 	}
 
 	var req callRequest
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSON(w, r, &req, nil) {
 		return
 	}
 
@@ -864,7 +867,7 @@ func resourceAsResponse(cf cloudFunction, kind string) map[string]any {
 	}
 
 	out := map[string]any{
-		"@type": "type.googleapis.com/google.cloud.functions.v1." + kind,
+		anyTypeKey: "type.googleapis.com/google.cloud.functions.v1." + kind,
 	}
 
 	var fields map[string]any
@@ -877,10 +880,25 @@ func resourceAsResponse(cf cloudFunction, kind string) map[string]any {
 	return out
 }
 
-func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+// decodeJSON decodes the request body into v. Numeric enums at the paths in
+// enums, as the gapic REST clients send them, are rewritten to their value
+// names first; a nil table decodes the body as it is.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any, enums gcpenum.Fields) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid JSON: "+err.Error())
+		return false
+	}
+
+	body, err := gcpenum.Normalize(raw, enums)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return false
+	}
+
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(v); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid JSON: "+err.Error())
 		return false
 	}
