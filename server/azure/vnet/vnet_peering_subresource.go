@@ -18,6 +18,10 @@ import (
 //
 //nolint:gocritic,dupl // rp is request-scoped; mirrors routeSecurityRule over a distinct sub-resource by design
 func (h *Handler) routeVNetPeering(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, &rp, childMaxDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")

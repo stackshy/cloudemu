@@ -204,6 +204,10 @@ func (h *Handler) serveClusterCollection(w http.ResponseWriter, r *http.Request,
 
 //nolint:dupl // sub-resource route shapes are intentionally typed; sharing via generics adds noise.
 func (h *Handler) serveAgentPoolRoute(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, rp, childMaxDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)
@@ -229,6 +233,10 @@ func (h *Handler) serveAgentPoolRoute(w http.ResponseWriter, r *http.Request, rp
 
 //nolint:dupl // sub-resource route shapes are intentionally typed; sharing via generics adds noise.
 func (h *Handler) serveMaintenanceRoute(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, rp, childMaxDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)

@@ -10,6 +10,9 @@ const (
 	providerName = "Microsoft.DBforPostgreSQL"
 	resourceType = "serverGroupsv2"
 
+	childMaxDepth      = 3 // serverGroupsv2/{c}/{child}/{name}
+	serverConfigsDepth = 4 // serverGroupsv2/{c}/servers/{s}/configurations
+
 	subFirewallRules   = "firewallRules"
 	subRoles           = "roles"
 	subServers         = "servers"

@@ -92,6 +92,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if azurearm.TooDeep(w, r, &rp, childMaxDepth) {
+		return
+	}
+
 	switch {
 	case rp.SubResource == "":
 		h.serveZone(w, r, &rp)
@@ -102,8 +106,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case isRecordType(rp.SubResource):
 		h.serveRecord(w, r, &rp)
 	default:
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound",
-			"unsupported private dns sub-resource "+rp.SubResource)
+		azurearm.WriteUnknownType(w, r, &rp)
 	}
 }
 

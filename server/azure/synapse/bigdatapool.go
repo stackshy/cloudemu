@@ -9,6 +9,10 @@ import (
 )
 
 func (h *Handler) serveBigDataPool(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, rp, childMaxDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		h.listBigDataPools(w, r, rp)
 		return

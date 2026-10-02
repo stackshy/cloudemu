@@ -45,6 +45,10 @@ func domainTopicJSONFor(rp *azurearm.ResourcePath) domainTopicJSON {
 
 // serveDomainTopics routes .../domains/{domain}/topics[/{topicName}].
 func (h *Handler) serveDomainTopics(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, rp, childMaxDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)

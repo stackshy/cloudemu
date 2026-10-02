@@ -38,6 +38,9 @@ const (
 	subDatabases      = "databases"
 	subFirewallRules  = "firewallRules"
 	subConfigurations = "configurations"
+
+	// childMaxDepth is the deepest child route: flexibleServers/{s}/{child}/{name}.
+	childMaxDepth = 3
 )
 
 // Handler serves Microsoft.DBforPostgreSQL ARM requests against a
@@ -71,6 +74,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Child resources and lifecycle actions live under a server name.
 	if rp.SubResource != "" {
+		if azurearm.TooDeep(w, r, &rp, childMaxDepth) {
+			return
+		}
+
 		switch rp.SubResource {
 		case subDatabases:
 			h.serveDatabase(w, r, &rp)
@@ -81,7 +88,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case subResourceStart, subResourceStop, subResourceRestart:
 			h.serveLifecycleAction(w, r, &rp)
 		default:
-			azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported sub-resource: "+rp.SubResource)
+			azurearm.WriteUnknownType(w, r, &rp)
 		}
 
 		return

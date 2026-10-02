@@ -14,6 +14,8 @@ const (
 	actionStatus         = "status"
 	resourceLocations    = "locations"
 	subOperationStatuses = "operationStatuses"
+	// childMaxDepth is the deepest child route: cassandraClusters/{c}/{child}/{name}.
+	childMaxDepth = 3
 
 	clusterResourceType = providerName + "/" + resourceType
 	dcResourceType      = clusterResourceType + "/" + subResourceDCs

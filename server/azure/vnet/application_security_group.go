@@ -66,6 +66,10 @@ func (h *Handler) routeASG(w http.ResponseWriter, r *http.Request, rp azurearm.R
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createASG(w, r, rp, svc)

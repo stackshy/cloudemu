@@ -48,13 +48,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// /sshPublicKeys/{name}/generateKeyPair is a POST sub-resource action.
-	if strings.EqualFold(rp.SubResource, "generateKeyPair") {
+	if strings.EqualFold(rp.SubResource, "generateKeyPair") && rp.SubResourceName == "" {
 		h.generateKeyPair(w, r, rp)
 		return
 	}
 
 	if rp.ResourceName == "" {
 		h.serveCollection(w, r, rp)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp) {
 		return
 	}
 

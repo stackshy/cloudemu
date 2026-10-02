@@ -111,7 +111,7 @@ func (h *Handler) routeNIC(w http.ResponseWriter, r *http.Request, rp azurearm.R
 	// InterfacesClient.BeginListEffectiveNetworkSecurityGroups: a POST action
 	// on the NIC, not a nested collection: routed before the whole-NIC method
 	// switch so it never falls through to createNIC/getNIC/deleteNIC.
-	if strings.EqualFold(rp.SubResource, subResEffectiveNSGs) {
+	if strings.EqualFold(rp.SubResource, subResEffectiveNSGs) && rp.SubResourceName == "" {
 		if r.Method != http.MethodPost {
 			azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 			return
@@ -119,6 +119,10 @@ func (h *Handler) routeNIC(w http.ResponseWriter, r *http.Request, rp azurearm.R
 
 		h.listEffectiveNSGs(w, r, rp, svc)
 
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp) {
 		return
 	}
 

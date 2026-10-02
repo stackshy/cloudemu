@@ -22,6 +22,9 @@ const (
 	subVirtualNetworkLinks = "virtualNetworkLinks"
 	subAll                 = "ALL"
 
+	// childMaxDepth is the deepest child route: privateDnsZones/{z}/{type}/{name}.
+	childMaxDepth = 3
+
 	// provisioningStateSucceeded is the terminal state the SDK poller and
 	// Terraform wait for.
 	provisioningStateSucceeded = "Succeeded"

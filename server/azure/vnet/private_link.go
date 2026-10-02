@@ -182,6 +182,10 @@ func (h *Handler) routePrivateEndpoint(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp, "privateDnsZoneGroups") {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createPrivateEndpoint(w, r, rp, svc)
@@ -384,6 +388,10 @@ func (h *Handler) routePrivateLinkService(w http.ResponseWriter, r *http.Request
 
 	if rp.ResourceName == "" {
 		h.listPrivateLinkServices(w, r, rp, svc)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp, "privateEndpointConnections") {
 		return
 	}
 

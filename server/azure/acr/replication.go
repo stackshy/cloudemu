@@ -9,6 +9,10 @@ import (
 
 // serveReplication routes .../registries/{registry}/replications[/{name}].
 func (h *ARMHandler) serveReplication(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, rp, replicationMaxDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			armMethodNotAllowed(w)

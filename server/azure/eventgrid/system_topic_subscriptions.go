@@ -11,6 +11,10 @@ import (
 // serveSystemTopicSubscription routes
 // .../systemTopics/{t}/eventSubscriptions[/{name}].
 func (h *Handler) serveSystemTopicSubscription(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, rp, childMaxDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)

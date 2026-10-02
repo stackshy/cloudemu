@@ -40,6 +40,9 @@ const (
 	actionResume = "resume"
 	actionStart  = "start"
 	actionStop   = "stop"
+
+	childMaxDepth    = 3 // workspaces/{w}/{child}/{name}
+	childActionDepth = 4 // ... /{name}/{action}
 )
 
 // Handler serves ARM Synapse requests. It owns the in-memory workspace tree.
@@ -81,6 +84,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // serveChild dispatches the child-resource routes under a workspace.
 func (h *Handler) serveChild(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	// {child}/{name}/{action} is the deepest workspace route.
+	if azurearm.TooDeep(w, r, rp, childActionDepth) {
+		return
+	}
+
 	switch {
 	case strings.EqualFold(rp.SubResource, childSQLPools):
 		h.serveSQLPool(w, r, rp)
@@ -89,7 +97,7 @@ func (h *Handler) serveChild(w http.ResponseWriter, r *http.Request, rp *azurear
 	case strings.EqualFold(rp.SubResource, childIntRuntime):
 		h.serveIntRuntime(w, r, rp)
 	default:
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "unsupported Synapse sub-resource")
+		azurearm.WriteUnknownType(w, r, rp)
 	}
 }
 
