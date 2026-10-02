@@ -47,6 +47,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gke"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 )
 
 const (
@@ -96,7 +97,7 @@ func (h *Handler) Matches(r *http.Request) bool {
 	}
 
 	p, ok := parsePath(r.URL.Path)
-	if !ok {
+	if !ok || sharedpath.Yield(r, sharedpath.Container, sharedpath.AlloyDB, sharedpath.ManagedKafka) {
 		return false
 	}
 

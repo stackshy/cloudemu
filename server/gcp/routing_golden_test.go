@@ -15,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/server"
 	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 )
 
 const (
@@ -231,6 +232,34 @@ func goldenRows() []goldenRow {
 		{e, g, "/_cloudemu/snapshot", "", "", "<nil>"},
 		{e, p, "/_cloudemu/reset", "", "", "<nil>"},
 		{e, g, "/", "", "", "<nil>"},
+		// API hint: Host header and /<api>.googleapis.com/ path alias.
+		{s, g, goldenLoc + "/clusters", "managedkafka.googleapis.com", "", "*managedkafka.Handler"},
+		{s, g, "/managedkafka.googleapis.com" + goldenLoc + "/clusters", "", "", "*managedkafka.Handler"},
+		{s, g, goldenLoc + "/clusters", "container.googleapis.com", "", "*gke.Handler"},
+		{s, g, "/container.googleapis.com" + goldenWest + "/clusters", "", "", "*gke.Handler"},
+		{s, g, "/container.googleapis.com" + goldenLoc + "/clusters/k3", "", "", "*gke.Handler"},
+		{s, g, "/managedkafka.googleapis.com" + goldenLoc + "/clusters/c1", "", "", "*managedkafka.Handler"},
+		{s, g, "/managedkafka.googleapis.com" + goldenLoc + "/clusters/k3/consumerGroups", "", "", "*firestore.Handler"},
+		{s, g, "/alloydb.googleapis.com" + goldenLoc + "/clusters", "", "", "*firestore.Handler"},
+		{s, g, goldenLoc + "/clusters", "us-central1-aiplatform.googleapis.com", "", "*gke.Handler"},
+		{s, g, goldenLoc + "/clusters", "www.googleapis.com", "", "*gke.Handler"},
+		{e, g, "/managedkafka.googleapis.com" + goldenLoc + "/operations/nope", "", "", "*lro.Handler"},
+		{s, g, goldenLoc + "/instances", "redis.googleapis.com", "", "*memorystore.Handler"},
+		{s, g, "/redis.googleapis.com" + goldenLoc + "/instances", "", "", "*memorystore.Handler"},
+		{s, g, "/file.googleapis.com" + goldenLoc + "/instances", "", "", "*filestore.Handler"},
+		{s, g, "/datafusion.googleapis.com" + goldenLoc + "/instances", "", "", "*datafusion.Handler"},
+		{s, g, "/securesourcemanager.googleapis.com" + goldenLoc + "/instances", "", "", "*securesourcemanager.Handler"},
+		{s, d, goldenLoc + "/instances/nope", "datafusion.googleapis.com", "", "*datafusion.Handler"},
+		{s, d, "/datafusion.googleapis.com" + goldenLoc + "/instances/nope", "", "", "*datafusion.Handler"},
+		{s, g, "/redis.googleapis.com" + goldenLoc + "/instances/f1", "", "", "*memorystore.Handler"},
+		{s, g, "/file.googleapis.com" + goldenLoc + "/instances/r1", "", "", "*filestore.Handler"},
+		{e, p, "/file.googleapis.com" + goldenLoc + "/instances?instanceId=x", "", `{"tier":"NOPE"}`, "*filestore.Handler"},
+		{e, p, "/securesourcemanager.googleapis.com" + goldenLoc + "/repositories?repositoryId=x", "", `{}`, "*securesourcemanager.Handler"},
+		{e, g, "/artifactregistry.googleapis.com" + goldenLoc + "/repositories", "", "", "*artifactregistry.Handler"},
+		{e, g, "/storage.googleapis.com/storage/v1/b?project=demo", "", "", "*gcs.Handler"},
+		{e, g, "/secretmanager.googleapis.com/v1/projects/demo/secrets", "", "", "*secretmanager.Handler"},
+		{e, g, "/storage/v1/b?project=demo", "storage.googleapis.com", "", "*gcs.Handler"},
+		{e, g, "/_cloudemu/snapshot", "container.googleapis.com", "", "<nil>"},
 	}
 }
 
@@ -267,6 +296,8 @@ func TestRoutingGolden(t *testing.T) {
 		if row.host != "" {
 			req.Host = row.host
 		}
+
+		req, _ = sharedpath.Rewrite(nil, req)
 
 		got := fmt.Sprintf("%T", servers[row.scenario].Match(req))
 		if got != row.want {

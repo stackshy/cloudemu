@@ -52,6 +52,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	dfdriver "github.com/stackshy/cloudemu/v2/services/datafusion/driver"
 )
@@ -156,6 +157,14 @@ func (h *Handler) Matches(r *http.Request) bool {
 	// claim them only when standalone (no shared registry).
 	if rt.resource == operationsSeg {
 		return h.ops == nil
+	}
+
+	if sharedpath.Yield(r, sharedpath.DataFusion, sharedpath.File, sharedpath.Redis, sharedpath.SecureSourceManager) {
+		return false
+	}
+
+	if sharedpath.Is(r, sharedpath.DataFusion) {
+		return true
 	}
 
 	// The :restart custom verb is Data Fusion's alone. Claim it unconditionally

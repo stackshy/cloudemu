@@ -65,6 +65,7 @@ import (
 	securesourcemanagersrv "github.com/stackshy/cloudemu/v2/server/gcp/securesourcemanager"
 	servicedirectorysrv "github.com/stackshy/cloudemu/v2/server/gcp/servicedirectory"
 	"github.com/stackshy/cloudemu/v2/server/gcp/servicenetworking"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 	spannersrv "github.com/stackshy/cloudemu/v2/server/gcp/spanner"
 	vertexaisrv "github.com/stackshy/cloudemu/v2/server/gcp/vertexai"
 	"github.com/stackshy/cloudemu/v2/server/gcp/vpc"
@@ -398,6 +399,10 @@ func New(d Drivers) *server.Server {
 	}
 
 	srv := server.New()
+
+	// An opt-in /<api>.googleapis.com/ path alias names the API for paths more
+	// than one service serves (see sharedpath). Any other path is untouched.
+	srv.SetPreDispatch(sharedpath.Rewrite)
 
 	// Managed Kafka shares the exact /v1/projects/{p}/locations/{l}/clusters[/…]
 	// grammar with GKE and AlloyDB (all greedy on that collection), so it
