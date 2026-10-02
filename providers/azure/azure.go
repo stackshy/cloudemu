@@ -199,26 +199,24 @@ type Provider struct {
 	Communication      *communication.Mock
 	DigitalTwins       *digitaltwins.Mock
 	ManagedGrafana     *managedgrafana.Mock
-	// AppInsights, ManagementLocks and ScopeTags hold the state of ARM handlers
-	// with no driver interface, kept here so persist snapshots them.
-	AppInsights      *insightscomponents.Mock
-	ManagementLocks  *managementlocks.Mock
-	ScopeTags        *scopetags.Mock
-	DevCenter        *devcenter.Mock
-	Purview          *purview.Mock
-	ChaosStudio      *chaosstudio.Mock
-	ElasticSan       *elasticsan.Mock
-	ManagedLustre    *managedlustre.Mock
-	AppConfiguration *appconfiguration.Mock
-	RedisEnterprise  *redisenterprise.Mock
-	MongoCluster     *mongocluster.Mock
-	Batch            *batch.Mock
-	StreamAnalytics  *streamanalytics.Mock
-	RecoveryServices *recoveryservices.Mock
-	IoTHub           *iothub.Mock
-	Logic            *logic.Mock
-	HealthcareApis   *healthcareapis.Mock
-	APIManagement    *apimanagement.Mock
+	AppInsights        *insightscomponents.Mock
+	ManagementLocks    *managementlocks.Mock
+	ScopeTags          *scopetags.Mock
+	DevCenter          *devcenter.Mock
+	Purview            *purview.Mock
+	ChaosStudio        *chaosstudio.Mock
+	ElasticSan         *elasticsan.Mock
+	ManagedLustre      *managedlustre.Mock
+	AppConfiguration   *appconfiguration.Mock
+	RedisEnterprise    *redisenterprise.Mock
+	MongoCluster       *mongocluster.Mock
+	Batch              *batch.Mock
+	StreamAnalytics    *streamanalytics.Mock
+	RecoveryServices   *recoveryservices.Mock
+	IoTHub             *iothub.Mock
+	Logic              *logic.Mock
+	HealthcareApis     *healthcareapis.Mock
+	APIManagement      *apimanagement.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
