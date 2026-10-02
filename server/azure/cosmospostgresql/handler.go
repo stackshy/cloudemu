@@ -103,6 +103,15 @@ func (h *Handler) serveCluster(w http.ResponseWriter, r *http.Request, rp *azure
 }
 
 func (h *Handler) serveClusterChild(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	maxDepth := childMaxDepth
+	if rp.SubResource == subServers {
+		maxDepth = serverConfigsDepth
+	}
+
+	if azurearm.TooDeep(w, r, rp, maxDepth) {
+		return
+	}
+
 	if action := h.clusterAction(rp.SubResource); action != nil {
 		h.postClusterAction(w, r, rp, action)
 		return
@@ -126,7 +135,7 @@ func (h *Handler) serveClusterChild(w http.ResponseWriter, r *http.Request, rp *
 	case subPrivateLinks:
 		h.servePrivateLinks(w, r, rp)
 	default:
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported sub-resource: "+rp.SubResource)
+		azurearm.WriteUnknownType(w, r, rp)
 	}
 }
 

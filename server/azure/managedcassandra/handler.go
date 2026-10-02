@@ -94,6 +94,10 @@ func (h *Handler) serveCluster(w http.ResponseWriter, r *http.Request, rp *azure
 }
 
 func (h *Handler) serveClusterChild(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, rp, childMaxDepth) {
+		return
+	}
+
 	switch rp.SubResource {
 	case subResourceDCs:
 		h.serveDataCenterRoute(w, r, rp)
@@ -106,7 +110,7 @@ func (h *Handler) serveClusterChild(w http.ResponseWriter, r *http.Request, rp *
 	case actionStatus:
 		h.clusterStatus(w, r, rp)
 	default:
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported sub-resource: "+rp.SubResource)
+		azurearm.WriteUnknownType(w, r, rp)
 	}
 }
 

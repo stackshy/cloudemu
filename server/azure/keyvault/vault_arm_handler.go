@@ -69,6 +69,12 @@ func (h *VaultARMHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Real Key Vault has these vault children; cloudemu does not model them
+	// over ARM, so they never reach (and never overwrite) the vault.
+	if azurearm.GuardLeaf(w, r, &rp, "secrets", "keys", "accessPolicies", "privateEndpointConnections") {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdateVault(w, r, &rp)

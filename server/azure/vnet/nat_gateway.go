@@ -72,6 +72,10 @@ func (h *Handler) routeNATGateway(w http.ResponseWriter, r *http.Request, rp azu
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createNATGateway(w, r, rp)

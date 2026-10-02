@@ -27,6 +27,7 @@ const (
 	// subResourceRevisions is the sub-resource segment for a container app's
 	// revisions (.../containerApps/{app}/revisions[/{rev}[/{action}]]).
 	subResourceRevisions = "revisions"
+	revisionActionDepth  = 4
 
 	actionActivate   = "activate"
 	actionDeactivate = "deactivate"
@@ -111,6 +112,10 @@ func (h *Handler) serveEnvironment(w http.ResponseWriter, r *http.Request, rp *a
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, rp, "daprComponents", "storages", "certificates", "managedCertificates") {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut, http.MethodPatch:
 		h.putEnvironment(w, r, rp)
@@ -184,6 +189,10 @@ func (h *Handler) serveApp(w http.ResponseWriter, r *http.Request, rp *azurearm.
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, rp, "authConfigs", "sourcecontrols") {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut, http.MethodPatch:
 		h.putApp(w, r, rp)
@@ -249,6 +258,11 @@ func (h *Handler) listApps(w http.ResponseWriter, r *http.Request, rp *azurearm.
 //	GET  .../revisions/{rev}          → get
 //	POST .../revisions/{rev}/{action} → activate | deactivate | restart
 func (h *Handler) serveRevision(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	// revisions/{r}/{action} is the deepest revision route.
+	if azurearm.TooDeep(w, r, rp, revisionActionDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		h.listRevisions(w, r, rp)
 		return

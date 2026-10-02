@@ -111,6 +111,9 @@ const (
 	subResRoutes        = "routes"
 	subResVNetPeerings  = "virtualNetworkPeerings"
 	subResCheckIPAvail  = "CheckIPAddressAvailability"
+
+	// childMaxDepth is the deepest child route: {type}/{name}/{child}/{childName}.
+	childMaxDepth = 3
 )
 
 // Handler serves Microsoft.Network ARM requests against a networking driver.
@@ -273,7 +276,7 @@ func (h *Handler) routeVNet(w http.ResponseWriter, r *http.Request, rp azurearm.
 	// not a nested resource: route it before the plain vnet GET/PUT/DELETE
 	// switch below, or it falls through and answers with the vnet body instead
 	// of an IPAddressAvailabilityResult.
-	if strings.EqualFold(rp.SubResource, subResCheckIPAvail) {
+	if strings.EqualFold(rp.SubResource, subResCheckIPAvail) && rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 			return
@@ -286,6 +289,10 @@ func (h *Handler) routeVNet(w http.ResponseWriter, r *http.Request, rp azurearm.
 
 	if rp.ResourceName == "" {
 		h.listVNets(w, r, rp)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp, "usages", "ddosProtectionStatus") {
 		return
 	}
 
@@ -305,6 +312,10 @@ func (h *Handler) routeVNet(w http.ResponseWriter, r *http.Request, rp azurearm.
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) routeSubnet(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, &rp, childMaxDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		h.listSubnets(w, r, rp)
 		return
@@ -336,6 +347,10 @@ func (h *Handler) routeNSG(w http.ResponseWriter, r *http.Request, rp azurearm.R
 	// (the NSG's own name, not a rule).
 	if rp.SubResource == subResSecurityRules {
 		h.routeSecurityRule(w, r, rp)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp, "defaultSecurityRules") {
 		return
 	}
 
@@ -1557,6 +1572,10 @@ func (h *Handler) deleteNSG(w http.ResponseWriter, r *http.Request, rp azurearm.
 func (h *Handler) routePublicIP(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	if rp.ResourceName == "" {
 		h.listPublicIPs(w, r, rp)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp) {
 		return
 	}
 

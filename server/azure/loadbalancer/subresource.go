@@ -57,14 +57,19 @@ func standaloneCRUD(kind subResourceKind) bool {
 	return kind == kindBackendAddressPools || kind == kindInboundNatRules
 }
 
+// subResourceMaxDepth is the deepest child route: loadBalancers/{lb}/{kind}/{name}.
+const subResourceMaxDepth = 3
+
 // serveSubResource routes a request addressing one load-balancer sub-resource
 // collection or child. Registered before any whole-LB handler runs.
 func (h *Handler) serveSubResource(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, rp, subResourceMaxDepth) {
+		return
+	}
+
 	kind := parseSubResourceKind(rp.SubResource)
 	if kind == kindUnknown {
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound",
-			"unknown load balancer sub-resource "+rp.SubResource)
-
+		azurearm.WriteUnknownType(w, r, rp)
 		return
 	}
 

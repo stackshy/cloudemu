@@ -19,6 +19,8 @@ const (
 	// for Microsoft.ContainerService/managedClusters/{name}/{start,stop}.
 	clusterActionStart = "start"
 	clusterActionStop  = "stop"
+	// childMaxDepth is the deepest child route: managedClusters/{c}/{child}/{name}.
+	childMaxDepth = 3
 )
 
 // armManagedCluster mirrors the JSON shape Azure ARM expects for

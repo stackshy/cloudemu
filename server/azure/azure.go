@@ -393,6 +393,33 @@ func New(d Drivers) http.Handler {
 	// backs the always-on enforcement gate wired via SetPreDispatch below.
 	srv.Register(locksHandler)
 
+	// IAM matches /providers/Microsoft.Authorization/role{Definitions,Assignments}
+	// and denyAssignments at any scope, including the extension form under an
+	// individual resource (.../virtualNetworks/vn/providers/Microsoft.
+	// Authorization/roleAssignments/{id}). Like locks it must register before
+	// every per-resource-type handler, whose ParsePath match would otherwise
+	// claim the leading /providers/{ns}/{type} pair and apply the write to the
+	// parent resource. Its Matches is a substring test no resource handler
+	// produces, so registering it early shadows nothing.
+	//
+	// The Drivers.IAM field stays typed as the shared iamdriver.IAM (rather
+	// than iam.Driver) so the docs/coverage generator's registration check
+	// (which recognizes only services/<name>/driver package types) still
+	// links this field to the "iam" service. The handler additionally needs
+	// the Azure-only RoleAssignment surface (see iam.Driver): every real
+	// driver behind this field is *azureiam.Mock (providers/azure/iam),
+	// which implements it, so the assertion below always succeeds in
+	// practice; it fails fast at server construction, not at request time,
+	// if a future caller ever wires in some other iamdriver.IAM.
+	if d.IAM != nil {
+		drv, ok := d.IAM.(iam.Driver)
+		if !ok {
+			panic(fmt.Sprintf("azure: Drivers.IAM (%T) does not implement iam.Driver (role assignments)", d.IAM))
+		}
+
+		srv.Register(iam.New(drv))
+	}
+
 	// Build the per-service handlers that own resource-group-scoped resources up
 	// front; they are registered at their normal positions further below. A
 	// resource group is a pure container, so deleting it must delete the
@@ -1132,28 +1159,6 @@ func New(d Drivers) http.Handler {
 	// order is unconstrained. Registered before the BlobStorage fallback.
 	if containerAppsHandler != nil {
 		srv.Register(containerAppsHandler)
-	}
-
-	// IAM matches /providers/Microsoft.Authorization/role{Definitions,Assignments}
-	// at any scope, distinct from every other ARM provider name, so
-	// registration order is unconstrained.
-	//
-	// The Drivers.IAM field stays typed as the shared iamdriver.IAM (rather
-	// than iam.Driver) so the docs/coverage generator's registration check
-	// (which recognizes only services/<name>/driver package types) still
-	// links this field to the "iam" service. The handler additionally needs
-	// the Azure-only RoleAssignment surface (see iam.Driver): every real
-	// driver behind this field is *azureiam.Mock (providers/azure/iam),
-	// which implements it, so the assertion below always succeeds in
-	// practice; it fails fast at server construction, not at request time,
-	// if a future caller ever wires in some other iamdriver.IAM.
-	if d.IAM != nil {
-		drv, ok := d.IAM.(iam.Driver)
-		if !ok {
-			panic(fmt.Sprintf("azure: Drivers.IAM (%T) does not implement iam.Driver (role assignments)", d.IAM))
-		}
-
-		srv.Register(iam.New(drv))
 	}
 
 	// ACR data-plane catalog API matches /acr/v1/…, disjoint from ARM, and

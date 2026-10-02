@@ -18,6 +18,8 @@ func (h *Handler) serveServers(w http.ResponseWriter, r *http.Request, rp *azure
 		h.listServers(w, r, rp)
 	case rp.SubResourceAction == subConfigurations:
 		h.listServerConfigurations(w, r, rp)
+	case rp.SubResourceAction != "":
+		azurearm.WriteUnknownType(w, r, rp)
 	default:
 		h.getServer(w, r, rp)
 	}

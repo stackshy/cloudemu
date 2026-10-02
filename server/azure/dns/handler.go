@@ -51,6 +51,9 @@ const (
 	// subRecordSets and subAll are the record-set list sub-paths.
 	subRecordSets = "recordsets"
 	subAll        = "all"
+
+	// childMaxDepth is the deepest child route: dnsZones/{z}/{type}/{name}.
+	childMaxDepth = 3
 )
 
 // Handler serves Microsoft.Network/dnsZones ARM requests against a dns driver.
@@ -137,14 +140,35 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if azurearm.TooDeep(w, r, &rp, childMaxDepth) {
+		return
+	}
+
 	switch rp.SubResource {
 	case "":
 		h.serveZone(w, r, &rp)
 	case subRecordSets, subAll:
 		h.serveRecordSetCollection(w, r, &rp)
 	default:
-		// .../dnsZones/{zone}/{recordType}/{name}
+		// .../dnsZones/{zone}/{recordType}/{name}. The record type is itself
+		// an ARM nested type, so an unknown one is InvalidResourceType.
+		if !isRecordType(rp.SubResource) {
+			azurearm.WriteUnknownType(w, r, &rp)
+			return
+		}
+
 		h.serveRecordSet(w, r, &rp)
+	}
+}
+
+// isRecordType reports whether seg names a public DNS record-set type
+// (case-insensitive), including DS, NAPTR and TLSA from api 2023-07-01-preview.
+func isRecordType(seg string) bool {
+	switch strings.ToUpper(seg) {
+	case "A", "AAAA", "CAA", "CNAME", "DS", "MX", "NAPTR", "NS", "PTR", "SOA", "SRV", "TLSA", "TXT":
+		return true
+	default:
+		return false
 	}
 }
 

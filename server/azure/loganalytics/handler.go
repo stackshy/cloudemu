@@ -49,6 +49,9 @@ const (
 	subTables        = "tables"
 	subDataExports   = "dataExports"
 	subSharedKeys    = "sharedKeys"
+
+	// childMaxDepth is the deepest child route: workspaces/{w}/{child}/{name}.
+	childMaxDepth = 3
 )
 
 // Handler serves Microsoft.OperationalInsights/workspaces ARM requests against
@@ -131,13 +134,17 @@ func (h *Handler) serveWorkspace(w http.ResponseWriter, r *http.Request, rp *azu
 // action verb. An unknown sub-resource is a 404 rather than the old bug where
 // every child was misrouted to createOrUpdateWorkspace and echoed the workspace.
 func (h *Handler) serveSubResource(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, rp, childMaxDepth) {
+		return
+	}
+
 	switch rp.SubResource {
 	case subSharedKeys:
 		h.getSharedKeys(w, r, rp)
 	case subSavedSearches, subTables, subDataExports:
 		h.serveChild(w, r, rp)
 	default:
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unknown workspace sub-resource: "+rp.SubResource)
+		azurearm.WriteUnknownType(w, r, rp)
 	}
 }
 

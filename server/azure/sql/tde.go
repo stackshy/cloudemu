@@ -2,7 +2,6 @@ package sql
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
@@ -38,28 +37,27 @@ func (h *Handler) serveTDE(w http.ResponseWriter, r *http.Request, rp *azurearm.
 		return
 	}
 
+	// A path ending at .../transparentDataEncryption (no "/current" name) is
+	// the list (ListByDatabase); one with the name is the single resource.
+	if rp.Rest == "" {
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w)
+			return
+		}
+
+		h.listTDE(w, r, rp, tde)
+
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.putTDE(w, r, rp, tde)
 	case http.MethodGet:
-		// A path ending at .../transparentDataEncryption (no "/current" name) is
-		// the list; one with the name is a single Get. The name segment is
-		// dropped by ParsePath, so distinguish on the raw path.
-		if tdeIsCollection(r.URL.Path) {
-			h.listTDE(w, r, rp, tde)
-			return
-		}
-
 		h.getTDE(w, r, rp, tde)
 	default:
 		writeMethodNotAllowed(w)
 	}
-}
-
-// tdeIsCollection reports whether urlPath addresses the transparentDataEncryption
-// collection (ListByDatabase) rather than the single "current" sub-resource.
-func tdeIsCollection(urlPath string) bool {
-	return strings.HasSuffix(strings.Trim(urlPath, "/"), "/"+subTDE)
 }
 
 func (*Handler) putTDE(

@@ -33,6 +33,16 @@ const (
 	mlLenCollection = 3 // .../{coll}
 	mlLenChild      = 4 // .../{coll}/{name}
 	mlLenSub        = 5 // .../{coll}/{name}/{sub}
+
+	// childMaxDepth is the deepest Cognitive Services account route:
+	// accounts/{a}/{child}/{name}.
+	childMaxDepth = 3
+
+	// ML workspace collections and the nested segments below an item.
+	collComputes = "computes"
+	collJobs     = "jobs"
+	subCancel    = "cancel"
+	subVersions  = "versions"
 )
 
 // Endpoint collection names and the batch-kind label.
@@ -262,14 +272,19 @@ func (h *MachineLearningHandler) listWorkspaces(w http.ResponseWriter, r *http.R
 
 // serveWorkspaceChild dispatches the nested workspace collections.
 func (h *MachineLearningHandler) serveWorkspaceChild(w http.ResponseWriter, r *http.Request, p *mlPath, ws string) {
+	if !mlChildShapeOK(p.rest) {
+		rejectMLChild(w, r)
+		return
+	}
+
 	coll := p.rest[2]
 
 	switch {
-	case coll == "computes":
+	case coll == collComputes:
 		h.serveComputes(w, r, p, ws)
 	case coll == collOnlineEndpoints || coll == collBatchEndpoints:
 		h.serveEndpoints(w, r, p, ws, coll)
-	case coll == "jobs":
+	case coll == collJobs:
 		h.serveJobs(w, r, p, ws)
 	case coll == "datastores":
 		h.serveDatastores(w, r, p, ws)
@@ -280,7 +295,7 @@ func (h *MachineLearningHandler) serveWorkspaceChild(w http.ResponseWriter, r *h
 	case assetTypes[coll]:
 		h.serveAssets(w, r, p, ws, coll)
 	default:
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported workspace child: "+coll)
+		rejectMLChild(w, r)
 	}
 }
 
@@ -316,6 +331,13 @@ func (h *MachineLearningHandler) serveRegistries(w http.ResponseWriter, r *http.
 
 		azurearm.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
 
+		return
+	}
+
+	// Registries route no children, so a nested path never reaches the
+	// registry itself.
+	if len(p.rest) > mlLenWorkspace {
+		rejectMLChild(w, r)
 		return
 	}
 

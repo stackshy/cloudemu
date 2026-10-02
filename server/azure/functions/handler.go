@@ -656,13 +656,17 @@ func (h *Handler) servePlan(w http.ResponseWriter, r *http.Request, rp azurearm.
 		return
 	}
 
-	if strings.EqualFold(rp.SubResource, servePlanSitesSubResource) {
+	if strings.EqualFold(rp.SubResource, servePlanSitesSubResource) && rp.SubResourceName == "" {
 		if r.Method == http.MethodGet {
 			h.listPlanWebApps(w, r, rp, store)
 		} else {
 			azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 		}
 
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp) {
 		return
 	}
 

@@ -55,6 +55,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.EqualFold(rp.SubResource, subBillingFeatures) && rp.SubResourceName == "" {
+		h.serveBillingFeatures(w, r, &rp)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp, "ProactiveDetectionConfigs", "ApiKeys", "exportconfiguration", "analyticsItems") {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, &rp)

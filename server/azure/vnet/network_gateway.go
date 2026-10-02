@@ -194,6 +194,10 @@ func (h *Handler) routeVNGateway(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createVNGateway(w, r, rp, svc)
@@ -469,6 +473,10 @@ func (h *Handler) routeLNGateway(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createLNGateway(w, r, rp, svc)
@@ -646,6 +654,10 @@ func (h *Handler) routeConnection(w http.ResponseWriter, r *http.Request, rp azu
 
 	if rp.ResourceName == "" {
 		h.listConnections(w, r, rp, svc)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp) {
 		return
 	}
 

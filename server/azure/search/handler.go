@@ -27,6 +27,9 @@ const (
 	subDeleteQuery = "deleteQueryKey"
 	collSharedLink = "sharedPrivateLinkResources"
 	collPEC        = "privateEndpointConnections"
+
+	// childMaxDepth is the deepest child route: searchServices/{s}/{child}/{name}.
+	childMaxDepth = 3
 )
 
 // ControlHandler serves Microsoft.Search/searchServices ARM requests.
@@ -55,6 +58,10 @@ func (h *ControlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "malformed ARM path")
 
+		return
+	}
+
+	if rp.SubResource != "" && azurearm.TooDeep(w, r, &rp, childMaxDepth) {
 		return
 	}
 
