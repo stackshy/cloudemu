@@ -83,7 +83,7 @@ func (h *Handler) writeIamPolicy(w http.ResponseWriter, key string) {
 // it back. Shared by the v1 and v2 handlers.
 func (h *Handler) storeIamPolicy(w http.ResponseWriter, r *http.Request, key string) {
 	var body setIamPolicyRequest
-	if !decodeJSON(w, r, &body) {
+	if !decodeJSON(w, r, &body, nil) {
 		return
 	}
 
@@ -123,7 +123,7 @@ func (h *Handler) serveTestIamPermissions(w http.ResponseWriter, r *http.Request
 	}
 
 	var body testIamPermissionsRequest
-	if !decodeJSON(w, r, &body) {
+	if !decodeJSON(w, r, &body, nil) {
 		return
 	}
 
@@ -183,7 +183,7 @@ func (h *Handler) serveV2TestIamPermissions(w http.ResponseWriter, r *http.Reque
 	}
 
 	var body testIamPermissionsRequest
-	if !decodeJSON(w, r, &body) {
+	if !decodeJSON(w, r, &body, nil) {
 		return
 	}
 

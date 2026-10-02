@@ -106,6 +106,36 @@ func Sub(f Fields, prefix string) Fields {
 	return out
 }
 
+// Name resolves one enum token, a JSON string or number, to a value name of e.
+// A string must be one of e's names; a number must be integral, fit int32 and
+// be in e.Names. Anything else reports false.
+func Name(raw json.RawMessage, e Enum) (string, bool) {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		for _, name := range e.Names {
+			if name == s {
+				return s, true
+			}
+		}
+
+		return "", false
+	}
+
+	var n json.Number
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return "", false
+	}
+
+	num, ok := enumNumber(n)
+	if !ok {
+		return "", false
+	}
+
+	name, ok := e.Names[num]
+
+	return name, ok
+}
+
 // ReadBody reads at most gcprest.MaxBodyBytes of the request body and runs
 // Normalize over it. On a read error or an unknown enum value it writes a 400
 // INVALID_ARGUMENT and returns ok=false.

@@ -49,6 +49,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	dpdriver "github.com/stackshy/cloudemu/v2/services/dataplex/driver"
 )
@@ -91,6 +92,10 @@ type level struct {
 	seg     string // "lakes" | "zones" | "assets"
 	idParam string // "lakeId" | "zoneId" | "assetId"
 	typeURL string
+
+	// enums is the level's numeric-enum table, applied to request bodies and
+	// to stored fields on read.
+	enums gcpenum.Fields
 
 	// validate rejects a create/patch body that violates a level invariant (a
 	// zone type/location_type enum, an asset resource_spec.type enum). Nil where
