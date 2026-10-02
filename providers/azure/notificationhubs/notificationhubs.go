@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"strings"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -139,6 +140,37 @@ func (m *Mock) CreateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 func (m *Mock) DeleteTopic(_ context.Context, id string) error {
 	if !m.topics.Delete(id) {
 		return errors.Newf(errors.NotFound, "topic %q not found", id)
+	}
+
+	return nil
+}
+
+// PurgeResourceGroup deletes every namespace and hub created in
+// subscription/resourceGroup, with their namespace metadata, authorization
+// rules, PNS credentials and device registrations. It backs the ARM
+// resource-group delete cascade; an unscoped topic is never selected.
+func (m *Mock) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	for name, td := range m.topics.All() {
+		if !td.info.Scope.InResourceGroup(subscription, resourceGroup) {
+			continue
+		}
+
+		m.topics.Delete(name)
+		m.nsMeta.Delete(name)
+		m.pnsCreds.Delete(name)
+
+		prefix := name + sasCompositeSep
+		for _, k := range m.sasRules.Keys() {
+			if strings.HasPrefix(k, prefix) {
+				m.sasRules.Delete(k)
+			}
+		}
+
+		for _, k := range m.registrations.Keys() {
+			if strings.HasPrefix(k, prefix) {
+				m.registrations.Delete(k)
+			}
+		}
 	}
 
 	return nil

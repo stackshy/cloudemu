@@ -1327,6 +1327,9 @@ type ManagedInstanceConfig struct {
 	// GeoRedundant/ZoneRedundant/LocalRedundant), a per-instance cost input.
 	StorageAccountType string
 	Tags               map[string]string
+	// Scope is the subscription and resource group the instance is created
+	// in, so a resource-group delete can find it.
+	Scope scope.Scope
 }
 
 // ManagedInstance is a SQL Managed Instance: a fully-managed instance that
@@ -1347,6 +1350,7 @@ type ManagedInstance struct {
 	FQDN               string
 	ARN                string
 	Tags               map[string]string
+	Scope              scope.Scope
 }
 
 // ManagedDatabaseConfig describes a database on a managed instance.

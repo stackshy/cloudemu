@@ -48,6 +48,14 @@ type Driver interface {
 	DeleteRoleAssignment(ctx context.Context, id string) (*azureiam.RoleAssignmentInfo, error)
 	ListRoleAssignments(ctx context.Context) ([]azureiam.RoleAssignmentInfo, error)
 	RoleAssignmentsForRoleDefinition(ctx context.Context, roleDefinitionGUID string) ([]azureiam.RoleAssignmentInfo, error)
+	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+}
+
+// PurgeResourceGroup deletes every role assignment scoped at or under
+// subscription/resourceGroup, backing the resource-group cascade delete. Deny
+// assignments are read-only system state and are not touched.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	return h.iam.PurgeResourceGroup(ctx, subscription, resourceGroup)
 }
 
 const (

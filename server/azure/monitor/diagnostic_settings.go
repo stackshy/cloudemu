@@ -1,12 +1,14 @@
 package monitor
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 const diagSuffix = "/providers/microsoft.insights/diagnosticsettings"
@@ -26,6 +28,23 @@ type DiagnosticSettingsHandler struct {
 // NewDiagnosticSettingsHandler returns an empty diagnostic-settings handler.
 func NewDiagnosticSettingsHandler() *DiagnosticSettingsHandler {
 	return &DiagnosticSettingsHandler{m: make(map[string]map[string]map[string]any)}
+}
+
+// PurgeResourceGroup drops every diagnostic setting attached to the resource
+// group or to a resource inside it, so a recreated resource in a recreated
+// group starts without the old settings. The map lives in this handler and is
+// not persisted.
+func (h *DiagnosticSettingsHandler) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for uri := range h.m {
+		if scope.IDInResourceGroup(uri, subscription, resourceGroup) {
+			delete(h.m, uri)
+		}
+	}
+
+	return nil
 }
 
 // Matches claims any path whose (lowercased) form carries the
