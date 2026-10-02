@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	azfunctions "github.com/stackshy/cloudemu/v2/providers/azure/functions"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -16,6 +17,8 @@ const (
 	subResourceRestart   = "restart"
 	subResourceStart     = "start"
 	subResourceStop      = "stop"
+
+	subResourcePublishingPolicies = "basicpublishingcredentialspolicies"
 
 	// siteStateRunning/siteStateStopped are the ARM site running states reflected
 	// on GET; start/stop toggle the stored state between them.
@@ -45,7 +48,7 @@ func (h *Handler) serveSiteSubResource(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	switch rp.SubResource {
+	switch strings.ToLower(rp.SubResource) {
 	case subResourceConfig:
 		h.serveConfig(w, r, rp, store)
 	case subResourceHost:
@@ -58,6 +61,8 @@ func (h *Handler) serveSiteSubResource(w http.ResponseWriter, r *http.Request, r
 		h.serveSiteState(w, r, rp, store, siteStateRunning)
 	case subResourceStop:
 		h.serveSiteState(w, r, rp, store, siteStateStopped)
+	case subResourcePublishingPolicies:
+		servePublishingPolicies(w, r, rp, store)
 	default:
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "unsupported sub-resource")
 	}
@@ -82,42 +87,6 @@ func (*Handler) serveSiteState(
 	}
 
 	w.WriteHeader(http.StatusOK)
-}
-
-//nolint:gocritic // rp travels the dispatch chain once per request.
-func (*Handler) serveConfig(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store azureFunctionApps) {
-	switch {
-	case rp.SubResourceName == configNameWeb && r.Method == http.MethodGet:
-		getConfigWeb(w, r, rp, store)
-	case rp.SubResourceName == configNameAppSettings && rp.SubResourceAction == actionList && r.Method == http.MethodPost:
-		listAppSettings(w, r, rp, store)
-	case rp.SubResourceName == configNameAppSettings && rp.SubResourceAction == "" && r.Method == http.MethodPut:
-		updateAppSettings(w, r, rp, store)
-	default:
-		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "unsupported config route")
-	}
-}
-
-//nolint:gocritic // rp travels the dispatch chain once per request.
-func getConfigWeb(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store azureFunctionApps) {
-	meta, err := store.GetSiteMeta(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
-	azurearm.WriteJSON(w, http.StatusOK, siteConfigResource{
-		ID:   siteID(rp) + "/config/web",
-		Name: configNameWeb,
-		Type: configResourceType,
-		Properties: siteConfig{
-			LinuxFxVersion: meta.LinuxFxVersion,
-			AlwaysOn:       meta.AlwaysOn,
-			FtpsState:      meta.FtpsState,
-			MinTLSVersion:  meta.MinTLSVersion,
-			AppSettings:    appSettingsSlice(meta.AppSettings),
-		},
-	})
 }
 
 //nolint:gocritic // rp travels the dispatch chain once per request.

@@ -202,14 +202,6 @@ type hostKeys struct {
 	SystemKeys   map[string]string `json:"systemKeys"`
 }
 
-// siteConfigResource is the ARM SiteConfigResource returned by GET config/web.
-type siteConfigResource struct {
-	ID         string     `json:"id,omitempty"`
-	Name       string     `json:"name"`
-	Type       string     `json:"type"`
-	Properties siteConfig `json:"properties"`
-}
-
 // functionEnvelope is the ARM FunctionEnvelope for one deployed function.
 type functionEnvelope struct {
 	ID         string                `json:"id"`
