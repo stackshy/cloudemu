@@ -2,6 +2,9 @@ package vnet
 
 import (
 	"context"
+	"fmt"
+	"hash/fnv"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -27,13 +30,30 @@ type eipData struct {
 	// across every UpdateAzurePublicIP, matching how network interfaces
 	// preserve theirs.
 	ResourceGUID string
+	// Location is the region the public IP was created in (ARM location).
+	Location string
 }
 
-// defaultFQDNRegion is the region segment used to build a mock DNS FQDN for a
-// public IP's domainNameLabel. Real Azure computes this from the resource's
-// actual location plus a per-cloud hash segment; a fixed region keeps the mock
-// deterministic without threading location through ElasticIPConfig.
-const defaultFQDNRegion = "eastus"
+// defaultPublicIPLocation is the region assumed when a public IP is created
+// without one (the portable API never sets Location).
+const defaultPublicIPLocation = "eastus"
+
+// publicIPFQDN builds the DNS name real Azure assigns a public IP with a
+// domainNameLabel: <label>.<region>.cloudapp.azure.com, where region is the
+// resource's canonical location (lower-case, no spaces). An empty label has
+// no FQDN.
+func publicIPFQDN(label, location string) string {
+	if label == "" {
+		return ""
+	}
+
+	region := strings.ToLower(strings.ReplaceAll(location, " ", ""))
+	if region == "" {
+		region = defaultPublicIPLocation
+	}
+
+	return label + "." + region + ".cloudapp.azure.com"
+}
 
 // Azure public-IP defaults applied when a request omits the field, matching the
 // values a real publicIPAddresses GET reports: Standard SKU, Regional tier,
@@ -73,7 +93,43 @@ func applyPublicIPDefaults(cfg driver.ElasticIPConfig) driver.ElasticIPConfig {
 		cfg.IdleTimeoutMinutes = defaultIdleTimeoutMin
 	}
 
+	if cfg.Location == "" {
+		cfg.Location = defaultPublicIPLocation
+	}
+
 	return cfg
+}
+
+// publicIPFirstOctet is the leading octet of every emulated public IP. 20.0.0.0/8
+// is one of the ranges Microsoft announces for Azure public IPs, so addresses
+// look like real ones instead of the RFC 1918 space a public IP never uses.
+const publicIPFirstOctet = 20
+
+// publicIPHostOctets is how many values the last octet may take (1..254).
+const publicIPHostOctets = 254
+
+// publicAddress derives a public-looking IPv4 address for a new allocation from
+// a hash of its id, salting and rehashing on the rare collision with an address
+// already handed out. The result is stored on the allocation, so it is stable
+// across reads and survives a snapshot restore.
+func (m *Mock) publicAddress(allocID string) string {
+	inUse := make(map[string]bool)
+	for _, e := range m.eips.All() {
+		inUse[e.PublicIP] = true
+	}
+
+	for salt := 0; ; salt++ {
+		h := fnv.New32a()
+		_, _ = fmt.Fprintf(h, "%s/%d", allocID, salt)
+		b := h.Sum(nil)
+
+		// Last octet stays in 1..254 so the address is never a network or
+		// broadcast-looking .0/.255.
+		addr := fmt.Sprintf("%d.%d.%d.%d", publicIPFirstOctet, b[1], b[2], int(b[3])%publicIPHostOctets+1)
+		if !inUse[addr] {
+			return addr
+		}
+	}
 }
 
 // AllocateAddress allocates a new public IP address.
@@ -90,7 +146,7 @@ func (m *Mock) AllocateAddress(
 
 	eip := &eipData{
 		AllocationID:       allocID,
-		PublicIP:           mockPublicIP(allocID),
+		PublicIP:           m.publicAddress(allocID),
 		Tags:               copyTags(cfg.Tags),
 		SKU:                cfg.SKU,
 		SKUTier:            cfg.SKUTier,
@@ -99,11 +155,9 @@ func (m *Mock) AllocateAddress(
 		Zones:              append([]string(nil), cfg.Zones...),
 		IdleTimeoutMinutes: cfg.IdleTimeoutMinutes,
 		DNSDomainNameLabel: cfg.DNSDomainNameLabel,
+		DNSFQDN:            publicIPFQDN(cfg.DNSDomainNameLabel, cfg.Location),
 		ResourceGUID:       generateGUID(),
-	}
-
-	if cfg.DNSDomainNameLabel != "" {
-		eip.DNSFQDN = cfg.DNSDomainNameLabel + "." + defaultFQDNRegion + ".cloudapp.azure.com"
+		Location:           cfg.Location,
 	}
 
 	m.eips.Set(allocID, eip)
@@ -132,14 +186,10 @@ func (m *Mock) UpdateAzurePublicIP(_ context.Context, allocationID string, cfg d
 		cp.AllocationMethod = cfg.AllocationMethod
 		cp.IdleTimeoutMinutes = cfg.IdleTimeoutMinutes
 		cp.DNSDomainNameLabel = cfg.DNSDomainNameLabel
+		cp.Location = cfg.Location
+		cp.DNSFQDN = publicIPFQDN(cfg.DNSDomainNameLabel, cfg.Location)
 
 		cp.Zones = append([]string(nil), cfg.Zones...)
-
-		if cfg.DNSDomainNameLabel != "" {
-			cp.DNSFQDN = cfg.DNSDomainNameLabel + "." + defaultFQDNRegion + ".cloudapp.azure.com"
-		} else {
-			cp.DNSFQDN = ""
-		}
 
 		return &cp
 	})
@@ -287,5 +337,6 @@ func toEIPInfo(eip *eipData) driver.ElasticIP {
 		DNSDomainNameLabel: eip.DNSDomainNameLabel,
 		DNSFQDN:            eip.DNSFQDN,
 		ResourceGUID:       eip.ResourceGUID,
+		Location:           eip.Location,
 	}
 }

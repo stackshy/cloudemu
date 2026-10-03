@@ -27,6 +27,40 @@ type natGatewayData struct {
 	// attach to it afterwards via their own natGateway reference), so SubnetID
 	// stays empty for the Azure wire handler's normal flow.
 	AllocationID string
+	// Location, SKU, IdleTimeoutMinutes and Zones are the Azure NAT gateway's
+	// region, sku.name, idleTimeoutInMinutes and zones.
+	Location           string
+	SKU                string
+	IdleTimeoutMinutes int
+	Zones              []string
+}
+
+// Azure NAT gateway defaults a real natGateways GET reports when the request
+// omits them: the Standard SKU (the only one) and a 4-minute idle timeout.
+const (
+	defaultNATGatewaySKU     = "Standard"
+	defaultNATGatewayIdleMin = 4
+	defaultNATGatewayRegion  = "eastus"
+)
+
+// applyNATGatewayDefaults fills the Azure NAT gateway fields ARM defaults when
+// the request omits them.
+//
+//nolint:gocritic // hugeParam: cfg mirrors CreateNATGateway's driver signature.
+func applyNATGatewayDefaults(cfg driver.NATGatewayConfig) driver.NATGatewayConfig {
+	if cfg.SKU == "" {
+		cfg.SKU = defaultNATGatewaySKU
+	}
+
+	if cfg.IdleTimeoutMinutes == 0 {
+		cfg.IdleTimeoutMinutes = defaultNATGatewayIdleMin
+	}
+
+	if cfg.Location == "" {
+		cfg.Location = defaultNATGatewayRegion
+	}
+
+	return cfg
 }
 
 // CreateNATGateway creates a NAT gateway, optionally binding it to a subnet
@@ -47,14 +81,19 @@ func (m *Mock) CreateNATGateway(_ context.Context, cfg driver.NATGatewayConfig) 
 	}
 
 	id := idgen.GenerateID("natgw-")
+	cfg = applyNATGatewayDefaults(cfg)
 
 	nat := &natGatewayData{
-		ID:        id,
-		SubnetID:  cfg.SubnetID,
-		VPCID:     vpcID,
-		State:     NATStateAvailable,
-		CreatedAt: m.opts.Clock.Now().Format(timeFormat),
-		Tags:      copyTags(cfg.Tags),
+		ID:                 id,
+		SubnetID:           cfg.SubnetID,
+		VPCID:              vpcID,
+		State:              NATStateAvailable,
+		CreatedAt:          m.opts.Clock.Now().Format(timeFormat),
+		Tags:               copyTags(cfg.Tags),
+		Location:           cfg.Location,
+		SKU:                cfg.SKU,
+		IdleTimeoutMinutes: cfg.IdleTimeoutMinutes,
+		Zones:              append([]string(nil), cfg.Zones...),
 	}
 
 	if cfg.AllocationID != "" {
@@ -132,7 +171,7 @@ func (m *Mock) DeleteNATGateway(_ context.Context, id string) error {
 }
 
 // UpdateAzureNATGateway re-applies the mutable fields of an existing NAT gateway
-// (its bound public-IP allocation and tags), so a repeat ARM CreateOrUpdate PUT
+// (its bound public-IP allocation, tags, sku, idle timeout and zones), so a repeat ARM CreateOrUpdate PUT
 // re-associates the public IP and reflects tag changes rather than discarding
 // them. When the requested allocation differs from the current one it binds the
 // new public IP first (rejecting one already in use) and only then frees the
@@ -147,7 +186,12 @@ func (m *Mock) DeleteNATGateway(_ context.Context, id string) error {
 // through a store lock), and real ARM serializes PUTs on one resource; folding
 // it fully atomic would require nesting the eips store lock inside a
 // natGateways Update callback, which the package deliberately avoids.
-func (m *Mock) UpdateAzureNATGateway(_ context.Context, id, allocationID string, tags map[string]string) error {
+//
+//nolint:gocritic // hugeParam: cfg mirrors CreateNATGateway's driver signature.
+func (m *Mock) UpdateAzureNATGateway(_ context.Context, id string, cfg driver.NATGatewayConfig) error {
+	cfg = applyNATGatewayDefaults(cfg)
+	allocationID := cfg.AllocationID
+
 	nat, ok := m.natGateways.Get(id)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "NAT gateway %q not found", id)
@@ -178,7 +222,11 @@ func (m *Mock) UpdateAzureNATGateway(_ context.Context, id, allocationID string,
 		cp := *n
 		cp.AllocationID = allocationID
 		cp.PublicIP = newPublicIP
-		cp.Tags = copyTags(tags)
+		cp.Tags = copyTags(cfg.Tags)
+		cp.Location = cfg.Location
+		cp.SKU = cfg.SKU
+		cp.IdleTimeoutMinutes = cfg.IdleTimeoutMinutes
+		cp.Zones = append([]string(nil), cfg.Zones...)
 
 		return &cp
 	})
@@ -193,13 +241,17 @@ func (m *Mock) DescribeNATGateways(_ context.Context, ids []string) ([]driver.NA
 
 func toNATGatewayInfo(n *natGatewayData) driver.NATGateway {
 	return driver.NATGateway{
-		ID:           n.ID,
-		SubnetID:     n.SubnetID,
-		VPCID:        n.VPCID,
-		PublicIP:     n.PublicIP,
-		State:        n.State,
-		CreatedAt:    n.CreatedAt,
-		Tags:         copyTags(n.Tags),
-		AllocationID: n.AllocationID,
+		ID:                 n.ID,
+		SubnetID:           n.SubnetID,
+		VPCID:              n.VPCID,
+		PublicIP:           n.PublicIP,
+		State:              n.State,
+		CreatedAt:          n.CreatedAt,
+		Tags:               copyTags(n.Tags),
+		AllocationID:       n.AllocationID,
+		Location:           n.Location,
+		SKU:                n.SKU,
+		IdleTimeoutMinutes: n.IdleTimeoutMinutes,
+		Zones:              append([]string(nil), n.Zones...),
 	}
 }

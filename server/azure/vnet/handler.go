@@ -1630,6 +1630,7 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		Tags:               tags,
 		Zones:              req.Zones,
 		IdleTimeoutMinutes: req.Properties.IdleTimeoutInMinutes,
+		Location:           req.Location,
 	}
 
 	if req.Properties.DNSSettings != nil {
@@ -1642,12 +1643,7 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
-	loc := req.Location
-	if loc == "" {
-		loc = defaultLoc
-	}
-
-	body := h.toPublicIPResponse(r.Context(), info, rp, loc)
+	body := h.toPublicIPResponse(r.Context(), info, rp)
 
 	writeAcceptedAsync(w, r, rp.Subscription, "publicip-create-"+rp.ResourceName, body)
 }
@@ -1691,7 +1687,7 @@ func (h *Handler) getPublicIP(w http.ResponseWriter, r *http.Request, rp azurear
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, h.toPublicIPResponse(r.Context(), info, rp, defaultLoc))
+	azurearm.WriteJSON(w, http.StatusOK, h.toPublicIPResponse(r.Context(), info, rp))
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -1757,7 +1753,7 @@ func (h *Handler) listPublicIPs(w http.ResponseWriter, r *http.Request, rp azure
 		scope := rp
 		scope.ResourceGroup = tagOr(infos[i].Tags, armPublicIPRGTag, rp.ResourceGroup)
 		scope.ResourceName = tagOr(infos[i].Tags, armPublicIPTag, infos[i].AllocationID)
-		out.Value = append(out.Value, h.toPublicIPResponse(r.Context(), &infos[i], scope, defaultLoc))
+		out.Value = append(out.Value, h.toPublicIPResponse(r.Context(), &infos[i], scope))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, out)
@@ -2142,11 +2138,9 @@ func nicResourceID(nsgARMID, nicResourceGroup, nicName string) string {
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) toPublicIPResponse(
-	ctx context.Context, info *netdriver.ElasticIP, rp azurearm.ResourcePath, location string,
+	ctx context.Context, info *netdriver.ElasticIP, rp azurearm.ResourcePath,
 ) publicIPResponse {
-	if location == "" {
-		location = defaultLoc
-	}
+	location := orDefault(info.Location, defaultLoc)
 
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typePublicIP, rp.ResourceName)
 
