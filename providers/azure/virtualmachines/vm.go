@@ -1446,7 +1446,8 @@ func (m *Mock) CreateKeyPair(_ context.Context, cfg driver.KeyPairConfig) (*driv
 		return nil, cerrors.New(cerrors.InvalidArgument, "key pair name must not be empty")
 	}
 
-	if _, ok := m.keyPairs.Get(cfg.Name); ok {
+	key := m.keyPairKey(cfg.Tags[subTag], cfg.Tags[rgTag], cfg.Name)
+	if _, ok := m.keyPairs.Get(key); ok {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "key pair %q already exists", cfg.Name)
 	}
 
@@ -1466,7 +1467,7 @@ func (m *Mock) CreateKeyPair(_ context.Context, cfg driver.KeyPairConfig) (*driv
 		Tags:        copyTags(cfg.Tags),
 	}
 
-	m.keyPairs.Set(cfg.Name, kp)
+	m.keyPairs.Set(key, kp)
 
 	result := *kp
 
@@ -1479,7 +1480,13 @@ func (m *Mock) CreateKeyPair(_ context.Context, cfg driver.KeyPairConfig) (*driv
 // authorized_keys form) and the private key (PEM PKCS#1), the one time the
 // private key is disclosed.
 func (m *Mock) GenerateKeyPair(_ context.Context, name string) (*driver.KeyPairInfo, error) {
-	kp, ok := m.keyPairs.Get(name)
+	key, _, _ := m.findKeyPair(name)
+
+	return m.generateKeyPairAt(key, name)
+}
+
+func (m *Mock) generateKeyPairAt(key, name string) (*driver.KeyPairInfo, error) {
+	kp, ok := m.keyPairs.Get(key)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "sshPublicKey %q not found", name)
 	}
@@ -1492,7 +1499,7 @@ func (m *Mock) GenerateKeyPair(_ context.Context, name string) (*driver.KeyPairI
 	kp.PublicKey = pub
 	kp.PrivateKey = priv
 	kp.Fingerprint = "fp-" + name
-	m.keyPairs.Set(name, kp)
+	m.keyPairs.Set(key, kp)
 
 	result := *kp
 
@@ -1527,7 +1534,13 @@ func generateRSAKeyPair() (publicKey, privateKey string, err error) {
 // (Azure sshPublicKeys PATCH Update). A nil publicKey leaves the key material
 // unchanged; a non-nil tags map replaces the resource's tags.
 func (m *Mock) UpdateKeyPair(_ context.Context, name string, publicKey *string, tags map[string]string) (*driver.KeyPairInfo, error) {
-	kp, ok := m.keyPairs.Get(name)
+	key, _, _ := m.findKeyPair(name)
+
+	return m.updateKeyPairAt(key, name, publicKey, tags)
+}
+
+func (m *Mock) updateKeyPairAt(key, name string, publicKey *string, tags map[string]string) (*driver.KeyPairInfo, error) {
+	kp, ok := m.keyPairs.Get(key)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "sshPublicKey %q not found", name)
 	}
@@ -1540,7 +1553,7 @@ func (m *Mock) UpdateKeyPair(_ context.Context, name string, publicKey *string, 
 		kp.Tags = copyTags(tags)
 	}
 
-	m.keyPairs.Set(name, kp)
+	m.keyPairs.Set(key, kp)
 
 	result := *kp
 
@@ -1549,7 +1562,8 @@ func (m *Mock) UpdateKeyPair(_ context.Context, name string, publicKey *string, 
 
 // DeleteKeyPair deletes a key pair by name.
 func (m *Mock) DeleteKeyPair(_ context.Context, name string) error {
-	if !m.keyPairs.Delete(name) {
+	key, _, ok := m.findKeyPair(name)
+	if !ok || !m.keyPairs.Delete(key) {
 		return cerrors.Newf(cerrors.NotFound, "key pair %q not found", name)
 	}
 
@@ -1574,7 +1588,7 @@ func (m *Mock) DescribeKeyPairs(_ context.Context, names []string) ([]driver.Key
 	var result []driver.KeyPairInfo
 
 	for _, name := range names {
-		if kp, ok := m.keyPairs.Get(name); ok {
+		if _, kp, ok := m.findKeyPair(name); ok {
 			cp := *kp
 			cp.PrivateKey = ""
 			result = append(result, cp)

@@ -156,7 +156,7 @@ func TestPurgeComputeResourceGroupStaysInSubscription(t *testing.T) {
 		t.Error("VM in sub-b was purged with sub-a's group")
 	}
 
-	if _, ok := m.scaleSets.Get("ss-sub-b"); !ok {
+	if _, ok := m.scaleSets.Get(scaleSetKey("sub-b", "shared", "ss-sub-b")); !ok {
 		t.Error("scale set in sub-b was purged with sub-a's group")
 	}
 

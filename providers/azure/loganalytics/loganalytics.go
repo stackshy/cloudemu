@@ -5,6 +5,7 @@ import (
 	"context"
 	"github.com/stackshy/cloudemu/v2/services/scope"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -96,7 +97,8 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 		return nil, errors.New(errors.InvalidArgument, "log group name is required")
 	}
 
-	if m.groups.Has(cfg.Name) {
+	key := m.groupKey(cfg.Scope, cfg.Name)
+	if m.groups.Has(key) {
 		return nil, errors.Newf(errors.AlreadyExists, "log group %q already exists", cfg.Name)
 	}
 
@@ -137,7 +139,7 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 		subFilters:    memstore.New[*driver.SubscriptionFilterInfo](),
 	}
 
-	m.groups.Set(cfg.Name, g)
+	m.groups.Set(key, g)
 
 	result := info
 
@@ -146,7 +148,19 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 
 // DeleteLogGroup deletes a Log Analytics workspace by name.
 func (m *Mock) DeleteLogGroup(_ context.Context, name string) error {
-	if !m.groups.Delete(name) {
+	key, _, ok := m.find(name)
+	if !ok || !m.groups.Delete(key) {
+		return errors.Newf(errors.NotFound, "log group %q not found", name)
+	}
+
+	return nil
+}
+
+// DeleteLogGroupScoped deletes the workspace of that name in the given
+// subscription and resource group, leaving same-named workspaces in other
+// resource groups untouched.
+func (m *Mock) DeleteLogGroupScoped(_ context.Context, subscription, resourceGroup, name string) error {
+	if !m.groups.Delete(m.groupKey(scope.Scope{Subscription: subscription, ResourceGroup: resourceGroup}, name)) {
 		return errors.Newf(errors.NotFound, "log group %q not found", name)
 	}
 
@@ -155,7 +169,7 @@ func (m *Mock) DeleteLogGroup(_ context.Context, name string) error {
 
 // GetLogGroup retrieves information about a Log Analytics workspace.
 func (m *Mock) GetLogGroup(_ context.Context, name string) (*driver.LogGroupInfo, error) {
-	g, ok := m.groups.Get(name)
+	_, g, ok := m.find(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", name)
 	}
@@ -163,6 +177,51 @@ func (m *Mock) GetLogGroup(_ context.Context, name string) (*driver.LogGroupInfo
 	result := g.info
 
 	return &result, nil
+}
+
+// GetLogGroupScoped returns the workspace of that name in the given
+// subscription and resource group. Workspace names are unique per resource
+// group, so the same name elsewhere is a different workspace.
+func (m *Mock) GetLogGroupScoped(_ context.Context, subscription, resourceGroup, name string) (*driver.LogGroupInfo, error) {
+	g, ok := m.groups.Get(m.groupKey(scope.Scope{Subscription: subscription, ResourceGroup: resourceGroup}, name))
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "log group %q not found", name)
+	}
+
+	result := g.info
+
+	return &result, nil
+}
+
+// groupKey is the store key of a workspace: subscription, resource group and
+// name, since the same workspace name may live in several resource groups. A
+// group created without a subscription is filed under the provider's own.
+func (m *Mock) groupKey(sc scope.Scope, name string) string {
+	sub := sc.Subscription
+	if sub == "" {
+		sub = m.opts.AccountID
+	}
+
+	return strings.ToLower(sub) + "/" + strings.ToLower(sc.ResourceGroup) + "/" + name
+}
+
+// find resolves a workspace by name alone, for the portable logging calls that
+// carry no scope. A group created without scope is tried first; otherwise the
+// first match in key order wins, so the choice is stable.
+func (m *Mock) find(name string) (string, *logGroup, bool) {
+	key := m.groupKey(scope.Scope{}, name)
+	if g, ok := m.groups.Get(key); ok {
+		return key, g, true
+	}
+
+	matches := m.groups.Filter(func(_ string, g *logGroup) bool { return g.info.Name == name })
+	if len(matches) == 0 {
+		return "", nil, false
+	}
+
+	keys := slices.Sorted(maps.Keys(matches))
+
+	return keys[0], matches[keys[0]], true
 }
 
 // ListLogGroups lists all Log Analytics workspaces.
@@ -182,7 +241,7 @@ func (m *Mock) ListLogGroups(_ context.Context, filter scope.Scope) ([]driver.Lo
 
 // CreateLogStream creates a new log stream in a workspace.
 func (m *Mock) CreateLogStream(_ context.Context, logGroup, streamName string) (*driver.LogStreamInfo, error) {
-	g, ok := m.groups.Get(logGroup)
+	_, g, ok := m.find(logGroup)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", logGroup)
 	}
@@ -214,7 +273,7 @@ func (m *Mock) CreateLogStream(_ context.Context, logGroup, streamName string) (
 
 // DeleteLogStream deletes a log stream from a workspace.
 func (m *Mock) DeleteLogStream(_ context.Context, logGroup, streamName string) error {
-	g, ok := m.groups.Get(logGroup)
+	_, g, ok := m.find(logGroup)
 	if !ok {
 		return errors.Newf(errors.NotFound, "log group %q not found", logGroup)
 	}
@@ -228,7 +287,7 @@ func (m *Mock) DeleteLogStream(_ context.Context, logGroup, streamName string) e
 
 // ListLogStreams lists all log streams in a workspace.
 func (m *Mock) ListLogStreams(_ context.Context, logGroup string) ([]driver.LogStreamInfo, error) {
-	g, ok := m.groups.Get(logGroup)
+	_, g, ok := m.find(logGroup)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", logGroup)
 	}
@@ -248,7 +307,7 @@ func (m *Mock) ListLogStreams(_ context.Context, logGroup string) ([]driver.LogS
 
 // PutLogEvents writes log events to a stream.
 func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, events []driver.LogEvent) error {
-	g, ok := m.groups.Get(groupName)
+	key, g, ok := m.find(groupName)
 	if !ok {
 		return errors.Newf(errors.NotFound, "log group %q not found", groupName)
 	}
@@ -275,7 +334,7 @@ func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, eve
 		totalBytes += int64(len(e.Message))
 	}
 
-	m.groups.Update(groupName, func(lg *logGroup) *logGroup {
+	m.groups.Update(key, func(lg *logGroup) *logGroup {
 		lg.info.StoredBytes += totalBytes
 		return lg
 	})
@@ -289,7 +348,7 @@ func (m *Mock) PutLogEvents(_ context.Context, groupName, streamName string, eve
 
 // GetLogEvents retrieves log events matching the query.
 func (m *Mock) GetLogEvents(_ context.Context, input *driver.LogQueryInput) ([]driver.LogEvent, error) {
-	g, ok := m.groups.Get(input.LogGroup)
+	_, g, ok := m.find(input.LogGroup)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", input.LogGroup)
 	}
@@ -372,7 +431,7 @@ func (m *Mock) FilterLogEvents(
 	_ context.Context,
 	input *driver.FilterLogEventsInput,
 ) ([]driver.FilteredLogEvent, error) {
-	g, ok := m.groups.Get(input.LogGroup)
+	_, g, ok := m.find(input.LogGroup)
 	if !ok {
 		return nil, errors.Newf(
 			errors.NotFound, "log group %q not found", input.LogGroup,
@@ -458,7 +517,7 @@ func (m *Mock) PutMetricFilter(
 	_ context.Context,
 	cfg *driver.MetricFilterConfig,
 ) error {
-	g, ok := m.groups.Get(cfg.LogGroup)
+	_, g, ok := m.find(cfg.LogGroup)
 	if !ok {
 		return errors.Newf(
 			errors.NotFound, "log group %q not found", cfg.LogGroup,
@@ -491,7 +550,7 @@ func (m *Mock) DeleteMetricFilter(
 	_ context.Context,
 	logGroup, filterName string,
 ) error {
-	g, ok := m.groups.Get(logGroup)
+	_, g, ok := m.find(logGroup)
 	if !ok {
 		return errors.Newf(
 			errors.NotFound, "log group %q not found", logGroup,
@@ -514,7 +573,7 @@ func (m *Mock) DescribeMetricFilters(
 	_ context.Context,
 	logGroup string,
 ) ([]driver.MetricFilterInfo, error) {
-	g, ok := m.groups.Get(logGroup)
+	_, g, ok := m.find(logGroup)
 	if !ok {
 		return nil, errors.Newf(
 			errors.NotFound, "log group %q not found", logGroup,
@@ -536,7 +595,7 @@ func (m *Mock) DescribeMetricFilters(
 // implemented so the shared driver interface is satisfied and portable callers
 // can round-trip filters, but no delivery is performed.
 func (m *Mock) PutSubscriptionFilter(_ context.Context, cfg *driver.SubscriptionFilterConfig) error {
-	g, ok := m.groups.Get(cfg.LogGroup)
+	_, g, ok := m.find(cfg.LogGroup)
 	if !ok {
 		return errors.Newf(errors.NotFound, "log group %q not found", cfg.LogGroup)
 	}
@@ -560,7 +619,7 @@ func (m *Mock) PutSubscriptionFilter(_ context.Context, cfg *driver.Subscription
 
 // DeleteSubscriptionFilter removes a subscription filter from a log group.
 func (m *Mock) DeleteSubscriptionFilter(_ context.Context, logGroup, filterName string) error {
-	g, ok := m.groups.Get(logGroup)
+	_, g, ok := m.find(logGroup)
 	if !ok {
 		return errors.Newf(errors.NotFound, "log group %q not found", logGroup)
 	}
@@ -575,7 +634,7 @@ func (m *Mock) DeleteSubscriptionFilter(_ context.Context, logGroup, filterName 
 
 // DescribeSubscriptionFilters lists all subscription filters for a log group.
 func (m *Mock) DescribeSubscriptionFilters(_ context.Context, logGroup string) ([]driver.SubscriptionFilterInfo, error) {
-	g, ok := m.groups.Get(logGroup)
+	_, g, ok := m.find(logGroup)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", logGroup)
 	}
@@ -594,7 +653,12 @@ func (m *Mock) DescribeSubscriptionFilters(_ context.Context, logGroup string) (
 // ARM CreateOrUpdate-on-existing semantics (retention and tags come from
 // the request; identity and CreatedAt are preserved).
 func (m *Mock) UpdateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*driver.LogGroupInfo, error) {
-	g, ok := m.groups.Get(cfg.Name)
+	key, g, ok := m.find(cfg.Name)
+	if !cfg.Scope.IsZero() {
+		key = m.groupKey(cfg.Scope, cfg.Name)
+		g, ok = m.groups.Get(key)
+	}
+
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", cfg.Name)
 	}
@@ -609,7 +673,7 @@ func (m *Mock) UpdateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 		g.info.Scope = cfg.Scope
 	}
 
-	m.groups.Set(cfg.Name, g)
+	m.groups.Set(key, g)
 
 	result := g.info
 

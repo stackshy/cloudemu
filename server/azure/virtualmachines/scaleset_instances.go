@@ -53,7 +53,7 @@ func serveScaleSetSubResource(w http.ResponseWriter, r *http.Request, rp azurear
 func scaleSetPowerAction(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store scaleSetStore) {
 	ids := decodeScaleSetInstanceIDs(r)
 
-	if err := store.PowerScaleSet(r.Context(), rp.ResourceName, rp.SubResource, ids); err != nil {
+	if err := store.PowerScaleSet(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, rp.SubResource, ids); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -136,13 +136,13 @@ func serveScaleSetVM(w http.ResponseWriter, r *http.Request, rp azurearm.Resourc
 //
 //nolint:gocritic // rp is a request-scoped value
 func listScaleSetVMs(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store scaleSetStore) {
-	vms, err := store.ListScaleSetVMs(r.Context(), rp.ResourceName)
+	vms, err := store.ListScaleSetVMs(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	loc := scaleSetLocation(r.Context(), store, rp.ResourceName)
+	loc := scaleSetLocation(r.Context(), store, rp)
 	out := make([]vmssVMResponse, 0, len(vms))
 
 	for i := range vms {
@@ -156,13 +156,13 @@ func listScaleSetVMs(w http.ResponseWriter, r *http.Request, rp azurearm.Resourc
 //
 //nolint:gocritic // rp is a request-scoped value
 func getScaleSetVM(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store scaleSetStore) {
-	vm, err := store.GetScaleSetVM(r.Context(), rp.ResourceName, rp.SubResourceName)
+	vm, err := store.GetScaleSetVM(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, rp.SubResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	loc := scaleSetLocation(r.Context(), store, rp.ResourceName)
+	loc := scaleSetLocation(r.Context(), store, rp)
 
 	azurearm.WriteJSON(w, http.StatusOK, toVMSSVMResponse(rp, *vm, loc))
 }
@@ -173,7 +173,7 @@ func getScaleSetVM(w http.ResponseWriter, r *http.Request, rp azurearm.ResourceP
 //
 //nolint:gocritic // rp is a request-scoped value
 func deleteScaleSetVM(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store scaleSetStore) {
-	if err := store.DeleteScaleSetVM(r.Context(), rp.ResourceName, rp.SubResourceName); err != nil {
+	if err := store.DeleteScaleSetVM(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, rp.SubResourceName); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -187,7 +187,9 @@ func deleteScaleSetVM(w http.ResponseWriter, r *http.Request, rp azurearm.Resour
 //
 //nolint:gocritic // rp is a request-scoped value
 func scaleSetVMPowerAction(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store scaleSetStore) {
-	if err := store.PowerScaleSetVM(r.Context(), rp.ResourceName, rp.SubResourceName, rp.SubResourceAction); err != nil {
+	err := store.PowerScaleSetVM(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName,
+		rp.SubResourceName, rp.SubResourceAction)
+	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -200,7 +202,7 @@ func scaleSetVMPowerAction(w http.ResponseWriter, r *http.Request, rp azurearm.R
 //
 //nolint:gocritic // rp is a request-scoped value
 func scaleSetVMInstanceView(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store scaleSetStore) {
-	vm, err := store.GetScaleSetVM(r.Context(), rp.ResourceName, rp.SubResourceName)
+	vm, err := store.GetScaleSetVM(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, rp.SubResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -220,7 +222,7 @@ func scaleSetVMInstanceView(w http.ResponseWriter, r *http.Request, rp azurearm.
 //
 //nolint:gocritic // rp is a request-scoped value
 func scaleSetInstanceView(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store scaleSetStore) {
-	vms, err := store.ListScaleSetVMs(r.Context(), rp.ResourceName)
+	vms, err := store.ListScaleSetVMs(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -246,14 +248,16 @@ func scaleSetInstanceView(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 
 // scaleSetLocation resolves a scale set's location for rendering its VMs'
 // required location field, falling back to eastus when unknown.
-func scaleSetLocation(ctx context.Context, store scaleSetStore, name string) string {
+//
+//nolint:gocritic // rp is a request-scoped value
+func scaleSetLocation(ctx context.Context, store scaleSetStore, rp azurearm.ResourcePath) string {
 	sets, err := store.ListScaleSets(ctx)
 	if err != nil {
 		return defaultVMSSLocation
 	}
 
 	for i := range sets {
-		if strings.EqualFold(sets[i].Name, name) {
+		if strings.EqualFold(sets[i].Name, rp.ResourceName) && inScaleSetScope(&sets[i], rp) {
 			return defaultIfEmpty(sets[i].Location, defaultVMSSLocation)
 		}
 	}
