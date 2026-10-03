@@ -39,6 +39,7 @@ type networkResponse struct {
 	NetworkFirewallPolicyEnforcementOrder string                `json:"networkFirewallPolicyEnforcementOrder,omitempty"`
 	CreationTimestamp                     string                `json:"creationTimestamp,omitempty"`
 	Subnetworks                           []string              `json:"subnetworks,omitempty"`
+	Peerings                              []networkPeering      `json:"peerings,omitempty"`
 }
 
 type networkListResponse struct {
