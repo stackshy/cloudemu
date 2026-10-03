@@ -74,6 +74,7 @@ type appServicePlanStore interface {
 // portable behavior (or 501 for Azure-only sub-routes).
 type azureFunctionApps interface {
 	UpsertSiteMeta(ctx context.Context, in azfunctions.SiteMeta) (*azfunctions.SiteMeta, error)
+	SiteNameOwnedElsewhere(ctx context.Context, subscription, resourceGroup, name string) bool
 	PatchSiteMeta(
 		ctx context.Context, subscription, resourceGroup, name string, patch azfunctions.SiteMetaPatch,
 	) (*azfunctions.SiteMeta, error)
@@ -317,6 +318,16 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		Handler:     handler,
 		Tags:        req.Tags,
 		Environment: appSettingsToMap(settings),
+	}
+
+	// Site names are global (*.azurewebsites.net): a name another resource
+	// group or subscription owns is a 409, never a rewrite of that site.
+	if store, ok := h.siteStore(); ok &&
+		store.SiteNameOwnedElsewhere(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName) {
+		azurearm.WriteError(w, http.StatusConflict, "Conflict",
+			"Website with given name "+rp.ResourceName+" already exists.")
+
+		return
 	}
 
 	info, err := upsertFunction(r, h.fn, cfg)

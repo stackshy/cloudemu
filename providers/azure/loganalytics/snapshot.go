@@ -13,7 +13,7 @@ import (
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // logAnalyticsSnapshot is the full serialized state of the Log Analytics mock:
-// every workspace (log group) keyed by name, each carrying its info, its log
+// every workspace (log group) keyed by subscription, resource group and name, each carrying its info, its log
 // streams (with their events), and its metric/subscription filters. logGroup and
 // logStream are unexported, so they are promoted to exported forms; the filter
 // stores hold exported driver values and round-trip through the generic memstore
@@ -82,7 +82,7 @@ func snapshotGroup(g *logGroup) (*logGroupSnapshot, error) {
 	return gs, nil
 }
 
-// Restore rebuilds every workspace under its original name with its streams,
+// Restore rebuilds every workspace under its scoped key with its streams,
 // events, and filters intact.
 func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	var snap logAnalyticsSnapshot
@@ -90,13 +90,15 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		return fmt.Errorf("loganalytics: parse snapshot: %w", err)
 	}
 
-	for name, gs := range snap.Groups {
+	for _, gs := range snap.Groups {
 		g, err := restoreGroup(gs)
 		if err != nil {
 			return err
 		}
 
-		m.groups.Set(name, g)
+		// The key is rebuilt from the record's own scope, which also migrates
+		// snapshots taken when workspaces were keyed by name alone.
+		m.groups.Set(m.groupKey(g.info.Scope, g.info.Name), g)
 	}
 
 	return nil

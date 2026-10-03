@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -29,14 +30,16 @@ func (h *Handler) createOrUpdateWorkspace(w http.ResponseWriter, r *http.Request
 		Scope:         scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
 	}
 
-	if _, err := h.logs.GetLogGroup(r.Context(), rp.ResourceName); err == nil {
+	key := workspaceKey(rp)
+
+	if _, err := h.workspace(r.Context(), rp); err == nil {
 		info, uerr := h.logs.UpdateLogGroup(r.Context(), cfg)
 		if uerr != nil {
 			azurearm.WriteCErr(w, uerr)
 			return
 		}
 
-		meta := h.meta.upsert(rp.ResourceName, info.ResourceID, req.Location, req.skuName(), req.settings())
+		meta := h.meta.upsert(key, info.ResourceID, req.Location, req.skuName(), req.settings())
 		azurearm.WriteJSON(w, http.StatusOK, toWorkspaceJSON(info, meta))
 
 		return
@@ -48,18 +51,18 @@ func (h *Handler) createOrUpdateWorkspace(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	meta := h.meta.upsert(rp.ResourceName, info.ResourceID, req.Location, req.skuName(), req.settings())
+	meta := h.meta.upsert(key, info.ResourceID, req.Location, req.skuName(), req.settings())
 	azurearm.WriteJSON(w, http.StatusCreated, toWorkspaceJSON(info, meta))
 }
 
 func (h *Handler) getWorkspace(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	info, err := h.logs.GetLogGroup(r.Context(), rp.ResourceName)
+	info, err := h.workspace(r.Context(), rp)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	meta := h.meta.get(rp.ResourceName, info.ResourceID)
+	meta := h.meta.get(workspaceKey(rp), info.ResourceID)
 	azurearm.WriteJSON(w, http.StatusOK, toWorkspaceJSON(info, meta))
 }
 
@@ -68,7 +71,7 @@ func (h *Handler) getWorkspace(w http.ResponseWriter, r *http.Request, rp *azure
 // missing workspace makes the ARM DELETE idempotent: 204 No Content ("Resource
 // does not exist"), not a 404 error body.
 func (h *Handler) deleteWorkspace(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.logs.DeleteLogGroup(r.Context(), rp.ResourceName); err != nil {
+	if err := h.deleteLogGroup(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName); err != nil {
 		if cerrors.IsNotFound(err) {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -79,8 +82,8 @@ func (h *Handler) deleteWorkspace(w http.ResponseWriter, r *http.Request, rp *az
 		return
 	}
 
-	h.meta.delete(rp.ResourceName)
-	h.children.deleteWorkspace(rp.ResourceName)
+	h.meta.delete(workspaceKey(rp))
+	h.children.deleteWorkspace(workspaceKey(rp))
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -102,13 +105,16 @@ func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resource
 			continue
 		}
 
-		if err := h.logs.DeleteLogGroup(ctx, infos[i].Name); err != nil && !cerrors.IsNotFound(err) {
+		sc := infos[i].Scope
+		if err := h.deleteLogGroup(ctx, sc.Subscription, sc.ResourceGroup, infos[i].Name); err != nil &&
+			!cerrors.IsNotFound(err) {
 			errs = append(errs, err)
 			continue
 		}
 
-		h.meta.delete(infos[i].Name)
-		h.children.deleteWorkspace(infos[i].Name)
+		key := scopedKey(sc.Subscription, sc.ResourceGroup, infos[i].Name)
+		h.meta.delete(key)
+		h.children.deleteWorkspace(key)
 	}
 
 	return errors.Join(errs...)
@@ -125,9 +131,55 @@ func (h *Handler) listWorkspaces(w http.ResponseWriter, r *http.Request, rp *azu
 	out := make([]workspaceJSON, 0, len(infos))
 
 	for i := range infos {
-		meta := h.meta.get(infos[i].Name, infos[i].ResourceID)
+		sc := infos[i].Scope
+		meta := h.meta.get(scopedKey(sc.Subscription, sc.ResourceGroup, infos[i].Name), infos[i].ResourceID)
 		out = append(out, toWorkspaceJSON(&infos[i], meta))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, workspaceListResult{Value: out})
+}
+
+// scopedLogGroups is the per-resource-group workspace lookup the Azure Log
+// Analytics provider offers. Workspace names are unique only within a resource
+// group, so the wire resolves through it when the backend supports it.
+type scopedLogGroups interface {
+	GetLogGroupScoped(ctx context.Context, subscription, resourceGroup, name string) (*logdriver.LogGroupInfo, error)
+	DeleteLogGroupScoped(ctx context.Context, subscription, resourceGroup, name string) error
+}
+
+// workspace returns the workspace the request path names, scoped to its
+// subscription and resource group.
+func (h *Handler) workspace(ctx context.Context, rp *azurearm.ResourcePath) (*logdriver.LogGroupInfo, error) {
+	if s, ok := h.logs.(scopedLogGroups); ok {
+		return s.GetLogGroupScoped(ctx, rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	}
+
+	info, err := h.logs.GetLogGroup(ctx, rp.ResourceName)
+	if err != nil {
+		return nil, err
+	}
+
+	if !info.Scope.InResourceGroup(rp.Subscription, rp.ResourceGroup) {
+		return nil, cerrors.Newf(cerrors.NotFound, "log group %q not found", rp.ResourceName)
+	}
+
+	return info, nil
+}
+
+func (h *Handler) deleteLogGroup(ctx context.Context, subscription, resourceGroup, name string) error {
+	if s, ok := h.logs.(scopedLogGroups); ok {
+		return s.DeleteLogGroupScoped(ctx, subscription, resourceGroup, name)
+	}
+
+	return h.logs.DeleteLogGroup(ctx, name)
+}
+
+// workspaceKey keys the wire-layer metadata and child resources of the
+// workspace the request path names.
+func workspaceKey(rp *azurearm.ResourcePath) string {
+	return scopedKey(rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+}
+
+func scopedKey(subscription, resourceGroup, name string) string {
+	return strings.ToLower(subscription) + "/" + strings.ToLower(resourceGroup) + "/" + name
 }

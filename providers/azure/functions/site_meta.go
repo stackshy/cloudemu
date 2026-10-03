@@ -210,6 +210,10 @@ func (m *Mock) UpsertSiteMeta(_ context.Context, in SiteMeta) (*SiteMeta, error)
 	defer m.sitesMu.Unlock()
 
 	if existing, ok := m.sites.Get(in.Name); ok {
+		if !existing.inScope(in.Subscription, in.ResourceGroup) {
+			return nil, siteNameTakenErr(in.Name)
+		}
+
 		existing.Location = in.Location
 		existing.ServerFarmID = in.ServerFarmID
 		existing.HTTPSOnly = in.HTTPSOnly
@@ -440,6 +444,27 @@ func (m *Mock) UpdateAppSettings(
 	m.sites.Set(name, meta)
 
 	return meta.clone(), nil
+}
+
+// SiteNameOwnedElsewhere reports whether a site of this name exists under a
+// different subscription or resource group. Site names are global DNS labels
+// (*.azurewebsites.net), so a PUT of that name anywhere else must be refused
+// before it touches the name-keyed function record.
+func (m *Mock) SiteNameOwnedElsewhere(_ context.Context, subscription, resourceGroup, name string) bool {
+	m.sitesMu.RLock()
+	defer m.sitesMu.RUnlock()
+
+	meta, ok := m.sites.Get(name)
+
+	return ok && !meta.inScope(subscription, resourceGroup)
+}
+
+func (s *SiteMeta) inScope(subscription, resourceGroup string) bool {
+	return s.Subscription == subscription && strings.EqualFold(s.ResourceGroup, resourceGroup)
+}
+
+func siteNameTakenErr(name string) error {
+	return cerrors.Newf(cerrors.AlreadyExists, "Website with given name %s already exists.", name)
 }
 
 // GetFunctionScoped returns the function only when it belongs to the given

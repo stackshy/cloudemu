@@ -176,6 +176,9 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		return err
 	}
 
+	m.rekeyKeyPairs()
+	m.rekeyScaleSets()
+
 	if err := m.restoreASGs(snap.ASGs); err != nil {
 		return err
 	}

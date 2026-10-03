@@ -49,6 +49,13 @@ func (h *Handler) createNamespace(w http.ResponseWriter, r *http.Request, ep ehP
 	h.mu.Lock()
 
 	ns, existed := h.namespaces.Get(nsKey(ep.namespace))
+	if existed && (!strings.EqualFold(ns.Subscription, ep.sub) || !strings.EqualFold(ns.ResourceGroup, ep.rg)) {
+		h.mu.Unlock()
+		writeNamespaceNameTaken(w, ep.namespace)
+
+		return
+	}
+
 	if !existed {
 		ns = &namespaceState{
 			Name:          ep.namespace,
