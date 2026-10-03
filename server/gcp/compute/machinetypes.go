@@ -3,6 +3,7 @@ package compute
 import (
 	"net/http"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -95,7 +96,7 @@ func listMachineTypes(w http.ResponseWriter, r *http.Request, rp gcprest.Resourc
 		items = append(items, toMachineTypeResponse(&machineTypeCatalog[i], rp, host))
 	}
 
-	page, next, ok := filterPage(w, r, items, func(m machineTypeResponse) string { return m.Name })
+	page, next, ok := gcplist.FilterPage(w, r, items, func(m machineTypeResponse) string { return m.Name })
 	if !ok {
 		return
 	}

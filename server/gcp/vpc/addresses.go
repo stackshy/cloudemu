@@ -4,10 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"sort"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -274,45 +273,28 @@ func (h *Handler) getAddress(w http.ResponseWriter, r *http.Request, rp gcprest.
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) listAddresses(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	all := h.addresses.list(r.Context(), rp.Project, scopeOf(rp))
-	filter := r.URL.Query().Get("filter")
 	usersByIP := h.addressUsersByIP(r.Context(), hostOf(r), rp.Project)
 
 	items := make([]json.RawMessage, 0, len(all))
-
 	for _, body := range all {
-		if addressMatches(filter, body) {
-			items = append(items, reflectAddressUsage(body, usersByIP))
-		}
+		items = append(items, reflectAddressUsage(body, usersByIP))
 	}
 
-	// Stable order for offset pagination.
-	sort.SliceStable(items, func(i, j int) bool { return rawName(items[i]) < rawName(items[j]) })
-
-	page, err := pagination.Paginate(items, r.URL.Query().Get("pageToken"),
-		maxResultsOf(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	page, next, ok := gcplist.FilterPage(w, r, items, rawName)
+	if !ok {
 		return
 	}
 
-	out := map[string]any{
-		"kind":  "compute#addressList",
-		"items": page.Items,
-	}
-	if page.NextPageToken != "" {
-		out["nextPageToken"] = page.NextPageToken
-	}
-
-	gcprest.WriteJSON(w, http.StatusOK, out)
+	gcprest.WriteJSON(w, http.StatusOK, rawListResponse{Kind: "compute#addressList", Items: page, NextPageToken: next})
 }
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) aggregatedListAddresses(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	byScope := h.addresses.allByScope(r.Context(), rp.Project)
-	filter := r.URL.Query().Get("filter")
 	host := hostOf(r)
 	usersByIP := h.addressUsersByIP(r.Context(), host, rp.Project)
-	items := map[string]addressesScopedList{}
+
+	var all []gcplist.Scoped[json.RawMessage]
 
 	for scope, bodies := range byScope {
 		key := "regions/" + scope
@@ -320,16 +302,18 @@ func (h *Handler) aggregatedListAddresses(w http.ResponseWriter, r *http.Request
 			key = gcprest.ScopeGlobal
 		}
 
-		list := make([]json.RawMessage, 0, len(bodies))
-
 		for _, b := range bodies {
-			if addressMatches(filter, b) {
-				list = append(list, reflectAddressUsage(b, usersByIP))
-			}
+			all = append(all, gcplist.Scoped[json.RawMessage]{Scope: key, Item: reflectAddressUsage(b, usersByIP)})
 		}
+	}
 
-		sort.SliceStable(list, func(i, j int) bool { return rawName(list[i]) < rawName(list[j]) })
+	grouped, next, ok := gcplist.AggregatedPage(w, r, all, rawName)
+	if !ok {
+		return
+	}
 
+	items := make(map[string]addressesScopedList, len(grouped))
+	for key, list := range grouped {
 		items[key] = addressesScopedList{Addresses: list}
 	}
 
@@ -341,10 +325,11 @@ func (h *Handler) aggregatedListAddresses(w http.ResponseWriter, r *http.Request
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, addressAggregatedListResponse{
-		Kind:     "compute#addressAggregatedList",
-		ID:       "projects/" + rp.Project + "/aggregated/addresses",
-		Items:    items,
-		SelfLink: host + "/compute/v1/projects/" + rp.Project + "/aggregated/addresses",
+		Kind:          "compute#addressAggregatedList",
+		ID:            "projects/" + rp.Project + "/aggregated/addresses",
+		Items:         items,
+		SelfLink:      host + "/compute/v1/projects/" + rp.Project + "/aggregated/addresses",
+		NextPageToken: next,
 	})
 }
 

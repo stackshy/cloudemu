@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -155,9 +156,17 @@ func (h *Handler) getRouter(w http.ResponseWriter, r *http.Request, rp gcprest.R
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) listRouters(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	gcprest.WriteJSON(w, http.StatusOK, map[string]any{
-		"kind":  "compute#routerList",
-		"items": h.routers.list(rp.Project, rp.ScopeName),
+	page, next, ok := gcplist.FilterPage(w, r, h.routers.list(rp.Project, rp.ScopeName), rawName)
+	if !ok {
+		return
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, rawListResponse{
+		Kind:          "compute#routerList",
+		ID:            "projects/" + rp.Project + "/regions/" + rp.ScopeName + "/routers",
+		Items:         page,
+		NextPageToken: next,
+		SelfLink:      gcprest.SelfLink(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName, "routers", ""),
 	})
 }
 

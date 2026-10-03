@@ -9,6 +9,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	gcecompute "github.com/stackshy/cloudemu/v2/providers/gcp/compute"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -134,7 +135,7 @@ func (h *Handler) listDisks(w http.ResponseWriter, r *http.Request, rp gcprest.R
 		out = append(out, toDiskResponse(&vols[i], scope, host, users[name]))
 	}
 
-	items, next, ok := filterPage(w, r, out, func(d diskResponse) string { return d.Name })
+	items, next, ok := gcplist.FilterPage(w, r, out, func(d diskResponse) string { return d.Name })
 	if !ok {
 		return
 	}
@@ -381,7 +382,7 @@ func (h *Handler) aggregatedListDisks(w http.ResponseWriter, r *http.Request, rp
 
 	host := hostFromRequest(r)
 	users := h.diskUsersByName(r.Context(), host, rp.Project)
-	all := make([]scopedItem[diskResponse], 0, len(vols))
+	all := make([]gcplist.Scoped[diskResponse], 0, len(vols))
 
 	for i := range vols {
 		zone := vols[i].AvailabilityZone
@@ -389,12 +390,10 @@ func (h *Handler) aggregatedListDisks(w http.ResponseWriter, r *http.Request, rp
 		scope := gcprest.ResourcePath{
 			Project: rp.Project, Scope: gcprest.ScopeZones, ScopeName: zone, ResourceName: name,
 		}
-		all = append(all, scopedItem[diskResponse]{
-			scope: "zones/" + zone, item: toDiskResponse(&vols[i], scope, host, users[name]),
-		})
+		all = append(all, gcplist.Scoped[diskResponse]{Scope: "zones/" + zone, Item: toDiskResponse(&vols[i], scope, host, users[name])})
 	}
 
-	grouped, next, ok := aggregatedPage(w, r, all, func(d diskResponse) string { return d.Name })
+	grouped, next, ok := gcplist.AggregatedPage(w, r, all, func(d diskResponse) string { return d.Name })
 	if !ok {
 		return
 	}

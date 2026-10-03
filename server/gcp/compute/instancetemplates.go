@@ -6,6 +6,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	gcecompute "github.com/stackshy/cloudemu/v2/providers/gcp/compute"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -104,7 +105,7 @@ func listTemplates(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePa
 		out = append(out, toTemplateResponse(&items[i], rp.Project, host))
 	}
 
-	page, next, ok := filterPage(w, r, out, func(t templateResponse) string { return t.Name })
+	page, next, ok := gcplist.FilterPage(w, r, out, func(t templateResponse) string { return t.Name })
 	if !ok {
 		return
 	}

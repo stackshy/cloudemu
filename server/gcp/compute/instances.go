@@ -9,6 +9,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/ipalloc"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -348,7 +349,7 @@ func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, rp gcpre
 		}
 	}
 
-	items, next, ok := filterPage(w, r, out, func(i instanceResponse) string { return i.Name })
+	items, next, ok := gcplist.FilterPage(w, r, out, func(i instanceResponse) string { return i.Name })
 	if !ok {
 		return
 	}
@@ -375,16 +376,15 @@ func (h *Handler) aggregatedListInstances(w http.ResponseWriter, r *http.Request
 	}
 
 	host := hostFromRequest(r)
-	all := make([]scopedItem[instanceResponse], 0, len(instances))
+	all := make([]gcplist.Scoped[instanceResponse], 0, len(instances))
 
 	for i := range instances {
-		all = append(all, scopedItem[instanceResponse]{
-			scope: "zones/" + tagOr(instances[i].Tags, keyZone, "unknown"),
-			item:  h.toInstanceResponse(r.Context(), &instances[i], rp.Project, host),
+		all = append(all, gcplist.Scoped[instanceResponse]{Scope: "zones/" + tagOr(instances[i].Tags, keyZone, "unknown"),
+			Item: h.toInstanceResponse(r.Context(), &instances[i], rp.Project, host),
 		})
 	}
 
-	grouped, next, ok := aggregatedPage(w, r, all, func(i instanceResponse) string { return i.Name })
+	grouped, next, ok := gcplist.AggregatedPage(w, r, all, func(i instanceResponse) string { return i.Name })
 	if !ok {
 		return
 	}

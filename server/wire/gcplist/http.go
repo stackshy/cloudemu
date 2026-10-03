@@ -1,16 +1,15 @@
-package compute
+package gcplist
 
 import (
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/gcpfilter"
-	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
 // listQuery parses the filter, maxResults and pageToken parameters every
-// compute list accepts. On a bad value it writes 400 and returns false.
-func listQuery(w http.ResponseWriter, r *http.Request) (*gcpfilter.Filter, gcplist.Params, bool) {
+// Compute Engine list accepts. On a bad value it writes 400 and returns false.
+func listQuery(w http.ResponseWriter, r *http.Request) (*gcpfilter.Filter, Params, bool) {
 	q := r.URL.Query()
 
 	f, err := gcpfilter.Compile(q.Get("filter"))
@@ -18,21 +17,21 @@ func listQuery(w http.ResponseWriter, r *http.Request) (*gcpfilter.Filter, gcpli
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid",
 			"Invalid value for field 'filter': '"+q.Get("filter")+"'. Invalid list filter expression.")
 
-		return nil, gcplist.Params{}, false
+		return nil, Params{}, false
 	}
 
-	p, err := gcplist.Compute(q)
+	p, err := Compute(q)
 	if err != nil {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
-		return nil, gcplist.Params{}, false
+		return nil, Params{}, false
 	}
 
 	return f, p, true
 }
 
-// filterPage applies the request's filter to items and returns the requested
+// FilterPage applies the request's filter to items and returns the requested
 // page ordered by name, plus the next page token.
-func filterPage[T any](
+func FilterPage[T any](
 	w http.ResponseWriter, r *http.Request, items []T, name func(T) string,
 ) (page []T, next string, ok bool) {
 	f, p, ok := listQuery(w, r)
@@ -48,7 +47,7 @@ func filterPage[T any](
 		}
 	}
 
-	page, next, err := gcplist.Page(kept, name, p)
+	page, next, err := Page(kept, name, p)
 	if err != nil {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
 		return nil, "", false
@@ -57,32 +56,32 @@ func filterPage[T any](
 	return page, next, true
 }
 
-// scopedItem is one aggregated-list entry with its "zones/{zone}" or
+// Scoped is one aggregated-list entry with its "zones/{zone}" or
 // "regions/{region}" key.
-type scopedItem[T any] struct {
-	scope string
-	item  T
+type Scoped[T any] struct {
+	Scope string
+	Item  T
 }
 
-// aggregatedPage filters and pages an aggregated list across all scopes, in
+// AggregatedPage filters and pages an aggregated list across all scopes, in
 // scope then name order, and regroups the page by scope.
-func aggregatedPage[T any](
-	w http.ResponseWriter, r *http.Request, items []scopedItem[T], name func(T) string,
+func AggregatedPage[T any](
+	w http.ResponseWriter, r *http.Request, items []Scoped[T], name func(T) string,
 ) (grouped map[string][]T, next string, ok bool) {
 	f, p, ok := listQuery(w, r)
 	if !ok {
 		return nil, "", false
 	}
 
-	kept := make([]scopedItem[T], 0, len(items))
+	kept := make([]Scoped[T], 0, len(items))
 
 	for _, it := range items {
-		if f.Match(it.item) {
+		if f.Match(it.Item) {
 			kept = append(kept, it)
 		}
 	}
 
-	page, next, err := gcplist.Page(kept, func(s scopedItem[T]) string { return s.scope + "\x00" + name(s.item) }, p)
+	page, next, err := Page(kept, func(s Scoped[T]) string { return s.Scope + "\x00" + name(s.Item) }, p)
 	if err != nil {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
 		return nil, "", false
@@ -90,7 +89,7 @@ func aggregatedPage[T any](
 
 	grouped = make(map[string][]T)
 	for _, s := range page {
-		grouped[s.scope] = append(grouped[s.scope], s.item)
+		grouped[s.Scope] = append(grouped[s.Scope], s.Item)
 	}
 
 	return grouped, next, true

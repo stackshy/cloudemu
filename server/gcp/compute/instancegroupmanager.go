@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	gcecompute "github.com/stackshy/cloudemu/v2/providers/gcp/compute"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -319,7 +320,7 @@ func (*Handler) listMIGs(w http.ResponseWriter, r *http.Request, rp gcprest.Reso
 		out = append(out, toMIGResponse(&igms[i], rp.Project, host))
 	}
 
-	items, next, ok := filterPage(w, r, out, func(m migResponse) string { return m.Name })
+	items, next, ok := gcplist.FilterPage(w, r, out, func(m migResponse) string { return m.Name })
 	if !ok {
 		return
 	}
@@ -431,7 +432,7 @@ func (h *Handler) aggregatedListMIGs(w http.ResponseWriter, r *http.Request, rp 
 
 	igms := backend.AllInstanceGroupManagersGCP(rp.Project)
 	host := hostFromRequest(r)
-	all := make([]scopedItem[migResponse], 0, len(igms))
+	all := make([]gcplist.Scoped[migResponse], 0, len(igms))
 
 	for i := range igms {
 		key := "zones/" + igms[i].Zone
@@ -439,10 +440,10 @@ func (h *Handler) aggregatedListMIGs(w http.ResponseWriter, r *http.Request, rp 
 			key = "regions/" + igms[i].Region
 		}
 
-		all = append(all, scopedItem[migResponse]{scope: key, item: toMIGResponse(&igms[i], rp.Project, host)})
+		all = append(all, gcplist.Scoped[migResponse]{Scope: key, Item: toMIGResponse(&igms[i], rp.Project, host)})
 	}
 
-	grouped, next, ok := aggregatedPage(w, r, all, func(m migResponse) string { return m.Name })
+	grouped, next, ok := gcplist.AggregatedPage(w, r, all, func(m migResponse) string { return m.Name })
 	if !ok {
 		return
 	}

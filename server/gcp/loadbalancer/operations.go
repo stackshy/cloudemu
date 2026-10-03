@@ -7,15 +7,14 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
@@ -282,8 +281,6 @@ func (h *Handler) listBackendServices(w http.ResponseWriter, r *http.Request, rp
 
 	host := hostOf(r)
 	scopeKey := scopeKeyOf(rp)
-	filter := r.URL.Query().Get("filter")
-
 	items := make([]backendServiceResponse, 0, len(tgs))
 
 	for i := range tgs {
@@ -293,25 +290,19 @@ func (h *Handler) listBackendServices(w http.ResponseWriter, r *http.Request, rp
 			continue
 		}
 
-		if resp := toBackendServiceResponse(&tgs[i], rp, host); gcprest.NameMatches(filter, resp.Name) {
-			items = append(items, resp)
-		}
+		items = append(items, toBackendServiceResponse(&tgs[i], rp, host))
 	}
 
-	sort.SliceStable(items, func(i, j int) bool { return items[i].Name < items[j].Name })
-
-	page, err := pagination.Paginate(items, r.URL.Query().Get("pageToken"),
-		gcprest.MaxResults(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	page, next, ok := gcplist.FilterPage(w, r, items, func(b backendServiceResponse) string { return b.Name })
+	if !ok {
 		return
 	}
 
 	out := backendServiceListResponse{
 		Kind:          "compute#backendServiceList",
 		ID:            "projects/" + rp.Project + "/" + listScopeSegment(rp) + "/backendServices",
-		Items:         page.Items,
-		NextPageToken: page.NextPageToken,
+		Items:         page,
+		NextPageToken: next,
 		SelfLink:      gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, resourceBackendServices, ""),
 	}
 
@@ -474,8 +465,6 @@ func (h *Handler) listForwardingRules(w http.ResponseWriter, r *http.Request, rp
 
 	host := hostOf(r)
 	scopeKey := scopeKeyOf(rp)
-	filter := r.URL.Query().Get("filter")
-
 	items := make([]forwardingRuleResponse, 0, len(lbs))
 
 	for i := range lbs {
@@ -483,25 +472,19 @@ func (h *Handler) listForwardingRules(w http.ResponseWriter, r *http.Request, rp
 			continue
 		}
 
-		if resp := h.toForwardingRuleResponse(r.Context(), &lbs[i], rp, host); gcprest.NameMatches(filter, resp.Name) {
-			items = append(items, resp)
-		}
+		items = append(items, h.toForwardingRuleResponse(r.Context(), &lbs[i], rp, host))
 	}
 
-	sort.SliceStable(items, func(i, j int) bool { return items[i].Name < items[j].Name })
-
-	page, err := pagination.Paginate(items, r.URL.Query().Get("pageToken"),
-		gcprest.MaxResults(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	page, next, ok := gcplist.FilterPage(w, r, items, func(f forwardingRuleResponse) string { return f.Name })
+	if !ok {
 		return
 	}
 
 	out := forwardingRuleListResponse{
 		Kind:          "compute#forwardingRuleList",
 		ID:            "projects/" + rp.Project + "/" + listScopeSegment(rp) + "/forwardingRules",
-		Items:         page.Items,
-		NextPageToken: page.NextPageToken,
+		Items:         page,
+		NextPageToken: next,
 		SelfLink:      gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, resourceForwardingRules, ""),
 	}
 
