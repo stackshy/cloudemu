@@ -418,8 +418,9 @@ func TestSDKGCEInstanceDefaults(t *testing.T) {
 		t.Error("scheduling nil")
 	}
 
-	if len(got.GetServiceAccounts()) == 0 {
-		t.Error("serviceAccounts empty")
+	// The compute API attaches no default service account.
+	if len(got.GetServiceAccounts()) != 0 {
+		t.Errorf("serviceAccounts=%v want none", got.GetServiceAccounts())
 	}
 
 	if got.GetShieldedInstanceConfig() == nil {

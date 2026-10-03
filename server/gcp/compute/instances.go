@@ -67,6 +67,9 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 	}
 
 	subnet := firstSubnet(req.NetworkInterfaces)
+	if subnet == "" {
+		subnet = h.autoSubnetFor(r.Context(), firstNetwork(req.NetworkInterfaces), rp.ScopeName)
+	}
 
 	cfg := computedriver.InstanceConfig{
 		ImageID:      bootImage(req.Disks),

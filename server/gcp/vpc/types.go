@@ -38,6 +38,7 @@ type networkResponse struct {
 	Mtu                                   int32                 `json:"mtu,omitempty"`
 	NetworkFirewallPolicyEnforcementOrder string                `json:"networkFirewallPolicyEnforcementOrder,omitempty"`
 	CreationTimestamp                     string                `json:"creationTimestamp,omitempty"`
+	Subnetworks                           []string              `json:"subnetworks,omitempty"`
 }
 
 type networkListResponse struct {
