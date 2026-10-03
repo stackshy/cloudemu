@@ -2174,6 +2174,14 @@ func (h *Handler) toPublicIPResponse(
 
 	out.Properties.IPConfiguration = h.publicIPConfigurationRef(ctx, rp.Subscription, id)
 
+	// A Dynamic public IP has no address until it is attached to a resource (a
+	// NIC ipConfiguration or a NAT gateway); real ARM omits ipAddress until then.
+	// Static addresses are assigned at create.
+	if strings.EqualFold(info.AllocationMethod, "Dynamic") &&
+		out.Properties.IPConfiguration == nil && info.AssociationID == "" {
+		out.Properties.IPAddress = ""
+	}
+
 	if prefixID := tagOr(info.Tags, armPublicIPPrefixTag, ""); prefixID != "" {
 		out.Properties.PublicIPPrefix = &armIDRef{ID: prefixID}
 	}

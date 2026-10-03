@@ -187,3 +187,72 @@ func TestSDKNATGatewayRegionSKUIdleTimeout(t *testing.T) {
 		})
 	}
 }
+
+// TestSDKDynamicPublicIPHasNoAddressUntilAttached guards real ARM behaviour for
+// a Dynamic (Basic SKU) public IP: no ipAddress until a NIC ipConfiguration
+// attaches it, then an address. Static keeps its address from create.
+func TestSDKDynamicPublicIPHasNoAddressUntilAttached(t *testing.T) {
+	ts := newVNetServer(t)
+	ctx := context.Background()
+	opts := clientOpts(ts)
+
+	pips, err := armnetwork.NewPublicIPAddressesClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := pips.BeginCreateOrUpdate(ctx, "rg-1", "pip-dyn", armnetwork.PublicIPAddress{
+		Location: to.Ptr("westus2"),
+		SKU:      &armnetwork.PublicIPAddressSKU{Name: to.Ptr(armnetwork.PublicIPAddressSKUNameBasic)},
+		Properties: &armnetwork.PublicIPAddressPropertiesFormat{
+			PublicIPAllocationMethod: to.Ptr(armnetwork.IPAllocationMethodDynamic),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	pollDone(t, p)
+
+	got, err := pips.Get(ctx, "rg-1", "pip-dyn", nil)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	if got.Properties.IPAddress != nil {
+		t.Errorf("unattached Dynamic ipAddress=%q want none", *got.Properties.IPAddress)
+	}
+
+	nics, err := armnetwork.NewInterfacesClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pipID := "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Network/publicIPAddresses/pip-dyn"
+
+	np, err := nics.BeginCreateOrUpdate(ctx, "rg-1", "nic-dyn", armnetwork.Interface{
+		Location: to.Ptr("westus2"),
+		Properties: &armnetwork.InterfacePropertiesFormat{
+			IPConfigurations: []*armnetwork.InterfaceIPConfiguration{{
+				Name: to.Ptr("ipconfig1"),
+				Properties: &armnetwork.InterfaceIPConfigurationPropertiesFormat{
+					PublicIPAddress: &armnetwork.PublicIPAddress{ID: to.Ptr(pipID)},
+				},
+			}},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("create nic: %v", err)
+	}
+
+	pollDone(t, np)
+
+	got, err = pips.Get(ctx, "rg-1", "pip-dyn", nil)
+	if err != nil {
+		t.Fatalf("get after attach: %v", err)
+	}
+
+	if got.Properties.IPAddress == nil || *got.Properties.IPAddress == "" {
+		t.Error("attached Dynamic public IP has no ipAddress")
+	}
+}

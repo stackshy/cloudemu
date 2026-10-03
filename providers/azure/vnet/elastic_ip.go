@@ -111,7 +111,8 @@ const publicIPHostOctets = 254
 // publicAddress derives a public-looking IPv4 address for a new allocation from
 // a hash of its id, salting and rehashing on the rare collision with an address
 // already handed out. The result is stored on the allocation, so it is stable
-// across reads and survives a snapshot restore.
+// across reads and survives a snapshot restore. Callers must hold m.pipMu until
+// the allocation carrying the address is stored.
 func (m *Mock) publicAddress(allocID string) string {
 	inUse := make(map[string]bool)
 	for _, e := range m.eips.All() {
@@ -143,6 +144,9 @@ func (m *Mock) AllocateAddress(
 	// Real Azure fills omitted fields with its own defaults (Standard/Regional
 	// SKU, Static allocation, IPv4, 4-minute idle timeout) and reports them on GET.
 	cfg = applyPublicIPDefaults(cfg)
+
+	m.pipMu.Lock()
+	defer m.pipMu.Unlock()
 
 	eip := &eipData{
 		AllocationID:       allocID,
