@@ -902,6 +902,32 @@ type AzureVMExtensions interface {
 	DeleteVMExtension(ctx context.Context, instanceID, name string) error
 }
 
+// AzureAvailabilitySet is a Microsoft.Compute/availabilitySets resource.
+type AzureAvailabilitySet struct {
+	Name                      string
+	Subscription              string
+	ResourceGroup             string
+	Location                  string
+	Tags                      map[string]string
+	SKUName                   string // "Aligned" (managed disks) or "Classic"
+	PlatformFaultDomainCount  int
+	PlatformUpdateDomainCount int
+	ProximityPlacementGroupID string
+}
+
+// AzureAvailabilitySets is an optional Azure-only capability for availability
+// sets. Only the Azure VM mock implements it.
+type AzureAvailabilitySets interface {
+	// PutAvailabilitySet creates or replaces the set. Out-of-range domain
+	// counts are InvalidArgument.
+	PutAvailabilitySet(ctx context.Context, set AzureAvailabilitySet) (*AzureAvailabilitySet, error)
+	GetAvailabilitySet(ctx context.Context, subscription, resourceGroup, name string) (*AzureAvailabilitySet, error)
+	// ListAvailabilitySets lists the sets of a subscription, narrowed to one
+	// resource group when resourceGroup is set.
+	ListAvailabilitySets(ctx context.Context, subscription, resourceGroup string) ([]AzureAvailabilitySet, error)
+	DeleteAvailabilitySet(ctx context.Context, subscription, resourceGroup, name string) error
+}
+
 // KeyPairGenerator is an optional Azure-only capability for the ARM
 // sshPublicKeys generateKeyPair action, which generates a fresh RSA key pair
 // server-side, stores the public key on the resource, and returns both the

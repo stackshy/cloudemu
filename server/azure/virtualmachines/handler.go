@@ -86,7 +86,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case resourceType, resourceTypeScaleSets, resourceTypeLocations:
+	case resourceType, resourceTypeScaleSets, resourceTypeLocations, resourceTypeAvailabilitySets:
 		return true
 	}
 
@@ -110,6 +110,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if rp.ResourceType == resourceTypeScaleSets {
 		h.serveScaleSet(w, r, rp)
+		return
+	}
+
+	if rp.ResourceType == resourceTypeAvailabilitySets {
+		h.serveAvailabilitySet(w, r, rp)
 		return
 	}
 

@@ -139,3 +139,46 @@ func TestFirewallPolicyRuleCollectionGroups(t *testing.T) {
 	c.mustPut(pol, `{"location":"eastus"}`)
 	c.wantStatus(http.MethodGet, group, http.StatusNotFound)
 }
+
+// TestAvailabilitySets covers azurerm_availability_set and the VM reference
+// to it.
+func TestAvailabilitySets(t *testing.T) {
+	c := newCasClient(t)
+	c.mustPut(rgPath("rg1"), `{"location":"eastus"}`)
+
+	as := resPath("rg1", "Microsoft.Compute/availabilitySets", "as1")
+	body := `{"location":"eastus","sku":{"name":"Aligned"},` +
+		`"properties":{"platformFaultDomainCount":2,"platformUpdateDomainCount":5}}`
+
+	if code, out := c.do(http.MethodPut, as, body); code != http.StatusOK {
+		t.Fatalf("PUT availability set = %d %v (the SDK accepts only 200)", code, out)
+	}
+
+	if code, _ := c.do(http.MethodPut, resPath("rg1", "Microsoft.Compute/availabilitySets", "bad"),
+		`{"location":"eastus","properties":{"platformFaultDomainCount":5,"platformUpdateDomainCount":5}}`); code != http.StatusBadRequest {
+		t.Errorf("fault domain count 5 = %d, want 400", code)
+	}
+
+	missing := resPath("rg1", "Microsoft.Compute/availabilitySets", "nope")
+	if code, _ := c.do(http.MethodPut, resPath("rg1", "Microsoft.Compute/virtualMachines", "vmx"),
+		`{"location":"eastus","properties":{"availabilitySet":{"id":"`+missing+`"}}}`); code != http.StatusNotFound {
+		t.Errorf("VM in a missing availability set = %d, want 404", code)
+	}
+
+	c.mustPut(resPath("rg1", "Microsoft.Compute/virtualMachines", "vm1"),
+		`{"location":"eastus","properties":{"availabilitySet":{"id":"`+as+`"}}}`)
+
+	_, out := c.do(http.MethodGet, as, "")
+	props, _ := out["properties"].(map[string]any)
+
+	if vms, _ := props["virtualMachines"].([]any); len(vms) != 1 || props["platformFaultDomainCount"] != float64(2) {
+		t.Errorf("availability set properties = %v", props)
+	}
+
+	if n := len(listValue(c, rgPath("rg1")+"/providers/Microsoft.Compute/availabilitySets")); n != 1 {
+		t.Errorf("list has %d sets, want 1", n)
+	}
+
+	c.wantStatus(http.MethodDelete, rgPath("rg1"), http.StatusAccepted)
+	c.wantStatus(http.MethodGet, as, http.StatusNotFound)
+}
