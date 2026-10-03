@@ -7,6 +7,7 @@ import (
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
@@ -105,6 +106,7 @@ func (h *Handler) routeServiceAttachmentItem(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
+		h.iam.Delete(gcpiam.ComputeName(rp))
 		h.writeServiceAttachmentOp(w, r, rp, rp.ResourceName, opDelete)
 	default:
 		gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")

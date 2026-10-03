@@ -160,6 +160,8 @@ func (h *Handler) deleteTemplate(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
+	h.dropPolicy(rp)
+
 	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "", resourceTemplates, rp.ResourceName, "delete")
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }

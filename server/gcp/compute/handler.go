@@ -24,6 +24,8 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	gcecompute "github.com/stackshy/cloudemu/v2/providers/gcp/compute"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -63,13 +65,15 @@ type Handler struct {
 	// operations this handler's /operations route serves). Nil in a package-level
 	// server, where every operation poll is answered DONE (legacy behavior).
 	ops *gcprest.OperationRegistry
+	// iam keeps resource policies keyed by full resource name.
+	iam gcpiam.Store
 }
 
 // New returns a Compute handler backed by c. net (may be nil) lets insert
 // allocate an instance's private networkIP from the referenced subnetwork's
 // CIDR.
 func New(c computedriver.Compute, net netdriver.Networking) *Handler {
-	return &Handler{compute: c, net: net}
+	return &Handler{compute: c, net: net, iam: resourceiam.New()}
 }
 
 // SetOperationRegistry wires the shared compute-operation registry so this
@@ -127,6 +131,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if isScopeResource(&rp) {
 		serveScopeResource(w, r, rp)
+		return
+	}
+
+	if h.serveIAM(w, r, rp) {
 		return
 	}
 

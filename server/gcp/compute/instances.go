@@ -425,6 +425,8 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
+	h.dropPolicy(rp)
+
 	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
 		"instances", rp.ResourceName, "delete")
 

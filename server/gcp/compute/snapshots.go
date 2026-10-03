@@ -141,6 +141,8 @@ func (h *Handler) deleteSnapshot(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
+	h.dropPolicy(rp)
+
 	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
 		"snapshots", rp.ResourceName, "delete")
 
