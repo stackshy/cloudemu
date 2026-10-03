@@ -4344,6 +4344,26 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AzureAvailabilitySets",
+        "doc": "AzureAvailabilitySets is an optional Azure-only capability for availability",
+        "operations": [
+          {
+            "name": "DeleteAvailabilitySet"
+          },
+          {
+            "name": "GetAvailabilitySet"
+          },
+          {
+            "name": "ListAvailabilitySets",
+            "doc": "ListAvailabilitySets lists the sets of a subscription, narrowed to one"
+          },
+          {
+            "name": "PutAvailabilitySet",
+            "doc": "PutAvailabilitySet creates or replaces the set. Out-of-range domain"
+          }
+        ]
+      },
+      {
         "name": "AzureDiskAccessor",
         "doc": "AzureDiskAccessor is an optional Azure-only capability for the managed-disk",
         "operations": [
