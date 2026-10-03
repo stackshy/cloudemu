@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/ipalloc"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -71,6 +72,16 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 		subnet = h.autoSubnetFor(r.Context(), firstNetwork(req.NetworkInterfaces), rp.ScopeName)
 	}
 
+	// Hold the subnet's allocation lock from picking the IP until the instance
+	// is stored, so concurrent launches and address reservations in the subnet
+	// never share an IP.
+	unlock := func() {}
+
+	if subnet != "" {
+		region, name := parseSubnetRef(subnet, rp.ScopeName)
+		unlock = ipalloc.LockSubnet(subnetProject(subnet, rp.Project), region, name)
+	}
+
 	cfg := computedriver.InstanceConfig{
 		ImageID:      bootImage(req.Disks),
 		InstanceType: machineTypeShort(req.MachineType),
@@ -81,6 +92,9 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 	}
 
 	instances, err := h.compute.RunInstances(r.Context(), cfg, 1)
+
+	unlock()
+
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return

@@ -208,13 +208,15 @@ type Mock struct {
 	diskAccess   *memstore.Store[string]
 	// vmExtensions holds VM extensions keyed by instance id and name.
 	vmExtensions *memstore.Store[*driver.AzureVMExtension]
-	sm           *statemachine.Machine
-	opts         *config.Options
-	ipCounter    atomic.Int64
-	volCounter   atomic.Int64
-	snapCounter  atomic.Int64
-	imgCounter   atomic.Int64
-	monitoring   mondriver.Monitoring
+	// availabilitySets is keyed by subscription, resource group and name.
+	availabilitySets *memstore.Store[*driver.AzureAvailabilitySet]
+	sm               *statemachine.Machine
+	opts             *config.Options
+	ipCounter        atomic.Int64
+	volCounter       atomic.Int64
+	snapCounter      atomic.Int64
+	imgCounter       atomic.Int64
+	monitoring       mondriver.Monitoring
 	// nicAttacher keeps a network interface's virtualMachine back-reference in
 	// sync with the VM lifecycle (attach on create, detach on terminate). nil
 	// until wired by the provider factory, in which case NIC attachment is
@@ -322,8 +324,10 @@ func New(opts *config.Options) *Mock {
 		scaleSets:    memstore.New[*ScaleSet](),
 		diskAccess:   memstore.New[string](),
 		vmExtensions: memstore.New[*driver.AzureVMExtension](),
-		sm:           statemachine.New(compute.VMTransitions()),
-		opts:         opts,
+
+		availabilitySets: memstore.New[*driver.AzureAvailabilitySet](),
+		sm:               statemachine.New(compute.VMTransitions()),
+		opts:             opts,
 	}
 }
 

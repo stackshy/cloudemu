@@ -100,6 +100,12 @@ func (m *Mock) PurgeComputeResourceGroup(ctx context.Context, subscription, reso
 	purgeTagged(m.images, subscription, resourceGroup, func(i *driver.ImageInfo) map[string]string { return i.Tags })
 	purgeTagged(m.keyPairs, subscription, resourceGroup, func(k *driver.KeyPairInfo) map[string]string { return k.Tags })
 
+	for key, set := range m.availabilitySets.All() {
+		if inGroup(set.Subscription, set.ResourceGroup, subscription, resourceGroup) {
+			m.availabilitySets.Delete(key)
+		}
+	}
+
 	return errors.Join(errs...)
 }
 
