@@ -3,6 +3,7 @@ package vpc
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"slices"
 
@@ -34,10 +35,10 @@ type networkPeering struct {
 	StateDetails                   string `json:"stateDetails,omitempty"`
 	AutoCreateRoutes               bool   `json:"autoCreateRoutes"`
 	ExchangeSubnetRoutes           bool   `json:"exchangeSubnetRoutes"`
-	ExportCustomRoutes             bool   `json:"exportCustomRoutes"`
-	ImportCustomRoutes             bool   `json:"importCustomRoutes"`
+	ExportCustomRoutes             *bool  `json:"exportCustomRoutes,omitempty"`
+	ImportCustomRoutes             *bool  `json:"importCustomRoutes,omitempty"`
 	ExportSubnetRoutesWithPublicIP *bool  `json:"exportSubnetRoutesWithPublicIp,omitempty"`
-	ImportSubnetRoutesWithPublicIP bool   `json:"importSubnetRoutesWithPublicIp"`
+	ImportSubnetRoutesWithPublicIP *bool  `json:"importSubnetRoutesWithPublicIp,omitempty"`
 	StackType                      string `json:"stackType,omitempty"`
 	UpdateStrategy                 string `json:"updateStrategy,omitempty"`
 }
@@ -96,15 +97,18 @@ func (h *Handler) routeNetworkAction(w http.ResponseWriter, r *http.Request, rp 
 		return
 	}
 
-	v, err := findNetByName(r.Context(), h.net, rp.ResourceName)
-	if err != nil {
-		gcprest.WriteCErr(w, err)
-		return
-	}
-
 	var req peeringRequest
 
 	if !gcprest.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	h.peeringMu.Lock()
+	defer h.peeringMu.Unlock()
+
+	v, err := findNetByName(r.Context(), h.net, rp.ResourceName)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
 		return
 	}
 
@@ -138,7 +142,7 @@ func (h *Handler) applyPeering(ctx context.Context, rp gcprest.ResourcePath, pee
 	idx := slices.IndexFunc(peerings, func(e networkPeering) bool { return e.Name == p.Name })
 
 	if rp.Action == addPeeringAction {
-		if err := h.validateNewPeering(ctx, rp, p, idx >= 0); err != nil {
+		if err := h.validateNewPeering(ctx, rp, p, peerings); err != nil {
 			return nil, err
 		}
 
@@ -173,26 +177,140 @@ func requestedPeering(req *peeringRequest) *networkPeering {
 	return p
 }
 
-// validateNewPeering rejects an addPeering whose name is taken, whose peer
-// network is missing, or that peers a network with itself.
+// validateNewPeering rejects an addPeering, with 400 as the compute API does,
+// whose name is taken, whose peer network is already peered with this one,
+// or that peers a network with itself, and with 404 when the peer network is
+// missing. Once the peer has the reverse peering, the peering would go ACTIVE,
+// so overlapping subnet ranges between the two networks are 400 too.
 //
 //nolint:gocritic // rp is a request-scoped value
-func (h *Handler) validateNewPeering(ctx context.Context, rp gcprest.ResourcePath, p *networkPeering, exists bool) error {
-	switch {
-	case exists:
-		return cerrors.Newf(cerrors.AlreadyExists, "peering %s already exists", p.Name)
-	case p.Network == "":
+func (h *Handler) validateNewPeering(ctx context.Context, rp gcprest.ResourcePath, p *networkPeering,
+	existing []networkPeering,
+) error {
+	if p.Network == "" {
 		return cerrors.New(cerrors.InvalidArgument, "peer network required")
-	case lastSegment(p.Network) == rp.ResourceName && refProject(p.Network, rp.Project) == rp.Project:
+	}
+
+	peerProj, peerName := refProject(p.Network, rp.Project), lastSegment(p.Network)
+
+	if peerName == rp.ResourceName && peerProj == rp.Project {
 		return cerrors.New(cerrors.InvalidArgument, "a network cannot peer with itself")
 	}
 
-	if _, err := findNetByName(projectctx.WithProject(ctx, projectctx.FromPath(p.Network)),
-		h.net, lastSegment(p.Network)); err != nil {
+	if err := checkPeeringUnique(existing, p.Name, rp, peerProj, peerName); err != nil {
+		return err
+	}
+
+	peerCtx := projectctx.WithProject(ctx, peerProj)
+
+	peer, err := findNetByName(peerCtx, h.net, peerName)
+	if err != nil {
 		return cerrors.Newf(cerrors.NotFound, "network %s not found", p.Network)
 	}
 
+	if !peersBack(peer, rp.ResourceName, rp.Project, peerProj) {
+		return nil
+	}
+
+	self, err := findNetByName(ctx, h.net, rp.ResourceName)
+	if err != nil {
+		return err
+	}
+
+	return h.checkNoOverlap(ctx, peerCtx, self.ID, peer.ID)
+}
+
+// checkPeeringUnique rejects a peering name already on the network, or a
+// second peering to the same peer network.
+//
+//nolint:gocritic // rp is a request-scoped value
+func checkPeeringUnique(existing []networkPeering, name string, rp gcprest.ResourcePath, peerProj, peerName string) error {
+	for i := range existing {
+		if existing[i].Name == name {
+			return cerrors.Newf(cerrors.InvalidArgument, "There is already a peering %s on network %s", name, rp.ResourceName)
+		}
+
+		if lastSegment(existing[i].Network) == peerName && refProject(existing[i].Network, rp.Project) == peerProj {
+			return cerrors.Newf(cerrors.InvalidArgument, "Network %s is already peered with %s as %s",
+				rp.ResourceName, peerName, existing[i].Name)
+		}
+	}
+
 	return nil
+}
+
+// peersBack reports whether the peer network has a peering to the named
+// network.
+func peersBack(peer *netdriver.VPCInfo, name, project, peerProj string) bool {
+	backs := decodePeerings(peer.Tags)
+
+	for i := range backs {
+		if lastSegment(backs[i].Network) == name && refProject(backs[i].Network, peerProj) == project {
+			return true
+		}
+	}
+
+	return false
+}
+
+// checkNoOverlap returns InvalidArgument when a subnet range, primary or
+// secondary, of one network overlaps one of the other.
+func (h *Handler) checkNoOverlap(ctx, peerCtx context.Context, selfID, peerID string) error {
+	mine, err := h.networkRanges(ctx, selfID)
+	if err != nil {
+		return err
+	}
+
+	theirs, err := h.networkRanges(peerCtx, peerID)
+	if err != nil {
+		return err
+	}
+
+	for _, a := range mine {
+		for _, b := range theirs {
+			if a.Contains(b.IP) || b.Contains(a.IP) {
+				return cerrors.Newf(cerrors.InvalidArgument,
+					"An IP range in the local network (%s) overlaps with an IP range (%s) in the peer network", a, b)
+			}
+		}
+	}
+
+	return nil
+}
+
+// networkRanges returns the primary and secondary ranges of a network's
+// subnetworks.
+func (h *Handler) networkRanges(ctx context.Context, vpcID string) ([]*net.IPNet, error) {
+	subnets, err := h.net.DescribeSubnets(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []*net.IPNet
+
+	add := func(cidr string) {
+		if _, n, err := net.ParseCIDR(cidr); err == nil {
+			out = append(out, n)
+		}
+	}
+
+	for i := range subnets {
+		if subnets[i].VPCID != vpcID {
+			continue
+		}
+
+		add(subnets[i].CIDRBlock)
+
+		var secondary []secondaryRange
+
+		if raw := subnets[i].Tags[subnetSecondaryTag]; raw != "" && json.Unmarshal([]byte(raw), &secondary) == nil {
+			for _, s := range secondary {
+				add(s.IPCIDRRange)
+			}
+		}
+	}
+
+	return out, nil
 }
 
 // newPeering stores a peering with the defaults GCP applies: routes are always
@@ -205,10 +323,10 @@ func newPeering(p *networkPeering, project string) networkPeering {
 	out.AutoCreateRoutes = true
 	out.ExchangeSubnetRoutes = true
 
-	if out.ExportSubnetRoutesWithPublicIP == nil {
-		v := true
-		out.ExportSubnetRoutesWithPublicIP = &v
-	}
+	out.ExportSubnetRoutesWithPublicIP = boolOr(out.ExportSubnetRoutesWithPublicIP, true)
+	out.ExportCustomRoutes = boolOr(out.ExportCustomRoutes, false)
+	out.ImportCustomRoutes = boolOr(out.ImportCustomRoutes, false)
+	out.ImportSubnetRoutesWithPublicIP = boolOr(out.ImportSubnetRoutesWithPublicIP, false)
 
 	if out.StackType == "" {
 		out.StackType = defaultStackType
@@ -217,15 +335,28 @@ func newPeering(p *networkPeering, project string) networkPeering {
 	return out
 }
 
-// mergePeeringUpdate applies updatePeering: the route exchange flags, stack
-// type and update strategy are mutable.
-func mergePeeringUpdate(dst, src *networkPeering) {
-	dst.ExportCustomRoutes = src.ExportCustomRoutes
-	dst.ImportCustomRoutes = src.ImportCustomRoutes
-	dst.ImportSubnetRoutesWithPublicIP = src.ImportSubnetRoutesWithPublicIP
+// boolOr returns p, or a pointer to def when p is nil.
+func boolOr(p *bool, def bool) *bool {
+	if p != nil {
+		return p
+	}
 
-	if src.ExportSubnetRoutesWithPublicIP != nil {
-		dst.ExportSubnetRoutesWithPublicIP = src.ExportSubnetRoutesWithPublicIP
+	return &def
+}
+
+// mergePeeringUpdate applies updatePeering: the route exchange flags, stack
+// type and update strategy are mutable, and only the fields the request sets
+// change.
+func mergePeeringUpdate(dst, src *networkPeering) {
+	for _, f := range []struct{ dst, src **bool }{
+		{&dst.ExportCustomRoutes, &src.ExportCustomRoutes},
+		{&dst.ImportCustomRoutes, &src.ImportCustomRoutes},
+		{&dst.ExportSubnetRoutesWithPublicIP, &src.ExportSubnetRoutesWithPublicIP},
+		{&dst.ImportSubnetRoutesWithPublicIP, &src.ImportSubnetRoutesWithPublicIP},
+	} {
+		if *f.src != nil {
+			*f.dst = *f.src
+		}
 	}
 
 	if src.StackType != "" {
@@ -257,11 +388,8 @@ func (h *Handler) peeringsView(ctx context.Context, info *netdriver.VPCInfo, pro
 			continue
 		}
 
-		for _, back := range decodePeerings(peer.Tags) {
-			if lastSegment(back.Network) == name && refProject(back.Network, peerProj) == project {
-				p.State, p.StateDetails = peeringStateActive, "Connected."
-				break
-			}
+		if peersBack(peer, name, project, peerProj) {
+			p.State, p.StateDetails = peeringStateActive, "Connected."
 		}
 	}
 

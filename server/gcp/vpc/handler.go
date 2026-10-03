@@ -33,6 +33,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -124,6 +125,10 @@ type Handler struct {
 	ops *gcprest.OperationRegistry
 	// iam keeps subnetwork policies keyed by full resource name.
 	iam gcpiam.Store
+	// peeringMu serializes peering changes. Each one reads a network's
+	// peerings, checks the peer network, and writes the list back, so two
+	// concurrent changes must not interleave.
+	peeringMu sync.Mutex
 }
 
 // New returns a networks handler. compute is optional (may be nil): when

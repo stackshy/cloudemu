@@ -42,7 +42,7 @@ func TestNetworkPeeringLifecycle(t *testing.T) {
 
 	wantPeering(ctx, t, svc, "na", "a-to-b", "INACTIVE")
 
-	wantStatus(t, "duplicate peering", addPeering("na", "a-to-b", "nb"), http.StatusConflict)
+	wantStatus(t, "duplicate peering", addPeering("na", "a-to-b", "nb"), http.StatusBadRequest)
 	wantStatus(t, "peering to a missing network", addPeering("na", "a-to-x", "nx"), http.StatusNotFound)
 
 	if err := addPeering("nb", "b-to-a", "na"); err != nil {
