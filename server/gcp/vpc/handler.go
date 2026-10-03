@@ -27,6 +27,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"hash/fnv"
+	"math"
 	"net"
 	"net/http"
 	"strconv"
@@ -1679,6 +1680,7 @@ func tagOr(m map[string]string, key, fallback string) string {
 
 // numericID returns a stable uint64-shaped string derived from a driver ID.
 // GCP wire IDs are uint64 and proto JSON unmarshalling rejects anything else.
+// The top bit is cleared because Terraform reads subnetwork_id into an int64.
 func numericID(driverID string) string {
 	const fnvOffset uint64 = 14695981039346656037
 
@@ -1690,7 +1692,7 @@ func numericID(driverID string) string {
 		h *= fnvPrime
 	}
 
-	return strconv.FormatUint(h, 10)
+	return strconv.FormatUint(h&math.MaxInt64, 10)
 }
 
 func hostOf(r *http.Request) string {

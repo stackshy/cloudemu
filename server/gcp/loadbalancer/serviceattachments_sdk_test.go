@@ -38,15 +38,22 @@ func attachment(name, preference string) *computepb.ServiceAttachment {
 	}
 }
 
-// insertAttachment inserts sa in testRegion, failing the test on error.
+// insertAttachment inserts sa in testProject and testRegion, failing the test
+// on error.
 func insertAttachment(ctx context.Context, t *testing.T, ts *httptest.Server, sa *computepb.ServiceAttachment) {
+	t.Helper()
+	insertAttachmentIn(ctx, t, ts, testProject, sa)
+}
+
+// insertAttachmentIn inserts sa in project and testRegion.
+func insertAttachmentIn(ctx context.Context, t *testing.T, ts *httptest.Server, project string, sa *computepb.ServiceAttachment) {
 	t.Helper()
 
 	c := newServiceAttachmentsClient(t, ts)
 
 	waitOp(ctx, t, "ServiceAttachment Insert "+sa.GetName(), func() (*gcpcompute.Operation, error) {
 		return c.Insert(ctx, &computepb.InsertServiceAttachmentRequest{
-			Project: testProject, Region: testRegion, ServiceAttachmentResource: sa,
+			Project: project, Region: testRegion, ServiceAttachmentResource: sa,
 		})
 	})
 }

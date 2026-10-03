@@ -218,7 +218,7 @@ func (h *Handler) validateAttachmentTarget(ctx context.Context, rp gcprest.Resou
 			target)
 	}
 
-	if _, err := store.GetGCPServiceAttachment(ctx, region, name); err != nil {
+	if _, err := store.GetGCPServiceAttachment(attachmentCtx(ctx, target), region, name); err != nil {
 		if cerrors.IsNotFound(err) {
 			return invalidRefErr("target", target, "serviceAttachment")
 		}

@@ -36,6 +36,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
@@ -115,6 +116,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "malformed path")
 		return
 	}
+
+	r = r.WithContext(projectctx.WithProject(r.Context(), rp.Project))
 
 	switch rp.ResourceType {
 	case resourceBackendServices:
