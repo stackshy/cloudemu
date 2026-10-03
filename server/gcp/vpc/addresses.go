@@ -312,7 +312,7 @@ func (h *Handler) aggregatedListAddresses(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	items := make(map[string]addressesScopedList, len(grouped)+1)
+	items := make(map[string]addressesScopedList, len(grouped))
 	for key, list := range grouped {
 		items[key] = addressesScopedList{Addresses: list}
 	}

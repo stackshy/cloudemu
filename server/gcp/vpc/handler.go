@@ -903,7 +903,7 @@ func (h *Handler) aggregatedListSubnetworks(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	items := make(map[string]subnetworksScopedList, len(grouped)+1)
+	items := make(map[string]subnetworksScopedList, len(grouped))
 	for key, list := range grouped {
 		items[key] = subnetworksScopedList{Subnetworks: list}
 	}
