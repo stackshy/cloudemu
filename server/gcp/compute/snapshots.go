@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -121,7 +122,7 @@ func (h *Handler) listSnapshots(w http.ResponseWriter, r *http.Request, rp gcpre
 		out = append(out, toSnapshotResponse(&snaps[i], scope, host))
 	}
 
-	items, next, ok := filterPage(w, r, out, func(x snapshotResponse) string { return x.Name })
+	items, next, ok := gcplist.FilterPage(w, r, out, func(x snapshotResponse) string { return x.Name })
 	if !ok {
 		return
 	}

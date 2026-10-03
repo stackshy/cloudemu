@@ -8,6 +8,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	gcecompute "github.com/stackshy/cloudemu/v2/providers/gcp/compute"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -136,7 +137,7 @@ func (h *Handler) listImages(w http.ResponseWriter, r *http.Request, rp gcprest.
 		out = append(out, toImageResponse(&imgs[i], scope, host))
 	}
 
-	items, next, ok := filterPage(w, r, out, func(x imageResponse) string { return x.Name })
+	items, next, ok := gcplist.FilterPage(w, r, out, func(x imageResponse) string { return x.Name })
 	if !ok {
 		return
 	}

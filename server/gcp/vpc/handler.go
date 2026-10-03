@@ -37,10 +37,10 @@ import (
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -92,13 +92,6 @@ const (
 // nowRFC3339 returns the current time formatted the way GCP stamps
 // creationTimestamp on every resource.
 func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
-
-// nameMatches reports whether name satisfies a GCP list filter, delegating to
-// the shared gcprest codec so every GCP handler applies filters identically.
-func nameMatches(filter, name string) bool { return gcprest.NameMatches(filter, name) }
-
-// maxResultsOf parses the maxResults query param, defaulting when absent/invalid.
-func maxResultsOf(raw string) int { return gcprest.MaxResults(raw) }
 
 // instanceLister is the minimal, optional compute-side lookup the subnetwork
 // delete guard needs: it lists instances so the handler can reject deleting a
@@ -439,8 +432,6 @@ func (h *Handler) listNetworks(w http.ResponseWriter, r *http.Request, rp gcpres
 	}
 
 	host := hostOf(r)
-	filter := r.URL.Query().Get("filter")
-
 	items := make([]networkResponse, 0, len(infos))
 	subnetLinks := h.subnetLinksByNetwork(r.Context(), rp.Project, host)
 
@@ -451,25 +442,19 @@ func (h *Handler) listNetworks(w http.ResponseWriter, r *http.Request, rp gcpres
 		resp := toNetworkResponse(&infos[i], scope, host)
 		resp.Subnetworks = subnetLinks[infos[i].ID]
 		resp.Peerings = h.peeringsView(r.Context(), &infos[i], rp.Project, host)
-
-		if nameMatches(filter, resp.Name) {
-			items = append(items, resp)
-		}
+		items = append(items, resp)
 	}
 
-	page, err := pagination.PaginateSorted(items,
-		func(a, b networkResponse) bool { return a.Name < b.Name },
-		r.URL.Query().Get("pageToken"), maxResultsOf(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	page, next, ok := gcplist.FilterPage(w, r, items, func(n networkResponse) string { return n.Name })
+	if !ok {
 		return
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, networkListResponse{
 		Kind:          "compute#networkList",
 		ID:            "projects/" + rp.Project + "/global/networks",
-		Items:         page.Items,
-		NextPageToken: page.NextPageToken,
+		Items:         page,
+		NextPageToken: next,
 		SelfLink:      gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "networks", ""),
 	})
 }
@@ -671,8 +656,6 @@ func (h *Handler) listSubnetworks(w http.ResponseWriter, r *http.Request, rp gcp
 	}
 
 	host := hostOf(r)
-	filter := r.URL.Query().Get("filter")
-
 	items := make([]subnetworkResponse, 0, len(infos))
 
 	for i := range infos {
@@ -684,25 +667,19 @@ func (h *Handler) listSubnetworks(w http.ResponseWriter, r *http.Request, rp gcp
 		scope := rp
 		scope.ResourceName = tagOr(infos[i].Tags, subnetNameTag, infos[i].ID)
 
-		resp := toSubnetworkResponse(&infos[i], scope, host)
-		if nameMatches(filter, resp.Name) {
-			items = append(items, resp)
-		}
+		items = append(items, toSubnetworkResponse(&infos[i], scope, host))
 	}
 
-	page, err := pagination.PaginateSorted(items,
-		func(a, b subnetworkResponse) bool { return a.Name < b.Name },
-		r.URL.Query().Get("pageToken"), maxResultsOf(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	page, next, ok := gcplist.FilterPage(w, r, items, func(s subnetworkResponse) string { return s.Name })
+	if !ok {
 		return
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, subnetworkListResponse{
 		Kind:          "compute#subnetworkList",
 		ID:            "projects/" + rp.Project + "/regions/" + rp.ScopeName + "/subnetworks",
-		Items:         page.Items,
-		NextPageToken: page.NextPageToken,
+		Items:         page,
+		NextPageToken: next,
 		SelfLink:      gcprest.SelfLink(host, rp.Project, gcprest.ScopeRegions, rp.ScopeName, "subnetworks", ""),
 	})
 }
@@ -906,8 +883,7 @@ func (h *Handler) aggregatedListSubnetworks(w http.ResponseWriter, r *http.Reque
 	}
 
 	host := hostOf(r)
-	filter := r.URL.Query().Get("filter")
-	items := map[string]subnetworksScopedList{}
+	all := make([]gcplist.Scoped[subnetworkResponse], 0, len(infos))
 
 	for i := range infos {
 		region := infos[i].AvailabilityZone
@@ -917,15 +893,19 @@ func (h *Handler) aggregatedListSubnetworks(w http.ResponseWriter, r *http.Reque
 		scope.ScopeName = region
 		scope.ResourceName = tagOr(infos[i].Tags, subnetNameTag, infos[i].ID)
 
-		resp := toSubnetworkResponse(&infos[i], scope, host)
-		if !nameMatches(filter, resp.Name) {
-			continue
-		}
+		all = append(all, gcplist.Scoped[subnetworkResponse]{
+			Scope: "regions/" + region, Item: toSubnetworkResponse(&infos[i], scope, host),
+		})
+	}
 
-		key := "regions/" + region
-		bucket := items[key]
-		bucket.Subnetworks = append(bucket.Subnetworks, resp)
-		items[key] = bucket
+	grouped, next, ok := gcplist.AggregatedPage(w, r, all, func(s subnetworkResponse) string { return s.Name })
+	if !ok {
+		return
+	}
+
+	items := make(map[string]subnetworksScopedList, len(grouped)+1)
+	for key, list := range grouped {
+		items[key] = subnetworksScopedList{Subnetworks: list}
 	}
 
 	// Real GCP always includes a global bucket; subnetworks are regional, so it
@@ -937,10 +917,11 @@ func (h *Handler) aggregatedListSubnetworks(w http.ResponseWriter, r *http.Reque
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, subnetworkAggregatedListResponse{
-		Kind:     "compute#subnetworkAggregatedList",
-		ID:       "projects/" + rp.Project + "/aggregated/subnetworks",
-		Items:    items,
-		SelfLink: host + "/compute/v1/projects/" + rp.Project + "/aggregated/subnetworks",
+		Kind:          "compute#subnetworkAggregatedList",
+		ID:            "projects/" + rp.Project + "/aggregated/subnetworks",
+		Items:         items,
+		SelfLink:      host + "/compute/v1/projects/" + rp.Project + "/aggregated/subnetworks",
+		NextPageToken: next,
 	})
 }
 
@@ -1051,33 +1032,25 @@ func (h *Handler) listFirewalls(w http.ResponseWriter, r *http.Request, rp gcpre
 	}
 
 	host := hostOf(r)
-	filter := r.URL.Query().Get("filter")
-
 	items := make([]firewallResponse, 0, len(infos))
 
 	for i := range infos {
 		scope := rp
 		scope.ResourceName = tagOr(infos[i].Tags, firewallNameTag, infos[i].ID)
 
-		resp := toFirewallResponse(&infos[i], scope, host)
-		if nameMatches(filter, resp.Name) {
-			items = append(items, resp)
-		}
+		items = append(items, toFirewallResponse(&infos[i], scope, host))
 	}
 
-	page, err := pagination.PaginateSorted(items,
-		func(a, b firewallResponse) bool { return a.Name < b.Name },
-		r.URL.Query().Get("pageToken"), maxResultsOf(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	page, next, ok := gcplist.FilterPage(w, r, items, func(f firewallResponse) string { return f.Name })
+	if !ok {
 		return
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, firewallListResponse{
 		Kind:          "compute#firewallList",
 		ID:            "projects/" + rp.Project + "/global/firewalls",
-		Items:         page.Items,
-		NextPageToken: page.NextPageToken,
+		Items:         page,
+		NextPageToken: next,
 		SelfLink:      gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "firewalls", ""),
 	})
 }

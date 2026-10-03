@@ -124,6 +124,16 @@ type addressesScopedList struct {
 	Warning   *scopedWarning    `json:"warning,omitempty"`
 }
 
+// rawListResponse is the list envelope for collections whose bodies are
+// stored verbatim (addresses, routes, routers).
+type rawListResponse struct {
+	Kind          string            `json:"kind"`
+	ID            string            `json:"id,omitempty"`
+	Items         []json.RawMessage `json:"items"`
+	NextPageToken string            `json:"nextPageToken,omitempty"`
+	SelfLink      string            `json:"selfLink,omitempty"`
+}
+
 type addressAggregatedListResponse struct {
 	Kind          string                         `json:"kind"`
 	ID            string                         `json:"id"`

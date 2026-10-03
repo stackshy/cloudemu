@@ -5,6 +5,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -91,7 +92,7 @@ func writeOperationNotFound(w http.ResponseWriter, name string) {
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) listOperations(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	page, next, ok := filterPage(w, r, operationPtrs(h.ops.List(rp.Project, rp.Scope, rp.ScopeName)), operationOrder)
+	page, next, ok := gcplist.FilterPage(w, r, operationPtrs(h.ops.List(rp.Project, rp.Scope, rp.ScopeName)), operationOrder)
 	if !ok {
 		return
 	}
@@ -118,13 +119,13 @@ func (h *Handler) listOperations(w http.ResponseWriter, r *http.Request, rp gcpr
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) aggregatedListOperations(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	ops := operationPtrs(h.ops.List(rp.Project, "", ""))
-	all := make([]scopedItem[*gcprest.Operation], 0, len(ops))
+	all := make([]gcplist.Scoped[*gcprest.Operation], 0, len(ops))
 
 	for _, op := range ops {
-		all = append(all, scopedItem[*gcprest.Operation]{scope: operationScopeKey(op), item: op})
+		all = append(all, gcplist.Scoped[*gcprest.Operation]{Scope: operationScopeKey(op), Item: op})
 	}
 
-	grouped, next, ok := aggregatedPage(w, r, all, operationOrder)
+	grouped, next, ok := gcplist.AggregatedPage(w, r, all, operationOrder)
 	if !ok {
 		return
 	}
