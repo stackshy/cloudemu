@@ -47,6 +47,9 @@ const createOptionAttach = "Attach"
 // with its VM (the alternative, "Detach", is the default and leaves the disk).
 const deleteOptionDelete = "Delete"
 
+// deleteOptionDetach is the ARM default deleteOption: the disk outlives the VM.
+const deleteOptionDetach = "Detach"
+
 // URL schemes for building absolute self-referential URLs (async operation
 // status, boot-diagnostics serial log) against the incoming request.
 const (
@@ -1485,6 +1488,12 @@ func (h *Handler) fillOSDiskRef(ctx context.Context, rp azurearm.ResourcePath, i
 
 		name := tagOr(v.Tags, diskARMNameTag, v.ID)
 		sp.OSDisk.Name = name
+
+		sp.OSDisk.DeleteOption = deleteOptionDetach
+		if v.DeleteOnTermination {
+			sp.OSDisk.DeleteOption = deleteOptionDelete
+		}
+
 		sp.OSDisk.ManagedDisk = &managedDiskParameters{
 			ID:                 azurearm.BuildResourceID(rp.Subscription, tagOr(v.Tags, diskRGTag, rp.ResourceGroup), providerName, "disks", name),
 			StorageAccountType: v.VolumeType,

@@ -618,7 +618,7 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeElasticIP,
 			ID: id, ARN: arn,
-			Region: e.region, Tags: copyTags(eip.Tags),
+			Region: firstNonEmpty(eip.Location, e.region), Tags: copyTags(eip.Tags),
 			SKU:        eip.SKU,
 			Properties: props,
 		})
@@ -634,7 +634,7 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeNATGateway,
 			ID: id, ARN: arn,
-			Region: e.region, Tags: copyTags(ng.Tags),
+			Region: firstNonEmpty(ng.Location, e.region), Tags: copyTags(ng.Tags),
 		})
 	}
 

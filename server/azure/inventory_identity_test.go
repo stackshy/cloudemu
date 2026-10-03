@@ -115,6 +115,26 @@ func TestInventoryRowsCarryARMIdentity(t *testing.T) {
 		t.Errorf("malformed KQL status = %d, want 400", code)
 	}
 
+	// The ARM listing reports the canonical-case type and no properties.
+	_, list = c.do(http.MethodGet, rgPath("rga")+"/resources?api-version=2021-04-01&$filter="+
+		url.QueryEscape("name eq 'vm-rga'"), "")
+	if v, _ := list["value"].([]any); len(v) != 1 ||
+		v[0].(map[string]any)["type"] != "Microsoft.Compute/virtualMachines" || v[0].(map[string]any)["properties"] != nil {
+		t.Errorf("listing row for vm-rga = %v", list["value"])
+	}
+
+	// Public IPs and NAT gateways report the location they were created in.
+	c.mustPut(resPath("rgb", "Microsoft.Network/publicIPAddresses", "pip1"),
+		`{"location":"japaneast","sku":{"name":"Standard"},"properties":{"publicIPAllocationMethod":"Static"}}`)
+	c.mustPut(resPath("rgb", "Microsoft.Network/natGateways", "nat1"), `{"location":"japaneast","sku":{"name":"Standard"}}`)
+
+	_, arg = c.do(http.MethodPost, "/providers/Microsoft.ResourceGraph/resources?api-version=2021-03-01",
+		`{"subscriptions":["`+casSub+`"],"query":"Resources | where name in ('pip1', 'nat1')"}`)
+	wantRows(t, "ARG pip/nat", rowsOf(t, arg["data"].([]any)), []string{
+		"pip1 microsoft.network/publicipaddresses japaneast",
+		"nat1 microsoft.network/natgateways japaneast",
+	})
+
 	// The VM reports its OS disk by ARM id, so a client deleting the VM can
 	// delete the disk too instead of leaving it in the group.
 	_, vm := c.do(http.MethodGet, resPath("rga", "Microsoft.Compute/virtualMachines", "vm-rga")+"?api-version=2024-03-01", "")

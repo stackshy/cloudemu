@@ -378,11 +378,23 @@ func tagsIn(body []byte) map[string]string {
 	return cloneTags(res.Tags)
 }
 
+// passThrough answers with the resource's failure: its status and its ARM error
+// code and message, re-encoded as a fresh ARM error rather than relayed bytes.
 func passThrough(w http.ResponseWriter, rec *httptest.ResponseRecorder) {
-	for k, v := range rec.Header() {
-		w.Header()[k] = v
+	var env struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 
-	w.WriteHeader(rec.Code)
-	_, _ = w.Write(rec.Body.Bytes())
+	_ = json.Unmarshal(rec.Body.Bytes(), &env)
+
+	if env.Error.Code == "" {
+		env.Error.Code = http.StatusText(rec.Code)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	azurearm.WriteError(w, rec.Code, env.Error.Code, env.Error.Message)
 }

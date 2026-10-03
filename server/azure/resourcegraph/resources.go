@@ -128,7 +128,7 @@ func (h *ResourcesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		value = append(value, row)
+		value = append(value, armListRow(row))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, map[string]any{"value": value})
@@ -200,4 +200,43 @@ var armFilterColumns = map[string]string{ //nolint:gochecknoglobals // static lo
 	"resourcetype": colType,
 	colName:        colName,
 	colLocation:    colLocation,
+}
+
+// armListRow reshapes a Resource Graph row into a generic-resources listing
+// entry: the canonical-case type read off the id (Microsoft.Compute/virtualMachines,
+// where Resource Graph lowercases it) and no properties, resourceGroup or
+// subscriptionId columns, which the ARM listing does not return.
+func armListRow(row map[string]any) map[string]any {
+	if t := armTypeFromID(valueString(row["id"])); t != "" {
+		row[colType] = t
+	}
+
+	delete(row, "properties")
+	delete(row, "resourceGroup")
+	delete(row, "subscriptionId")
+
+	return row
+}
+
+// armTypeFromID returns the resource type an ARM id names, in the id's casing:
+// the namespace after the last /providers/ followed by every type segment
+// (.../providers/Microsoft.Network/virtualNetworks/v/subnets/s gives
+// Microsoft.Network/virtualNetworks/subnets). Empty for an id without one.
+func armTypeFromID(id string) string {
+	i := strings.LastIndex(strings.ToLower(id), "/providers/")
+	if i < 0 {
+		return ""
+	}
+
+	segs := strings.Split(strings.Trim(id[i+len("/providers/"):], "/"), "/")
+	if len(segs) < 3 || len(segs)%2 == 0 {
+		return ""
+	}
+
+	parts := []string{segs[0]}
+	for j := 1; j < len(segs); j += 2 {
+		parts = append(parts, segs[j])
+	}
+
+	return strings.Join(parts, "/")
 }
