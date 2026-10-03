@@ -28,7 +28,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `aps` | [APS](./aws/aps.md) | - | - | - | 21 |
 | `athena` | [Athena](./aws/athena.md) | - | - | - | 26 |
 | `azureai` | - | [AI](./azure/ai.md) | - | - | 92 |
-| `azurefirewall` | - | [Firewall](./azure/firewall.md) | - | - | 8 |
+| `azurefirewall` | - | [Firewall](./azure/firewall.md) | - | - | 12 |
 | `azuresearch` | - | [Search](./azure/search.md) | - | - | 53 |
 | `backup` | [Backup](./aws/backup.md) | - | - | - | 25 |
 | `backupdr` | - | - | [BackupDR](./gcp/backupdr.md) | - | 6 |
@@ -60,7 +60,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `composer` | - | - | [Composer](./gcp/composer.md) | - | 6 |
 | `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | - | 37 |
 | `configservice` | [Config](./aws/config.md) | - | - | - | 102 |
-| `containerapps` | - | [ContainerApps](./azure/containerapps.md) | - | - | 27 |
+| `containerapps` | - | [ContainerApps](./azure/containerapps.md) | - | - | 28 |
 | `containerinstances` | - | [ContainerInstances](./azure/containerinstances.md) | - | - | 10 |
 | `containerregistry` | [ECR](./aws/ecr.md) | [ACR](./azure/acr.md) | [ArtifactRegistry](./gcp/artifactregistry.md) | - | 15 |
 | `cosmosaccount` | - | [Cosmosaccount](./azure/cosmosaccount.md) | - | - | 10 |

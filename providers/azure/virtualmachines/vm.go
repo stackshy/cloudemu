@@ -206,6 +206,8 @@ type Mock struct {
 	keyPairs     *memstore.Store[*driver.KeyPairInfo]
 	scaleSets    *memstore.Store[*ScaleSet]
 	diskAccess   *memstore.Store[string]
+	// vmExtensions holds VM extensions keyed by instance id and name.
+	vmExtensions *memstore.Store[*driver.AzureVMExtension]
 	sm           *statemachine.Machine
 	opts         *config.Options
 	ipCounter    atomic.Int64
@@ -319,6 +321,7 @@ func New(opts *config.Options) *Mock {
 		keyPairs:     memstore.New[*driver.KeyPairInfo](),
 		scaleSets:    memstore.New[*ScaleSet](),
 		diskAccess:   memstore.New[string](),
+		vmExtensions: memstore.New[*driver.AzureVMExtension](),
 		sm:           statemachine.New(compute.VMTransitions()),
 		opts:         opts,
 	}
@@ -922,6 +925,7 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 	// (recorded as VolumeInfo.DeleteOnTermination): a disk with the flag set is
 	// deleted with the VM, one without it is detached (returned to Unattached).
 	m.cascadeTerminatedVolumes(instanceIDs)
+	m.dropExtensions(instanceIDs)
 
 	// Tear down the real backing for any engine-backed instances. Every id is now
 	// Terminated (transitionInstances verified they exist), so this is best-effort:
