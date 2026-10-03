@@ -214,6 +214,11 @@ func (h *Handler) routeNetworks(w http.ResponseWriter, r *http.Request, rp gcpre
 		return
 	}
 
+	if rp.Action != "" {
+		h.routeNetworkAction(w, r, rp)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.getNetwork(w, r, rp)
@@ -415,6 +420,7 @@ func (h *Handler) getNetwork(w http.ResponseWriter, r *http.Request, rp gcprest.
 	host := hostOf(r)
 	resp := toNetworkResponse(v, rp, host)
 	resp.Subnetworks = h.subnetLinksByNetwork(r.Context(), rp.Project, host)[v.ID]
+	resp.Peerings = h.peeringsView(r.Context(), v, rp.Project, host)
 
 	gcprest.WriteJSON(w, http.StatusOK, resp)
 }
@@ -439,6 +445,7 @@ func (h *Handler) listNetworks(w http.ResponseWriter, r *http.Request, rp gcpres
 
 		resp := toNetworkResponse(&infos[i], scope, host)
 		resp.Subnetworks = subnetLinks[infos[i].ID]
+		resp.Peerings = h.peeringsView(r.Context(), &infos[i], rp.Project, host)
 
 		if nameMatches(filter, resp.Name) {
 			items = append(items, resp)
