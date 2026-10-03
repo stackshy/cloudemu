@@ -220,6 +220,7 @@ func configsFromInstances(in []driver.ContainerInstance) []driver.ContainerConfi
 			CPU:        c.CPU,
 			MemoryInGB: c.MemoryInGB,
 			Env:        append([]driver.EnvVar(nil), c.Env...),
+			Ports:      append([]driver.Port(nil), c.Ports...),
 		})
 	}
 

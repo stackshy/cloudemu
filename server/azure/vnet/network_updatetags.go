@@ -176,7 +176,7 @@ func (h *Handler) patchPublicIP(w http.ResponseWriter, r *http.Request, rp azure
 
 	h.patchMu.Unlock()
 
-	azurearm.WriteJSON(w, http.StatusOK, h.toPublicIPResponse(r.Context(), info, rp, defaultLoc))
+	azurearm.WriteJSON(w, http.StatusOK, h.toPublicIPResponse(r.Context(), info, rp))
 }
 
 //nolint:gocritic,dupl // rp is request-scoped; UpdateTags handlers share one get-modify-put shape over distinct types by design
@@ -213,7 +213,7 @@ func (h *Handler) patchNATGateway(w http.ResponseWriter, r *http.Request, rp azu
 
 	h.patchMu.Unlock()
 
-	azurearm.WriteJSON(w, http.StatusOK, h.natGatewayResponse(r.Context(), info, rp, defaultLoc))
+	azurearm.WriteJSON(w, http.StatusOK, h.natGatewayResponse(r.Context(), info, rp))
 }
 
 // patchRouteTable replaces a route table's tags. Route-table tags live in the
