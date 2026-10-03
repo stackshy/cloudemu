@@ -266,38 +266,8 @@ func isResourceScope(scope string) bool {
 // the resource. A failure on the resource (404 for a missing one, 409 for a
 // locked one) is returned as the resource answered it.
 func (h *Handler) serveResource(w http.ResponseWriter, r *http.Request, scope string) {
-	var update func(current map[string]string) map[string]string
-
-	switch r.Method {
-	case http.MethodGet:
-	case http.MethodPut:
-		var body tagsBody
-		if !azurearm.DecodeJSON(w, r, &body) {
-			return
-		}
-
-		update = func(map[string]string) map[string]string { return cloneTags(body.Properties.Tags) }
-	case http.MethodPatch:
-		var body tagsPatchBody
-		if !azurearm.DecodeJSON(w, r, &body) {
-			return
-		}
-
-		op := body.Operation
-		if op == "" {
-			op = opMerge
-		}
-
-		if !strings.EqualFold(op, opMerge) && !strings.EqualFold(op, opReplace) && !strings.EqualFold(op, opDelete) {
-			azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter", "unsupported tags patch operation: "+op)
-			return
-		}
-
-		update = func(cur map[string]string) map[string]string { return applyPatch(cur, op, body.Properties.Tags) }
-	case http.MethodDelete:
-		update = func(map[string]string) map[string]string { return map[string]string{} }
-	default:
-		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+	update, ok := resourceUpdate(w, r)
+	if !ok {
 		return
 	}
 
@@ -329,6 +299,50 @@ func (h *Handler) serveResource(w http.ResponseWriter, r *http.Request, scope st
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, response(scope, tags))
+}
+
+// resourceUpdate decodes a tags request into the change it makes to the
+// current set: nil for a GET, the new set for PUT/PATCH/DELETE. ok is false
+// when the request was rejected (the error is already written).
+func resourceUpdate(w http.ResponseWriter, r *http.Request) (func(map[string]string) map[string]string, bool) {
+	switch r.Method {
+	case http.MethodGet:
+		return nil, true
+	case http.MethodPut:
+		var body tagsBody
+		if !azurearm.DecodeJSON(w, r, &body) {
+			return nil, false
+		}
+
+		return func(map[string]string) map[string]string { return cloneTags(body.Properties.Tags) }, true
+	case http.MethodPatch:
+		return patchUpdate(w, r)
+	case http.MethodDelete:
+		return func(map[string]string) map[string]string { return map[string]string{} }, true
+	default:
+		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		return nil, false
+	}
+}
+
+// patchUpdate decodes a tags PATCH (Merge, Replace or Delete; Merge when unset).
+func patchUpdate(w http.ResponseWriter, r *http.Request) (func(map[string]string) map[string]string, bool) {
+	var body tagsPatchBody
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return nil, false
+	}
+
+	op := body.Operation
+	if op == "" {
+		op = opMerge
+	}
+
+	if !strings.EqualFold(op, opMerge) && !strings.EqualFold(op, opReplace) && !strings.EqualFold(op, opDelete) {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter", "unsupported tags patch operation: "+op)
+		return nil, false
+	}
+
+	return func(cur map[string]string) map[string]string { return applyPatch(cur, op, body.Properties.Tags) }, true
 }
 
 // call sends method to the resource at scope through the ARM router, keeping

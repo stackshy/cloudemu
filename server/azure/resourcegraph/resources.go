@@ -124,7 +124,7 @@ func (h *ResourcesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// Subnets are child resources of a virtual network; the generic listing
 		// only returns top-level tracked resources.
-		if row["type"] == azureTypeSubnet || !match(row) {
+		if row[colType] == azureTypeSubnet || !match(row) {
 			continue
 		}
 
@@ -140,7 +140,14 @@ var _ interface {
 	http.Handler
 } = (*ResourcesHandler)(nil)
 
-const azureTypeSubnet = "microsoft.network/subnets"
+// Row columns shared by the renderer and the $filter matcher.
+const (
+	colType     = "type"
+	colName     = "name"
+	colLocation = "location"
+
+	azureTypeSubnet = "microsoft.network/subnets"
+)
 
 // reARMFilterAnd splits an ARM $filter into clauses; reARMFilterClause matches
 // one `field eq 'value'` clause.
@@ -154,9 +161,7 @@ var (
 // joined by `and`. Values compare case-insensitively, except tag values. An
 // empty filter matches everything.
 func parseARMFilter(filter string) (func(map[string]any) bool, error) {
-	var preds []func(map[string]any) bool
-
-	tagName, tagValue := "", ""
+	want := map[string]string{}
 
 	for _, clause := range reARMFilterAnd.Split(strings.TrimSpace(filter), -1) {
 		if clause == "" {
@@ -165,38 +170,34 @@ func parseARMFilter(filter string) (func(map[string]any) bool, error) {
 
 		m := reARMFilterClause.FindStringSubmatch(clause)
 		if m == nil {
-			return nil, fmt.Errorf("invalid $filter clause %q", clause)
+			return nil, invalid("invalid $filter clause %q", clause)
 		}
 
-		field, want := strings.ToLower(m[1]), m[2]
-
-		switch field {
-		case "tagname":
-			tagName = want
-		case "tagvalue":
-			tagValue = want
-		default:
-			col := map[string]string{"resourcetype": "type", "name": "name", "location": "location"}[field]
-			preds = append(preds, func(row map[string]any) bool {
-				return strings.EqualFold(valueString(row[col]), want)
-			})
-		}
-	}
-
-	if tagName != "" {
-		preds = append(preds, func(row map[string]any) bool {
-			v, ok := row["tags"].(map[string]string)[tagName]
-			return ok && (tagValue == "" || v == tagValue)
-		})
+		want[strings.ToLower(m[1])] = m[2]
 	}
 
 	return func(row map[string]any) bool {
-		for _, p := range preds {
-			if !p(row) {
+		for field, col := range armFilterColumns {
+			if v, ok := want[field]; ok && !strings.EqualFold(valueString(row[col]), v) {
 				return false
 			}
 		}
 
-		return true
+		name, ok := want["tagname"]
+		if !ok {
+			return true
+		}
+
+		v, has := row["tags"].(map[string]string)[name]
+		value, byValue := want["tagvalue"]
+
+		return has && (!byValue || v == value)
 	}, nil
+}
+
+// armFilterColumns maps the case-insensitive $filter fields to row columns.
+var armFilterColumns = map[string]string{ //nolint:gochecknoglobals // static lookup table
+	"resourcetype": colType,
+	colName:        colName,
+	colLocation:    colLocation,
 }

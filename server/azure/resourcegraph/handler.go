@@ -103,8 +103,8 @@ func (h *Handler) queryResources(w http.ResponseWriter, r *http.Request) {
 
 	query, err := parseKQL(req.Query)
 	if err != nil {
-		azurearm.WriteError(w, http.StatusBadRequest, "BadRequest",
-			"Query is invalid. Please refer to the documentation for the Azure Resource Graph service and fix the error before retrying. "+err.Error())
+		azurearm.WriteError(w, http.StatusBadRequest, "BadRequest", "Query is invalid. Please refer to the documentation "+
+			"for the Azure Resource Graph service and fix the error before retrying. "+err.Error())
 
 		return
 	}
@@ -274,9 +274,9 @@ func resourceToWire(r *resourcediscovery.Resource, subscription string) map[stri
 
 	out := map[string]any{
 		"id":             rewriteSubscription(r.ARN, subscription),
-		"name":           r.ID,
-		"type":           portableToAzureType(r.Service, r.Type),
-		"location":       r.Region,
+		colName:          r.ID,
+		colType:          portableToAzureType(r.Service, r.Type),
+		colLocation:      r.Region,
 		"resourceGroup":  resourceGroupOrDefault(r.ARN),
 		"subscriptionId": subscription,
 		"tags":           tagsOrEmpty(r.Tags),
