@@ -2,6 +2,7 @@ package tags_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -52,6 +53,14 @@ func armClientOptions(ts *httptest.Server) *arm.ClientOptions {
 func newClient(t *testing.T) *armresources.TagsClient {
 	t.Helper()
 
+	client, _ := newClientServer(t)
+
+	return client
+}
+
+func newClientServer(t *testing.T) (*armresources.TagsClient, *httptest.Server) {
+	t.Helper()
+
 	cloudP := cloudemu.NewAzure()
 	srv := azureserver.New(azureserver.DriversFrom(cloudP))
 
@@ -65,7 +74,41 @@ func newClient(t *testing.T) *armresources.TagsClient {
 		t.Fatalf("new client: %v", err)
 	}
 
-	return client
+	return client, ts
+}
+
+// armDo sends a raw ARM request and returns the status and decoded body.
+func armDo(t *testing.T, ts *httptest.Server, method, path, body string) (int, map[string]any) {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(context.Background(), method, ts.URL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+
+	out := map[string]any{}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+
+	return resp.StatusCode, out
+}
+
+func armTags(body map[string]any) map[string]string {
+	out := map[string]string{}
+	tags, _ := body["tags"].(map[string]any)
+
+	for k, v := range tags {
+		out[k], _ = v.(string)
+	}
+
+	return out
 }
 
 // ensureRG creates a resource group so tests can PUT resources into it. Real
@@ -219,11 +262,16 @@ func TestSDKTagsAtScopeLifecycle(t *testing.T) {
 // sets: a resource-id scope and a subscription scope do not bleed into each
 // other.
 func TestSDKTagsAtScopeIsolatedByScope(t *testing.T) {
-	client := newClient(t)
+	client, ts := newClientServer(t)
 	ctx := context.Background()
 
 	const resScope = "subscriptions/" + testSub +
 		"/resourceGroups/rg-1/providers/Microsoft.Storage/storageAccounts/acct1"
+
+	if code, _ := armDo(t, ts, http.MethodPut, "/"+resScope+"?api-version=2023-01-01",
+		`{"location":"eastus","kind":"StorageV2","sku":{"name":"Standard_LRS"}}`); code >= 300 {
+		t.Fatalf("create storage account: %d", code)
+	}
 
 	if _, err := client.CreateOrUpdateAtScope(ctx, testScope, armresources.TagsResource{
 		Properties: &armresources.Tags{Tags: ptrs(map[string]string{"level": "sub"})},
@@ -251,3 +299,72 @@ func TestSDKTagsAtScopeIsolatedByScope(t *testing.T) {
 
 	assertTags(t, "resource-scope", resGot.Properties, map[string]string{"level": "resource"})
 }
+
+// TestSDKTagsAtScopeAreResourceTags is the AZRM-07 regression: the tags at a
+// resource or resource-group scope are that resource's own tags, so a Tags API
+// write shows on the resource GET, a resource write shows on the Tags API GET,
+// and a missing resource is a 404 rather than a detached tag set.
+func TestSDKTagsAtScopeAreResourceTags(t *testing.T) {
+	client, ts := newClientServer(t)
+	ctx := context.Background()
+
+	const (
+		rgScope   = "subscriptions/" + testSub + "/resourceGroups/rg-1"
+		acctScope = rgScope + "/providers/Microsoft.Storage/storageAccounts/acct2"
+		acctPath  = "/" + acctScope + "?api-version=2023-01-01"
+	)
+
+	if code, _ := armDo(t, ts, http.MethodPut, acctPath,
+		`{"location":"eastus","kind":"StorageV2","sku":{"name":"Standard_LRS"},"tags":{"team":"a"}}`); code >= 300 {
+		t.Fatalf("create storage account: %d", code)
+	}
+
+	got, err := client.GetAtScope(ctx, acctScope, nil)
+	if err != nil {
+		t.Fatalf("get account tags: %v", err)
+	}
+
+	assertTags(t, "tags API reads resource tags", got.Properties, map[string]string{"team": "a"})
+
+	if _, err := client.UpdateAtScope(ctx, acctScope, armresources.TagsPatchResource{
+		Operation:  to.Ptr(armresources.TagsPatchOperationMerge),
+		Properties: &armresources.Tags{Tags: ptrs(map[string]string{"cost": "42"})},
+	}, nil); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+
+	_, acct := armDo(t, ts, http.MethodGet, acctPath, "")
+	if tags := armTags(acct); len(tags) != 2 || tags["cost"] != "42" || tags["team"] != "a" {
+		t.Fatalf("account GET tags after merge = %v, want team=a cost=42", tags)
+	}
+
+	if _, err := client.UpdateAtScope(ctx, acctScope, armresources.TagsPatchResource{
+		Operation:  to.Ptr(armresources.TagsPatchOperationDelete),
+		Properties: &armresources.Tags{Tags: ptrs(map[string]string{"team": ""})},
+	}, nil); err != nil {
+		t.Fatalf("delete op: %v", err)
+	}
+
+	_, acct = armDo(t, ts, http.MethodGet, acctPath, "")
+	if tags := armTags(acct); len(tags) != 1 || tags["cost"] != "42" {
+		t.Fatalf("account GET tags after delete op = %v, want cost=42", tags)
+	}
+
+	if _, err := client.CreateOrUpdateAtScope(ctx, rgScope, armresources.TagsResource{
+		Properties: &armresources.Tags{Tags: ptrs(map[string]string{"owner": "me"})},
+	}, nil); err != nil {
+		t.Fatalf("put rg tags: %v", err)
+	}
+
+	_, rg := armDo(t, ts, http.MethodGet, "/"+rgScope+"?api-version=2021-04-01", "")
+	if tags := armTags(rg); tags["owner"] != "me" {
+		t.Fatalf("resource group GET tags = %v, want owner=me", tags)
+	}
+
+	if code, _ := armDo(t, ts, http.MethodGet, "/"+rgScope+
+		"/providers/Microsoft.Storage/storageAccounts/missing"+pathSuffixForTest+"?api-version=2021-04-01", ""); code != http.StatusNotFound {
+		t.Fatalf("tags at a missing resource = %d, want 404", code)
+	}
+}
+
+const pathSuffixForTest = "/providers/Microsoft.Resources/tags/default"

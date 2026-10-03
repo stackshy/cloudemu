@@ -1,12 +1,15 @@
 package azure_test
 
 import (
+	"context"
+	"net/http"
 	"testing"
 )
 
-// TestScopeTagsClearedOnResourceDelete: deleting a resource clears the
-// tags-at-scope set on it, so a resource recreated with the same id starts
-// with no tags, while a sibling's tags stay.
+// TestScopeTagsClearedOnResourceDelete: the tags at a resource scope are the
+// resource's own, so a deleted resource answers 404 and a resource recreated
+// with the same id starts with only the tags it is created with, while a
+// sibling's tags stay.
 func TestScopeTagsClearedOnResourceDelete(t *testing.T) {
 	ts, c := echoTestServer(t)
 	base := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Sql/servers/"
@@ -19,8 +22,26 @@ func TestScopeTagsClearedOnResourceDelete(t *testing.T) {
 
 	deleteOK(t, c, base+"srv1?api-version=2021-11-01")
 
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"srv1"+tagsSuffix, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("tags at a deleted resource: status %d, want 404", resp.StatusCode)
+	}
+
+	putJSON(t, c, base+"srv1?api-version=2021-11-01", map[string]any{"location": "eastus"})
+
 	if tags := tagsOf(t, getJSON(t, c, base+"srv1"+tagsSuffix)); len(tags) != 0 {
-		t.Fatalf("deleted resource kept tags-at-scope: %v", tags)
+		t.Fatalf("recreated resource kept old tags: %v", tags)
 	}
 
 	if tags := tagsOf(t, getJSON(t, c, base+"srv10"+tagsSuffix)); tags["env"] != "srv10" {

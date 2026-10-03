@@ -3,6 +3,7 @@ package resourcegraph
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -100,6 +101,12 @@ func (h *ResourcesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	match, err := parseARMFilter(r.URL.Query().Get("$filter"))
+	if err != nil {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidFilterInQueryString", err.Error())
+		return
+	}
+
 	all, err := h.engine.ListAll(r.Context())
 	if err != nil {
 		azurearm.WriteCErr(w, err)
@@ -113,7 +120,15 @@ func (h *ResourcesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		value = append(value, resourceToWire(&all[i], h.subscriptionID))
+		row := resourceToWire(&all[i], h.subscriptionID)
+
+		// Subnets are child resources of a virtual network; the generic listing
+		// only returns top-level tracked resources.
+		if row[colType] == azureTypeSubnet || !match(row) {
+			continue
+		}
+
+		value = append(value, armListRow(row))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, map[string]any{"value": value})
@@ -124,3 +139,104 @@ var _ interface {
 	Matches(*http.Request) bool
 	http.Handler
 } = (*ResourcesHandler)(nil)
+
+// Row columns shared by the renderer and the $filter matcher.
+const (
+	colType     = "type"
+	colName     = "name"
+	colLocation = "location"
+
+	azureTypeSubnet = "microsoft.network/subnets"
+)
+
+// reARMFilterAnd splits an ARM $filter into clauses; reARMFilterClause matches
+// one `field eq 'value'` clause.
+var (
+	reARMFilterAnd    = regexp.MustCompile(`(?i)\s+and\s+`)
+	reARMFilterClause = regexp.MustCompile(`(?i)^\s*(resourceType|name|location|tagName|tagValue)\s+eq\s+'([^']*)'\s*$`)
+)
+
+// parseARMFilter compiles the $filter of a generic-resources listing: clauses
+// `resourceType eq`, `name eq`, `location eq`, `tagName eq` and `tagValue eq`
+// joined by `and`. Values compare case-insensitively, except tag values. An
+// empty filter matches everything.
+func parseARMFilter(filter string) (func(map[string]any) bool, error) {
+	want := map[string]string{}
+
+	for _, clause := range reARMFilterAnd.Split(strings.TrimSpace(filter), -1) {
+		if clause == "" {
+			continue
+		}
+
+		m := reARMFilterClause.FindStringSubmatch(clause)
+		if m == nil {
+			return nil, invalid("invalid $filter clause %q", clause)
+		}
+
+		want[strings.ToLower(m[1])] = m[2]
+	}
+
+	return func(row map[string]any) bool {
+		for field, col := range armFilterColumns {
+			if v, ok := want[field]; ok && !strings.EqualFold(valueString(row[col]), v) {
+				return false
+			}
+		}
+
+		name, ok := want["tagname"]
+		if !ok {
+			return true
+		}
+
+		v, has := row["tags"].(map[string]string)[name]
+		value, byValue := want["tagvalue"]
+
+		return has && (!byValue || v == value)
+	}, nil
+}
+
+// armFilterColumns maps the case-insensitive $filter fields to row columns.
+var armFilterColumns = map[string]string{ //nolint:gochecknoglobals // static lookup table
+	"resourcetype": colType,
+	colName:        colName,
+	colLocation:    colLocation,
+}
+
+// armListRow reshapes a Resource Graph row into a generic-resources listing
+// entry: the canonical-case type read off the id (Microsoft.Compute/virtualMachines,
+// where Resource Graph lowercases it) and no properties, resourceGroup or
+// subscriptionId columns, which the ARM listing does not return.
+func armListRow(row map[string]any) map[string]any {
+	if t := armTypeFromID(valueString(row["id"])); t != "" {
+		row[colType] = t
+	}
+
+	delete(row, "properties")
+	delete(row, "resourceGroup")
+	delete(row, "subscriptionId")
+
+	return row
+}
+
+// armTypeFromID returns the resource type an ARM id names, in the id's casing:
+// the namespace after the last /providers/ followed by every type segment
+// (.../providers/Microsoft.Network/virtualNetworks/v/subnets/s gives
+// Microsoft.Network/virtualNetworks/subnets). Empty for an id without one.
+func armTypeFromID(id string) string {
+	i := strings.LastIndex(strings.ToLower(id), "/providers/")
+	if i < 0 {
+		return ""
+	}
+
+	segs := strings.Split(strings.Trim(id[i+len("/providers/"):], "/"), "/")
+	if len(segs) < 3 || len(segs)%2 == 0 {
+		return ""
+	}
+
+	parts := []string{segs[0]}
+	for j := 1; j < len(segs); j += 2 {
+		parts = append(parts, segs[j])
+	}
+
+	return strings.Join(parts, "/")
+}
