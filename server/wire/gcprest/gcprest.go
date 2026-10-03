@@ -34,7 +34,7 @@ import (
 // stores nothing.
 type OperationRegistry struct {
 	mu  sync.RWMutex
-	ops map[string]opEntry
+	ops map[string]*opEntry
 }
 
 // opEntry is one stored operation with the project and scope it is polled
@@ -46,7 +46,7 @@ type opEntry struct {
 
 // NewOperationRegistry returns an empty operation registry.
 func NewOperationRegistry() *OperationRegistry {
-	return &OperationRegistry{ops: map[string]opEntry{}}
+	return &OperationRegistry{ops: map[string]*opEntry{}}
 }
 
 // opKey scopes an operation name by the project and URL scope it is polled
@@ -62,10 +62,14 @@ func (reg *OperationRegistry) Get(project, scope, scopeName, name string) (Opera
 	}
 
 	reg.mu.RLock()
-	e, ok := reg.ops[opKey(project, scope, scopeName, name)]
-	reg.mu.RUnlock()
+	defer reg.mu.RUnlock()
 
-	return e.op, ok
+	e, ok := reg.ops[opKey(project, scope, scopeName, name)]
+	if !ok {
+		return Operation{}, false
+	}
+
+	return e.op, true
 }
 
 // List returns the operations stored in project. An empty scope returns every
@@ -133,7 +137,7 @@ func (reg *OperationRegistry) RecordDoneTarget(
 	}
 
 	reg.mu.Lock()
-	reg.ops[opKey(project, scope, scopeName, op.Name)] = opEntry{project: project, scope: scope, scopeName: scopeName, op: op}
+	reg.ops[opKey(project, scope, scopeName, op.Name)] = &opEntry{project: project, scope: scope, scopeName: scopeName, op: op}
 	reg.mu.Unlock()
 
 	return op
