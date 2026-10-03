@@ -1,19 +1,24 @@
 // Package gcplist reads GCP list paging parameters and slices a stable page
-// out of a result set. Page tokens are opaque offsets into the list sorted by
-// a caller-supplied key, so following nextPageToken visits every item once.
+// out of a result set. Page tokens are keyset cursors: each one carries the
+// sort key of the last item returned, and the next page starts strictly after
+// it. Items inserted or deleted between pages therefore never repeat an item
+// or invalidate the token, as with real GCP cursors.
 package gcplist
 
 import (
+	"encoding/base64"
 	"errors"
 	"net/url"
+	"sort"
 	"strconv"
-
-	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"strings"
 )
 
 // ComputeMaxResults is the Compute Engine default and maximum for maxResults
 // (https://cloud.google.com/compute/docs/reference/rest/v1/instances/list).
 const ComputeMaxResults = 500
+
+const tokenPrefix = "after:"
 
 var (
 	// ErrInvalidMaxResults reports a maxResults that is not an integer in 0..500.
@@ -50,21 +55,43 @@ func Compute(q url.Values) (Params, error) {
 	return p, nil
 }
 
-// Page sorts items by key and returns the page p selects plus the token for
-// the next page, which is empty on the last page. A token that does not decode,
-// or that points past the end of the list, is rejected.
+// Page sorts items by key (keys must be unique) and returns the page p
+// selects plus the token for the next page, which is empty on the last page.
+// The page is never nil, so an empty list encodes as []. Only a token that
+// does not decode is rejected.
 func Page[T any](items []T, key func(T) string, p Params) (page []T, next string, err error) {
+	sort.SliceStable(items, func(i, j int) bool { return key(items[i]) < key(items[j]) })
+
+	start := 0
+
 	if p.Token != "" {
-		tok, decErr := pagination.DecodeToken(p.Token)
-		if decErr != nil || tok.Offset >= len(items) {
+		after, ok := decodeToken(p.Token)
+		if !ok {
 			return nil, "", ErrInvalidPageToken
 		}
+
+		start = sort.Search(len(items), func(i int) bool { return key(items[i]) > after })
 	}
 
-	sorted, err := pagination.PaginateSorted(items, func(a, b T) bool { return key(a) < key(b) }, p.Token, p.Size)
+	end := min(start+p.Size, len(items))
+
+	page = make([]T, 0, end-start)
+	page = append(page, items[start:end]...)
+
+	if end < len(items) && end > start {
+		next = base64.RawURLEncoding.EncodeToString([]byte(tokenPrefix + key(items[end-1])))
+	}
+
+	return page, next, nil
+}
+
+func decodeToken(token string) (string, bool) {
+	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
-		return nil, "", ErrInvalidPageToken
+		return "", false
 	}
 
-	return sorted.Items, sorted.NextPageToken, nil
+	after, ok := strings.CutPrefix(string(raw), tokenPrefix)
+
+	return after, ok
 }

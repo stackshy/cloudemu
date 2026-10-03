@@ -2,6 +2,7 @@ package compute
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -728,9 +729,9 @@ func tagOr(m map[string]string, key, fallback string) string {
 	return fallback
 }
 
-// numericID returns a stable uint64-shaped string derived from a driver
-// resource ID. GCP IDs in the wire protocol are uint64; non-numeric values
-// fail the SDK's protobuf unmarshalling.
+// numericID returns a stable numeric string derived from a driver resource
+// ID. GCP IDs in the wire protocol are uint64, but real ids fit int64 and the
+// Terraform provider parses them as int64, so the top bit is cleared.
 func numericID(driverID string) string {
 	const fnvOffset uint64 = 14695981039346656037
 
@@ -742,7 +743,7 @@ func numericID(driverID string) string {
 		h *= fnvPrime
 	}
 
-	return strconv.FormatUint(h, 10)
+	return strconv.FormatUint(h&math.MaxInt64, 10)
 }
 
 // gcpStatusFor maps driver states to GCP Compute Engine instance status.

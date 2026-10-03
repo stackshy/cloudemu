@@ -3,9 +3,11 @@ package compute_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -86,8 +88,67 @@ func TestComputeDiskListPagingAndFilter(t *testing.T) {
 		rawPage(t, ts.URL+zonesPath("/disks?"+q), http.StatusBadRequest)
 	}
 
-	stale := rawPage(t, ts.URL+zonesPath("/disks?maxResults=4"), http.StatusOK).NextPageToken
-	rawPage(t, ts.URL+zonesPath("/disks?filter=name%3Dd-a&pageToken="+url.QueryEscape(stale)), http.StatusBadRequest)
+	for _, f := range []string{"someUnknownField = x", "someUnknownField != x", "-name = d-a", "labels = x AND nope.x = y"} {
+		rawPage(t, ts.URL+zonesPath("/disks?filter="+url.QueryEscape(f)), http.StatusBadRequest)
+	}
+
+	for _, raw := range items {
+		var d struct {
+			ID string `json:"id"`
+		}
+
+		_ = json.Unmarshal(raw, &d)
+
+		if _, err := strconv.ParseInt(d.ID, 10, 64); err != nil {
+			t.Errorf("disk id %q does not fit int64: %v", d.ID, err)
+		}
+	}
+
+	empty := rawBody(t, ts.URL+zonesPath("/disks?filter="+url.QueryEscape("name = nope")))
+	if !strings.Contains(empty, `"items":[]`) {
+		t.Errorf("empty filtered list body %s, want \"items\":[]", empty)
+	}
+
+	// The cursor from page 1 (after d-b) survives an insert before it and the
+	// delete of the next item: page 2 neither repeats d-b nor returns 400.
+	insertDisk(t, client, &computepb.Disk{Name: proto.String("d-0"), SizeGb: proto.Int64(10)})
+
+	del, err := client.Delete(ctx, &computepb.DeleteDiskRequest{Project: testProject, Zone: testZone, Disk: "d-c"})
+	if err != nil {
+		t.Fatalf("Delete d-c: %v", err)
+	}
+
+	if err := del.Wait(ctx); err != nil {
+		t.Fatalf("Delete d-c wait: %v", err)
+	}
+
+	next := rawBody(t, ts.URL+zonesPath("/disks?maxResults=2&pageToken="+url.QueryEscape(page.NextPageToken)))
+	if !strings.Contains(next, `"name":"d-d"`) || !strings.Contains(next, `"name":"d-e"`) ||
+		strings.Contains(next, `"name":"d-b"`) || strings.Contains(next, `"name":"d-0"`) {
+		t.Errorf("page 2 after insert+delete = %s, want exactly d-d and d-e", next)
+	}
+
+	stale := rawBody(t, ts.URL+zonesPath("/disks?filter=name%3Dd-a&pageToken="+url.QueryEscape(page.NextPageToken)))
+	if !strings.Contains(stale, `"items":[]`) {
+		t.Errorf("cursor past every match = %s, want 200 with no items", stale)
+	}
+}
+
+func rawBody(t *testing.T, u string) string {
+	t.Helper()
+
+	resp, err := http.Get(u) //nolint:gosec,noctx // test server URL
+	if err != nil {
+		t.Fatalf("GET %s: %v", u, err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: status %d: %s", u, resp.StatusCode, body)
+	}
+
+	return string(body)
 }
 
 func TestComputeInstanceListStatusFilterAndAggregatedPaging(t *testing.T) {
@@ -193,4 +254,31 @@ func rawPage(t *testing.T, u string, wantStatus int) rawListPage {
 	}
 
 	return out
+}
+
+// TestComputeNumericIDsFitInt64 pins ids to int64 range: the Terraform
+// provider parses image, disk and machine type ids with ParseInt.
+func TestComputeNumericIDsFitInt64(t *testing.T) {
+	ts := newGCPTestServer(t)
+
+	var list struct {
+		Items []struct {
+			Name string `json:"name"`
+			ID   string `json:"id"`
+		} `json:"items"`
+	}
+
+	if err := json.Unmarshal([]byte(rawBody(t, ts.URL+zonesPath("/machineTypes"))), &list); err != nil {
+		t.Fatalf("decode machineTypes: %v", err)
+	}
+
+	if len(list.Items) < 4 {
+		t.Fatalf("machineTypes returned %d items", len(list.Items))
+	}
+
+	for _, it := range list.Items {
+		if _, err := strconv.ParseInt(it.ID, 10, 64); err != nil {
+			t.Errorf("machineType %s id %q does not fit int64: %v", it.Name, it.ID, err)
+		}
+	}
 }

@@ -74,11 +74,42 @@ func TestPageWalk(t *testing.T) {
 		t.Errorf("page sizes = %v, want [2 2 1]", sizes)
 	}
 
-	_, stale, _ := Page(append([]string(nil), items...), key, Params{Size: 4})
+	if _, _, err := Page(items, key, Params{Size: 2, Token: "bogus!"}); !errors.Is(err, ErrInvalidPageToken) {
+		t.Errorf("malformed token: err = %v, want ErrInvalidPageToken", err)
+	}
 
-	for _, tok := range []string{"bogus", stale} {
-		if _, _, err := Page(items[:2], key, Params{Size: 2, Token: tok}); !errors.Is(err, ErrInvalidPageToken) {
-			t.Errorf("token %q: err = %v, want ErrInvalidPageToken", tok, err)
+	empty, next, err := Page([]string{}, key, Params{Size: 2})
+	if err != nil || empty == nil || next != "" {
+		t.Errorf("empty list: page %#v next %q err %v, want non-nil empty page", empty, next, err)
+	}
+}
+
+// TestPageSurvivesChangesBetweenPages pins the keyset cursor: an insert
+// before the cursor does not repeat an item, and deleting the items around
+// the cursor neither repeats nor rejects the token.
+func TestPageSurvivesChangesBetweenPages(t *testing.T) {
+	key := func(s string) string { return s }
+
+	first, token, err := Page([]string{"b", "d", "f", "h", "j"}, key, Params{Size: 2})
+	if err != nil || strings.Join(first, "") != "bd" || token == "" {
+		t.Fatalf("page 1 = %v %q %v", first, token, err)
+	}
+
+	tests := []struct {
+		name  string
+		items []string
+		want  string
+	}{
+		{"insert before cursor", []string{"a", "b", "d", "f", "h", "j"}, "fh"},
+		{"insert after cursor", []string{"b", "d", "e", "f", "h", "j"}, "ef"},
+		{"cursor item deleted", []string{"b", "f", "h", "j"}, "fh"},
+		{"everything after deleted", []string{"b"}, ""},
+	}
+
+	for _, tc := range tests {
+		page, _, err := Page(tc.items, key, Params{Size: 2, Token: token})
+		if err != nil || strings.Join(page, "") != tc.want {
+			t.Errorf("%s: page %v err %v, want %q", tc.name, page, err, tc.want)
 		}
 	}
 }

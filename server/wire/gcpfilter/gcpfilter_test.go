@@ -2,6 +2,7 @@ package gcpfilter
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -87,9 +88,50 @@ func TestCompileInvalid(t *testing.T) {
 		"name = x AND",
 		strings.Repeat("(", 40) + "name = x" + strings.Repeat(")", 40),
 		"name = " + strings.Repeat("x", 3000),
+		"-name = x",
+		"NOT name = x",
 	} {
 		if _, err := Compile(expr); !errors.Is(err, ErrInvalid) {
 			t.Errorf("Compile(%q) err = %v, want ErrInvalid", expr, err)
+		}
+	}
+}
+
+type wrapped struct {
+	vm
+	Disks []struct {
+		Source string `json:"source"`
+	} `json:"disks"`
+	Extra  any    `json:"extra,omitempty"`
+	hidden string //nolint:unused // proves unexported fields are not filterable
+}
+
+func TestValidate(t *testing.T) {
+	typ := reflect.TypeFor[wrapped]()
+
+	for _, tc := range []struct {
+		expr string
+		ok   bool
+	}{
+		{"name = x", true},
+		{"labels.anything = x", true},
+		{"labels.env != prod", true},
+		{"disks.source = x", true},
+		{"extra.deep.field = x", true},
+		{"(status = RUNNING) (cpus > 1)", true},
+		{"unknownField = x", false},
+		{"unknownField != x", false},
+		{"name.sub = x", false},
+		{"disks.nope = x", false},
+		{"hidden = x", false},
+	} {
+		f, err := Compile(tc.expr)
+		if err != nil {
+			t.Fatalf("Compile(%q): %v", tc.expr, err)
+		}
+
+		if err := f.Validate(typ); (err == nil) != tc.ok {
+			t.Errorf("Validate(%q) err = %v, want ok=%v", tc.expr, err, tc.ok)
 		}
 	}
 }
