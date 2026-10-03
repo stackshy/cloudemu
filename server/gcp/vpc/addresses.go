@@ -206,6 +206,11 @@ func (h *Handler) insertAddress(w http.ResponseWriter, r *http.Request, rp gcpre
 		return
 	}
 
+	// Hold the subnet's allocation lock from picking the IP until the address
+	// is stored, so concurrent reservations never share an IP.
+	unlock := lockAddressSubnet(rp, body)
+	defer unlock()
+
 	if err := h.assignAddress(r.Context(), rp, hostOf(r), named.Name, body); err != nil {
 		writeAddressErr(w, err)
 		return

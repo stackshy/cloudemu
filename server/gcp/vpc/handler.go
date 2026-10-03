@@ -702,12 +702,12 @@ func (h *Handler) deleteSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 		return
 	}
 
-	// Real GCP refuses to delete a subnetwork that still has instances in it,
-	// returning 400 resourceInUseByAnotherResource (mirrors the network delete
-	// guard against live subnets above). Scan instances whose networkInterfaces
-	// subnet references this subnet and reject; delete succeeds once empty.
+	// Real GCP refuses to delete a subnetwork that still has instances or
+	// reserved internal addresses in it, returning 400
+	// resourceInUseByAnotherResource (mirrors the network delete guard against
+	// live subnets above); delete succeeds once empty.
 	host := hostOf(r)
-	if inst, scanErr := h.instanceInSubnet(r.Context(), host, rp.Project, rp.ResourceName, rp.ScopeName); scanErr != nil {
+	if inst, scanErr := h.subnetUser(r.Context(), host, rp.Project, rp.ResourceName, rp.ScopeName); scanErr != nil {
 		gcprest.WriteCErr(w, scanErr)
 		return
 	} else if inst != "" {

@@ -2,6 +2,7 @@ package vpc
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sort"
 
@@ -44,6 +45,21 @@ var autoModeRanges = map[string]string{ //nolint:gochecknoglobals // static look
 	"northamerica-northeast2": "10.188.0.0/20",
 	"asia-south2":             "10.190.0.0/20",
 	"australia-southeast2":    "10.192.0.0/20",
+	"southamerica-west1":      "10.194.0.0/20",
+	"europe-west8":            "10.198.0.0/20",
+	"europe-west9":            "10.200.0.0/20",
+	"us-east5":                "10.202.0.0/20",
+	"europe-southwest1":       "10.204.0.0/20",
+	"us-south1":               "10.206.0.0/20",
+	"me-west1":                "10.208.0.0/20",
+	"europe-west12":           "10.210.0.0/20",
+	"me-central1":             "10.212.0.0/20",
+	"europe-west10":           "10.214.0.0/20",
+	"me-central2":             "10.216.0.0/20",
+	"africa-south1":           "10.218.0.0/20",
+	"northamerica-south1":     "10.224.0.0/20",
+	"europe-north2":           "10.226.0.0/20",
+	"asia-southeast3":         "10.232.0.0/20",
 }
 
 // createAutoSubnets creates the per-region subnetworks of an auto mode network,
@@ -56,6 +72,8 @@ func (h *Handler) createAutoSubnets(ctx context.Context, vpcID, netName string) 
 	}
 
 	sort.Strings(regions)
+
+	created := make([]string, 0, len(regions))
 
 	for _, region := range regions {
 		cfg := netdriver.SubnetConfig{
@@ -70,12 +88,26 @@ func (h *Handler) createAutoSubnets(ctx context.Context, vpcID, netName string) 
 			},
 		}
 
-		if _, err := h.net.CreateSubnet(ctx, cfg); err != nil {
+		s, err := h.net.CreateSubnet(ctx, cfg)
+		if err != nil {
+			h.rollbackAutoNetwork(ctx, vpcID, created)
 			return err
 		}
+
+		created = append(created, s.ID)
 	}
 
 	return nil
+}
+
+// rollbackAutoNetwork removes a half-built auto mode network: the subnetworks
+// created so far, then the network, so a failed insert leaves nothing behind.
+func (h *Handler) rollbackAutoNetwork(ctx context.Context, vpcID string, subnetIDs []string) {
+	for _, id := range subnetIDs {
+		_ = h.net.DeleteSubnet(ctx, id)
+	}
+
+	_ = h.net.DeleteVPC(ctx, vpcID)
 }
 
 // releaseAutoSubnets deletes an auto mode network's own subnetworks ahead of
@@ -96,7 +128,7 @@ func (h *Handler) releaseAutoSubnets(w http.ResponseWriter, r *http.Request, rp 
 	}
 
 	for i := range auto {
-		inst, err := h.instanceInSubnet(ctx, hostOf(r), rp.Project, rp.ResourceName, auto[i].AvailabilityZone)
+		inst, err := h.subnetUser(ctx, hostOf(r), rp.Project, rp.ResourceName, auto[i].AvailabilityZone)
 		if err != nil {
 			gcprest.WriteCErr(w, err)
 			return false
@@ -118,6 +150,27 @@ func (h *Handler) releaseAutoSubnets(w http.ResponseWriter, r *http.Request, rp 
 	}
 
 	return true
+}
+
+// subnetUser returns the self-link of the first instance or reserved address
+// using the subnetwork, or "" when none does.
+func (h *Handler) subnetUser(ctx context.Context, host, project, name, region string) (string, error) {
+	if inst, err := h.instanceInSubnet(ctx, host, project, name, region); err != nil || inst != "" {
+		return inst, err
+	}
+
+	for _, raw := range h.addresses.list(ctx, project, region) {
+		var a struct {
+			Name       string `json:"name"`
+			Subnetwork string `json:"subnetwork"`
+		}
+
+		if json.Unmarshal(raw, &a) == nil && a.Subnetwork != "" && subnetRefMatches(a.Subnetwork, name, region) {
+			return gcprest.SelfLink(host, project, gcprest.ScopeRegions, region, resourceAddresses, a.Name), nil
+		}
+	}
+
+	return "", nil
 }
 
 // releasableAutoSubnets returns the network's auto subnetworks, or none when a

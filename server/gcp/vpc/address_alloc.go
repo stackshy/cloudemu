@@ -66,6 +66,24 @@ func (h *Handler) assignAddress(ctx context.Context, rp gcprest.ResourcePath, ho
 	return h.assignInternal(ctx, rp, host, subnetRef, ip, body)
 }
 
+// lockAddressSubnet takes the allocation lock of the subnetwork an INTERNAL
+// regional address is reserved in, returning its unlock function (a no-op for
+// any other address).
+//
+//nolint:gocritic // rp is a request-scoped value
+func lockAddressSubnet(rp gcprest.ResourcePath, body map[string]any) func() {
+	addrType, _ := body["addressType"].(string)
+	subnetRef, _ := body["subnetwork"].(string)
+
+	if addrType != addressTypeInternal || subnetRef == "" || rp.Scope != gcprest.ScopeRegions {
+		return func() {}
+	}
+
+	region, name := subnetRefParts(subnetRef, rp.ScopeName)
+
+	return ipalloc.LockSubnet(refProject(subnetRef, rp.Project), region, name)
+}
+
 // assignInternal gives an INTERNAL address a free IP of its subnetwork's
 // range, or keeps the caller's IP when it is inside the range and free. A
 // missing subnetwork is NotFound, and an IP outside the range or already taken

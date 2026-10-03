@@ -6,7 +6,25 @@ package ipalloc
 import (
 	"encoding/binary"
 	"net"
+	"sync"
 )
+
+// subnetLocks holds one mutex per subnet key. It is process-wide because the
+// handlers that allocate from a subnet (reserved addresses, instance launches)
+// are separate and must all serialize on the same lock.
+var subnetLocks sync.Map //nolint:gochecknoglobals // shared by every allocator of a subnet
+
+// LockSubnet serializes IP allocation in one subnet. Callers hold it from
+// reading the subnet's used IPs until the new holder is stored, so two
+// concurrent allocations never pick the same free IP. It returns the unlock
+// function.
+func LockSubnet(project, region, subnet string) func() {
+	v, _ := subnetLocks.LoadOrStore(project+"/"+region+"/"+subnet, &sync.Mutex{})
+	mu, _ := v.(*sync.Mutex)
+	mu.Lock()
+
+	return mu.Unlock
+}
 
 // reservedLowAddrs is the count of low addresses GCP reserves in every subnet
 // (network, gateway, and two more). The broadcast (highest) address is
