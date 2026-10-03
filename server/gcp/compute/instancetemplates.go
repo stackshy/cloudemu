@@ -147,8 +147,8 @@ func (h *Handler) insertTemplate(w http.ResponseWriter, r *http.Request, rp gcpr
 
 	// targetId carries the template's numeric id: Terraform keys its read on it
 	// (self_link_unique), and a get by id resolves like a get by name.
-	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "", resourceTemplates, req.Name, "insert")
-	op.TargetID = templateID(req.Name)
+	op := h.ops.RecordDoneTarget(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
+		resourceTemplates, req.Name, templateID(req.Name), "insert")
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 

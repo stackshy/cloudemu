@@ -26,21 +26,27 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
-// OperationRegistry records the compute#operation names the compute-family
-// handlers (compute, networks/vpc, load balancing) mint, so a subsequent
-// zone/region/global Operations.get resolves a real operation and 404s a name
-// that was never issued, matching real GCP instead of fabricating DONE for any
-// name. A nil *OperationRegistry records nothing and reports every name as
-// present, preserving the legacy allow-all behavior for a handler constructed
-// without a shared registry (e.g. a package-level test).
+// OperationRegistry stores the compute#operation records the compute-family
+// handlers (compute, networks/vpc, load balancing) mint, so a later
+// zone/region/global operations get, wait, list or delete reads back the
+// operation as it was issued (same id, operationType and targetLink), matching
+// real GCP, and 404s a name that was never issued. A nil *OperationRegistry
+// stores nothing.
 type OperationRegistry struct {
-	mu   sync.RWMutex
-	seen map[string]struct{}
+	mu  sync.RWMutex
+	ops map[string]opEntry
+}
+
+// opEntry is one stored operation with the project and scope it is polled
+// under.
+type opEntry struct {
+	project, scope, scopeName string
+	op                        Operation
 }
 
 // NewOperationRegistry returns an empty operation registry.
 func NewOperationRegistry() *OperationRegistry {
-	return &OperationRegistry{seen: map[string]struct{}{}}
+	return &OperationRegistry{ops: map[string]opEntry{}}
 }
 
 // opKey scopes an operation name by the project and URL scope it is polled
@@ -49,43 +55,86 @@ func opKey(project, scope, scopeName, name string) string {
 	return project + "\x00" + scope + "\x00" + scopeName + "\x00" + name
 }
 
-// Record notes that operation name exists in project at scope/scopeName.
-// Nil-safe: a nil registry is a no-op.
-func (reg *OperationRegistry) Record(project, scope, scopeName, name string) {
+// Get returns the operation stored under name in project at scope/scopeName.
+func (reg *OperationRegistry) Get(project, scope, scopeName, name string) (Operation, bool) {
 	if reg == nil {
-		return
-	}
-
-	reg.mu.Lock()
-	reg.seen[opKey(project, scope, scopeName, name)] = struct{}{}
-	reg.mu.Unlock()
-}
-
-// Has reports whether operation name was recorded in project at
-// scope/scopeName. A nil registry reports true (not enforcing), so a handler
-// without a shared registry keeps answering every operation poll as it did
-// before.
-func (reg *OperationRegistry) Has(project, scope, scopeName, name string) bool {
-	if reg == nil {
-		return true
+		return Operation{}, false
 	}
 
 	reg.mu.RLock()
-	_, ok := reg.seen[opKey(project, scope, scopeName, name)]
+	e, ok := reg.ops[opKey(project, scope, scopeName, name)]
 	reg.mu.RUnlock()
 
-	return ok
+	return e.op, ok
+}
+
+// List returns the operations stored in project. An empty scope returns every
+// scope (the aggregated list); otherwise only scope/scopeName.
+func (reg *OperationRegistry) List(project, scope, scopeName string) []Operation {
+	if reg == nil {
+		return nil
+	}
+
+	reg.mu.RLock()
+	defer reg.mu.RUnlock()
+
+	out := make([]Operation, 0, len(reg.ops))
+
+	for _, e := range reg.ops {
+		if e.project != project || (scope != "" && (e.scope != scope || e.scopeName != scopeName)) {
+			continue
+		}
+
+		out = append(out, e.op)
+	}
+
+	return out
+}
+
+// Delete removes the operation stored under name, reporting whether it existed.
+func (reg *OperationRegistry) Delete(project, scope, scopeName, name string) bool {
+	if reg == nil {
+		return false
+	}
+
+	key := opKey(project, scope, scopeName, name)
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	if _, ok := reg.ops[key]; !ok {
+		return false
+	}
+
+	delete(reg.ops, key)
+
+	return true
 }
 
 // RecordDone builds a DONE operation for a mutation (via NewDoneOperation) and
-// records its name so a later poll resolves it. It replaces a bare
-// NewDoneOperation call at a handler's mint sites; a nil registry still returns
-// the operation but records nothing.
+// stores it so a later poll reads it back unchanged. A nil registry still
+// returns the operation but stores nothing.
 func (reg *OperationRegistry) RecordDone(
 	host, project, scope, scopeName, resourceType, name, opType string,
 ) Operation {
+	return reg.RecordDoneTarget(host, project, scope, scopeName, resourceType, name, "", opType)
+}
+
+// RecordDoneTarget is RecordDone with the target resource's numeric id, which
+// real GCP reports as the operation's targetId.
+func (reg *OperationRegistry) RecordDoneTarget(
+	host, project, scope, scopeName, resourceType, name, targetID, opType string,
+) Operation {
 	op := NewDoneOperation(host, project, scope, scopeName, resourceType, name, opType)
-	reg.Record(project, scope, scopeName, op.Name)
+	op.TargetID = targetID
+
+	if reg == nil {
+		return op
+	}
+
+	reg.mu.Lock()
+	reg.ops[opKey(project, scope, scopeName, op.Name)] = opEntry{project: project, scope: scope, scopeName: scopeName, op: op}
+	reg.mu.Unlock()
 
 	return op
 }
@@ -363,6 +412,10 @@ func SelfLink(host, project, scope, scopeName, resourceType, name string) string
 	return host + "/compute/v1/projects/" + project + "/" + scope + "/" + scopeName + "/" + resourceType + "/" + name
 }
 
+// OperationUser is the principal reported as an operation's user. The
+// emulator does not authenticate callers, so every operation carries this one.
+const OperationUser = "cloudemu@example.com"
+
 // Operation models the subset of GCP's compute#operation we need. Real ops
 // are async; our mock returns DONE immediately so SDK clients that poll see
 // completion on the first GET.
@@ -373,6 +426,7 @@ type Operation struct {
 	OperationType string `json:"operationType"`
 	TargetID      string `json:"targetId,omitempty"`
 	TargetLink    string `json:"targetLink,omitempty"`
+	User          string `json:"user,omitempty"`
 	Status        string `json:"status"`
 	Progress      int    `json:"progress"`
 	InsertTime    string `json:"insertTime"`
@@ -399,6 +453,7 @@ func NewDoneOperation(host, project, scope, scopeName, resourceType, name, opTyp
 		Name:          opName,
 		OperationType: opType,
 		TargetLink:    SelfLink(host, project, scope, scopeName, resourceType, name),
+		User:          OperationUser,
 		Status:        "DONE",
 		Progress:      100,
 		InsertTime:    now,
