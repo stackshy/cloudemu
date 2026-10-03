@@ -183,7 +183,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup and the branch-from-`de
 
 ## Sponsor
 
-cloudemu is free and MIT licensed, and it will stay that way. If it saves your team a cloud bill, a flaky CI run or an afternoon of setup, you can [sponsor the project](https://github.com/sponsors/stackshy). It pays for the time spent fixing the gaps people hit and keeping up with new cloud features.
+cloudemu is free and MIT licensed, and it will stay that way. If it saves your team a cloud bill, a flaky CI run or an afternoon of setup, you can [sponsor the project](https://github.com/sponsors/NitinKumar004). It pays for the time spent fixing the gaps people hit and keeping up with new cloud features.
 
 ## License
 
