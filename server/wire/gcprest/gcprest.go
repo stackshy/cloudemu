@@ -121,9 +121,38 @@ func (reg *OperationRegistry) Delete(project, scope, scopeName, name string) boo
 
 	delete(reg.ops, key)
 
-	reg.buckets[opKey(project, scope, scopeName, "")].live--
+	bkey := opKey(project, scope, scopeName, "")
+	b := reg.buckets[bkey]
+	b.live--
+
+	if b.live == 0 {
+		delete(reg.buckets, bkey)
+	} else {
+		reg.compact(b)
+	}
 
 	return true
+}
+
+// compact rebuilds b.names without its consumed prefix and deleted names once
+// those dominate, so a create and delete loop cannot grow the slice without
+// bound. The caller holds reg.mu.
+func (reg *OperationRegistry) compact(b *opBucket) {
+	const slack = 16
+
+	if len(b.names)-b.head <= 2*b.live+slack {
+		return
+	}
+
+	kept := make([]string, 0, b.live)
+
+	for _, name := range b.names[b.head:] {
+		if _, ok := reg.ops[opKey(b.project, b.scope, b.scopeName, name)]; ok {
+			kept = append(kept, name)
+		}
+	}
+
+	b.names, b.head = kept, 0
 }
 
 // store records op and evicts the scope's oldest operations beyond
@@ -158,6 +187,8 @@ func (reg *OperationRegistry) store(project, scope, scopeName string, op *Operat
 		b.names = append([]string(nil), b.names[b.head:]...)
 		b.head = 0
 	}
+
+	reg.compact(b)
 }
 
 // RecordDone builds a DONE operation for a mutation (via NewDoneOperation) and
