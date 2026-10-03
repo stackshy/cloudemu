@@ -42,10 +42,11 @@ func (t templateResponse) MarshalJSON() ([]byte, error) {
 }
 
 type templateListResponse struct {
-	Kind     string             `json:"kind"`
-	ID       string             `json:"id"`
-	Items    []templateResponse `json:"items"`
-	SelfLink string             `json:"selfLink"`
+	Kind          string             `json:"kind"`
+	ID            string             `json:"id"`
+	Items         []templateResponse `json:"items"`
+	NextPageToken string             `json:"nextPageToken,omitempty"`
+	SelfLink      string             `json:"selfLink"`
 }
 
 // serveInstanceTemplatesRoute dispatches global instanceTemplates
@@ -100,16 +101,20 @@ func listTemplates(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePa
 	out := make([]templateResponse, 0, len(items))
 
 	for i := range items {
-		if gcprest.NameMatches(r.URL.Query().Get("filter"), items[i].Name) {
-			out = append(out, toTemplateResponse(&items[i], rp.Project, host))
-		}
+		out = append(out, toTemplateResponse(&items[i], rp.Project, host))
+	}
+
+	page, next, ok := filterPage(w, r, out, func(t templateResponse) string { return t.Name })
+	if !ok {
+		return
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, templateListResponse{
-		Kind:     "compute#instanceTemplateList",
-		ID:       "projects/" + rp.Project + "/global/instanceTemplates",
-		Items:    out,
-		SelfLink: gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", resourceTemplates, ""),
+		Kind:          "compute#instanceTemplateList",
+		ID:            "projects/" + rp.Project + "/global/instanceTemplates",
+		Items:         page,
+		NextPageToken: next,
+		SelfLink:      gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", resourceTemplates, ""),
 	})
 }
 

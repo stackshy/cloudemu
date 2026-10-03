@@ -99,10 +99,11 @@ type migStatus struct {
 }
 
 type migListResponse struct {
-	Kind     string        `json:"kind"`
-	ID       string        `json:"id"`
-	Items    []migResponse `json:"items"`
-	SelfLink string        `json:"selfLink"`
+	Kind          string        `json:"kind"`
+	ID            string        `json:"id"`
+	Items         []migResponse `json:"items"`
+	NextPageToken string        `json:"nextPageToken,omitempty"`
+	SelfLink      string        `json:"selfLink"`
 }
 
 // serveInstanceGroupManagersRoute dispatches the zonal instanceGroupManagers
@@ -315,18 +316,20 @@ func (*Handler) listMIGs(w http.ResponseWriter, r *http.Request, rp gcprest.Reso
 	out := make([]migResponse, 0, len(igms))
 
 	for i := range igms {
-		if !gcprest.NameMatches(r.URL.Query().Get("filter"), igms[i].Name) {
-			continue
-		}
-
 		out = append(out, toMIGResponse(&igms[i], rp.Project, host))
 	}
 
+	items, next, ok := filterPage(w, r, out, func(m migResponse) string { return m.Name })
+	if !ok {
+		return
+	}
+
 	gcprest.WriteJSON(w, http.StatusOK, migListResponse{
-		Kind:     "compute#instanceGroupManagerList",
-		ID:       "projects/" + rp.Project + "/" + rp.Scope + "/" + rp.ScopeName + "/instanceGroupManagers",
-		Items:    out,
-		SelfLink: gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "instanceGroupManagers", ""),
+		Kind:          "compute#instanceGroupManagerList",
+		ID:            "projects/" + rp.Project + "/" + rp.Scope + "/" + rp.ScopeName + "/instanceGroupManagers",
+		Items:         items,
+		NextPageToken: next,
+		SelfLink:      gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "instanceGroupManagers", ""),
 	})
 }
 
@@ -408,10 +411,11 @@ type migScopedList struct {
 }
 
 type migAggregatedListResponse struct {
-	Kind     string                   `json:"kind"`
-	ID       string                   `json:"id"`
-	Items    map[string]migScopedList `json:"items"`
-	SelfLink string                   `json:"selfLink"`
+	Kind          string                   `json:"kind"`
+	ID            string                   `json:"id"`
+	Items         map[string]migScopedList `json:"items"`
+	NextPageToken string                   `json:"nextPageToken,omitempty"`
+	SelfLink      string                   `json:"selfLink"`
 }
 
 // aggregatedListMIGs handles GET /aggregated/instanceGroupManagers, grouping
@@ -427,7 +431,7 @@ func (h *Handler) aggregatedListMIGs(w http.ResponseWriter, r *http.Request, rp 
 
 	igms := backend.AllInstanceGroupManagersGCP(rp.Project)
 	host := hostFromRequest(r)
-	items := make(map[string]migScopedList)
+	all := make([]scopedItem[migResponse], 0, len(igms))
 
 	for i := range igms {
 		key := "zones/" + igms[i].Zone
@@ -435,16 +439,25 @@ func (h *Handler) aggregatedListMIGs(w http.ResponseWriter, r *http.Request, rp 
 			key = "regions/" + igms[i].Region
 		}
 
-		bucket := items[key]
-		bucket.InstanceGroupManagers = append(bucket.InstanceGroupManagers, toMIGResponse(&igms[i], rp.Project, host))
-		items[key] = bucket
+		all = append(all, scopedItem[migResponse]{scope: key, item: toMIGResponse(&igms[i], rp.Project, host)})
+	}
+
+	grouped, next, ok := aggregatedPage(w, r, all, func(m migResponse) string { return m.Name })
+	if !ok {
+		return
+	}
+
+	items := make(map[string]migScopedList, len(grouped))
+	for key, list := range grouped {
+		items[key] = migScopedList{InstanceGroupManagers: list}
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, migAggregatedListResponse{
-		Kind:     "compute#instanceGroupManagerAggregatedList",
-		ID:       "projects/" + rp.Project + "/aggregated/instanceGroupManagers",
-		Items:    items,
-		SelfLink: strings.TrimSuffix(host, "/") + "/compute/v1/projects/" + rp.Project + "/aggregated/instanceGroupManagers",
+		Kind:          "compute#instanceGroupManagerAggregatedList",
+		ID:            "projects/" + rp.Project + "/aggregated/instanceGroupManagers",
+		Items:         items,
+		NextPageToken: next,
+		SelfLink:      strings.TrimSuffix(host, "/") + "/compute/v1/projects/" + rp.Project + "/aggregated/instanceGroupManagers",
 	})
 }
 

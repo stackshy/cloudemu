@@ -47,10 +47,11 @@ type machineTypeResponse struct {
 }
 
 type machineTypeListResponse struct {
-	Kind     string                `json:"kind"`
-	ID       string                `json:"id"`
-	Items    []machineTypeResponse `json:"items"`
-	SelfLink string                `json:"selfLink"`
+	Kind          string                `json:"kind"`
+	ID            string                `json:"id"`
+	Items         []machineTypeResponse `json:"items"`
+	NextPageToken string                `json:"nextPageToken,omitempty"`
+	SelfLink      string                `json:"selfLink"`
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -94,11 +95,17 @@ func listMachineTypes(w http.ResponseWriter, r *http.Request, rp gcprest.Resourc
 		items = append(items, toMachineTypeResponse(&machineTypeCatalog[i], rp, host))
 	}
 
+	page, next, ok := filterPage(w, r, items, func(m machineTypeResponse) string { return m.Name })
+	if !ok {
+		return
+	}
+
 	gcprest.WriteJSON(w, http.StatusOK, machineTypeListResponse{
-		Kind:     "compute#machineTypeList",
-		ID:       "projects/" + rp.Project + "/zones/" + rp.ScopeName + "/machineTypes",
-		Items:    items,
-		SelfLink: gcprest.SelfLink(host, rp.Project, gcprest.ScopeZones, rp.ScopeName, "machineTypes", ""),
+		Kind:          "compute#machineTypeList",
+		ID:            "projects/" + rp.Project + "/zones/" + rp.ScopeName + "/machineTypes",
+		Items:         page,
+		NextPageToken: next,
+		SelfLink:      gcprest.SelfLink(host, rp.Project, gcprest.ScopeZones, rp.ScopeName, "machineTypes", ""),
 	})
 }
 

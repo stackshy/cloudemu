@@ -58,10 +58,11 @@ type imageDeprecation struct {
 }
 
 type imageListResponse struct {
-	Kind     string          `json:"kind"`
-	ID       string          `json:"id"`
-	Items    []imageResponse `json:"items"`
-	SelfLink string          `json:"selfLink"`
+	Kind          string          `json:"kind"`
+	ID            string          `json:"id"`
+	Items         []imageResponse `json:"items"`
+	NextPageToken string          `json:"nextPageToken,omitempty"`
+	SelfLink      string          `json:"selfLink"`
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -135,11 +136,17 @@ func (h *Handler) listImages(w http.ResponseWriter, r *http.Request, rp gcprest.
 		out = append(out, toImageResponse(&imgs[i], scope, host))
 	}
 
+	items, next, ok := filterPage(w, r, out, func(x imageResponse) string { return x.Name })
+	if !ok {
+		return
+	}
+
 	gcprest.WriteJSON(w, http.StatusOK, imageListResponse{
-		Kind:     imageListKind,
-		ID:       "projects/" + rp.Project + "/global/images",
-		Items:    out,
-		SelfLink: gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "images", ""),
+		Kind:          imageListKind,
+		ID:            "projects/" + rp.Project + "/global/images",
+		Items:         items,
+		NextPageToken: next,
+		SelfLink:      gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "images", ""),
 	})
 }
 
