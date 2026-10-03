@@ -2,7 +2,6 @@ package compute
 
 import (
 	"net/http"
-	"reflect"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/gcpfilter"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
@@ -10,16 +9,11 @@ import (
 )
 
 // listQuery parses the filter, maxResults and pageToken parameters every
-// compute list accepts, checking filter fields against the item type. On a
-// bad value it writes 400 and returns false.
-func listQuery(w http.ResponseWriter, r *http.Request, item reflect.Type) (*gcpfilter.Filter, gcplist.Params, bool) {
+// compute list accepts. On a bad value it writes 400 and returns false.
+func listQuery(w http.ResponseWriter, r *http.Request) (*gcpfilter.Filter, gcplist.Params, bool) {
 	q := r.URL.Query()
 
 	f, err := gcpfilter.Compile(q.Get("filter"))
-	if err == nil {
-		err = f.Validate(item)
-	}
-
 	if err != nil {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid",
 			"Invalid value for field 'filter': '"+q.Get("filter")+"'. Invalid list filter expression.")
@@ -41,7 +35,7 @@ func listQuery(w http.ResponseWriter, r *http.Request, item reflect.Type) (*gcpf
 func filterPage[T any](
 	w http.ResponseWriter, r *http.Request, items []T, name func(T) string,
 ) (page []T, next string, ok bool) {
-	f, p, ok := listQuery(w, r, reflect.TypeFor[T]())
+	f, p, ok := listQuery(w, r)
 	if !ok {
 		return nil, "", false
 	}
@@ -75,7 +69,7 @@ type scopedItem[T any] struct {
 func aggregatedPage[T any](
 	w http.ResponseWriter, r *http.Request, items []scopedItem[T], name func(T) string,
 ) (grouped map[string][]T, next string, ok bool) {
-	f, p, ok := listQuery(w, r, reflect.TypeFor[T]())
+	f, p, ok := listQuery(w, r)
 	if !ok {
 		return nil, "", false
 	}

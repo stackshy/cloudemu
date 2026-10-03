@@ -2,7 +2,6 @@ package gcpfilter
 
 import (
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -58,7 +57,21 @@ func TestCompileAndMatch(t *testing.T) {
 		{"zone = us-central1-a", true},
 		{"zone eq .*us-central1-a", true},
 		{"((((name = web-1))))", true},
+		{"-name = web-1", false},
+		{"-name = web-2", true},
+		{"(status = RUNNING) -labels.env = dev", true},
+		// Unset fields, whether optional or not modelled by the emulator.
 		{"unknownField = x", false},
+		{"unknownField != x", true},
+		{"unknownField:*", false},
+		{"-unknownField = x", true},
+		{"unknownField eq x", false},
+		{"unknownField ne x", true},
+		{"unknownField > 1", false},
+		{"architecture = X86_64", false},
+		{"description:foo", false},
+		{"properties.machineType = e2-small", false},
+		{"labels.team:*", false},
 	}
 
 	for _, tc := range tests {
@@ -88,50 +101,11 @@ func TestCompileInvalid(t *testing.T) {
 		"name = x AND",
 		strings.Repeat("(", 40) + "name = x" + strings.Repeat(")", 40),
 		"name = " + strings.Repeat("x", 3000),
-		"-name = x",
 		"NOT name = x",
+		"--name = x",
 	} {
 		if _, err := Compile(expr); !errors.Is(err, ErrInvalid) {
 			t.Errorf("Compile(%q) err = %v, want ErrInvalid", expr, err)
-		}
-	}
-}
-
-type wrapped struct {
-	vm
-	Disks []struct {
-		Source string `json:"source"`
-	} `json:"disks"`
-	Extra  any    `json:"extra,omitempty"`
-	hidden string //nolint:unused // proves unexported fields are not filterable
-}
-
-func TestValidate(t *testing.T) {
-	typ := reflect.TypeFor[wrapped]()
-
-	for _, tc := range []struct {
-		expr string
-		ok   bool
-	}{
-		{"name = x", true},
-		{"labels.anything = x", true},
-		{"labels.env != prod", true},
-		{"disks.source = x", true},
-		{"extra.deep.field = x", true},
-		{"(status = RUNNING) (cpus > 1)", true},
-		{"unknownField = x", false},
-		{"unknownField != x", false},
-		{"name.sub = x", false},
-		{"disks.nope = x", false},
-		{"hidden = x", false},
-	} {
-		f, err := Compile(tc.expr)
-		if err != nil {
-			t.Fatalf("Compile(%q): %v", tc.expr, err)
-		}
-
-		if err := f.Validate(typ); (err == nil) != tc.ok {
-			t.Errorf("Validate(%q) err = %v, want ok=%v", tc.expr, err, tc.ok)
 		}
 	}
 }

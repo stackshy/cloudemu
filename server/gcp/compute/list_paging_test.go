@@ -88,8 +88,31 @@ func TestComputeDiskListPagingAndFilter(t *testing.T) {
 		rawPage(t, ts.URL+zonesPath("/disks?"+q), http.StatusBadRequest)
 	}
 
-	for _, f := range []string{"someUnknownField = x", "someUnknownField != x", "-name = d-a", "labels = x AND nope.x = y"} {
-		rawPage(t, ts.URL+zonesPath("/disks?filter="+url.QueryEscape(f)), http.StatusBadRequest)
+	for _, tc := range []struct {
+		filter string
+		want   int
+	}{
+		{"-name = d-a", 4},
+		{"someUnknownField != x", 5},
+		{"-someUnknownField = x", 5},
+		{"someUnknownField = x", 0},
+		{"someUnknownField:*", 0},
+	} {
+		var got []json.RawMessage
+
+		_ = json.Unmarshal(rawPage(t, ts.URL+zonesPath("/disks?filter="+url.QueryEscape(tc.filter)), http.StatusOK).Items, &got)
+		if len(got) != tc.want {
+			t.Errorf("filter %q returned %d disks, want %d", tc.filter, len(got), tc.want)
+		}
+	}
+
+	// Real fields the emulator does not model are unset, never a 400.
+	for _, path := range []string{
+		"/compute/v1/projects/" + testProject + "/global/images?filter=" + url.QueryEscape("architecture = X86_64"),
+		zonesPath("/instances?filter=" + url.QueryEscape("description:foo")),
+		"/compute/v1/projects/" + testProject + "/global/instanceTemplates?filter=" + url.QueryEscape("properties.machineType = e2-small"),
+	} {
+		rawPage(t, ts.URL+path, http.StatusOK)
 	}
 
 	for _, raw := range items {

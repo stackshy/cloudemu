@@ -502,8 +502,8 @@ func TestGCEInstanceListFilterAndPagination(t *testing.T) {
 }
 
 // TestGCEInstanceListFilterLabelsAndUnknownField covers BUG3: a "labels.<k>=<v>"
-// filter returns only the matching instances, and a filter naming a field the
-// instance resource does not have is rejected with 400, as real Compute does.
+// filter returns only the matching instances, and a field the instance does
+// not carry is unset: = matches none of them and != matches all of them.
 func TestGCEInstanceListFilterLabelsAndUnknownField(t *testing.T) {
 	client, _, ctx := newInstancesEnv(t)
 
@@ -523,11 +523,18 @@ func TestGCEInstanceListFilterLabelsAndUnknownField(t *testing.T) {
 		t.Errorf("labels.env=prod returned %v, want [prod-vm]", prod)
 	}
 
-	_, err := client.List(ctx, &computepb.ListInstancesRequest{
+	none := listNames(t, client.List(ctx, &computepb.ListInstancesRequest{
 		Project: testProject, Zone: testZone, Filter: ptrStr("someUnknownField=whatever"),
-	}).Next()
-	if err == nil || !strings.Contains(err.Error(), "400") {
-		t.Errorf("unknown-field filter err = %v, want 400 INVALID_ARGUMENT", err)
+	}))
+	if len(none) != 0 {
+		t.Errorf("unset-field = filter returned %v, want none", none)
+	}
+
+	all := listNames(t, client.List(ctx, &computepb.ListInstancesRequest{
+		Project: testProject, Zone: testZone, Filter: ptrStr("someUnknownField != whatever"),
+	}))
+	if len(all) != 2 {
+		t.Errorf("unset-field != filter returned %v, want both instances", all)
 	}
 }
 

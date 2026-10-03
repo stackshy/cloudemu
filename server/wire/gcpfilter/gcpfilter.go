@@ -10,7 +10,6 @@ package gcpfilter
 import (
 	"encoding/json"
 	"errors"
-	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -39,8 +38,7 @@ var ErrInvalid = errors.New("invalid list filter expression")
 
 // Filter is a compiled list filter. A nil *Filter matches everything.
 type Filter struct {
-	root  node
-	paths [][]string
+	root node
 }
 
 type node interface {
@@ -70,6 +68,10 @@ func (o orNode) eval(item map[string]any) bool {
 
 	return false
 }
+
+type notNode struct{ inner node }
+
+func (n notNode) eval(item map[string]any) bool { return !n.inner.eval(item) }
 
 type cmpNode struct {
 	path  []string
@@ -107,103 +109,7 @@ func Compile(expr string) (*Filter, error) {
 		return nil, ErrInvalid
 	}
 
-	return &Filter{root: root, paths: p.paths}, nil
-}
-
-// Validate rejects a filter that names a field the item type t does not
-// declare, the way Compute answers 400 for a field outside the resource
-// schema. Map keys (labels.x) and anything under an interface or raw JSON are
-// open, so an optional field that is merely unset on an item is not unknown.
-func (f *Filter) Validate(t reflect.Type) error {
-	if f == nil {
-		return nil
-	}
-
-	for _, path := range f.paths {
-		if !hasPath(t, path) {
-			return ErrInvalid
-		}
-	}
-
-	return nil
-}
-
-func hasPath(t reflect.Type, path []string) bool {
-	for ; len(path) > 0; path = path[1:] {
-		var open bool
-		if t, open = elem(t); open {
-			return true
-		}
-
-		if t.Kind() == reflect.Map {
-			t = t.Elem()
-			continue
-		}
-
-		if t.Kind() != reflect.Struct {
-			return false
-		}
-
-		ft, ok := jsonField(t, path[0])
-		if !ok {
-			return false
-		}
-
-		t = ft
-	}
-
-	return true
-}
-
-// elem strips pointers, slices and arrays. open reports a type whose contents
-// are not declared (an interface or raw JSON bytes), under which any field
-// path is accepted.
-func elem(t reflect.Type) (inner reflect.Type, open bool) {
-	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
-		if t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8 {
-			return t, true
-		}
-
-		t = t.Elem()
-	}
-
-	return t, t.Kind() == reflect.Interface
-}
-
-// jsonField finds the type of the field encoding/json writes under name,
-// looking through embedded structs.
-func jsonField(t reflect.Type, name string) (reflect.Type, bool) {
-	for i := range t.NumField() {
-		sf := t.Field(i)
-		tag, _, _ := strings.Cut(sf.Tag.Get("json"), ",")
-
-		if sf.Anonymous && tag == "" {
-			et := sf.Type
-			if et.Kind() == reflect.Pointer {
-				et = et.Elem()
-			}
-
-			if ft, ok := jsonField(et, name); ok {
-				return ft, true
-			}
-
-			continue
-		}
-
-		if !sf.IsExported() || tag == "-" {
-			continue
-		}
-
-		if tag == "" {
-			tag = sf.Name
-		}
-
-		if tag == name {
-			return sf.Type, true
-		}
-	}
-
-	return nil, false
+	return &Filter{root: root}, nil
 }
 
 // Match reports whether item (any JSON-marshalable wire struct) satisfies f.
@@ -226,9 +132,8 @@ func (f *Filter) Match(item any) bool {
 }
 
 type parser struct {
-	src   string
-	pos   int
-	paths [][]string
+	src string
+	pos int
 }
 
 func (p *parser) skipSpace() {
@@ -328,6 +233,17 @@ func (p *parser) parseTerm(depth int) (node, error) {
 		return nil, ErrInvalid
 	}
 
+	if p.src[p.pos] == '-' {
+		p.pos++
+
+		c, err := p.parseComparison()
+		if err != nil {
+			return nil, err
+		}
+
+		return notNode{c}, nil
+	}
+
 	if p.src[p.pos] != '(' {
 		return p.parseComparison()
 	}
@@ -365,6 +281,7 @@ func (p *parser) scan(stop string) string {
 	return p.src[start:p.pos]
 }
 
+// parseComparison reads "field op value".
 func (p *parser) parseComparison() (node, error) {
 	field := p.scan("()=!<>:")
 	if field == "" || field == "AND" || field == "OR" || !isLetter(field[0]) {
@@ -390,10 +307,7 @@ func (p *parser) parseComparison() (node, error) {
 		return nil, err
 	}
 
-	path := strings.Split(field, ".")
-	p.paths = append(p.paths, path)
-
-	return &cmpNode{path: path, op: op, value: value, re: re}, nil
+	return &cmpNode{path: strings.Split(field, "."), op: op, value: value, re: re}, nil
 }
 
 // compilePattern returns the RE2 full-match regex for eq/ne, the wildcard
@@ -474,6 +388,8 @@ func mixesRegex(n node) bool {
 			for _, c := range t {
 				walk(c)
 			}
+		case notNode:
+			walk(t.inner)
 		case *cmpNode:
 			if t.op == opRegexEq || t.op == opRegexNe {
 				regex = true
@@ -487,10 +403,11 @@ func mixesRegex(n node) bool {
 	return regex && plain
 }
 
-// eval tests the comparison against every value the path reaches. A field
-// that is unset on this item (an absent label, an omitted optional field)
-// reaches no values: = and eq do not match, while != and ne do, as on real
-// Compute where "labels.env != prod" includes items with no env label.
+// eval tests the comparison against every value the path reaches. Any field
+// the item does not carry (an absent label, an omitted optional field, or a
+// field the emulator does not model) is unset and reaches no values: =, eq,
+// ordering and ':' do not match, while != and ne do, as on real Compute where
+// "labels.env != prod" includes items with no env label.
 func (c *cmpNode) eval(item map[string]any) bool {
 	leaves := resolve(item, c.path)
 
