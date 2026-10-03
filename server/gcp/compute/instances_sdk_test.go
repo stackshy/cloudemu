@@ -502,8 +502,8 @@ func TestGCEInstanceListFilterAndPagination(t *testing.T) {
 }
 
 // TestGCEInstanceListFilterLabelsAndUnknownField covers BUG3: a "labels.<k>=<v>"
-// filter returns only the matching instances, and a filter naming a field the
-// emulator does not model matches everything (never silently excludes all).
+// filter returns only the matching instances, and a field the instance does
+// not carry is unset: = matches none of them and != matches all of them.
 func TestGCEInstanceListFilterLabelsAndUnknownField(t *testing.T) {
 	client, _, ctx := newInstancesEnv(t)
 
@@ -523,12 +523,18 @@ func TestGCEInstanceListFilterLabelsAndUnknownField(t *testing.T) {
 		t.Errorf("labels.env=prod returned %v, want [prod-vm]", prod)
 	}
 
-	// An unrecognized field must match everything, not exclude all.
-	all := listNames(t, client.List(ctx, &computepb.ListInstancesRequest{
+	none := listNames(t, client.List(ctx, &computepb.ListInstancesRequest{
 		Project: testProject, Zone: testZone, Filter: ptrStr("someUnknownField=whatever"),
 	}))
+	if len(none) != 0 {
+		t.Errorf("unset-field = filter returned %v, want none", none)
+	}
+
+	all := listNames(t, client.List(ctx, &computepb.ListInstancesRequest{
+		Project: testProject, Zone: testZone, Filter: ptrStr("someUnknownField != whatever"),
+	}))
 	if len(all) != 2 {
-		t.Errorf("unknown-field filter returned %v, want both instances", all)
+		t.Errorf("unset-field != filter returned %v, want both instances", all)
 	}
 }
 

@@ -2,12 +2,12 @@ package compute
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -323,34 +323,24 @@ func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, rp gcpre
 	}
 
 	host := hostFromRequest(r)
-	pred := parseFilter(r.URL.Query().Get("filter"))
-
 	out := make([]instanceResponse, 0, len(instances))
 
 	for i := range instances {
-		if !instanceInZone(&instances[i], rp.ScopeName) {
-			continue
-		}
-
-		resp := h.toInstanceResponse(r.Context(), &instances[i], rp.Project, host)
-		if pred(&resp) {
-			out = append(out, resp)
+		if instanceInZone(&instances[i], rp.ScopeName) {
+			out = append(out, h.toInstanceResponse(r.Context(), &instances[i], rp.Project, host))
 		}
 	}
 
-	page, err := pagination.PaginateSorted(out,
-		func(a, b instanceResponse) bool { return a.Name < b.Name },
-		r.URL.Query().Get("pageToken"), parseMaxResults(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	items, next, ok := filterPage(w, r, out, func(i instanceResponse) string { return i.Name })
+	if !ok {
 		return
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, instanceListResponse{
 		Kind:          "compute#instanceList",
 		ID:            "projects/" + rp.Project + "/zones/" + rp.ScopeName + "/instances",
-		Items:         page.Items,
-		NextPageToken: page.NextPageToken,
+		Items:         items,
+		NextPageToken: next,
 		SelfLink:      gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "instances", ""),
 	})
 }
@@ -368,26 +358,31 @@ func (h *Handler) aggregatedListInstances(w http.ResponseWriter, r *http.Request
 	}
 
 	host := hostFromRequest(r)
-	pred := parseFilter(r.URL.Query().Get("filter"))
-	items := make(map[string]instancesScopedList)
+	all := make([]scopedItem[instanceResponse], 0, len(instances))
 
 	for i := range instances {
-		resp := h.toInstanceResponse(r.Context(), &instances[i], rp.Project, host)
-		if !pred(&resp) {
-			continue
-		}
+		all = append(all, scopedItem[instanceResponse]{
+			scope: "zones/" + tagOr(instances[i].Tags, keyZone, "unknown"),
+			item:  h.toInstanceResponse(r.Context(), &instances[i], rp.Project, host),
+		})
+	}
 
-		scope := "zones/" + tagOr(instances[i].Tags, keyZone, "unknown")
-		bucket := items[scope]
-		bucket.Instances = append(bucket.Instances, resp)
-		items[scope] = bucket
+	grouped, next, ok := aggregatedPage(w, r, all, func(i instanceResponse) string { return i.Name })
+	if !ok {
+		return
+	}
+
+	items := make(map[string]instancesScopedList, len(grouped))
+	for scope, list := range grouped {
+		items[scope] = instancesScopedList{Instances: list}
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, aggregatedListResponse{
-		Kind:     "compute#instanceAggregatedList",
-		ID:       "projects/" + rp.Project + "/aggregated/instances",
-		Items:    items,
-		SelfLink: host + "/compute/v1/projects/" + rp.Project + "/aggregated/instances",
+		Kind:          "compute#instanceAggregatedList",
+		ID:            "projects/" + rp.Project + "/aggregated/instances",
+		Items:         items,
+		NextPageToken: next,
+		SelfLink:      host + "/compute/v1/projects/" + rp.Project + "/aggregated/instances",
 	})
 }
 
@@ -734,9 +729,9 @@ func tagOr(m map[string]string, key, fallback string) string {
 	return fallback
 }
 
-// numericID returns a stable uint64-shaped string derived from a driver
-// resource ID. GCP IDs in the wire protocol are uint64; non-numeric values
-// fail the SDK's protobuf unmarshalling.
+// numericID returns a stable numeric string derived from a driver resource
+// ID. GCP IDs in the wire protocol are uint64, but real ids fit int64 and the
+// Terraform provider parses them as int64, so the top bit is cleared.
 func numericID(driverID string) string {
 	const fnvOffset uint64 = 14695981039346656037
 
@@ -748,7 +743,7 @@ func numericID(driverID string) string {
 		h *= fnvPrime
 	}
 
-	return strconv.FormatUint(h, 10)
+	return strconv.FormatUint(h&math.MaxInt64, 10)
 }
 
 // gcpStatusFor maps driver states to GCP Compute Engine instance status.

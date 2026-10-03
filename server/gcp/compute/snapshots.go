@@ -41,10 +41,11 @@ type snapshotResponse struct {
 }
 
 type snapshotListResponse struct {
-	Kind     string             `json:"kind"`
-	ID       string             `json:"id"`
-	Items    []snapshotResponse `json:"items"`
-	SelfLink string             `json:"selfLink"`
+	Kind          string             `json:"kind"`
+	ID            string             `json:"id"`
+	Items         []snapshotResponse `json:"items"`
+	NextPageToken string             `json:"nextPageToken,omitempty"`
+	SelfLink      string             `json:"selfLink"`
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -120,11 +121,17 @@ func (h *Handler) listSnapshots(w http.ResponseWriter, r *http.Request, rp gcpre
 		out = append(out, toSnapshotResponse(&snaps[i], scope, host))
 	}
 
+	items, next, ok := filterPage(w, r, out, func(x snapshotResponse) string { return x.Name })
+	if !ok {
+		return
+	}
+
 	gcprest.WriteJSON(w, http.StatusOK, snapshotListResponse{
-		Kind:     "compute#snapshotList",
-		ID:       "projects/" + rp.Project + "/global/snapshots",
-		Items:    out,
-		SelfLink: gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "snapshots", ""),
+		Kind:          "compute#snapshotList",
+		ID:            "projects/" + rp.Project + "/global/snapshots",
+		Items:         items,
+		NextPageToken: next,
+		SelfLink:      gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "snapshots", ""),
 	})
 }
 

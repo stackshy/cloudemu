@@ -49,10 +49,11 @@ type diskResponse struct {
 }
 
 type diskListResponse struct {
-	Kind     string         `json:"kind"`
-	ID       string         `json:"id"`
-	Items    []diskResponse `json:"items"`
-	SelfLink string         `json:"selfLink"`
+	Kind          string         `json:"kind"`
+	ID            string         `json:"id"`
+	Items         []diskResponse `json:"items"`
+	NextPageToken string         `json:"nextPageToken,omitempty"`
+	SelfLink      string         `json:"selfLink"`
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -133,11 +134,17 @@ func (h *Handler) listDisks(w http.ResponseWriter, r *http.Request, rp gcprest.R
 		out = append(out, toDiskResponse(&vols[i], scope, host, users[name]))
 	}
 
+	items, next, ok := filterPage(w, r, out, func(d diskResponse) string { return d.Name })
+	if !ok {
+		return
+	}
+
 	gcprest.WriteJSON(w, http.StatusOK, diskListResponse{
-		Kind:     "compute#diskList",
-		ID:       "projects/" + rp.Project + "/zones/" + rp.ScopeName + "/disks",
-		Items:    out,
-		SelfLink: gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "disks", ""),
+		Kind:          "compute#diskList",
+		ID:            "projects/" + rp.Project + "/zones/" + rp.ScopeName + "/disks",
+		Items:         items,
+		NextPageToken: next,
+		SelfLink:      gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "disks", ""),
 	})
 }
 
@@ -354,10 +361,11 @@ type disksScopedList struct {
 }
 
 type diskAggregatedListResponse struct {
-	Kind     string                     `json:"kind"`
-	ID       string                     `json:"id"`
-	Items    map[string]disksScopedList `json:"items"`
-	SelfLink string                     `json:"selfLink"`
+	Kind          string                     `json:"kind"`
+	ID            string                     `json:"id"`
+	Items         map[string]disksScopedList `json:"items"`
+	NextPageToken string                     `json:"nextPageToken,omitempty"`
+	SelfLink      string                     `json:"selfLink"`
 }
 
 // aggregatedListDisks handles GET /aggregated/disks, returning every disk
@@ -373,7 +381,7 @@ func (h *Handler) aggregatedListDisks(w http.ResponseWriter, r *http.Request, rp
 
 	host := hostFromRequest(r)
 	users := h.diskUsersByName(r.Context(), host, rp.Project)
-	items := make(map[string]disksScopedList)
+	all := make([]scopedItem[diskResponse], 0, len(vols))
 
 	for i := range vols {
 		zone := vols[i].AvailabilityZone
@@ -381,17 +389,27 @@ func (h *Handler) aggregatedListDisks(w http.ResponseWriter, r *http.Request, rp
 		scope := gcprest.ResourcePath{
 			Project: rp.Project, Scope: gcprest.ScopeZones, ScopeName: zone, ResourceName: name,
 		}
-		key := "zones/" + zone
-		bucket := items[key]
-		bucket.Disks = append(bucket.Disks, toDiskResponse(&vols[i], scope, host, users[name]))
-		items[key] = bucket
+		all = append(all, scopedItem[diskResponse]{
+			scope: "zones/" + zone, item: toDiskResponse(&vols[i], scope, host, users[name]),
+		})
+	}
+
+	grouped, next, ok := aggregatedPage(w, r, all, func(d diskResponse) string { return d.Name })
+	if !ok {
+		return
+	}
+
+	items := make(map[string]disksScopedList, len(grouped))
+	for key, list := range grouped {
+		items[key] = disksScopedList{Disks: list}
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, diskAggregatedListResponse{
-		Kind:     "compute#diskAggregatedList",
-		ID:       "projects/" + rp.Project + "/aggregated/disks",
-		Items:    items,
-		SelfLink: strings.TrimSuffix(host, "/") + "/compute/v1/projects/" + rp.Project + "/aggregated/disks",
+		Kind:          "compute#diskAggregatedList",
+		ID:            "projects/" + rp.Project + "/aggregated/disks",
+		Items:         items,
+		NextPageToken: next,
+		SelfLink:      strings.TrimSuffix(host, "/") + "/compute/v1/projects/" + rp.Project + "/aggregated/disks",
 	})
 }
 
