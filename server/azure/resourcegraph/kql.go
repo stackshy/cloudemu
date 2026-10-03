@@ -1,463 +1,560 @@
 // Package resourcegraph serves Azure Resource Graph (armresourcegraph) REST
 // requests against a *resourcediscovery.Engine.
 //
-// Resource Graph queries use Kusto Query Language (KQL), a rich
-// data-analytics grammar. This handler implements a documented subset that
-// covers the queries real callers make for inventory/discovery:
+// Resource Graph queries use Kusto Query Language (KQL). This package evaluates
+// the subset inventory callers use, against the rendered rows (the same rows a
+// client receives), so a filter on any column sees exactly what the row shows:
 //
-//	Resources
-//	| where type == 'microsoft.compute/virtualmachines'
-//	| where type =~ 'microsoft.network/virtualnetworks'
-//	| where resourceGroup == 'rg-prod'
-//	| where location == 'eastus'
-//	| where tags['env'] == 'prod'
-//	| where tags.env == 'prod'
-//	| project id, type, name              (column selection: ignored, full
-//	                                        records returned)
-//	| limit 100                           (also: | take 100)
+//	Resources                                 (or ResourceContainers; may be omitted)
+//	| where resourceGroup =~ 'rg' and (type == 'microsoft.compute/disks' or tags['env'] != 'prod')
+//	| where location in~ ('eastus', 'westus') and name !in ('a') and sku.tier contains 'Prem'
+//	| project id, name, rg = resourceGroup
+//	| order by name asc                       (also: sort by; default desc)
+//	| limit 10                                (also: take 10)
+//	| count                                   (also: summarize count())
 //
-// Unknown tokens and unsupported clauses are tolerated: the parser logs
-// them away and continues with the constraints it did understand. Real
-// Resource Graph would reject malformed queries; the stub favors returning
-// some result over a 400 so SDK callers that probe with unknown queries
-// don't blow up.
+// Comparison operators: ==, !=, =~, !~, in, !in, in~, !in~, contains,
+// !contains, startswith, endswith, has. Anything else is a 400 InvalidQuery,
+// matching real Resource Graph's rejection of a query it cannot run.
 package resourcegraph
 
 import (
-	"regexp"
+	"fmt"
+	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
-// Canonical Azure resource type strings used by Resource Graph query syntax
-// and emitted in response rows.
-const (
-	azureTypeVM         = "microsoft.compute/virtualmachines"
-	azureTypeDisk       = "microsoft.compute/disks"
-	azureTypeSnapshot   = "microsoft.compute/snapshots"
-	azureTypeVMSS       = "microsoft.compute/virtualmachinescalesets"
-	azureTypeVNet       = "microsoft.network/virtualnetworks"
-	azureTypeSubnet     = "microsoft.network/subnets"
-	azureTypeSubnetN    = "microsoft.network/virtualnetworks/subnets"
-	azureTypeNSG        = "microsoft.network/networksecuritygroups"
-	azureTypeNIC        = "microsoft.network/networkinterfaces"
-	azureTypePublicIP   = "microsoft.network/publicipaddresses"
-	azureTypeStorage    = "microsoft.storage/storageaccounts"
-	azureTypeStoCnt     = "microsoft.storage/storageaccounts/blobservices/containers"
-	azureTypeCosmos     = "microsoft.documentdb/databaseaccounts"
-	azureTypeCosmosC    = "microsoft.documentdb/databaseaccounts/sqldatabases/containers"
-	azureTypeWebSite    = "microsoft.web/sites"
-	azureTypeServerfrm  = "microsoft.web/serverfarms"
-	azureTypeDatabrick  = "microsoft.databricks/workspaces"
-	azureTypeAKS        = "microsoft.containerservice/managedclusters"
-	azureTypeAgentPool  = "microsoft.containerservice/managedclusters/agentpools"
-	azureTypeSQL        = "microsoft.sql/servers"
-	azureTypeSQLMI      = "microsoft.sql/managedinstances"
-	azureTypeSQLDB      = "microsoft.sql/servers/databases"
-	azureTypeMySQLFlex  = "microsoft.dbformysql/flexibleservers"
-	azureTypePgFlex     = "microsoft.dbforpostgresql/flexibleservers"
-	azureTypeSecret     = "microsoft.keyvault/vaults/secrets"
-	azureTypeVault      = "microsoft.keyvault/vaults"
-	azureTypeACR        = "microsoft.containerregistry/registries"
-	azureTypeSBQueue    = "microsoft.servicebus/namespaces/queues"
-	azureTypeNotifHub   = "microsoft.notificationhubs/namespaces/notificationhubs"
-	azureTypeDNSZone    = "microsoft.network/dnszones"
-	azureTypeLogWS      = "microsoft.operationalinsights/workspaces"
-	azureTypeRedis      = "microsoft.cache/redis"
-	azureTypeLB         = "microsoft.network/loadbalancers"
-	azureTypeAlert      = "microsoft.insights/metricalerts"
-	azureTypeIdentity   = "microsoft.managedidentity/userassignedidentities"
-	azureTypeRoleDef    = "microsoft.authorization/roledefinitions"
-	azureTypeNATGw      = "microsoft.network/natgateways"
-	azureTypeASG        = "microsoft.network/applicationsecuritygroups"
-	azureTypePubIPPfx   = "microsoft.network/publicipprefixes"
-	azureTypeRouteTbl   = "microsoft.network/routetables"
-	azureTypeVNetPeer   = "microsoft.network/virtualnetworks/virtualnetworkpeerings"
-	azureTypeSQLVM      = "microsoft.sqlvirtualmachine/sqlvirtualmachines"
-	azureTypeMLWorkspc  = "microsoft.machinelearningservices/workspaces"
-	azureTypeMLEndpt    = "microsoft.machinelearningservices/workspaces/onlineendpoints"
-	azureTypeCognitive  = "microsoft.cognitiveservices/accounts"
-	azureTypeCAEnv      = "microsoft.app/managedenvironments"
-	azureTypeLoadTest   = "microsoft.loadtestservice/loadtests"
-	azureTypeCApp       = "microsoft.app/containerapps"
-	azureTypeSignalR    = "microsoft.signalrservice/signalr"
-	azureTypeWebPubSub  = "microsoft.signalrservice/webpubsub"
-	azureTypeCommComms  = "microsoft.communication/communicationservices"
-	azureTypeDTwins     = "microsoft.digitaltwins/digitaltwinsinstances"
-	azureTypeGrafana    = "microsoft.dashboard/grafana"
-	azureTypeDevCenter  = "microsoft.devcenter/devcenters"
-	azureTypePurview    = "microsoft.purview/accounts"
-	azureTypeChaosExp   = "microsoft.chaos/experiments"
-	azureTypeElasticSan = "microsoft.elasticsan/elasticsans"
-	azureTypeManagedLus = "microsoft.storagecache/amlfilesystems"
-	azureTypeAppConfig  = "microsoft.appconfiguration/configurationstores"
-	azureTypeRedisEnt   = "microsoft.cache/redisenterprise"
-	azureTypeHealthWks  = "microsoft.healthcareapis/workspaces"
-	azureTypeMongoClus  = "microsoft.documentdb/mongoclusters"
-	azureTypeBatchAcct  = "microsoft.batch/batchaccounts"
-	azureTypeStreamAnl  = "microsoft.streamanalytics/streamingjobs"
-	azureTypeRecovery   = "microsoft.recoveryservices/vaults"
-	azureTypeIoTHub     = "microsoft.devices/iothubs"
-	azureTypeAPIM       = "microsoft.apimanagement/service"
-	azureTypeLogicWf    = "microsoft.logic/workflows"
-)
+// row is one Resource Graph result row.
+type row = map[string]any
 
-// Portable service identifiers as emitted by the resourcediscovery walkers.
-const (
-	portableCompute      = "compute"
-	portableNetworking   = "networking"
-	portableStorage      = "storage"
-	portableDatabase     = "database"
-	portableServerless   = "serverless"
-	portableAppService   = "appservice"
-	portableDatabricks   = "databricks"
-	portableKubernetes   = "kubernetes"
-	portableRelationalDB = "relationaldb"
-	portableSecrets      = "secrets"
-	portableContainer    = "containerregistry"
-	portableQueue        = "messagequeue"
-	portableNotif        = "notification"
-	portableDNS          = "dns"
-	portableLogging      = "logging"
-	portableCache        = "cache"
-	portableLB           = "loadbalancer"
-	portableMonitoring   = "monitoring"
-	portableIAM          = "iam"
-	portableAzureML      = "machinelearningservices"
-	portableCognitive    = "cognitiveservices"
-	portableContainerApp = "containerapps"
-	portableLoadTest     = "loadtesting"
-	portableSignalR      = "signalr"
-	portableWebPubSub    = "webpubsub"
-	portableCommunicatn  = "communication"
-	portableDTwins       = "digitaltwins"
-	portableManagedGraf  = "managedgrafana"
-	portableDevCenter    = "devcenter"
-	portablePurview      = "purview"
-	portableChaosStudio  = "chaosstudio"
-	portableElasticSan   = "elasticsan"
-	portableManagedLus   = "managedlustre"
-	portableAppConfig    = "appconfiguration"
-	portableRedisEnt     = "redisenterprise"
-	portableHealthApis   = "healthcareapis"
-	portableMongoClus    = "mongocluster"
-	portableBatch        = "batch"
-	portableStreamAnl    = "streamanalytics"
-	portableRecovery     = "recoveryservices"
-	portableIoTHub       = "iothub"
-	portableAPIM         = "apimanagement"
-	portableLogic        = "logic"
-)
-
-// parsedKQL is the result of KQL parsing: an engine Query plus the limit
-// extracted from `| limit N` / `| take N` (0 means no caller-specified limit).
-//
-// ForceEmpty is set when the parser detects a contradiction in chained
-// where-clauses (e.g. two different type filters AND-ed together). Real KQL
-// `where type == 'X' | where type == 'Y'` returns zero rows because a single
-// resource cannot have two types; the engine matcher would otherwise OR-merge
-// the two values via the Services slice, so we short-circuit at the handler.
-type parsedKQL struct {
-	Query      resourcediscovery.Query
-	Limit      int
-	ForceEmpty bool
-
-	// internal tracking, used by applyType / addTag to detect conflicts.
-	typeSet     bool
-	tagFirstVal map[string]string
+// kqlQuery is a parsed query: the table it reads and its operators, in order.
+type kqlQuery struct {
+	table string
+	ops   []func([]row) []row
 }
 
-// Pre-compiled KQL predicate regexes. Compiled once at package load; safe
-// for concurrent use.
-//
-
-var (
-	// type == 'X' / type =~ 'X' / type == "X".
-	reWhereType = regexp.MustCompile(`(?i)^\s*type\s*(==|=~)\s*['"]([^'"]+)['"]\s*$`)
-	// type in ('a','b') / type in~ ('a', "b"): case-insensitive in-list.
-	reWhereTypeIn = regexp.MustCompile(`(?i)^\s*type\s+in~?\s*\(([^)]*)\)\s*$`)
-	// a single quoted item inside an in-list.
-	reQuotedItem = regexp.MustCompile(`['"]([^'"]+)['"]`)
-	// resourceGroup == 'X'.
-	reWhereRG = regexp.MustCompile(`(?i)^\s*resourceGroup\s*==\s*['"]([^'"]+)['"]\s*$`)
-	// location == 'X'.
-	reWhereLocation = regexp.MustCompile(`(?i)^\s*location\s*==\s*['"]([^'"]+)['"]\s*$`)
-	// tags['k'] == 'v' / tags["k"] == "v".
-	reWhereTagsBracket = regexp.MustCompile(`(?i)^\s*tags\s*\[\s*['"]([^'"]+)['"]\s*\]\s*==\s*['"]([^'"]+)['"]\s*$`)
-	// tags.k == 'v'.
-	reWhereTagsDot = regexp.MustCompile(`(?i)^\s*tags\.([A-Za-z0-9_-]+)\s*==\s*['"]([^'"]+)['"]\s*$`)
-	// limit N / take N.
-	reLimit = regexp.MustCompile(`(?i)^\s*(limit|take)\s+(\d+)\s*$`)
+const (
+	tableResources  = "resources"
+	tableContainers = "resourcecontainers"
 )
 
-// parseKQL splits the query on `|` and applies each clause to a Query under
-// construction. Always returns a valid parsedKQL; unrecognized clauses
-// (project, summarize, join, …) are silently ignored: the stub favors
-// returning some result over a 400 on syntax we don't model yet.
-func parseKQL(query string) parsedKQL {
-	out := parsedKQL{}
+// parseKQL parses query, returning an error for syntax or operators it does
+// not support.
+func parseKQL(query string) (*kqlQuery, error) {
+	toks, err := lexKQL(query)
+	if err != nil {
+		return nil, err
+	}
 
-	clauses := strings.Split(query, "|")
-	for _, raw := range clauses {
-		clause := strings.TrimSpace(raw)
-		if clause == "" {
-			continue
+	p := &kqlParser{toks: toks}
+	q := &kqlQuery{table: tableResources}
+
+	if t := p.peek(); t.kind == tokIdent && !isOperatorWord(t.text) {
+		q.table = strings.ToLower(p.next().text)
+		if q.table != tableResources && q.table != tableContainers {
+			return nil, fmt.Errorf("table '%s' is not supported", t.text)
 		}
 
-		applyClause(&out, clause)
+		if !p.accept("|") && !p.done() {
+			return nil, fmt.Errorf("expected '|' after table name, got '%s'", p.peek().text)
+		}
+	}
+
+	for !p.done() {
+		op, err := p.operator()
+		if err != nil {
+			return nil, err
+		}
+
+		q.ops = append(q.ops, op)
+
+		if !p.accept("|") && !p.done() {
+			return nil, fmt.Errorf("unexpected '%s'", p.peek().text)
+		}
+	}
+
+	return q, nil
+}
+
+// run applies the query's operators to rows.
+func (q *kqlQuery) run(rows []row) []row {
+	for _, op := range q.ops {
+		rows = op(rows)
+	}
+
+	return rows
+}
+
+func isOperatorWord(s string) bool {
+	switch strings.ToLower(s) {
+	case "where", "project", "limit", "take", "order", "sort", "count", "summarize":
+		return true
+	default:
+		return false
+	}
+}
+
+type tokKind int
+
+const (
+	tokIdent tokKind = iota
+	tokString
+	tokNumber
+	tokSym
+	tokEOF
+)
+
+type token struct {
+	kind tokKind
+	text string
+}
+
+// lexKQL splits a query into identifiers (paths such as tags['k'] or sku.tier
+// are joined by the parser), quoted strings, numbers and symbols.
+func lexKQL(s string) ([]token, error) {
+	var toks []token
+
+	for i := 0; i < len(s); {
+		c := s[i]
+
+		switch {
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+			i++
+		case c == '\'' || c == '"':
+			j := strings.IndexByte(s[i+1:], c)
+			if j < 0 {
+				return nil, fmt.Errorf("unterminated string literal")
+			}
+
+			toks = append(toks, token{tokString, s[i+1 : i+1+j]})
+			i += j + 2
+		case c >= '0' && c <= '9':
+			j := i
+			for j < len(s) && (s[j] >= '0' && s[j] <= '9' || s[j] == '.') {
+				j++
+			}
+
+			toks = append(toks, token{tokNumber, s[i:j]})
+			i = j
+		case isIdentByte(c):
+			j := i
+			for j < len(s) && (isIdentByte(s[j]) || s[j] >= '0' && s[j] <= '9' || s[j] == '-' || s[j] == '~') {
+				j++
+			}
+
+			toks = append(toks, token{tokIdent, s[i:j]})
+			i = j
+		default:
+			n := symLen(s[i:])
+			if n == 0 {
+				return nil, fmt.Errorf("unexpected character '%c'", c)
+			}
+
+			toks = append(toks, token{tokSym, s[i : i+n]})
+			i += n
+		}
+	}
+
+	return toks, nil
+}
+
+func isIdentByte(c byte) bool {
+	return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+func symLen(s string) int {
+	for _, op := range []string{"==", "!=", "=~", "!~", "!in~", "!in", "!contains", "=", "|", "(", ")", ",", "[", "]", "."} {
+		if strings.HasPrefix(s, op) {
+			return len(op)
+		}
+	}
+
+	return 0
+}
+
+type kqlParser struct {
+	toks []token
+	pos  int
+}
+
+func (p *kqlParser) done() bool { return p.pos >= len(p.toks) }
+
+func (p *kqlParser) peek() token {
+	if p.done() {
+		return token{kind: tokEOF}
+	}
+
+	return p.toks[p.pos]
+}
+
+func (p *kqlParser) next() token {
+	t := p.peek()
+	p.pos++
+
+	return t
+}
+
+// accept consumes the next token when its text matches s (case-insensitively).
+func (p *kqlParser) accept(s string) bool {
+	if t := p.peek(); t.kind != tokEOF && t.kind != tokString && strings.EqualFold(t.text, s) {
+		p.pos++
+		return true
+	}
+
+	return false
+}
+
+func (p *kqlParser) operator() (func([]row) []row, error) {
+	t := p.next()
+
+	switch strings.ToLower(t.text) {
+	case "where":
+		pred, err := p.orExpr()
+		if err != nil {
+			return nil, err
+		}
+
+		return func(rows []row) []row { return filterRows(rows, pred) }, nil
+	case "project":
+		return p.project()
+	case "limit", "take":
+		n, err := strconv.Atoi(p.next().text)
+		if err != nil || n < 0 {
+			return nil, fmt.Errorf("%s needs a row count", t.text)
+		}
+
+		return func(rows []row) []row { return rows[:min(n, len(rows))] }, nil
+	case "order", "sort":
+		return p.order()
+	case "count":
+		return func(rows []row) []row { return []row{{"Count": len(rows)}} }, nil
+	case "summarize":
+		if !p.accept("count") || !p.accept("(") || !p.accept(")") {
+			return nil, fmt.Errorf("only 'summarize count()' is supported")
+		}
+
+		return func(rows []row) []row { return []row{{"count_": len(rows)}} }, nil
+	default:
+		return nil, fmt.Errorf("query operator '%s' is not supported", t.text)
+	}
+}
+
+// path parses a column reference: name, name.sub, name['key'] or a mix.
+func (p *kqlParser) path() ([]string, error) {
+	t := p.next()
+	if t.kind != tokIdent {
+		return nil, fmt.Errorf("expected a column name, got '%s'", t.text)
+	}
+
+	segs := []string{t.text}
+
+	for {
+		switch {
+		case p.accept("."):
+			s := p.next()
+			if s.kind != tokIdent {
+				return nil, fmt.Errorf("expected a name after '.'")
+			}
+
+			segs = append(segs, s.text)
+		case p.accept("["):
+			s := p.next()
+			if s.kind != tokString || !p.accept("]") {
+				return nil, fmt.Errorf("expected ['key']")
+			}
+
+			segs = append(segs, s.text)
+		default:
+			return segs, nil
+		}
+	}
+}
+
+func (p *kqlParser) project() (func([]row) []row, error) {
+	type col struct {
+		name string
+		path []string
+	}
+
+	var cols []col
+
+	for {
+		path, err := p.path()
+		if err != nil {
+			return nil, err
+		}
+
+		c := col{name: strings.Join(path, "_"), path: path}
+
+		if p.accept("=") {
+			if len(path) != 1 {
+				return nil, fmt.Errorf("invalid project alias")
+			}
+
+			if c.path, err = p.path(); err != nil {
+				return nil, err
+			}
+		}
+
+		cols = append(cols, c)
+
+		if !p.accept(",") {
+			break
+		}
+	}
+
+	return func(rows []row) []row {
+		out := make([]row, 0, len(rows))
+		for _, r := range rows {
+			pr := make(row, len(cols))
+			for _, c := range cols {
+				pr[c.name] = lookup(r, c.path)
+			}
+
+			out = append(out, pr)
+		}
+
+		return out
+	}, nil
+}
+
+func (p *kqlParser) order() (func([]row) []row, error) {
+	if !p.accept("by") {
+		return nil, fmt.Errorf("expected 'by' after order/sort")
+	}
+
+	path, err := p.path()
+	if err != nil {
+		return nil, err
+	}
+
+	// KQL sorts descending unless asc is given.
+	desc := true
+	if p.accept("asc") {
+		desc = false
+	} else {
+		p.accept("desc")
+	}
+
+	return func(rows []row) []row {
+		out := append([]row(nil), rows...)
+		sort.SliceStable(out, func(i, j int) bool {
+			a, b := lookup(out[i], path), lookup(out[j], path)
+			if desc {
+				a, b = b, a
+			}
+
+			return lessValue(a, b)
+		})
+
+		return out
+	}, nil
+}
+
+type predicate func(row) bool
+
+func (p *kqlParser) orExpr() (predicate, error) {
+	left, err := p.andExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	for p.accept("or") {
+		right, err := p.andExpr()
+		if err != nil {
+			return nil, err
+		}
+
+		l := left
+		left = func(r row) bool { return l(r) || right(r) }
+	}
+
+	return left, nil
+}
+
+func (p *kqlParser) andExpr() (predicate, error) {
+	left, err := p.term()
+	if err != nil {
+		return nil, err
+	}
+
+	for p.accept("and") {
+		right, err := p.term()
+		if err != nil {
+			return nil, err
+		}
+
+		l := left
+		left = func(r row) bool { return l(r) && right(r) }
+	}
+
+	return left, nil
+}
+
+func (p *kqlParser) term() (predicate, error) {
+	if p.accept("(") {
+		inner, err := p.orExpr()
+		if err != nil {
+			return nil, err
+		}
+
+		if !p.accept(")") {
+			return nil, fmt.Errorf("missing ')'")
+		}
+
+		return inner, nil
+	}
+
+	path, err := p.path()
+	if err != nil {
+		return nil, err
+	}
+
+	op := strings.ToLower(p.next().text)
+
+	if op == "in" || op == "in~" || op == "!in" || op == "!in~" {
+		list, err := p.literalList()
+		if err != nil {
+			return nil, err
+		}
+
+		fold, negate := strings.HasSuffix(op, "~"), strings.HasPrefix(op, "!")
+
+		return func(r row) bool {
+			v := valueString(lookup(r, path))
+			for _, item := range list {
+				if v == item || fold && strings.EqualFold(v, item) {
+					return !negate
+				}
+			}
+
+			return negate
+		}, nil
+	}
+
+	lit := p.next()
+	if lit.kind != tokString && lit.kind != tokNumber && !strings.EqualFold(lit.text, "true") && !strings.EqualFold(lit.text, "false") {
+		return nil, fmt.Errorf("expected a literal after '%s'", op)
+	}
+
+	cmp, ok := comparators[op]
+	if !ok {
+		return nil, fmt.Errorf("operator '%s' is not supported", op)
+	}
+
+	return func(r row) bool { return cmp(valueString(lookup(r, path)), lit.text) }, nil
+}
+
+func (p *kqlParser) literalList() ([]string, error) {
+	if !p.accept("(") {
+		return nil, fmt.Errorf("expected '(' after in")
+	}
+
+	var out []string
+
+	for !p.accept(")") {
+		t := p.next()
+		if t.kind != tokString && t.kind != tokNumber {
+			return nil, fmt.Errorf("expected a literal in list, got '%s'", t.text)
+		}
+
+		out = append(out, t.text)
+
+		if !p.accept(",") && p.peek().text != ")" {
+			return nil, fmt.Errorf("expected ',' or ')' in list")
+		}
+	}
+
+	return out, nil
+}
+
+var comparators = map[string]func(v, lit string) bool{ //nolint:gochecknoglobals // static operator table
+	"==":         func(v, l string) bool { return v == l },
+	"!=":         func(v, l string) bool { return v != l },
+	"=~":         strings.EqualFold,
+	"!~":         func(v, l string) bool { return !strings.EqualFold(v, l) },
+	"contains":   func(v, l string) bool { return strings.Contains(strings.ToLower(v), strings.ToLower(l)) },
+	"!contains":  func(v, l string) bool { return !strings.Contains(strings.ToLower(v), strings.ToLower(l)) },
+	"has":        func(v, l string) bool { return strings.Contains(strings.ToLower(v), strings.ToLower(l)) },
+	"startswith": func(v, l string) bool { return strings.HasPrefix(strings.ToLower(v), strings.ToLower(l)) },
+	"endswith":   func(v, l string) bool { return strings.HasSuffix(strings.ToLower(v), strings.ToLower(l)) },
+}
+
+func filterRows(rows []row, pred predicate) []row {
+	var out []row
+
+	for _, r := range rows {
+		if pred(r) {
+			out = append(out, r)
+		}
 	}
 
 	return out
 }
 
-func applyClause(out *parsedKQL, clause string) {
-	// Drop the leading "Resources" table reference; it's the only one we
-	// support and it carries no constraint.
-	if strings.EqualFold(clause, "Resources") {
-		return
-	}
+// lookup resolves a column path against a row. The first segment matches the
+// column name case-insensitively; later segments index nested objects, tags
+// included.
+func lookup(r row, path []string) any {
+	var cur any = map[string]any(r)
 
-	if strings.HasPrefix(strings.ToLower(clause), "where ") {
-		applyWhere(out, strings.TrimSpace(clause[len("where "):]))
-		return
-	}
+	for _, seg := range path {
+		switch m := cur.(type) {
+		case map[string]any:
+			cur = getFold(m, seg)
+		case map[string]string:
+			v, ok := m[seg]
+			if !ok {
+				return nil
+			}
 
-	if m := reLimit.FindStringSubmatch(clause); m != nil {
-		if n, err := strconv.Atoi(m[2]); err == nil {
-			out.Limit = n
-		}
-
-		return
-	}
-}
-
-// applyWhere routes a single "where" predicate to the matching field on the
-// engine Query. Unknown predicates are tolerated and left untouched: see
-// parseKQL's package-level comment for the rationale.
-func applyWhere(out *parsedKQL, body string) {
-	if m := reWhereType.FindStringSubmatch(body); m != nil {
-		applyType(out, m[2])
-		return
-	}
-
-	if m := reWhereTypeIn.FindStringSubmatch(body); m != nil {
-		items := reQuotedItem.FindAllStringSubmatch(m[1], -1)
-
-		types := make([]string, 0, len(items))
-		for _, it := range items {
-			types = append(types, it[1])
-		}
-
-		applyTypeList(out, types)
-
-		return
-	}
-
-	if m := reWhereRG.FindStringSubmatch(body); m != nil {
-		// The engine does not track resource groups; every Azure resource
-		// is bucketed under a single "default" group. Filtering by RG is
-		// therefore a no-op here (documented limitation); revisit if the
-		// engine grows real RG awareness.
-		_ = m
-		return
-	}
-
-	if m := reWhereLocation.FindStringSubmatch(body); m != nil {
-		out.Query.Region = m[1]
-		return
-	}
-
-	if m := reWhereTagsBracket.FindStringSubmatch(body); m != nil {
-		addTag(out, m[1], m[2])
-		return
-	}
-
-	if m := reWhereTagsDot.FindStringSubmatch(body); m != nil {
-		addTag(out, m[1], m[2])
-		return
-	}
-}
-
-// applyType maps an Azure type string to portable Service + Type. Lower-case
-// before matching since Azure types are case-insensitive in KQL. A second
-// type clause is treated as an AND contradiction: real KQL would yield
-// zero rows because a resource cannot have two types. So ForceEmpty is
-// flipped and later short-circuits the handler.
-func applyType(out *parsedKQL, azureType string) {
-	if out.typeSet {
-		out.ForceEmpty = true
-		return
-	}
-
-	out.typeSet = true
-
-	svc, typ := mapAzureType(strings.ToLower(azureType))
-	if svc == "" && typ == "" {
-		// Unmapped type: match none, not all. Without this the empty Query
-		// would fall through to "no filter" and return the whole inventory.
-		out.ForceEmpty = true
-
-		return
-	}
-
-	if svc != "" {
-		out.Query.Services = []string{svc}
-	}
-
-	if typ != "" {
-		out.Query.Type = typ
-	}
-}
-
-// applyTypeList handles `where type in~ ('a', 'b')`: an any-of set of types.
-// Each Azure type maps to a portable (service, type) pair; the services and
-// types are unioned into the engine Query as any-of filters. Like applyType,
-// a second type clause AND-ed on top is a contradiction and flips ForceEmpty.
-func applyTypeList(out *parsedKQL, azureTypes []string) {
-	if out.typeSet {
-		out.ForceEmpty = true
-		return
-	}
-
-	out.typeSet = true
-
-	for _, at := range azureTypes {
-		svc, typ := mapAzureType(strings.ToLower(strings.TrimSpace(at)))
-		if svc != "" {
-			out.Query.Services = appendUnique(out.Query.Services, svc)
-		}
-
-		if typ != "" {
-			out.Query.Types = appendUnique(out.Query.Types, typ)
+			cur = v
+		default:
+			return nil
 		}
 	}
 
-	// An empty list, or one containing only types cloudemu doesn't model,
-	// resolves to no filter terms. Match none rather than letting the empty
-	// Query fall through to "no filter" and return the whole inventory.
-	if len(out.Query.Services) == 0 && len(out.Query.Types) == 0 {
-		out.ForceEmpty = true
-	}
+	return cur
 }
 
-// appendUnique appends v to s only if it is not already present, preserving
-// order. Keeps the any-of filter slices free of duplicate entries.
-func appendUnique(s []string, v string) []string {
-	for _, existing := range s {
-		if existing == v {
-			return s
+func getFold(m map[string]any, key string) any {
+	if v, ok := m[key]; ok {
+		return v
+	}
+
+	for k, v := range m {
+		if strings.EqualFold(k, key) {
+			return v
 		}
 	}
 
-	return append(s, v)
+	return nil
 }
 
-// addTag records a tag predicate. Repeating the same key with a different
-// value is a KQL contradiction (a single tag cannot hold two values at
-// once); flips ForceEmpty so the handler returns an empty result.
-func addTag(out *parsedKQL, key, value string) {
-	if prev, seen := out.tagFirstVal[key]; seen && prev != value {
-		out.ForceEmpty = true
-		return
+func valueString(v any) string {
+	if v == nil {
+		return ""
 	}
 
-	if out.tagFirstVal == nil {
-		out.tagFirstVal = make(map[string]string)
+	if s, ok := v.(string); ok {
+		return s
 	}
 
-	out.tagFirstVal[key] = value
-
-	if out.Query.Tags == nil {
-		out.Query.Tags = make(map[string]string)
-	}
-
-	out.Query.Tags[key] = value
+	return fmt.Sprint(v)
 }
 
-// portableResourceType is a portable (service, type) pair.
-type portableResourceType struct{ service, typ string }
+// lessValue orders two values numerically when both are numbers, otherwise as
+// case-insensitive strings.
+func lessValue(a, b any) bool {
+	as, bs := valueString(a), valueString(b)
 
-// azureToPortableType maps a fully-qualified Azure resource type to the portable
-// pair the engine uses. A map lookup rather than a switch keeps gocyclo under
-// the gate as the type list grows.
-var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglobals // static lookup table
-	azureTypeVM:         {portableCompute, "Instance"},
-	azureTypeDisk:       {portableCompute, "Volume"},
-	azureTypeSnapshot:   {portableCompute, "Snapshot"},
-	azureTypeVMSS:       {portableCompute, "ScaleSet"},
-	azureTypeVNet:       {portableNetworking, "VPC"},
-	azureTypeSubnet:     {portableNetworking, "Subnet"},
-	azureTypeSubnetN:    {portableNetworking, "Subnet"},
-	azureTypeNSG:        {portableNetworking, "SecurityGroup"},
-	azureTypeNIC:        {portableNetworking, "NetworkInterface"},
-	azureTypePublicIP:   {portableNetworking, "ElasticIP"},
-	azureTypeStorage:    {portableStorage, "Bucket"},
-	azureTypeStoCnt:     {portableStorage, "Bucket"},
-	azureTypeCosmos:     {portableDatabase, "Table"},
-	azureTypeCosmosC:    {portableDatabase, "Table"},
-	azureTypeWebSite:    {portableServerless, "Function"},
-	azureTypeServerfrm:  {portableAppService, "AppServicePlan"},
-	azureTypeDatabrick:  {portableDatabricks, "Workspace"},
-	azureTypeAKS:        {portableKubernetes, "Cluster"},
-	azureTypeAgentPool:  {portableKubernetes, "NodeGroup"},
-	azureTypeSQL:        {portableRelationalDB, "SqlServer"},
-	azureTypeSQLMI:      {portableRelationalDB, "SqlManagedInstance"},
-	azureTypeSQLDB:      {portableRelationalDB, "SqlDatabase"},
-	azureTypeMySQLFlex:  {portableRelationalDB, "MySqlFlexibleServer"},
-	azureTypePgFlex:     {portableRelationalDB, "PostgresFlexibleServer"},
-	azureTypeSecret:     {portableSecrets, "Secret"},
-	azureTypeVault:      {portableSecrets, "Vault"},
-	azureTypeACR:        {portableContainer, "Repository"},
-	azureTypeSBQueue:    {portableQueue, "Queue"},
-	azureTypeNotifHub:   {portableNotif, "Topic"},
-	azureTypeDNSZone:    {portableDNS, "Zone"},
-	azureTypeLogWS:      {portableLogging, "LogGroup"},
-	azureTypeRedis:      {portableCache, "CacheCluster"},
-	azureTypeLB:         {portableLB, "LoadBalancer"},
-	azureTypeAlert:      {portableMonitoring, "Alarm"},
-	azureTypeIdentity:   {portableIAM, "UserAssignedIdentity"},
-	azureTypeRoleDef:    {portableIAM, "Role"},
-	azureTypeNATGw:      {portableNetworking, "NatGateway"},
-	azureTypeASG:        {portableNetworking, "ApplicationSecurityGroup"},
-	azureTypePubIPPfx:   {portableNetworking, "PublicIPPrefix"},
-	azureTypeRouteTbl:   {portableNetworking, "RouteTable"},
-	azureTypeVNetPeer:   {portableNetworking, "PeeringConnection"},
-	azureTypeSQLVM:      {portableCompute, "SqlVirtualMachine"},
-	azureTypeMLWorkspc:  {portableAzureML, "Workspace"},
-	azureTypeMLEndpt:    {portableAzureML, "Endpoint"},
-	azureTypeCognitive:  {portableCognitive, "Account"},
-	azureTypeCAEnv:      {portableContainerApp, "ManagedEnvironment"},
-	azureTypeCApp:       {portableContainerApp, "ContainerApp"},
-	azureTypeLoadTest:   {portableLoadTest, "LoadTest"},
-	azureTypeSignalR:    {portableSignalR, "SignalR"},
-	azureTypeWebPubSub:  {portableWebPubSub, "WebPubSub"},
-	azureTypeCommComms:  {portableCommunicatn, "CommunicationService"},
-	azureTypeDTwins:     {portableDTwins, "DigitalTwinsInstance"},
-	azureTypeGrafana:    {portableManagedGraf, "Grafana"},
-	azureTypeDevCenter:  {portableDevCenter, "DevCenter"},
-	azureTypePurview:    {portablePurview, "Account"},
-	azureTypeChaosExp:   {portableChaosStudio, "Experiment"},
-	azureTypeElasticSan: {portableElasticSan, "ElasticSan"},
-	azureTypeManagedLus: {portableManagedLus, "AmlFilesystem"},
-	azureTypeAppConfig:  {portableAppConfig, "ConfigurationStore"},
-	azureTypeRedisEnt:   {portableRedisEnt, "RedisEnterprise"},
-	azureTypeHealthWks:  {portableHealthApis, "Workspace"},
-	azureTypeMongoClus:  {portableMongoClus, "MongoCluster"},
-	azureTypeBatchAcct:  {portableBatch, "BatchAccount"},
-	azureTypeStreamAnl:  {portableStreamAnl, "StreamingJob"},
-	azureTypeRecovery:   {portableRecovery, "Vault"},
-	azureTypeIoTHub:     {portableIoTHub, "IotHub"},
-	azureTypeAPIM:       {portableAPIM, "Service"},
-	azureTypeLogicWf:    {portableLogic, "Workflow"},
-}
+	af, aErr := strconv.ParseFloat(as, 64)
+	bf, bErr := strconv.ParseFloat(bs, 64)
 
-// mapAzureType translates a fully-qualified Azure resource type to the
-// portable (service, type) pair the engine uses. Returns ("", "") for
-// unmapped types so the filter is treated as match-none rather than
-// match-all.
-func mapAzureType(azureType string) (service, typ string) {
-	p := azureToPortableType[azureType]
-	return p.service, p.typ
+	if aErr == nil && bErr == nil {
+		return af < bf
+	}
+
+	return strings.ToLower(as) < strings.ToLower(bs)
 }

@@ -3,6 +3,7 @@ package resourcegraph
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -100,6 +101,12 @@ func (h *ResourcesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	match, err := parseARMFilter(r.URL.Query().Get("$filter"))
+	if err != nil {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidFilterInQueryString", err.Error())
+		return
+	}
+
 	all, err := h.engine.ListAll(r.Context())
 	if err != nil {
 		azurearm.WriteCErr(w, err)
@@ -113,7 +120,15 @@ func (h *ResourcesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		value = append(value, resourceToWire(&all[i], h.subscriptionID))
+		row := resourceToWire(&all[i], h.subscriptionID)
+
+		// Subnets are child resources of a virtual network; the generic listing
+		// only returns top-level tracked resources.
+		if row["type"] == azureTypeSubnet || !match(row) {
+			continue
+		}
+
+		value = append(value, row)
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, map[string]any{"value": value})
@@ -124,3 +139,64 @@ var _ interface {
 	Matches(*http.Request) bool
 	http.Handler
 } = (*ResourcesHandler)(nil)
+
+const azureTypeSubnet = "microsoft.network/subnets"
+
+// reARMFilterAnd splits an ARM $filter into clauses; reARMFilterClause matches
+// one `field eq 'value'` clause.
+var (
+	reARMFilterAnd    = regexp.MustCompile(`(?i)\s+and\s+`)
+	reARMFilterClause = regexp.MustCompile(`(?i)^\s*(resourceType|name|location|tagName|tagValue)\s+eq\s+'([^']*)'\s*$`)
+)
+
+// parseARMFilter compiles the $filter of a generic-resources listing: clauses
+// `resourceType eq`, `name eq`, `location eq`, `tagName eq` and `tagValue eq`
+// joined by `and`. Values compare case-insensitively, except tag values. An
+// empty filter matches everything.
+func parseARMFilter(filter string) (func(map[string]any) bool, error) {
+	var preds []func(map[string]any) bool
+
+	tagName, tagValue := "", ""
+
+	for _, clause := range reARMFilterAnd.Split(strings.TrimSpace(filter), -1) {
+		if clause == "" {
+			continue
+		}
+
+		m := reARMFilterClause.FindStringSubmatch(clause)
+		if m == nil {
+			return nil, fmt.Errorf("invalid $filter clause %q", clause)
+		}
+
+		field, want := strings.ToLower(m[1]), m[2]
+
+		switch field {
+		case "tagname":
+			tagName = want
+		case "tagvalue":
+			tagValue = want
+		default:
+			col := map[string]string{"resourcetype": "type", "name": "name", "location": "location"}[field]
+			preds = append(preds, func(row map[string]any) bool {
+				return strings.EqualFold(valueString(row[col]), want)
+			})
+		}
+	}
+
+	if tagName != "" {
+		preds = append(preds, func(row map[string]any) bool {
+			v, ok := row["tags"].(map[string]string)[tagName]
+			return ok && (tagValue == "" || v == tagValue)
+		})
+	}
+
+	return func(row map[string]any) bool {
+		for _, p := range preds {
+			if !p(row) {
+				return false
+			}
+		}
+
+		return true
+	}, nil
+}

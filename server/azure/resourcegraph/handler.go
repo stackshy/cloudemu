@@ -101,31 +101,41 @@ func (h *Handler) queryResources(w http.ResponseWriter, r *http.Request) {
 	// stays consistent for every service.
 	subscription := h.effectiveSubscription(req.Subscriptions)
 
-	parsed := parseKQL(req.Query)
-
-	// Contradiction in chained where-clauses (e.g. two type filters AND-ed
-	// together): short-circuit before hitting the engine. See parsedKQL.
-	if parsed.ForceEmpty {
-		azurearm.WriteJSON(w, http.StatusOK, emptyResponse())
-		return
-	}
-
-	results, err := h.engine.List(r.Context(), parsed.Query)
+	query, err := parseKQL(req.Query)
 	if err != nil {
-		azurearm.WriteCErr(w, err)
+		azurearm.WriteError(w, http.StatusBadRequest, "BadRequest",
+			"Query is invalid. Please refer to the documentation for the Azure Resource Graph service and fix the error before retrying. "+err.Error())
+
 		return
 	}
 
-	// The KQL `| limit N` caps the matching set; $top/$skip/$skipToken page over
-	// it. totalRecords is the size of that matching set (not the page), so a
-	// paged client can see how many rows exist beyond the current page.
-	matched := applyKQLLimit(results, parsed.Limit)
-	skip := effectiveSkip(req.Options.Skip, req.Options.SkipToken)
-	page := pageResults(matched, req.Options.Top, skip)
+	// The query runs over the rendered rows, so every filter sees exactly the
+	// columns a client reads. ResourceContainers (groups and subscriptions) is
+	// not modeled yet and reads as an empty table.
+	var rows []row
 
-	data := make([]map[string]any, 0, len(page))
-	for i := range page {
-		data = append(data, resourceToWire(&page[i], subscription))
+	if query.table == tableResources {
+		all, err := h.engine.ListAll(r.Context())
+		if err != nil {
+			azurearm.WriteCErr(w, err)
+			return
+		}
+
+		rows = make([]row, 0, len(all))
+		for i := range all {
+			rows = append(rows, resourceToWire(&all[i], subscription))
+		}
+	}
+
+	// $top/$skip/$skipToken page over the query result. totalRecords is the size
+	// of that result (not the page), so a paged client can see how many rows
+	// exist beyond the current page.
+	matched := query.run(rows)
+	skip := effectiveSkip(req.Options.Skip, req.Options.SkipToken)
+	data := pageResults(matched, req.Options.Top, skip)
+
+	if data == nil {
+		data = []row{}
 	}
 
 	resp := map[string]any{
@@ -136,7 +146,7 @@ func (h *Handler) queryResources(w http.ResponseWriter, r *http.Request) {
 		"resultTruncated": "false",
 	}
 
-	if next := skip + len(page); next < len(matched) {
+	if next := skip + len(data); next < len(matched) {
 		resp["$skipToken"] = encodeSkipToken(next)
 	}
 
@@ -192,30 +202,9 @@ func (h *Handler) effectiveSubscription(reqSubs []string) string {
 	return h.subscriptionID
 }
 
-func emptyResponse() map[string]any {
-	return map[string]any{
-		"totalRecords":    0,
-		"count":           0,
-		"data":            []any{},
-		"facets":          []any{},
-		"resultTruncated": "false",
-	}
-}
-
-// applyKQLLimit caps the result set to the `| limit N` / `| take N` from the KQL
-// query. This is the query's own row cap, distinct from the $top paging control,
-// so it defines the total record count a client pages over.
-func applyKQLLimit(results []resourcediscovery.Resource, kqlLimit int) []resourcediscovery.Resource {
-	if kqlLimit > 0 && kqlLimit < len(results) {
-		return results[:kqlLimit]
-	}
-
-	return results
-}
-
 // pageResults returns the $top/$skip page of the matching set. skip past the end
 // yields an empty page; a top of 0 means no page cap.
-func pageResults(matched []resourcediscovery.Resource, top, skip int) []resourcediscovery.Resource {
+func pageResults(matched []row, top, skip int) []row {
 	if skip >= len(matched) {
 		return nil
 	}
@@ -455,7 +444,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"relationaldb/PostgresFlexibleServer": "microsoft.dbforpostgresql/flexibleservers",
 	"secrets/Secret":                      "microsoft.keyvault/vaults/secrets",
 	"secrets/Vault":                       "microsoft.keyvault/vaults",
-	"containerregistry/Repository":        "microsoft.containerregistry/registries",
+	"containerregistry/Registry":          "microsoft.containerregistry/registries",
 	"messagequeue/Queue":                  "microsoft.servicebus/namespaces/queues",
 	"notification/Topic":                  "microsoft.notificationhubs/namespaces/notificationhubs",
 	"dns/Zone":                            "microsoft.network/dnszones",

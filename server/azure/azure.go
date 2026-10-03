@@ -717,9 +717,9 @@ func New(d Drivers) http.Handler {
 	rgHandler := resourcegroups.NewWithStore(d.ResourceGroups, d.ResourceDiscovery)
 	srv.Register(rgHandler)
 
-	// Tags resource provider (Microsoft.Resources/tags/default). Self-contained
-	// (no driver): it owns the per-scope tag sets an armresources TagsClient
-	// manages at subscription or resource scope. Its path suffix
+	// Tags resource provider (Microsoft.Resources/tags/default). Resource-group
+	// and resource scopes read and write the resource's own tags through the
+	// router (wired at the end); the store keeps subscription tag sets. Its path suffix
 	// /providers/Microsoft.Resources/tags/default is disjoint from the
 	// resource-group paths above and the Microsoft.ResourceGraph/generic-resources
 	// listings, so registration order is unconstrained.
@@ -728,7 +728,8 @@ func New(d Drivers) http.Handler {
 		scopeTags = tagsatscope.New()
 	}
 
-	srv.Register(tagssrv.New(scopeTags))
+	tagsHandler := tagssrv.New(scopeTags)
+	srv.Register(tagsHandler)
 
 	// microsoft.insights extension resources (metrics, metricDefinitions,
 	// diagnosticSettings) hang off an arbitrary resource URI, so they must claim
@@ -1291,7 +1292,13 @@ func New(d Drivers) http.Handler {
 	// Every handler is registered now, so collect the resource-group purgers.
 	rgHandler.SetPurgers(resourcegroups.CollectPurgers(srv.Handlers()))
 
-	return echoUnmodeledProperties(srv, newPropertyOverlay(d.PropertyOverlay), scopeTags)
+	router := echoUnmodeledProperties(srv, newPropertyOverlay(d.PropertyOverlay), scopeTags)
+
+	// The Tags API reads and writes resource and resource-group tags on the
+	// resource itself, through the full router so locks and overlays apply.
+	tagsHandler.SetRouter(router)
+
+	return router
 }
 
 // registerDatabricksDataPlane registers the Databricks workspace data-plane

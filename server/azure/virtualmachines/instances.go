@@ -450,6 +450,7 @@ func (h *Handler) attachImplicitDataDisk(
 	vol, err := h.compute.CreateVolume(ctx, computedriver.VolumeConfig{
 		Size:       d.DiskSizeGB,
 		VolumeType: managedDiskStorageType(d.ManagedDisk),
+		Location:   h.instanceLocation(ctx, instanceID),
 		Tags:       diskMaterializeTags(name, rp.ResourceGroup, rp.Subscription, d.CreateOption),
 	})
 	if err != nil {
@@ -576,7 +577,7 @@ func (h *Handler) materializeOSDisk(
 		return h.applyDiskDeleteOption(ctx, volID, od.DeleteOption)
 	}
 
-	volID, err := h.resolveOrCreateOSDisk(ctx, rp, od, vols)
+	volID, err := h.resolveOrCreateOSDisk(ctx, rp, od, vols, h.instanceLocation(ctx, instanceID))
 	if err != nil || volID == "" {
 		return err
 	}
@@ -595,7 +596,7 @@ func (h *Handler) materializeOSDisk(
 //
 //nolint:gocritic // rp is a request-scoped value.
 func (h *Handler) resolveOrCreateOSDisk(
-	ctx context.Context, rp azurearm.ResourcePath, od *osDisk, vols []computedriver.VolumeInfo,
+	ctx context.Context, rp azurearm.ResourcePath, od *osDisk, vols []computedriver.VolumeInfo, location string,
 ) (string, error) {
 	if strings.EqualFold(od.CreateOption, createOptionAttach) {
 		if od.ManagedDisk == nil || od.ManagedDisk.ID == "" {
@@ -618,6 +619,7 @@ func (h *Handler) resolveOrCreateOSDisk(
 	vol, err := h.compute.CreateVolume(ctx, computedriver.VolumeConfig{
 		Size:       od.DiskSizeGB,
 		VolumeType: managedDiskStorageType(od.ManagedDisk),
+		Location:   location,
 		Tags:       diskMaterializeTags(name, rp.ResourceGroup, rp.Subscription, createOption),
 	})
 	if err != nil {
@@ -625,6 +627,18 @@ func (h *Handler) resolveOrCreateOSDisk(
 	}
 
 	return vol.ID, nil
+}
+
+// instanceLocation is the region of instanceID, which the disks a VM
+// materializes share (Azure creates a VM's managed disks in the VM's region).
+// Empty when the instance cannot be read, leaving the disk default.
+func (h *Handler) instanceLocation(ctx context.Context, instanceID string) string {
+	insts, err := h.compute.DescribeInstances(ctx, []string{instanceID}, nil)
+	if err != nil || len(insts) == 0 {
+		return ""
+	}
+
+	return insts[0].Region
 }
 
 // osDiskOf returns the id of the OS disk currently attached to instanceID (the
