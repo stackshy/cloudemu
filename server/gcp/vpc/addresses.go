@@ -200,8 +200,24 @@ func (h *Handler) insertAddress(w http.ResponseWriter, r *http.Request, rp gcpre
 		return
 	}
 
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil || body == nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "address body must be a JSON object")
+		return
+	}
+
+	// Hold the subnet's allocation lock from picking the IP until the address
+	// is stored, so concurrent reservations never share an IP.
+	unlock := lockAddressSubnet(rp, body)
+	defer unlock()
+
+	if err := h.assignAddress(r.Context(), rp, hostOf(r), named.Name, body); err != nil {
+		writeAddressErr(w, err)
+		return
+	}
+
 	err := h.addresses.insert(r.Context(), rp.Project, scopeOf(rp), named.Name,
-		h.enrichAddress(r.Context(), raw, rp, hostOf(r), named.Name))
+		h.enrichAddress(r.Context(), body, rp, hostOf(r), named.Name))
 	if err != nil {
 		writeAddressErr(w, err)
 		return
@@ -217,14 +233,9 @@ func (h *Handler) insertAddress(w http.ResponseWriter, r *http.Request, rp gcpre
 // prefixLength, addressType, …). Without this a Get reads back all-empty.
 //
 //nolint:gocritic // rp is a request-scoped value
-func (h *Handler) enrichAddress(ctx context.Context, raw json.RawMessage, rp gcprest.ResourcePath,
+func (h *Handler) enrichAddress(ctx context.Context, body map[string]any, rp gcprest.ResourcePath,
 	host, name string,
 ) json.RawMessage {
-	var body map[string]any
-	if err := json.Unmarshal(raw, &body); err != nil || body == nil {
-		return raw
-	}
-
 	body["kind"] = "compute#address"
 	body["id"] = numericID(rp.Project + "/" + scopeOf(rp) + "/" + name)
 	body["status"] = "RESERVED"
@@ -240,10 +251,7 @@ func (h *Handler) enrichAddress(ctx context.Context, raw json.RawMessage, rp gcp
 		body["region"] = host + "/compute/v1/projects/" + rp.Project + "/regions/" + rp.ScopeName
 	}
 
-	enriched, err := json.Marshal(body)
-	if err != nil {
-		return raw
-	}
+	enriched, _ := json.Marshal(body)
 
 	return enriched
 }
