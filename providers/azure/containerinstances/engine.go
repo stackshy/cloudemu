@@ -21,6 +21,7 @@ func synthContainers(cfgs []driver.ContainerConfig) []driver.ContainerInstance {
 			CPU:        c.CPU,
 			MemoryInGB: c.MemoryInGB,
 			Env:        append([]driver.EnvVar(nil), c.Env...),
+			Ports:      append([]driver.Port(nil), c.Ports...),
 			Current:    driver.ContainerState{State: containerStateRunning},
 		})
 	}

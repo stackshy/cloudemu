@@ -33,6 +33,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -124,6 +125,10 @@ type Handler struct {
 	ops *gcprest.OperationRegistry
 	// iam keeps subnetwork policies keyed by full resource name.
 	iam gcpiam.Store
+	// peeringMu serializes peering changes. Each one reads a network's
+	// peerings, checks the peer network, and writes the list back, so two
+	// concurrent changes must not interleave.
+	peeringMu sync.Mutex
 }
 
 // New returns a networks handler. compute is optional (may be nil): when
@@ -211,6 +216,11 @@ func (h *Handler) routeNetworks(w http.ResponseWriter, r *http.Request, rp gcpre
 			gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
 		}
 
+		return
+	}
+
+	if rp.Action != "" {
+		h.routeNetworkAction(w, r, rp)
 		return
 	}
 
@@ -415,6 +425,7 @@ func (h *Handler) getNetwork(w http.ResponseWriter, r *http.Request, rp gcprest.
 	host := hostOf(r)
 	resp := toNetworkResponse(v, rp, host)
 	resp.Subnetworks = h.subnetLinksByNetwork(r.Context(), rp.Project, host)[v.ID]
+	resp.Peerings = h.peeringsView(r.Context(), v, rp.Project, host)
 
 	gcprest.WriteJSON(w, http.StatusOK, resp)
 }
@@ -439,6 +450,7 @@ func (h *Handler) listNetworks(w http.ResponseWriter, r *http.Request, rp gcpres
 
 		resp := toNetworkResponse(&infos[i], scope, host)
 		resp.Subnetworks = subnetLinks[infos[i].ID]
+		resp.Peerings = h.peeringsView(r.Context(), &infos[i], rp.Project, host)
 
 		if nameMatches(filter, resp.Name) {
 			items = append(items, resp)
