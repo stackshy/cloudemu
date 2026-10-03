@@ -602,13 +602,14 @@ func (h *Handler) insertSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 		Tags:             subnetTags(&req),
 	}
 
-	if _, err := h.net.CreateSubnet(r.Context(), cfg); err != nil {
+	sub, err := h.net.CreateSubnet(r.Context(), cfg)
+	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
-		"subnetworks", req.Name, "insert")
+	op := h.ops.RecordDoneTarget(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
+		"subnetworks", req.Name, numericID(sub.ID), "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }

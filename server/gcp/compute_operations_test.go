@@ -207,6 +207,11 @@ func TestComputeOperationsListGetDelete(t *testing.T) {
 		targets = append(targets, o.GetOperationType()+" "+o.GetTargetLink()[strings.LastIndex(o.GetTargetLink(), "/")+1:])
 	}
 
+	if list := mustDo(t, ts, http.MethodGet, "/compute/v1/projects/"+opsProject+"/global/operations", ""); !strings.Contains(list,
+		`/compute/v1/projects/`+opsProject+`/global/operations"`) {
+		t.Errorf("global operations list selfLink must end in /operations: %.300s", list)
+	}
+
 	if strings.Join(targets, ",") != "insert d1,insert d2,insert d3" {
 		t.Errorf("zone operations = %v, want the 3 disk inserts in order", targets)
 	}
@@ -279,7 +284,7 @@ func TestRegionalOperationStored(t *testing.T) {
 	}
 
 	got := waitOp(t, op, "insert", "regions/"+opsRegion+"/subnetworks/s1", "regions/"+opsRegion)
-	if !strings.HasSuffix(got.GetRegion(), "/regions/"+opsRegion) || got.GetZone() != "" {
+	if !strings.HasSuffix(got.GetRegion(), "/regions/"+opsRegion) || got.GetZone() != "" || got.GetTargetId() == 0 {
 		t.Errorf("regional op region %q zone %q", got.GetRegion(), got.GetZone())
 	}
 }

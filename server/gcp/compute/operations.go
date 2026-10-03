@@ -106,7 +106,8 @@ func (h *Handler) listOperations(w http.ResponseWriter, r *http.Request, rp gcpr
 		ID:            id + "/operations",
 		Items:         page,
 		NextPageToken: next,
-		SelfLink:      gcprest.SelfLink(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName, resourceOperations, ""),
+		SelfLink: strings.TrimSuffix(
+			gcprest.SelfLink(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName, resourceOperations, ""), "/"),
 	})
 }
 

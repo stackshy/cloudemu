@@ -30,23 +30,30 @@ import (
 // handlers (compute, networks/vpc, load balancing) mint, so a later
 // zone/region/global operations get, wait, list or delete reads back the
 // operation as it was issued (same id, operationType and targetLink), matching
-// real GCP, and 404s a name that was never issued. A nil *OperationRegistry
-// stores nothing.
+// real GCP, and 404s a name that was never issued. Like GCP, which keeps
+// operations only for a limited time, it retains the most recent
+// MaxOperationsPerScope operations per project and scope and drops the oldest.
+// A nil *OperationRegistry stores nothing.
 type OperationRegistry struct {
-	mu  sync.RWMutex
-	ops map[string]*opEntry
+	mu      sync.RWMutex
+	ops     map[string]Operation
+	buckets map[string]*opBucket
 }
 
-// opEntry is one stored operation with the project and scope it is polled
-// under.
-type opEntry struct {
+// MaxOperationsPerScope caps the operations retained per project and scope.
+const MaxOperationsPerScope = 1000
+
+// opBucket is the creation-ordered operation names of one project and scope.
+// names[head:] may hold names already deleted; live counts the stored ones.
+type opBucket struct {
 	project, scope, scopeName string
-	op                        Operation
+	names                     []string
+	head, live                int
 }
 
 // NewOperationRegistry returns an empty operation registry.
 func NewOperationRegistry() *OperationRegistry {
-	return &OperationRegistry{ops: map[string]*opEntry{}}
+	return &OperationRegistry{ops: map[string]Operation{}, buckets: map[string]*opBucket{}}
 }
 
 // opKey scopes an operation name by the project and URL scope it is polled
@@ -64,16 +71,14 @@ func (reg *OperationRegistry) Get(project, scope, scopeName, name string) (Opera
 	reg.mu.RLock()
 	defer reg.mu.RUnlock()
 
-	e, ok := reg.ops[opKey(project, scope, scopeName, name)]
-	if !ok {
-		return Operation{}, false
-	}
+	op, ok := reg.ops[opKey(project, scope, scopeName, name)]
 
-	return e.op, true
+	return op, ok
 }
 
-// List returns the operations stored in project. An empty scope returns every
-// scope (the aggregated list); otherwise only scope/scopeName.
+// List returns the operations stored in project in creation order. An empty
+// scope returns every scope (the aggregated list); otherwise only
+// scope/scopeName.
 func (reg *OperationRegistry) List(project, scope, scopeName string) []Operation {
 	if reg == nil {
 		return nil
@@ -82,14 +87,18 @@ func (reg *OperationRegistry) List(project, scope, scopeName string) []Operation
 	reg.mu.RLock()
 	defer reg.mu.RUnlock()
 
-	out := make([]Operation, 0, len(reg.ops))
+	var out []Operation
 
-	for _, e := range reg.ops {
-		if e.project != project || (scope != "" && (e.scope != scope || e.scopeName != scopeName)) {
+	for _, b := range reg.buckets {
+		if b.project != project || (scope != "" && (b.scope != scope || b.scopeName != scopeName)) {
 			continue
 		}
 
-		out = append(out, e.op)
+		for _, name := range b.names[b.head:] {
+			if op, ok := reg.ops[opKey(b.project, b.scope, b.scopeName, name)]; ok {
+				out = append(out, op)
+			}
+		}
 	}
 
 	return out
@@ -112,7 +121,43 @@ func (reg *OperationRegistry) Delete(project, scope, scopeName, name string) boo
 
 	delete(reg.ops, key)
 
+	reg.buckets[opKey(project, scope, scopeName, "")].live--
+
 	return true
+}
+
+// store records op and evicts the scope's oldest operations beyond
+// MaxOperationsPerScope. The caller holds reg.mu.
+func (reg *OperationRegistry) store(project, scope, scopeName string, op *Operation) {
+	bkey := opKey(project, scope, scopeName, "")
+
+	b := reg.buckets[bkey]
+	if b == nil {
+		b = &opBucket{project: project, scope: scope, scopeName: scopeName}
+		reg.buckets[bkey] = b
+	}
+
+	reg.ops[opKey(project, scope, scopeName, op.Name)] = *op
+	b.names = append(b.names, op.Name)
+	b.live++
+
+	for b.live > MaxOperationsPerScope {
+		key := opKey(project, scope, scopeName, b.names[b.head])
+		b.head++
+
+		if _, ok := reg.ops[key]; ok {
+			delete(reg.ops, key)
+
+			b.live--
+		}
+	}
+
+	// Drop the consumed prefix once it is half the slice, so the slice stays
+	// bounded and each insert is amortized O(1).
+	if b.head > len(b.names)/2 {
+		b.names = append([]string(nil), b.names[b.head:]...)
+		b.head = 0
+	}
 }
 
 // RecordDone builds a DONE operation for a mutation (via NewDoneOperation) and
@@ -137,7 +182,7 @@ func (reg *OperationRegistry) RecordDoneTarget(
 	}
 
 	reg.mu.Lock()
-	reg.ops[opKey(project, scope, scopeName, op.Name)] = &opEntry{project: project, scope: scope, scopeName: scopeName, op: op}
+	reg.store(project, scope, scopeName, &op)
 	reg.mu.Unlock()
 
 	return op

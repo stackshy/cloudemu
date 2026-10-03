@@ -413,8 +413,8 @@ func (h *Handler) insertForwardingRule(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	op := h.ops.RecordDone(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
-		resourceForwardingRules, req.Name, "insert")
+	op := h.ops.RecordDoneTarget(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
+		resourceForwardingRules, req.Name, numericID(lb.ID), "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
