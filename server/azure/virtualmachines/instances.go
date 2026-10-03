@@ -1452,7 +1452,46 @@ func (h *Handler) buildVMResponse(
 		resp.Properties.StorageProfile.DataDisks = disks
 	}
 
+	h.fillOSDiskRef(ctx, rp, inst.ID, &resp)
+
 	return resp
+}
+
+// fillOSDiskRef reports the attached OS disk under storageProfile.osDisk (name
+// and managedDisk id/type), as real ARM does. Terraform reads managedDisk.id to
+// delete the OS disk with the VM; without it the disk is left behind.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) fillOSDiskRef(ctx context.Context, rp azurearm.ResourcePath, instanceID string, resp *vmResponse) {
+	vols, err := h.compute.DescribeVolumes(ctx, nil)
+	if err != nil {
+		return
+	}
+
+	for i := range vols {
+		v := &vols[i]
+		if v.AttachedTo != instanceID || v.Device != osDiskDevice {
+			continue
+		}
+
+		if resp.Properties.StorageProfile == nil {
+			resp.Properties.StorageProfile = &storageProfile{}
+		}
+
+		sp := resp.Properties.StorageProfile
+		if sp.OSDisk == nil {
+			sp.OSDisk = &osDisk{}
+		}
+
+		name := tagOr(v.Tags, diskARMNameTag, v.ID)
+		sp.OSDisk.Name = name
+		sp.OSDisk.ManagedDisk = &managedDiskParameters{
+			ID:                 azurearm.BuildResourceID(rp.Subscription, tagOr(v.Tags, diskRGTag, rp.ResourceGroup), providerName, "disks", name),
+			StorageAccountType: v.VolumeType,
+		}
+
+		return
+	}
 }
 
 // toVMResponse maps a driver Instance back onto the ARM JSON shape.

@@ -115,6 +115,17 @@ func TestInventoryRowsCarryARMIdentity(t *testing.T) {
 		t.Errorf("malformed KQL status = %d, want 400", code)
 	}
 
+	// The VM reports its OS disk by ARM id, so a client deleting the VM can
+	// delete the disk too instead of leaving it in the group.
+	_, vm := c.do(http.MethodGet, resPath("rga", "Microsoft.Compute/virtualMachines", "vm-rga")+"?api-version=2024-03-01", "")
+	sp, _ := vm["properties"].(map[string]any)["storageProfile"].(map[string]any)
+	od, _ := sp["osDisk"].(map[string]any)
+	md, _ := od["managedDisk"].(map[string]any)
+
+	if id, _ := md["id"].(string); id != resPath("rga", "Microsoft.Compute/disks", "os-rga") {
+		t.Errorf("VM osDisk.managedDisk.id = %q", id)
+	}
+
 	_, exp := c.do(http.MethodPost, rgPath("rga")+"/exportTemplate?api-version=2021-04-01", `{"resources":["*"]}`)
 	tmpl, _ := exp["template"].(map[string]any)
 
