@@ -26,6 +26,9 @@ type ContainerConfig struct {
 	CPU        float64
 	MemoryInGB float64
 	Env        []EnvVar
+	// Ports are the container's own exposed ports (containers[].properties.ports),
+	// distinct from the group ipAddress ports.
+	Ports []Port
 }
 
 // Port is a single port exposed on a container group's public/private IP.
@@ -88,6 +91,7 @@ type ContainerInstance struct {
 	CPU        float64
 	MemoryInGB float64
 	Env        []EnvVar
+	Ports      []Port
 	Current    ContainerState
 }
 
