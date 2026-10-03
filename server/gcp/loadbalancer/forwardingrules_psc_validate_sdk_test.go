@@ -84,7 +84,7 @@ func TestSDKGCPForwardingRulePSCInternalAddress(t *testing.T) {
 	ctx := context.Background()
 	client := newRegionalForwardingRulesClient(t, ts.URL, option.WithHTTPClient(ts.Client()))
 
-	insertAttachment(ctx, t, ts, attachment("producer-sa", "ACCEPT_AUTOMATIC"))
+	insertAttachmentIn(ctx, t, ts, pscProducerProject, attachment("producer-sa", "ACCEPT_AUTOMATIC"))
 
 	op, err := client.Insert(ctx, &computepb.InsertForwardingRuleRequest{
 		Project: testProject, Region: testRegion,

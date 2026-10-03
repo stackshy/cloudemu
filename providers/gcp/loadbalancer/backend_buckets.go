@@ -31,8 +31,8 @@ func (m *Mock) InsertGCPBackendBucket(ctx context.Context, res driver.GCPResourc
 }
 
 // GetGCPBackendBucket returns the named backend bucket, or NotFound.
-func (m *Mock) GetGCPBackendBucket(_ context.Context, name string) (*driver.GCPResource, error) {
-	res, ok := m.gcpResources.Get(gcpResourceKey(driver.GCPBackendBucketCollection, backendBucketScope, name))
+func (m *Mock) GetGCPBackendBucket(ctx context.Context, name string) (*driver.GCPResource, error) {
+	res, ok := m.gcpResources.Get(m.resourceKey(ctx, driver.GCPBackendBucketCollection, backendBucketScope, name))
 	if !ok {
 		return nil, backendBucketNotFound(name)
 	}
@@ -47,10 +47,10 @@ func (m *Mock) ListGCPBackendBuckets(ctx context.Context) ([]driver.GCPResource,
 
 // UpdateGCPBackendBucket applies mutate to the named backend bucket under the
 // store lock. A mutate error leaves the stored record unchanged.
-func (m *Mock) UpdateGCPBackendBucket(_ context.Context, name string, mutate func(*driver.GCPResource) error) error {
+func (m *Mock) UpdateGCPBackendBucket(ctx context.Context, name string, mutate func(*driver.GCPResource) error) error {
 	var mutateErr error
 
-	updated := m.gcpResources.Update(gcpResourceKey(driver.GCPBackendBucketCollection, backendBucketScope, name),
+	updated := m.gcpResources.Update(m.resourceKey(ctx, driver.GCPBackendBucketCollection, backendBucketScope, name),
 		func(res driver.GCPResource) driver.GCPResource {
 			next := res
 			if err := mutate(&next); err != nil {
@@ -68,8 +68,8 @@ func (m *Mock) UpdateGCPBackendBucket(_ context.Context, name string, mutate fun
 }
 
 // DeleteGCPBackendBucket removes the named backend bucket, or NotFound.
-func (m *Mock) DeleteGCPBackendBucket(_ context.Context, name string) error {
-	if !m.gcpResources.Delete(gcpResourceKey(driver.GCPBackendBucketCollection, backendBucketScope, name)) {
+func (m *Mock) DeleteGCPBackendBucket(ctx context.Context, name string) error {
+	if !m.gcpResources.Delete(m.resourceKey(ctx, driver.GCPBackendBucketCollection, backendBucketScope, name)) {
 		return backendBucketNotFound(name)
 	}
 
