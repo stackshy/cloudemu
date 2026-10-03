@@ -14,6 +14,7 @@ const (
 	skuAligned                   = "Aligned"
 	defaultFaultDomains          = 2
 	defaultUpdateDomains         = 5
+	codeInvalidParameter         = "InvalidParameter"
 )
 
 type availabilitySetSKU struct {
@@ -84,6 +85,16 @@ func (h *Handler) serveAvailabilitySet(w http.ResponseWriter, r *http.Request, r
 
 		azurearm.WriteJSON(w, http.StatusOK, h.toAvailabilitySetResponse(r.Context(), set))
 	case http.MethodDelete:
+		id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName,
+			resourceTypeAvailabilitySets, rp.ResourceName)
+		if len(h.availabilitySetMembers(r.Context(), id)) > 0 {
+			azurearm.WriteError(w, http.StatusConflict, "OperationNotAllowed",
+				"Availability Set '"+rp.ResourceName+"' cannot be deleted. Before deleting an Availability Set "+
+					"please ensure that it does not contain any VM.")
+
+			return
+		}
+
 		// Deleting an absent set is idempotent in ARM: 204.
 		status := http.StatusOK
 		if store.DeleteAvailabilitySet(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName) != nil {
@@ -120,8 +131,9 @@ func (h *Handler) listAvailabilitySets(
 }
 
 // putAvailabilitySet serves PUT (create or replace) and PATCH (merge onto the
-// stored set; the domain counts are immutable in Azure, so PATCH only changes
-// tags and the placement group).
+// stored set). A create needs a location. The fault and update domain counts
+// are fixed once the set exists: a request that changes either is a 409, on
+// PUT and PATCH alike.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) putAvailabilitySet(
@@ -132,26 +144,22 @@ func (h *Handler) putAvailabilitySet(
 		return
 	}
 
-	set := computedriver.AzureAvailabilitySet{
-		Name: rp.ResourceName, Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup,
-		Location: defaultIfEmpty(req.Location, defaultVMSSLocation), Tags: req.Tags, SKUName: "Classic",
-		PlatformFaultDomainCount: defaultFaultDomains, PlatformUpdateDomainCount: defaultUpdateDomains,
-	}
+	cur, getErr := store.GetAvailabilitySet(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 
-	if r.Method == http.MethodPatch {
-		cur, err := store.GetAvailabilitySet(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
-		if err != nil {
-			azurearm.WriteCErr(w, err)
-			return
-		}
-
-		set = *cur
-		if req.Tags != nil {
-			set.Tags = req.Tags
-		}
+	set, ok := baseAvailabilitySet(w, r.Method, rp, &req, cur, getErr)
+	if !ok {
+		return
 	}
 
 	req.applyTo(&set)
+
+	if cur != nil && (set.PlatformFaultDomainCount != cur.PlatformFaultDomainCount ||
+		set.PlatformUpdateDomainCount != cur.PlatformUpdateDomainCount) {
+		azurearm.WriteError(w, http.StatusConflict, "PropertyChangeNotAllowed",
+			"Changing property 'platformFaultDomainCount' or 'platformUpdateDomainCount' is not allowed.")
+
+		return
+	}
 
 	stored, err := store.PutAvailabilitySet(r.Context(), set)
 	if err != nil {
@@ -162,6 +170,46 @@ func (h *Handler) putAvailabilitySet(
 	// AvailabilitySets CreateOrUpdate is synchronous and answers 200 for both
 	// create and update; the SDK rejects a 201.
 	azurearm.WriteJSON(w, http.StatusOK, h.toAvailabilitySetResponse(r.Context(), stored))
+}
+
+// baseAvailabilitySet is the set a request applies to: the stored one for
+// PATCH (which must exist) and for a PUT that replaces an existing set, or a
+// new one with the defaults. It writes the error and reports false when the
+// request cannot proceed.
+//
+//nolint:gocritic // rp is a request-scoped value
+func baseAvailabilitySet(
+	w http.ResponseWriter, method string, rp azurearm.ResourcePath, req *availabilitySetRequest,
+	cur *computedriver.AzureAvailabilitySet, getErr error,
+) (computedriver.AzureAvailabilitySet, bool) {
+	switch {
+	case method == http.MethodPatch && cur == nil:
+		azurearm.WriteCErr(w, getErr)
+		return computedriver.AzureAvailabilitySet{}, false
+	case method == http.MethodPatch:
+		set := *cur
+		if req.Tags != nil {
+			set.Tags = req.Tags
+		}
+
+		return set, true
+	case cur != nil:
+		set := *cur
+		set.Tags = req.Tags
+
+		return set, true
+	case req.Location == "":
+		azurearm.WriteError(w, http.StatusBadRequest, "LocationRequired",
+			"The location property is required for this definition.")
+
+		return computedriver.AzureAvailabilitySet{}, false
+	}
+
+	return computedriver.AzureAvailabilitySet{
+		Name: rp.ResourceName, Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup,
+		Location: req.Location, Tags: req.Tags, SKUName: "Classic",
+		PlatformFaultDomainCount: defaultFaultDomains, PlatformUpdateDomainCount: defaultUpdateDomains,
+	}, true
 }
 
 // applyTo copies the fields the request carries onto set.
@@ -228,24 +276,60 @@ func (h *Handler) availabilitySetMembers(ctx context.Context, id string) []subRe
 	return out
 }
 
-// validateAvailabilitySet reports whether a VM's availabilitySet reference
-// resolves to an existing set. An empty reference is valid.
-func (h *Handler) validateAvailabilitySet(ctx context.Context, ref *subResource) bool {
+// armError is an ARM error response to write.
+type armError struct {
+	status  int
+	code    string
+	message string
+}
+
+// checkAvailabilitySet validates a VM's availabilitySet reference: the set
+// must exist (404) and sit in the VM's subscription, resource group and
+// location (400 InvalidParameter). An empty reference is valid.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) checkAvailabilitySet(
+	ctx context.Context, rp azurearm.ResourcePath, ref *subResource, vmLocation string,
+) *armError {
 	if ref == nil || ref.ID == "" {
-		return true
+		return nil
 	}
 
 	store, ok := h.compute.(computedriver.AzureAvailabilitySets)
 	if !ok {
-		return true
+		return nil
 	}
 
 	pp, ok := azurearm.ParsePath(ref.ID)
 	if !ok || pp.ResourceName == "" {
-		return false
+		return &armError{http.StatusBadRequest, codeInvalidParameter, "Availability set id '" + ref.ID + "' is malformed."}
 	}
 
-	_, err := store.GetAvailabilitySet(ctx, pp.Subscription, pp.ResourceGroup, pp.ResourceName)
+	set, err := store.GetAvailabilitySet(ctx, pp.Subscription, pp.ResourceGroup, pp.ResourceName)
+	if err != nil {
+		return &armError{http.StatusNotFound, "NotFound", "The Resource '" + ref.ID + "' was not found."}
+	}
 
-	return err == nil
+	return availabilitySetScopeError(rp, &pp, ref.ID, set.Location, vmLocation)
+}
+
+// availabilitySetScopeError rejects a set outside the VM's resource group or
+// location.
+//
+//nolint:gocritic // rp is a request-scoped value
+func availabilitySetScopeError(
+	rp azurearm.ResourcePath, setPath *azurearm.ResourcePath, setID, setLocation, vmLocation string,
+) *armError {
+	if !strings.EqualFold(setPath.Subscription, rp.Subscription) ||
+		!strings.EqualFold(setPath.ResourceGroup, rp.ResourceGroup) {
+		return &armError{http.StatusBadRequest, codeInvalidParameter, "Availability set '" + setID +
+			"' must be in the same resource group as virtual machine '" + rp.ResourceName + "'."}
+	}
+
+	if vmLocation != "" && !strings.EqualFold(setLocation, vmLocation) {
+		return &armError{http.StatusBadRequest, codeInvalidParameter, "Availability set '" + setID +
+			"' is in location '" + setLocation + "', which differs from virtual machine location '" + vmLocation + "'."}
+	}
+
+	return nil
 }

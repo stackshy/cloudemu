@@ -105,10 +105,8 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
-	if !h.validateAvailabilitySet(r.Context(), req.Properties.AvailabilitySet) {
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound",
-			"The Resource '"+req.Properties.AvailabilitySet.ID+"' was not found.")
-
+	if ae := h.checkAvailabilitySet(r.Context(), rp, req.Properties.AvailabilitySet, req.Location); ae != nil {
+		azurearm.WriteError(w, ae.status, ae.code, ae.message)
 		return
 	}
 
@@ -137,6 +135,15 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	// ARM CreateOrUpdate is idempotent: a repeated PUT to the same {rg,name}
 	// updates the VM in place rather than provisioning a duplicate.
 	if existing, findErr := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); findErr == nil {
+		// A VM's availability set is fixed at create: moving it needs a
+		// delete and recreate.
+		if !strings.EqualFold(existing.Tags[availabilitySetTag], cfg.Tags[availabilitySetTag]) {
+			azurearm.WriteError(w, http.StatusConflict, "PropertyChangeNotAllowed",
+				"Changing property 'availabilitySet.id' is not allowed.")
+
+			return
+		}
+
 		h.updateExisting(w, r, rp, req, existing, cfg)
 		return
 	}
