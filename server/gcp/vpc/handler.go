@@ -37,6 +37,8 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/internal/projectctx"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -119,6 +121,8 @@ type Handler struct {
 	// handler's shared /operations route (which serves these polls) resolves a
 	// real operation and 404s a bogus one. Nil in a package-level server.
 	ops *gcprest.OperationRegistry
+	// iam keeps subnetwork policies keyed by full resource name.
+	iam gcpiam.Store
 }
 
 // New returns a networks handler. compute is optional (may be nil): when
@@ -130,8 +134,13 @@ func New(n netdriver.Networking, compute instanceLister) *Handler {
 		routers:   newRouterStore(),
 		addresses: newAddressStore(n),
 		routes:    newRouteStore(),
+		iam:       resourceiam.New(),
 	}
 }
+
+// SetIAMStore makes the handler keep subnetwork policies in s, the store
+// shared with the other GCP handlers.
+func (h *Handler) SetIAMStore(s gcpiam.Store) { h.iam = s }
 
 // SetOperationRegistry wires the shared compute-operation registry so the
 // operations this handler mints are resolvable (and unknown names 404) through
@@ -237,6 +246,15 @@ func (h *Handler) routeSubnetworks(w http.ResponseWriter, r *http.Request, rp gc
 		default:
 			gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
 		}
+
+		return
+	}
+
+	if gcpiam.IsVerb(rp.Action) {
+		gcpiam.ServeCompute(w, r, rp, h.iam, func() error {
+			_, err := findSubnetByName(r.Context(), h.net, rp.ResourceName, rp.ScopeName)
+			return err
+		})
 
 		return
 	}
@@ -683,6 +701,8 @@ func (h *Handler) deleteSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 		gcprest.WriteCErr(w, err)
 		return
 	}
+
+	h.iam.Delete(gcpiam.ComputeName(rp))
 
 	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
 		"subnetworks", rp.ResourceName, "delete")

@@ -37,6 +37,8 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/internal/projectctx"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
@@ -66,11 +68,14 @@ type Handler struct {
 	// buckets, when set, lets backendBuckets reject a bucketName that names no
 	// existing Cloud Storage bucket.
 	buckets BucketLister
+	// iam keeps backend service and service attachment policies keyed by full
+	// resource name.
+	iam gcpiam.Store
 }
 
 // New returns a GCP load balancer handler backed by lb.
 func New(lb lbdriver.LoadBalancer) *Handler {
-	return &Handler{lb: lb}
+	return &Handler{lb: lb, iam: resourceiam.New()}
 }
 
 // SetOperationRegistry wires the shared compute-operation registry so the
@@ -118,6 +123,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r = r.WithContext(projectctx.WithProject(r.Context(), rp.Project))
+
+	if h.serveIAM(w, r, rp) {
+		return
+	}
 
 	switch rp.ResourceType {
 	case resourceBackendServices:

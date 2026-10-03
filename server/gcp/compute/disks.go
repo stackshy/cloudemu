@@ -168,6 +168,8 @@ func (h *Handler) deleteDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 		return
 	}
 
+	h.dropPolicy(rp)
+
 	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
 		"disks", rp.ResourceName, "delete")
 

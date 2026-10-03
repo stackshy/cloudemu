@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -113,11 +114,13 @@ func (h *Handler) validateURLMapServiceRefs(ctx context.Context, rp gcprest.Reso
 }
 
 // requireBackendService rejects a url-map reference naming a backend service
-// that does not exist in the url-map's scope.
+// that does not exist in the url-map's scope. The service is looked up in the
+// project the reference names: a URL map may use a backend service of another
+// project (cross-project service referencing).
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) requireBackendService(ctx context.Context, rp gcprest.ResourcePath, ref namedRef) error {
-	_, err := h.findTGByName(ctx, rp, backendServiceName(ref.value))
+	_, err := h.findTGByName(refContext(ctx, ref.value), rp, backendServiceName(ref.value))
 	if cerrors.IsNotFound(err) {
 		return invalidRefErr(ref.field, ref.value, "backend service")
 	}
@@ -221,9 +224,11 @@ func (h *Handler) requireGCPResource(ctx context.Context, rp gcprest.ResourcePat
 		return nil
 	}
 
-	name := lastPathSegment(ref)
+	err := errOtherProject
+	if refInProject(ref, rp.Project) {
+		_, err = store.GetGCPResource(ctx, collection, scopeKeyOf(rp), lastPathSegment(ref))
+	}
 
-	_, err := store.GetGCPResource(ctx, collection, scopeKeyOf(rp), name)
 	if err == nil {
 		return nil
 	}
@@ -324,7 +329,12 @@ func (h *Handler) validateBackendRefs(ctx context.Context, backends []backend) e
 			continue
 		}
 
-		if _, err := store.GetGCPResource(ctx, collection, scope, name); err != nil {
+		err := errOtherProject
+		if refInProject(backends[i].Group, projectctx.ProjectOr(ctx, "")) {
+			_, err = store.GetGCPResource(ctx, collection, scope, name)
+		}
+
+		if err != nil {
 			if cerrors.IsNotFound(err) {
 				return cerrors.Newf(cerrors.InvalidArgument,
 					"Invalid value for field 'resource.backends[%d].group': '%s'. The referenced instance group resource cannot be found.",
@@ -336,4 +346,24 @@ func (h *Handler) validateBackendRefs(ctx context.Context, backends []backend) e
 	}
 
 	return nil
+}
+
+// errOtherProject stands in for a lookup of a reference to another project
+// where GCP requires the referenced resource to be in the referrer's project,
+// so the caller reports it the way it reports a missing resource.
+var errOtherProject error = cerrors.New(cerrors.NotFound, "referenced resource is in another project")
+
+// refInProject reports whether ref names a resource of project: it carries
+// that project, or none (a bare name or a scope-relative path). An empty
+// project accepts every reference.
+func refInProject(ref, project string) bool {
+	p := projectctx.FromPath(ref)
+
+	return p == "" || project == "" || p == project
+}
+
+// refContext addresses the project ref names, or keeps ctx's project when ref
+// carries none.
+func refContext(ctx context.Context, ref string) context.Context {
+	return projectctx.WithProject(ctx, projectctx.FromPath(ref))
 }

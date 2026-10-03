@@ -156,6 +156,8 @@ func (h *Handler) deleteImage(w http.ResponseWriter, r *http.Request, rp gcprest
 		return
 	}
 
+	h.dropPolicy(rp)
+
 	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
 		"images", rp.ResourceName, "delete")
 

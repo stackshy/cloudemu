@@ -363,7 +363,8 @@ func (h *Handler) healthCheckInUse(ctx context.Context, rp gcprest.ResourcePath)
 		}
 
 		for _, ref := range strings.Split(refs, ",") {
-			if lastPathSegment(ref) == rp.ResourceName && hcRefScope(ref, tgs[i].Tags[bsScopeTag]) == scope {
+			if lastPathSegment(ref) == rp.ResourceName && hcRefScope(ref, tgs[i].Tags[bsScopeTag]) == scope &&
+				refInProject(ref, rp.Project) {
 				return displayName(tgs[i].Tags, bsNameTag, tgs[i].Name)
 			}
 		}

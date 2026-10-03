@@ -156,8 +156,9 @@ type Drivers struct {
 	// Matches disambiguates by content and instance ownership, and it registers
 	// ahead of Cloud SQL (see New).
 	Spanner spannerdriver.Spanner
-	// ResourceIAM keeps the resource policies the BigQuery, Spanner and Cloud
-	// DNS handlers serve. Nil gets a fresh in-memory store.
+	// ResourceIAM keeps the resource policies the BigQuery, Spanner, Cloud DNS,
+	// Compute, VPC and load-balancing handlers serve. Nil gets a fresh
+	// in-memory store.
 	ResourceIAM gcpiam.Store
 	// Dataproc serves the dataproc.googleapis.com v1 cluster control plane against
 	// the dataproc driver. Its paths live under /v1/projects/{p}/regions/{r}/
@@ -480,6 +481,7 @@ func New(d Drivers) *server.Server {
 		// networkIP from the referenced subnetwork's CIDR.
 		computeH := compute.New(d.Compute, d.Networking)
 		computeH.SetOperationRegistry(computeOps)
+		computeH.SetIAMStore(iamStore)
 		srv.Register(computeH)
 	}
 
@@ -488,6 +490,7 @@ func New(d Drivers) *server.Server {
 		// subnet that still has instances.
 		netH := vpc.New(d.Networking, d.Compute)
 		netH.SetOperationRegistry(computeOps)
+		netH.SetIAMStore(iamStore)
 		srv.Register(netH)
 	}
 
@@ -509,6 +512,7 @@ func New(d Drivers) *server.Server {
 	if d.LB != nil {
 		lbH := lbsrv.New(d.LB)
 		lbH.SetOperationRegistry(computeOps)
+		lbH.SetIAMStore(iamStore)
 
 		if d.Storage != nil {
 			// backendBuckets reject a bucketName naming no existing GCS bucket.

@@ -110,3 +110,27 @@ func setPolicy(w http.ResponseWriter, r *http.Request, name string, s Store) {
 		gcprest.WriteJSON(w, http.StatusOK, out)
 	}
 }
+
+// ComputeName returns the full resource name of the compute resource rp
+// addresses ("projects/{p}/zones/{z}/disks/{d}", "projects/{p}/global/images/{i}"),
+// the key its policy is stored under.
+//
+//nolint:gocritic // rp is a request-scoped value
+func ComputeName(rp gcprest.ResourcePath) string {
+	link := gcprest.SelfLink("", rp.Project, rp.Scope, rp.ScopeName, rp.ResourceType, rp.ResourceName)
+
+	return strings.TrimPrefix(link, "/compute/v1/")
+}
+
+// ServeCompute answers the IAM verb in rp.Action on a compute resource once
+// exists confirms the resource is there, so a missing resource is a 404.
+//
+//nolint:gocritic // rp is a request-scoped value
+func ServeCompute(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, s Store, exists func() error) {
+	if err := exists(); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	Serve(w, r, rp.Action, ComputeName(rp), s)
+}
