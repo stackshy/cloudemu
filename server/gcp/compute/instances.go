@@ -113,8 +113,8 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
-	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
-		"instances", req.Name, "insert")
+	op := h.ops.RecordDoneTarget(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
+		"instances", req.Name, numericID(instances[0].ID), "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }

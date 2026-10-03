@@ -369,8 +369,8 @@ func (h *Handler) insertNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 		}
 	}
 
-	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
-		"networks", req.Name, "insert")
+	op := h.ops.RecordDoneTarget(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
+		"networks", req.Name, numericID(v.ID), "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
@@ -602,13 +602,14 @@ func (h *Handler) insertSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 		Tags:             subnetTags(&req),
 	}
 
-	if _, err := h.net.CreateSubnet(r.Context(), cfg); err != nil {
+	sub, err := h.net.CreateSubnet(r.Context(), cfg)
+	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
-		"subnetworks", req.Name, "insert")
+	op := h.ops.RecordDoneTarget(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
+		"subnetworks", req.Name, numericID(sub.ID), "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
@@ -1018,13 +1019,14 @@ func (h *Handler) insertFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 		Tags:        tags,
 	}
 
-	if _, err := h.net.CreateSecurityGroup(r.Context(), cfg); err != nil {
+	sg, err := h.net.CreateSecurityGroup(r.Context(), cfg)
+	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
-		"firewalls", req.Name, "insert")
+	op := h.ops.RecordDoneTarget(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
+		"firewalls", req.Name, numericID(sg.ID), "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
