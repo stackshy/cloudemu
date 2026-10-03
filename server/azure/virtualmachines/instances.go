@@ -30,6 +30,7 @@ const (
 	diskRGTag           = "cloudemu:azureRG"
 	subTag              = "cloudemu:azureSub" // the subscription a resource was created in
 	diskCreateOptionTag = "cloudemu:createOption"
+	availabilitySetTag  = "cloudemu:availabilitySet" // the availability set a VM was placed in
 )
 
 // osDiskDevice is the driver Device marker a materialized OS disk is attached
@@ -104,6 +105,13 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
+	if !h.validateAvailabilitySet(r.Context(), req.Properties.AvailabilitySet) {
+		azurearm.WriteError(w, http.StatusNotFound, "NotFound",
+			"The Resource '"+req.Properties.AvailabilitySet.ID+"' was not found.")
+
+		return
+	}
+
 	cfg := computedriver.InstanceConfig{
 		ImageID:           imageRefToID(req.Properties.StorageProfile),
 		InstanceType:      hardwareSize(req.Properties.HardwareProfile),
@@ -120,6 +128,10 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		Identity:          toDriverIdentity(req.Identity),
 		Plan:              toDriverPlan(req.Plan),
 		NetworkInterfaces: nicRefs,
+	}
+
+	if as := req.Properties.AvailabilitySet; as != nil && as.ID != "" {
+		cfg.Tags[availabilitySetTag] = as.ID
 	}
 
 	// ARM CreateOrUpdate is idempotent: a repeated PUT to the same {rg,name}
@@ -1505,7 +1517,7 @@ func stripInternalTags(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 
 	for k, v := range in {
-		if k == armNameTag || k == subTag {
+		if k == armNameTag || k == subTag || k == availabilitySetTag {
 			continue
 		}
 
