@@ -551,8 +551,8 @@ func sanitizeUnmodeled(v any, parent string) any {
 
 // isZeroScalarJSON reports whether v is the JSON zero value for a scalar type:
 // null, "", false, or 0. Only scalars are classified; maps and slices always
-// return false here (an empty object/array is a much rarer "clear" signal and
-// is left to the existing verbatim-capture behavior).
+// return false here (missingEntry drops an empty object separately, and an
+// empty array is still captured verbatim).
 func isZeroScalarJSON(v any) bool {
 	switch t := v.(type) {
 	case nil:
@@ -620,6 +620,15 @@ func missingEntry(k string, reqVal, respVal any, present bool) (any, bool) {
 		// still captured verbatim below; this only narrows the false-positive
 		// case of a zero scalar.
 		if isZeroScalarJSON(reqVal) {
+			return nil, false
+		}
+
+		// An empty request object carries no data, and real ARM omits it from
+		// the read rather than echoing {}. azurerm sends
+		// "additionalCapabilities": {} on every VM PUT whose config has no
+		// additional_capabilities block; echoing it back made the provider
+		// flatten a block of false values and plan a permanent diff.
+		if obj, ok := reqVal.(map[string]any); ok && len(obj) == 0 {
 			return nil, false
 		}
 
