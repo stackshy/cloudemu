@@ -79,7 +79,7 @@ func TestKQLProjectAndCount(t *testing.T) {
 
 	for query, want := range map[string]row{
 		"Resources | where location == 'westus' | count": {"Count": 2},
-		"Resources | summarize count()":                   {"count_": 4},
+		"Resources | summarize count()":                  {"count_": 4},
 	} {
 		q, err := parseKQL(query)
 		if err != nil {
