@@ -30,6 +30,7 @@ const (
 	diskRGTag           = "cloudemu:azureRG"
 	subTag              = "cloudemu:azureSub" // the subscription a resource was created in
 	diskCreateOptionTag = "cloudemu:createOption"
+	availabilitySetTag  = "cloudemu:availabilitySet" // the availability set a VM was placed in
 )
 
 // osDiskDevice is the driver Device marker a materialized OS disk is attached
@@ -104,6 +105,11 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
+	if ae := h.checkAvailabilitySet(r.Context(), rp, req.Properties.AvailabilitySet, req.Location); ae != nil {
+		azurearm.WriteError(w, ae.status, ae.code, ae.message)
+		return
+	}
+
 	cfg := computedriver.InstanceConfig{
 		ImageID:           imageRefToID(req.Properties.StorageProfile),
 		InstanceType:      hardwareSize(req.Properties.HardwareProfile),
@@ -122,9 +128,22 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		NetworkInterfaces: nicRefs,
 	}
 
+	if as := req.Properties.AvailabilitySet; as != nil && as.ID != "" {
+		cfg.Tags[availabilitySetTag] = as.ID
+	}
+
 	// ARM CreateOrUpdate is idempotent: a repeated PUT to the same {rg,name}
 	// updates the VM in place rather than provisioning a duplicate.
 	if existing, findErr := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); findErr == nil {
+		// A VM's availability set is fixed at create: moving it needs a
+		// delete and recreate.
+		if !strings.EqualFold(existing.Tags[availabilitySetTag], cfg.Tags[availabilitySetTag]) {
+			azurearm.WriteError(w, http.StatusConflict, "PropertyChangeNotAllowed",
+				"Changing property 'availabilitySet.id' is not allowed.")
+
+			return
+		}
+
 		h.updateExisting(w, r, rp, req, existing, cfg)
 		return
 	}
@@ -1505,7 +1524,7 @@ func stripInternalTags(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 
 	for k, v := range in {
-		if k == armNameTag || k == subTag {
+		if k == armNameTag || k == subTag || k == availabilitySetTag {
 			continue
 		}
 
