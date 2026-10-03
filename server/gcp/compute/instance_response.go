@@ -45,9 +45,13 @@ func (h *Handler) toInstanceResponse(ctx context.Context, inst *computedriver.In
 			Items:       netTags,
 			Fingerprint: fingerprint(strings.Join(netTags, ",")),
 		},
-		Metadata:               metadataResponse(metaItems),
-		Scheduling:             defaultScheduling(),
-		ServiceAccounts:        serviceAccountsFor(inst.Tags, project),
+		Metadata:   metadataResponse(metaItems),
+		Scheduling: defaultScheduling(),
+		// The client's serviceAccounts[] round-trip exactly. An instance inserted
+		// without them has none: the compute API attaches no default account
+		// (gcloud and the console add one client-side), so Terraform with no
+		// service_account block must read back an empty list.
+		ServiceAccounts:        decodeServiceAccounts(inst.Tags),
 		ShieldedInstanceConfig: defaultShieldedConfig(),
 	}
 
@@ -245,40 +249,6 @@ func defaultScheduling() *scheduling {
 		Preemptible:       false,
 		ProvisioningModel: "STANDARD",
 	}
-}
-
-// serviceAccountsFor reflects the serviceAccounts[] the client attached at
-// insert time (email + scopes, round-tripped exactly). When the client omitted
-// them, it falls back to the default compute service account real GCP attaches.
-func serviceAccountsFor(tags map[string]string, project string) []serviceAccount {
-	if sas := decodeServiceAccounts(tags); len(sas) > 0 {
-		return sas
-	}
-
-	return defaultServiceAccounts(project)
-}
-
-// defaultComputeSAScopes are the scopes real GCP grants the default compute
-// service account when an instance is created without a serviceAccounts block
-// (the "default access" set), not the full cloud-platform scope.
-var defaultComputeSAScopes = []string{ //nolint:gochecknoglobals // static lookup table
-	"https://www.googleapis.com/auth/devstorage.read_only",
-	"https://www.googleapis.com/auth/logging.write",
-	"https://www.googleapis.com/auth/monitoring.write",
-	"https://www.googleapis.com/auth/service.management.readonly",
-	"https://www.googleapis.com/auth/servicecontrol",
-	"https://www.googleapis.com/auth/trace.append",
-}
-
-// defaultServiceAccounts returns the default compute service account GCP attaches
-// to an instance created without one. Real GCP resolves the account to the
-// project's compute SA email (never the literal "default", which is only a
-// request-side shorthand) with the default-access scope set.
-func defaultServiceAccounts(project string) []serviceAccount {
-	return []serviceAccount{{
-		Email:  project + "-compute@developer.gserviceaccount.com",
-		Scopes: defaultComputeSAScopes,
-	}}
 }
 
 func defaultShieldedConfig() *shieldedInstanceConfig {

@@ -44,24 +44,14 @@ func TestSDKInstanceServiceAccountsRoundTrip(t *testing.T) {
 		t.Errorf("serviceAccount scopes=%v want %v", sas[0].GetScopes(), scopes)
 	}
 
-	// An instance without a service_account gets the default compute SA.
+	// An instance inserted without serviceAccounts has none: the compute API
+	// attaches no default account.
 	insertBasicInstance(t, client, "default-sa-vm", &computepb.NetworkInterface{
 		Network: ptrStr("global/networks/default"),
 	}, nil)
 
-	def := getSDKInstance(t, client, "default-sa-vm")
-
-	dsas := def.GetServiceAccounts()
-
-	wantEmail := testProject + "-compute@developer.gserviceaccount.com"
-	if len(dsas) != 1 || dsas[0].GetEmail() != wantEmail {
-		t.Fatalf("default-sa-vm serviceAccounts=%v want single email=%q", dsas, wantEmail)
-	}
-
-	// Real GCP grants the default compute SA the default-access scope set, not
-	// the full cloud-platform scope.
-	if len(dsas[0].GetScopes()) != 6 || dsas[0].GetScopes()[0] != "https://www.googleapis.com/auth/devstorage.read_only" {
-		t.Errorf("default SA scopes=%v want the 6-scope default-access set", dsas[0].GetScopes())
+	if dsas := getSDKInstance(t, client, "default-sa-vm").GetServiceAccounts(); len(dsas) != 0 {
+		t.Fatalf("default-sa-vm serviceAccounts=%v want none", dsas)
 	}
 }
 

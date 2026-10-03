@@ -30,6 +30,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -345,9 +346,17 @@ func (h *Handler) insertNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 		Tags:      tags,
 	}
 
-	if _, err := h.net.CreateVPC(r.Context(), cfg); err != nil {
+	v, err := h.net.CreateVPC(r.Context(), cfg)
+	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
+	}
+
+	if tags[autoSubnetTag] == trueValue {
+		if err := h.createAutoSubnets(r.Context(), v.ID, req.Name); err != nil {
+			gcprest.WriteCErr(w, err)
+			return
+		}
 	}
 
 	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
@@ -403,7 +412,11 @@ func (h *Handler) getNetwork(w http.ResponseWriter, r *http.Request, rp gcprest.
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, toNetworkResponse(v, rp, hostOf(r)))
+	host := hostOf(r)
+	resp := toNetworkResponse(v, rp, host)
+	resp.Subnetworks = h.subnetLinksByNetwork(r.Context(), rp.Project, host)[v.ID]
+
+	gcprest.WriteJSON(w, http.StatusOK, resp)
 }
 
 //nolint:gocritic,dupl // rp is a request-scoped value; list-shape duplicates by-design across resources
@@ -418,12 +431,15 @@ func (h *Handler) listNetworks(w http.ResponseWriter, r *http.Request, rp gcpres
 	filter := r.URL.Query().Get("filter")
 
 	items := make([]networkResponse, 0, len(infos))
+	subnetLinks := h.subnetLinksByNetwork(r.Context(), rp.Project, host)
 
 	for i := range infos {
 		scope := rp
 		scope.ResourceName = tagOr(infos[i].Tags, netNameTag, infos[i].ID)
 
 		resp := toNetworkResponse(&infos[i], scope, host)
+		resp.Subnetworks = subnetLinks[infos[i].ID]
+
 		if nameMatches(filter, resp.Name) {
 			items = append(items, resp)
 		}
@@ -460,7 +476,12 @@ func (h *Handler) deleteNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 	// 400 resourceInUseByAnotherResource rather than the generic 409 conditionNotMet
 	// WriteCErr maps FailedPrecondition to, so translate that one case here, and
 	// re-derive the child's user-facing name so the message names the resource the
-	// caller typed, not the provider error's internal driver id.
+	// caller typed, not the provider error's internal driver id. An auto mode
+	// network's own subnetworks go with it.
+	if !h.releaseAutoSubnets(w, r, rp, v.ID) {
+		return
+	}
+
 	if err := h.net.DeleteVPC(r.Context(), v.ID); err != nil {
 		if cerrors.IsFailedPrecondition(err) {
 			gcprest.WriteError(w, http.StatusBadRequest, "resourceInUseByAnotherResource",
@@ -681,12 +702,12 @@ func (h *Handler) deleteSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 		return
 	}
 
-	// Real GCP refuses to delete a subnetwork that still has instances in it,
-	// returning 400 resourceInUseByAnotherResource (mirrors the network delete
-	// guard against live subnets above). Scan instances whose networkInterfaces
-	// subnet references this subnet and reject; delete succeeds once empty.
+	// Real GCP refuses to delete a subnetwork that still has instances or
+	// reserved internal addresses in it, returning 400
+	// resourceInUseByAnotherResource (mirrors the network delete guard against
+	// live subnets above); delete succeeds once empty.
 	host := hostOf(r)
-	if inst, scanErr := h.instanceInSubnet(r.Context(), host, rp.Project, rp.ResourceName, rp.ScopeName); scanErr != nil {
+	if inst, scanErr := h.subnetUser(r.Context(), host, rp.Project, rp.ResourceName, rp.ScopeName); scanErr != nil {
 		gcprest.WriteCErr(w, scanErr)
 		return
 	} else if inst != "" {
@@ -1429,6 +1450,29 @@ func resolveNetwork(ctx context.Context, n netdriver.Networking, ref string) (st
 }
 
 // Response shaping.
+
+// subnetLinksByNetwork maps each network's driver id to the sorted self-links
+// of its subnetworks, the subnetworks[] a network GET returns.
+func (h *Handler) subnetLinksByNetwork(ctx context.Context, project, host string) map[string][]string {
+	out := map[string][]string{}
+
+	subnets, err := h.net.DescribeSubnets(ctx, nil)
+	if err != nil {
+		return out
+	}
+
+	for i := range subnets {
+		s := &subnets[i]
+		out[s.VPCID] = append(out[s.VPCID], gcprest.SelfLink(host, project, gcprest.ScopeRegions,
+			s.AvailabilityZone, resourceSubnetworks, tagOr(s.Tags, subnetNameTag, s.ID)))
+	}
+
+	for _, links := range out {
+		sort.Strings(links)
+	}
+
+	return out
+}
 
 //nolint:gocritic // rp is a request-scoped value
 func toNetworkResponse(info *netdriver.VPCInfo, rp gcprest.ResourcePath, host string) networkResponse {
