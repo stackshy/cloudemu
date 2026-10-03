@@ -503,7 +503,9 @@ func writeOnlyProperty(parent, key string) bool {
 		"validationkey",
 		// Container Apps environment storages: azureFile.accountKey is accepted
 		// on PUT and never returned.
-		"accountkey":
+		"accountkey",
+		// VM extensions: protectedSettings is accepted on PUT and never returned.
+		"protectedsettings":
 		return true
 	default:
 		return false

@@ -879,6 +879,29 @@ type AzureSSHKeyUpdater interface {
 	UpdateKeyPair(ctx context.Context, name string, publicKey *string, tags map[string]string) (*KeyPairInfo, error)
 }
 
+// AzureVMExtension is a Microsoft.Compute/virtualMachines/extensions child.
+// Properties holds the ARM properties as sent (publisher, type,
+// typeHandlerVersion, settings, ...) minus protectedSettings, which Azure
+// accepts on write and never returns.
+type AzureVMExtension struct {
+	Name       string
+	Location   string
+	Tags       map[string]string
+	Properties map[string]any
+}
+
+// AzureVMExtensions is an optional Azure-only capability for VM extensions.
+// Extensions belong to a VM: they are deleted with it. Only the Azure VM mock
+// implements it; the wire handler type-asserts for it.
+type AzureVMExtensions interface {
+	// PutVMExtension creates or replaces the extension on the VM, reporting
+	// whether it was created. Returns NotFound when the VM does not exist.
+	PutVMExtension(ctx context.Context, instanceID string, ext AzureVMExtension) (*AzureVMExtension, bool, error)
+	GetVMExtension(ctx context.Context, instanceID, name string) (*AzureVMExtension, error)
+	ListVMExtensions(ctx context.Context, instanceID string) ([]AzureVMExtension, error)
+	DeleteVMExtension(ctx context.Context, instanceID, name string) error
+}
+
 // KeyPairGenerator is an optional Azure-only capability for the ARM
 // sshPublicKeys generateKeyPair action, which generates a fresh RSA key pair
 // server-side, stores the public key on the resource, and returns both the

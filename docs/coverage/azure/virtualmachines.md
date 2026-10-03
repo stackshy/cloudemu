@@ -110,6 +110,17 @@ AzureVMDeleter is an optional Azure-only capability that removes VMs
 | --- | --- |
 | `DeleteInstances` |  |
 
+### AzureVMExtensions
+
+AzureVMExtensions is an optional Azure-only capability for VM extensions.
+
+| Operation | Description |
+| --- | --- |
+| `DeleteVMExtension` |  |
+| `GetVMExtension` |  |
+| `ListVMExtensions` |  |
+| `PutVMExtension` | PutVMExtension creates or replaces the extension on the VM, reporting |
+
 ### ConsoleReader
 
 ConsoleReader is an optional capability a Compute implementation may provide

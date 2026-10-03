@@ -1795,12 +1795,19 @@
         "doc": "CreateOrUpdateFirewallPolicy stores pol as a full replace and reports"
       },
       {
+        "name": "CreateOrUpdateRuleCollectionGroup",
+        "doc": "Rule collection groups are children of a policy and are deleted with"
+      },
+      {
         "name": "DeleteAzureFirewall",
         "doc": "DeleteAzureFirewall removes the firewall, returning NotFound if it does not"
       },
       {
         "name": "DeleteFirewallPolicy",
         "doc": "DeleteFirewallPolicy removes the policy, returning NotFound if it does not"
+      },
+      {
+        "name": "DeleteRuleCollectionGroup"
       },
       {
         "name": "GetAzureFirewall",
@@ -1811,12 +1818,18 @@
         "doc": "GetFirewallPolicy returns the policy identified by (resourceGroup, name),"
       },
       {
+        "name": "GetRuleCollectionGroup"
+      },
+      {
         "name": "ListAzureFirewalls",
         "doc": "ListAzureFirewalls returns the firewalls in rg, or all when rg is empty"
       },
       {
         "name": "ListFirewallPolicies",
         "doc": "ListFirewallPolicies returns the policies in rg, or all when rg is empty"
+      },
+      {
+        "name": "ListRuleCollectionGroups"
       }
     ],
     "providers": {
@@ -4419,6 +4432,25 @@
         ]
       },
       {
+        "name": "AzureVMExtensions",
+        "doc": "AzureVMExtensions is an optional Azure-only capability for VM extensions.",
+        "operations": [
+          {
+            "name": "DeleteVMExtension"
+          },
+          {
+            "name": "GetVMExtension"
+          },
+          {
+            "name": "ListVMExtensions"
+          },
+          {
+            "name": "PutVMExtension",
+            "doc": "PutVMExtension creates or replaces the extension on the VM, reporting"
+          }
+        ]
+      },
+      {
         "name": "ConsoleReader",
         "doc": "ConsoleReader is an optional capability a Compute implementation may provide",
         "operations": [
@@ -4972,6 +5004,9 @@
       },
       {
         "name": "GetRevision"
+      },
+      {
+        "name": "ListAppSecrets"
       },
       {
         "name": "ListAppsByResourceGroup"

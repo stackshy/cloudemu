@@ -19,7 +19,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [Cache](./cache.md) | `cache` | 17 |
 | [ChaosStudio](./chaosstudio.md) | (provider-native) | 8 |
 | [Communication](./communication.md) | (provider-native) | 10 |
-| [ContainerApps](./containerapps.md) | (provider-native) | 27 |
+| [ContainerApps](./containerapps.md) | (provider-native) | 28 |
 | [ContainerInstances](./containerinstances.md) | `containerinstances` | 10 |
 | [CosmosDB](./cosmosdb.md) | `database` | 24 |
 | [CosmosPostgreSQL](./cosmospostgresql.md) | `cosmospostgresql` | 34 |
@@ -34,7 +34,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [ElasticSan](./elasticsan.md) | (provider-native) | 8 |
 | [EventGrid](./eventgrid.md) | `eventbus` | 16 |
 | [Eventhub](./eventhub.md) | (provider-native) | 14 |
-| [Firewall](./firewall.md) | `azurefirewall` | 8 |
+| [Firewall](./firewall.md) | `azurefirewall` | 12 |
 | [FrontDoor](./frontdoor.md) | `frontdoor` | 12 |
 | [Functions](./functions.md) | `serverless` | 27 |
 | [HealthcareApis](./healthcareapis.md) | (provider-native) | 16 |
