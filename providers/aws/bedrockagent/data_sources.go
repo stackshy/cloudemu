@@ -20,7 +20,11 @@ func (m *Mock) CreateDataSource(_ context.Context, cfg driver.DataSourceConfig) 
 		return nil, errors.Newf(errors.NotFound, "knowledge base %q not found", cfg.KnowledgeBaseID)
 	}
 
-	id := newID(m.dataSource)
+	id, err := newID(m.dataSource)
+	if err != nil {
+		return nil, err
+	}
+
 	now := m.now()
 	ds := &driver.DataSource{
 		ID:                      id,
@@ -116,7 +120,11 @@ func (m *Mock) StartIngestionJob(_ context.Context, kbID, dsID, description stri
 		return nil, errors.Newf(errors.NotFound, "data source %q not found", dsID)
 	}
 
-	id := newID(m.jobs)
+	id, err := newID(m.jobs)
+	if err != nil {
+		return nil, err
+	}
+
 	now := m.now()
 	job := &driver.IngestionJob{
 		ID:              id,

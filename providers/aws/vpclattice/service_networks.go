@@ -55,7 +55,11 @@ func (m *Mock) CreateServiceNetwork(
 		authType = authTypeNone
 	}
 
-	id := idgen.GenerateLongID("sn-")
+	id, err := idgen.GenerateLongID("sn-")
+	if err != nil {
+		return nil, err
+	}
+
 	sn := &driver.ServiceNetwork{
 		ID:                   id,
 		ARN:                  m.arn("servicenetwork/" + id),
