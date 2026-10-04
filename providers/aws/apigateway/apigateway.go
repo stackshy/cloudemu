@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/vtl"
 	"github.com/stackshy/cloudemu/v2/services/apigateway/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -83,13 +84,21 @@ type Mock struct {
 	regionMu sync.RWMutex
 	certs    map[string]*driver.ClientCertificate
 	account  driver.Account
+
+	// templates caches parsed mapping templates by source, so a deployed
+	// template is parsed once rather than on every invoke.
+	templates *vtl.Cache
 }
+
+// templateCacheBytes bounds the memory of the parsed mapping templates kept.
+const templateCacheBytes = 64 << 20
 
 // New creates a new API Gateway mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
 		apis: memstore.New[*apiData](), opts: opts,
 		certs: map[string]*driver.ClientCertificate{}, account: defaultAccount(),
+		templates: vtl.NewCache(templateCacheBytes),
 	}
 }
 

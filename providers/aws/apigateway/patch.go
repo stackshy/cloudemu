@@ -17,6 +17,10 @@ const (
 	opRemove  = "remove"
 )
 
+// pathContentHandling is the contentHandling patch path shared by
+// integrations and integration responses.
+const pathContentHandling = "/contentHandling"
+
 // pathDescription is the JSON Pointer for the /description field, shared by the
 // RestApi, Stage and Deployment patch appliers.
 const pathDescription = "/description"
@@ -182,15 +186,16 @@ func (m *Mock) UpdateMethod(
 		return nil, cerrors.New(cerrors.NotFound, msgMethodNotFound)
 	}
 
+	next := copyMethod(mth)
 	for _, op := range ops {
-		switch op.Path {
-		case "/authorizationType":
-			mth.AuthorizationType = op.Value
-		case "/apiKeyRequired":
-			mth.APIKeyRequired = parseBool(op.Value)
-		}
+		applyMethodPatch(&next, op)
 	}
 
+	if err := validateMethodRequestParams(next.RequestParameters); err != nil {
+		return nil, err
+	}
+
+	*mth = next
 	out := copyMethod(mth)
 
 	return &out, nil
@@ -218,11 +223,17 @@ func (m *Mock) UpdateIntegration(
 		return nil, cerrors.New(cerrors.NotFound, msgIntegrationNotFound)
 	}
 
+	next := copyIntegration(mth.Integration)
 	for _, op := range ops {
-		applyIntegrationPatch(mth.Integration, op)
+		applyIntegrationPatch(&next, op)
 	}
 
-	out := *mth.Integration
+	if err := validateIntegrationSettings(&next, mth.RequestParameters); err != nil {
+		return nil, err
+	}
+
+	*mth.Integration = next
+	out := copyIntegration(mth.Integration)
 
 	return &out, nil
 }
@@ -242,6 +253,51 @@ func applyIntegrationPatch(ig *driver.Integration, op driver.PatchOperation) {
 		if n, err := strconv.Atoi(op.Value); err == nil {
 			ig.TimeoutInMillis = n
 		}
+	case "/credentials":
+		ig.Credentials = patchRef(op)
+	case pathContentHandling:
+		ig.ContentHandling = patchRef(op)
+	case "/cacheNamespace":
+		ig.CacheNamespace = patchRef(op)
+	default:
+		applyIntegrationMapPatch(ig, op)
+	}
+}
+
+// applyIntegrationMapPatch handles the map- and list-valued integration paths.
+func applyIntegrationMapPatch(ig *driver.Integration, op driver.PatchOperation) {
+	applyMapPatch(op, "/requestTemplates/", func(k, v string, remove bool) {
+		ig.RequestTemplates = patchStrMap(ig.RequestTemplates, k, v, remove)
+	})
+	applyMapPatch(op, "/requestParameters/", func(k, v string, remove bool) {
+		ig.RequestParameters = patchStrMap(ig.RequestParameters, k, v, remove)
+	})
+	applyMapPatch(op, "/cacheKeyParameters/", func(k, _ string, remove bool) {
+		action := opAdd
+		if remove {
+			action = opRemove
+		}
+
+		ig.CacheKeyParameters = patchStringSlice(ig.CacheKeyParameters, action, k)
+	})
+}
+
+// applyMethodPatch applies one patch op to a Method.
+func applyMethodPatch(mth *driver.Method, op driver.PatchOperation) {
+	switch op.Path {
+	case "/authorizationType":
+		mth.AuthorizationType = op.Value
+	case "/apiKeyRequired":
+		mth.APIKeyRequired = parseBool(op.Value)
+	case "/operationName":
+		mth.OperationName = patchRef(op)
+	default:
+		applyMapPatch(op, "/requestParameters/", func(k, v string, remove bool) {
+			mth.RequestParameters = patchBoolMap(mth.RequestParameters, k, v, remove)
+		})
+		applyMapPatch(op, "/requestModels/", func(k, v string, remove bool) {
+			mth.RequestModels = patchStrMap(mth.RequestModels, k, v, remove)
+		})
 	}
 }
 
@@ -407,18 +463,6 @@ func patchStringSlice(s []string, op, v string) []string {
 	default:
 		return s
 	}
-}
-
-// copyMethod returns a deep copy of a method and its integration.
-func copyMethod(mth *driver.Method) driver.Method {
-	out := *mth
-
-	if mth.Integration != nil {
-		ig := *mth.Integration
-		out.Integration = &ig
-	}
-
-	return out
 }
 
 // parseBool reports whether an on-the-wire patch value (always a string) is
