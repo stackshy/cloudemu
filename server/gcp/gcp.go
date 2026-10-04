@@ -1127,7 +1127,7 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.Monitoring != nil {
-		srv.Register(monitoring.New(d.Monitoring))
+		srv.Register(monitoring.New(d.Monitoring, d.ProjectID))
 	}
 
 	// Kubernetes data-plane API. Matches /k8s/{uid}/..., disjoint from every

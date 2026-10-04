@@ -26,12 +26,17 @@ func (m *Mock) visible(ctx context.Context, tags map[string]string) bool {
 		return true
 	}
 
-	owner := tags[ProjectTag]
-	if owner == "" {
-		owner = m.opts.ProjectID
+	return m.ownerOf(tags) == m.project(ctx)
+}
+
+// ownerOf returns the project that owns a record with tags. A record with no
+// project tag belongs to the default project.
+func (m *Mock) ownerOf(tags map[string]string) string {
+	if owner := tags[ProjectTag]; owner != "" {
+		return owner
 	}
 
-	return owner == m.project(ctx)
+	return m.opts.ProjectID
 }
 
 // stampProject returns tags with the owning project set, allocating the map

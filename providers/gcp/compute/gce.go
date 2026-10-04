@@ -162,10 +162,10 @@ const gcpZoneTagKey = "cloudemu:gcp:zone"
 // zone when the launch zone is known. Cloud Monitoring resource filters
 // (resource.labels.zone=…, resource.labels.project_id=…) match on these, so all
 // three must be emitted for a filtered timeSeries.list to return the series.
-func (m *Mock) metricDimensions(instanceID, zone string) map[string]string {
+func metricDimensions(instanceID, zone, project string) map[string]string {
 	dims := map[string]string{
 		"instance_id": instanceID,
-		"project_id":  m.opts.ProjectID,
+		"project_id":  project,
 	}
 
 	if zone != "" {
@@ -175,7 +175,7 @@ func (m *Mock) metricDimensions(instanceID, zone string) map[string]string {
 	return dims
 }
 
-func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime, zone string) {
+func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime string, tags map[string]string) {
 	if m.monitoring == nil {
 		return
 	}
@@ -187,7 +187,7 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime, 
 
 	metrics := gcpMetricNames()
 	values := []float64{0.25, 1024.0, 512.0, 100.0, 50.0}
-	dims := m.metricDimensions(instanceID, zone)
+	dims := metricDimensions(instanceID, tags[gcpZoneTagKey], m.ownerOf(tags))
 
 	var data []mondriver.MetricDatum
 
@@ -211,14 +211,14 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime, 
 	_ = m.monitoring.PutMetricData(ctx, data)
 }
 
-func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID, zone string, values []float64) {
+func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID string, tags map[string]string, values []float64) {
 	if m.monitoring == nil {
 		return
 	}
 
 	metrics := gcpMetricNames()
 	now := m.opts.Clock.Now()
-	dims := m.metricDimensions(instanceID, zone)
+	dims := metricDimensions(instanceID, tags[gcpZoneTagKey], m.ownerOf(tags))
 	data := make([]mondriver.MetricDatum, len(metrics))
 
 	for i, metricName := range metrics {
@@ -356,7 +356,7 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		m.instances.Set(id, inst)
 		results = append(results, toInstance(inst))
 		created = append(created, inst)
-		m.emitInstanceMetrics(ctx, id, inst.LaunchTime, tags[gcpZoneTagKey])
+		m.emitInstanceMetrics(ctx, id, inst.LaunchTime, tags)
 	}
 
 	return results, nil
@@ -402,7 +402,7 @@ func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t 
 		_ = m.sm.Transition(id, t.finalState)
 		inst.State = t.finalState
 
-		m.emitLifecycleMetrics(ctx, id, inst.Tags[gcpZoneTagKey], t.metricValues)
+		m.emitLifecycleMetrics(ctx, id, inst.Tags, t.metricValues)
 	}
 
 	return nil
