@@ -71,6 +71,8 @@ type changeSetRecord struct {
 // change nothing. A template or parameter error is returned and nothing is
 // stored.
 func (m *Mock) CreateChangeSet(ctx context.Context, in *cfn.CreateChangeSetInput) (*cfn.ChangeSet, error) {
+	m.settle(ctx)
+
 	if err := validateChangeSetInput(in); err != nil {
 		return nil, err
 	}
@@ -493,7 +495,9 @@ func (sd *stackData) view(rec *changeSetRecord) cfn.ChangeSet {
 
 // DescribeChangeSet returns a change set and one page of its changes.
 // Property values are included only when IncludePropertyValues is set.
-func (m *Mock) DescribeChangeSet(_ context.Context, in *cfn.DescribeChangeSetInput) (*cfn.ChangeSet, error) {
+func (m *Mock) DescribeChangeSet(ctx context.Context, in *cfn.DescribeChangeSetInput) (*cfn.ChangeSet, error) {
+	m.settle(ctx)
+
 	sd, rec, err := m.lookupChangeSet(in.ChangeSetName, in.StackName)
 	if err != nil {
 		return nil, err
@@ -557,7 +561,9 @@ func pageChanges(changes []cfn.ResourceChange, token string) ([]cfn.ResourceChan
 
 // ListChangeSets returns one page of a stack's change sets in creation
 // order.
-func (m *Mock) ListChangeSets(_ context.Context, in *cfn.ListChangeSetsInput) (*cfn.ChangeSetList, error) {
+func (m *Mock) ListChangeSets(ctx context.Context, in *cfn.ListChangeSetsInput) (*cfn.ChangeSetList, error) {
+	m.settle(ctx)
+
 	sd, err := m.activeStack(in.StackName)
 	if err != nil {
 		return nil, err
@@ -585,10 +591,19 @@ func (m *Mock) ListChangeSets(_ context.Context, in *cfn.ListChangeSetsInput) (*
 // sets are deleted as it starts. OnStackFailure, or DisableRollback when the
 // change set has none, decides what a failure does.
 func (m *Mock) ExecuteChangeSet(ctx context.Context, in *cfn.ExecuteChangeSetInput) error {
+	m.settle(ctx)
+
 	sd, rec, err := m.lookupChangeSet(in.ChangeSetName, in.StackName)
 	if err != nil {
 		return err
 	}
+
+	if _, terr := sd.checkToken(in.ClientRequestToken, actionExecuteChangeSet); terr != nil {
+		return terr
+	}
+
+	sd.opMu.Lock()
+	defer sd.opMu.Unlock()
 
 	sd.mu.RLock()
 	retried := in.ClientRequestToken != "" && rec.ExecuteToken == in.ClientRequestToken
@@ -692,7 +707,7 @@ func (m *Mock) executeCreate(ctx context.Context, sd *stackData, run *execution)
 		return err
 	}
 
-	sd.finishExecute(rec, m.provision(ctx, sd, effective, res, run.onFailure))
+	m.provision(ctx, sd, effective, res, &pendingOp{OnFailure: run.onFailure, ChangeSetID: rec.ChangeSet.ID})
 
 	return nil
 }
@@ -715,7 +730,7 @@ func (m *Mock) executeUpdate(ctx context.Context, sd *stackData, run *execution)
 		return berr
 	}
 
-	sd.finishExecute(rec, m.runUpdate(ctx, sd, in, plan, run.onFailure))
+	m.runUpdate(ctx, sd, in, plan, &pendingOp{OnFailure: run.onFailure, ChangeSetID: rec.ChangeSet.ID})
 
 	return nil
 }
@@ -735,9 +750,12 @@ func (m *Mock) beginExecute(
 		return err
 	}
 
-	if !allowed(sd.stack.Status) {
+	if !allowed(sd.stack.Status) || sd.pending != nil || sd.busy {
 		return cerrors.Newf(cerrors.InvalidArgument, msgStackCannotUpdate, sd.stack.ID, sd.stack.Status)
 	}
+
+	sd.recordToken(run.token, actionExecuteChangeSet)
+	m.startCursor(sd)
 
 	rec.ChangeSet.ExecutionStatus = cfn.ExecutionInProgress
 	rec.ExecuteToken = run.token
@@ -758,14 +776,25 @@ func (m *Mock) beginExecute(
 	return nil
 }
 
-// finishExecute records how an execution ended.
-func (sd *stackData) finishExecute(rec *changeSetRecord, ok bool) {
+// finishChangeSet records how the execution of change set id ended. An
+// operation that no change set started passes "".
+func (sd *stackData) finishChangeSet(id string, ok bool) {
+	if id == "" {
+		return
+	}
+
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	rec.ChangeSet.ExecutionStatus = cfn.ExecutionComplete
-	if !ok {
-		rec.ChangeSet.ExecutionStatus = cfn.ExecutionFailed
+	for _, rec := range sd.changeSets {
+		if rec.ChangeSet.ID != id {
+			continue
+		}
+
+		rec.ChangeSet.ExecutionStatus = cfn.ExecutionComplete
+		if !ok {
+			rec.ChangeSet.ExecutionStatus = cfn.ExecutionFailed
+		}
 	}
 }
 
@@ -785,7 +814,9 @@ func (sd *stackData) obsoleteChangeSets() {
 // REVIEW_IN_PROGRESS stays when its last change set is deleted, as in AWS.
 // Named within a stack that exists, a change set that is already gone is a
 // successful no-op.
-func (m *Mock) DeleteChangeSet(_ context.Context, in *cfn.DeleteChangeSetInput) error {
+func (m *Mock) DeleteChangeSet(ctx context.Context, in *cfn.DeleteChangeSetInput) error {
+	m.settle(ctx)
+
 	sd, rec, err := m.lookupChangeSet(in.ChangeSetName, in.StackName)
 
 	var named *cfn.ExceptionError

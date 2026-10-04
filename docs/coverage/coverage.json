@@ -3413,6 +3413,9 @@
     "interface": "provider-native",
     "operations": [
       {
+        "name": "CancelUpdateStack"
+      },
+      {
         "name": "ContinueUpdateRollback"
       },
       {
@@ -3449,6 +3452,9 @@
         "name": "ExecuteChangeSet"
       },
       {
+        "name": "GetStackPolicy"
+      },
+      {
         "name": "GetTemplate"
       },
       {
@@ -3468,6 +3474,12 @@
       },
       {
         "name": "ListStacks"
+      },
+      {
+        "name": "RollbackStack"
+      },
+      {
+        "name": "SetStackPolicy"
       },
       {
         "name": "UpdateStack"
@@ -7274,6 +7286,36 @@
       },
       {
         "name": "RollbackNodePool"
+      },
+      {
+        "name": "SetClusterLogging"
+      },
+      {
+        "name": "SetClusterMonitoring"
+      },
+      {
+        "name": "SetLegacyAbac"
+      },
+      {
+        "name": "SetMaintenancePolicy"
+      },
+      {
+        "name": "SetMasterAuth"
+      },
+      {
+        "name": "SetNetworkPolicy"
+      },
+      {
+        "name": "SetNodePoolAutoscaling"
+      },
+      {
+        "name": "SetNodePoolManagement"
+      },
+      {
+        "name": "SetNodePoolSize"
+      },
+      {
+        "name": "SetResourceLabels"
       },
       {
         "name": "StartIPRotation"
