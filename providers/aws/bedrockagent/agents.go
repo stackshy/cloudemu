@@ -24,7 +24,11 @@ func (m *Mock) CreateAgent(_ context.Context, cfg driver.AgentConfig) (*driver.A
 		return nil, err
 	}
 
-	id := newID(m.agents)
+	id, err := newID(m.agents)
+	if err != nil {
+		return nil, err
+	}
+
 	now := m.now()
 
 	ttl := cfg.IdleSessionTTLInSeconds
@@ -180,7 +184,11 @@ func (m *Mock) CreateAgentAlias(_ context.Context, cfg driver.AgentAliasConfig) 
 		return nil, errors.Newf(errors.NotFound, "agent %q not found", cfg.AgentID)
 	}
 
-	id := newID(m.aliases)
+	id, err := newID(m.aliases)
+	if err != nil {
+		return nil, err
+	}
+
 	now := m.now()
 	alias := &driver.AgentAlias{
 		ID:          id,

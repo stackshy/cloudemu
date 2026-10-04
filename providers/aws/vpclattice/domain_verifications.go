@@ -22,7 +22,11 @@ func (m *Mock) StartDomainVerification(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	id := idgen.GenerateLongID("dv-")
+	id, err := idgen.GenerateLongID("dv-")
+	if err != nil {
+		return nil, err
+	}
+
 	d := &driver.DomainVerification{
 		ID:         id,
 		ARN:        m.arn("domainverification/" + id),

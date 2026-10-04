@@ -1,6 +1,7 @@
 package sts_test
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -48,4 +49,31 @@ func distinctChars(s string) int {
 	}
 
 	return len(seen)
+}
+
+// TestMintMatchesRealSTSShape checks the minted credential has the shape real
+// STS returns: ASIA plus 16 base32 characters, a 40-character base64-alphabet
+// secret and a long base64 session token.
+func TestMintMatchesRealSTSShape(t *testing.T) {
+	store := sts.NewSessionStore(config.NewFakeClock(time.Unix(0, 0)))
+
+	sess, err := store.Mint(time.Hour, sts.SessionOwner{})
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+
+	checks := []struct {
+		name, got string
+		re        *regexp.Regexp
+	}{
+		{"AccessKeyID", sess.AccessKeyID, regexp.MustCompile(`^ASIA[A-Z2-7]{16}$`)},
+		{"SecretAccessKey", sess.SecretAccessKey, regexp.MustCompile(`^[A-Za-z0-9+/]{40}$`)},
+		{"SessionToken", sess.SessionToken, regexp.MustCompile(`^[A-Za-z0-9+/]{300,}$`)},
+	}
+
+	for _, c := range checks {
+		if !c.re.MatchString(c.got) {
+			t.Fatalf("%s = %q, want shape %s", c.name, c.got, c.re)
+		}
+	}
 }

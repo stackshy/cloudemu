@@ -31,7 +31,11 @@ func (m *Mock) CreateGraphqlAPI(_ context.Context, in *driver.CreateGraphqlAPIIn
 		return nil, err
 	}
 
-	apiID := newAPIID()
+	apiID, err := newAPIID()
+	if err != nil {
+		return nil, err
+	}
+
 
 	api := driver.GraphqlAPI{
 		APIID:              apiID,

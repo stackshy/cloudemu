@@ -11,17 +11,27 @@ import (
 // client-side, so a too-short or wrong-charset id is rejected before the request
 // is sent (breaking key rotation, tag ops, GetCommandInvocation, etc.).
 func TestAWSIDFormats(t *testing.T) {
+	must := func(id string, err error) string {
+		t.Helper()
+
+		if err != nil {
+			t.Fatalf("generate id: %v", err)
+		}
+
+		return id
+	}
+
 	cases := []struct {
 		name string
 		got  string
 		re   *regexp.Regexp
 	}{
-		{"AccessKeyID", idgen.AccessKeyID(), regexp.MustCompile(`^AKIA[A-Z2-7]{16}$`)},
-		{"TempAccessKeyID", idgen.TempAccessKeyID(), regexp.MustCompile(`^ASIA[A-Z2-7]{16}$`)},
-		{"AppSyncAPIID", idgen.AppSyncAPIID(), regexp.MustCompile(`^[a-z0-9]{26}$`)},
-		{"BedrockInferenceProfileID", idgen.BedrockInferenceProfileID(), regexp.MustCompile(`^[a-z0-9]{12}$`)},
-		{"BedrockAgentResourceID", idgen.BedrockAgentResourceID(), regexp.MustCompile(`^[0-9A-Z]{10}$`)},
-		{"GenerateLongID", idgen.GenerateLongID("svc-"), regexp.MustCompile(`^svc-[0-9a-f]{17}$`)},
+		{"AccessKeyID", must(idgen.AccessKeyID()), regexp.MustCompile(`^AKIA[A-Z2-7]{16}$`)},
+		{"TempAccessKeyID", must(idgen.TempAccessKeyID()), regexp.MustCompile(`^ASIA[A-Z2-7]{16}$`)},
+		{"AppSyncAPIID", must(idgen.AppSyncAPIID()), regexp.MustCompile(`^[a-z0-9]{26}$`)},
+		{"BedrockInferenceProfileID", must(idgen.BedrockInferenceProfileID()), regexp.MustCompile(`^[a-z0-9]{12}$`)},
+		{"BedrockAgentResourceID", must(idgen.BedrockAgentResourceID()), regexp.MustCompile(`^[0-9A-Z]{10}$`)},
+		{"GenerateLongID", must(idgen.GenerateLongID("svc-")), regexp.MustCompile(`^svc-[0-9a-f]{17}$`)},
 		{"UUID", idgen.UUID(), regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)},
 	}
 	for _, tc := range cases {
@@ -34,14 +44,14 @@ func TestAWSIDFormats(t *testing.T) {
 
 	// Access key ids must be >= 16 chars total, the minimum the AWS SDKs enforce
 	// client-side before UpdateAccessKey/DeleteAccessKey.
-	if len(idgen.AccessKeyID()) < 16 {
-		t.Fatalf("AccessKeyID length %d < 16", len(idgen.AccessKeyID()))
+	if id := must(idgen.AccessKeyID()); len(id) < 16 {
+		t.Fatalf("AccessKeyID length %d < 16", len(id))
 	}
 
 	// Uniqueness sanity across a batch (crypto/rand-backed).
 	seen := map[string]bool{}
 	for range 100 {
-		id := idgen.AccessKeyID()
+		id := must(idgen.AccessKeyID())
 		if seen[id] {
 			t.Fatalf("duplicate AccessKeyID %q", id)
 		}

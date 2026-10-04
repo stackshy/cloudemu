@@ -34,8 +34,13 @@ func (m *Mock) CreateAPIKey(_ context.Context, in *driver.CreateAPIKeyInput) (*d
 		return nil, err
 	}
 
+	id, err := newAPIKeyID()
+	if err != nil {
+		return nil, err
+	}
+
 	key := driver.APIKey{
-		ID:          newAPIKeyID(),
+		ID:          id,
 		Description: in.Description,
 		Expires:     expires,
 		Deletes:     deletes,
@@ -125,8 +130,13 @@ func (m *Mock) DeleteAPIKey(_ context.Context, apiID, id string) error {
 
 // newAPIKeyID mints a da2 API-key id: "da2-" plus 26 lowercase alphanumeric
 // characters, the same random shape AppSync uses for an apiId.
-func newAPIKeyID() string {
-	return apiKeyIDPrefix + idgen.AppSyncAPIID()
+func newAPIKeyID() (string, error) {
+	id, err := idgen.AppSyncAPIID()
+	if err != nil {
+		return "", err
+	}
+
+	return apiKeyIDPrefix + id, nil
 }
 
 // computeExpiry resolves an API-key expiry (epoch seconds) and its deletion
