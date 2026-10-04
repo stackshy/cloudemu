@@ -20,7 +20,11 @@ func (m *Mock) CreatePrompt(_ context.Context, cfg driver.PromptConfig) (*driver
 		return nil, err
 	}
 
-	id := newID(m.prompts)
+	id, err := newID(m.prompts)
+	if err != nil {
+		return nil, err
+	}
+
 	now := m.now()
 	prompt := &driver.Prompt{
 		ID:                       id,

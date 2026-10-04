@@ -1,6 +1,7 @@
 package sts
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -89,17 +90,29 @@ func (s *SessionStore) Mint(dur time.Duration, owner SessionOwner) (Session, err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for {
-		sess.AccessKeyID = idgen.TempAccessKeyID()
-		if _, taken := s.sessions[sess.AccessKeyID]; !taken {
-			break
+	for range maxKeyIDAttempts {
+		id, err := idgen.TempAccessKeyID()
+		if err != nil {
+			return Session{}, err
+		}
+
+		if _, taken := s.sessions[id]; !taken {
+			sess.AccessKeyID = id
+			s.sessions[id] = sess
+
+			return sess, nil
 		}
 	}
 
-	s.sessions[sess.AccessKeyID] = sess
-
-	return sess, nil
+	return Session{}, errKeyIDExhausted
 }
+
+// maxKeyIDAttempts bounds the retries when a freshly drawn access key id is
+// already taken. With 80 random bits a single collision is already unlikely.
+const maxKeyIDAttempts = 5
+
+// errKeyIDExhausted reports that every attempt drew an id already in use.
+var errKeyIDExhausted = errors.New("could not generate a unique temporary access key id")
 
 // Lookup returns the recorded session for id, if any. Expiry is not filtered
 // here: the gate compares the returned Expiration against its own clock so it

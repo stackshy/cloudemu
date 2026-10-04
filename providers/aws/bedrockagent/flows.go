@@ -20,7 +20,11 @@ func (m *Mock) CreateFlow(_ context.Context, cfg driver.FlowConfig) (*driver.Flo
 		return nil, err
 	}
 
-	id := newID(m.flows)
+	id, err := newID(m.flows)
+	if err != nil {
+		return nil, err
+	}
+
 	now := m.now()
 	flow := &driver.Flow{
 		ID:                       id,

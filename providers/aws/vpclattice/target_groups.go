@@ -41,7 +41,11 @@ func (m *Mock) CreateTargetGroup(_ context.Context, in *driver.CreateTargetGroup
 		_ = json.Unmarshal(in.Config, &cfg)
 	}
 
-	id := idgen.GenerateLongID("tg-")
+	id, err := idgen.GenerateLongID("tg-")
+	if err != nil {
+		return nil, err
+	}
+
 	tg := &driver.TargetGroup{
 		ID:                          id,
 		ARN:                         m.arn("targetgroup/" + id),

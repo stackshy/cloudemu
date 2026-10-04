@@ -115,24 +115,30 @@ const (
 	hexLower      = "0123456789abcdef"
 )
 
-// randString returns n characters drawn from alphabet via crypto/rand. A random
-// source failure degrades to a correctly-shaped constant string rather than
-// panicking, so callers always get a valid-length id.
-func randString(n int, alphabet string) string {
+// randString returns n characters drawn from alphabet via crypto/rand. A
+// random source failure is returned rather than papered over with a constant,
+// so no caller can end up with a predictable id.
+func randString(n int, alphabet string) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
-		for i := range b {
-			b[i] = alphabet[0]
-		}
-
-		return string(b)
+		return "", fmt.Errorf("generate id: %w", err)
 	}
 
 	for i := range b {
 		b[i] = alphabet[int(b[i])%len(alphabet)]
 	}
 
-	return string(b)
+	return string(b), nil
+}
+
+// prefixed returns prefix followed by n random characters from alphabet.
+func prefixed(prefix string, n int, alphabet string) (string, error) {
+	r, err := randString(n, alphabet)
+	if err != nil {
+		return "", err
+	}
+
+	return prefix + r, nil
 }
 
 // accessKeyRandLen is the number of characters after the AKIA/ASIA prefix in an
@@ -144,11 +150,11 @@ const accessKeyRandLen = 16
 // shape client-side (minimum length 16) before sending UpdateAccessKey /
 // DeleteAccessKey, so a shorter id makes key rotation/deletion impossible through
 // the real tooling.
-func AccessKeyID() string { return "AKIA" + randString(accessKeyRandLen, base32Upper) }
+func AccessKeyID() (string, error) { return prefixed("AKIA", accessKeyRandLen, base32Upper) }
 
 // TempAccessKeyID is the STS temporary-credential variant of AccessKeyID (ASIA
 // prefix), used for assumed-role / session credentials.
-func TempAccessKeyID() string { return "ASIA" + randString(accessKeyRandLen, base32Upper) }
+func TempAccessKeyID() (string, error) { return prefixed("ASIA", accessKeyRandLen, base32Upper) }
 
 // Signing secrets. These authenticate callers, so unlike the ids above they
 // never fall back to a predictable value: a crypto/rand failure is returned.
@@ -212,7 +218,7 @@ const longIDRandLen = 17
 // the length AWS's newer resource ids use (e.g. VPC Lattice svc-/sn-/tg-/rule-).
 // The SDKs validate these client-side, so the legacy 8-char GenerateID is too
 // short and is rejected before the request is sent.
-func GenerateLongID(prefix string) string { return prefix + randString(longIDRandLen, hexLower) }
+func GenerateLongID(prefix string) (string, error) { return prefixed(prefix, longIDRandLen, hexLower) }
 
 // appSyncAPIIDLen is the length of an AppSync GraphQL API id.
 const appSyncAPIIDLen = 26
@@ -220,14 +226,16 @@ const appSyncAPIIDLen = 26
 // AppSyncAPIID returns a 26-character lowercase-alphanumeric id matching the shape
 // AppSync mints for a GraphQL API. The SDKs embed it in ARNs the CLI validates, so
 // the legacy 8-char id breaks TagResource/ListTagsForResource client-side.
-func AppSyncAPIID() string { return randString(appSyncAPIIDLen, lowerAlphaNum) }
+func AppSyncAPIID() (string, error) { return randString(appSyncAPIIDLen, lowerAlphaNum) }
 
 // bedrockProfileIDLen is the length of a Bedrock application inference profile id.
 const bedrockProfileIDLen = 12
 
 // BedrockInferenceProfileID returns a 12-character lowercase-alphanumeric id,
 // the shape Bedrock mints for an application inference profile.
-func BedrockInferenceProfileID() string { return randString(bedrockProfileIDLen, lowerAlphaNum) }
+func BedrockInferenceProfileID() (string, error) {
+	return randString(bedrockProfileIDLen, lowerAlphaNum)
+}
 
 // bedrockAgentIDLen is the length of every Bedrock Agents resource id.
 const bedrockAgentIDLen = 10
@@ -236,7 +244,7 @@ const bedrockAgentIDLen = 10
 // shape Bedrock Agents mints for agents, aliases, knowledge bases, data sources,
 // ingestion jobs, flows and prompts. Their ARNs embed it and the tagging API's
 // ARN pattern requires exactly this shape.
-func BedrockAgentResourceID() string { return randString(bedrockAgentIDLen, upperAlphaNum) }
+func BedrockAgentResourceID() (string, error) { return randString(bedrockAgentIDLen, upperAlphaNum) }
 
 // ARN generates an AWS ARN.
 func ARN(partition, service, region, accountID, resource string) string {
