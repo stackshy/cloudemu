@@ -21,6 +21,19 @@ func locationOf(name string) string {
 	return defaultLocation
 }
 
+// projectOf extracts the project segment from a projects/{p}/... resource
+// name, or "" when absent.
+func projectOf(name string) string {
+	rest, ok := strings.CutPrefix(name, "projects/")
+	if !ok {
+		return ""
+	}
+
+	project, _, _ := strings.Cut(rest, "/")
+
+	return project
+}
+
 func (m *Mock) CreateDataset(_ context.Context, cfg driver.DatasetConfig) (*driver.Operation, *driver.Dataset, error) {
 	now := m.now()
 	name := m.resName(cfg.Location, "datasets", m.newID())

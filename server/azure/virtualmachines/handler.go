@@ -86,7 +86,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case resourceType, resourceTypeScaleSets, resourceTypeLocations:
+	case resourceType, resourceTypeScaleSets, resourceTypeLocations, resourceTypeAvailabilitySets:
 		return true
 	}
 
@@ -110,6 +110,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if rp.ResourceType == resourceTypeScaleSets {
 		h.serveScaleSet(w, r, rp)
+		return
+	}
+
+	if rp.ResourceType == resourceTypeAvailabilitySets {
+		h.serveAvailabilitySet(w, r, rp)
 		return
 	}
 
@@ -170,6 +175,11 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp azu
 
 //nolint:gocritic // rp travels through the dispatch chain once per request
 func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if strings.EqualFold(rp.SubResource, subExtensions) {
+		h.serveExtensions(w, r, rp)
+		return
+	}
+
 	// Boot-diagnostics serial-log download is a GET sub-path, unlike the POST
 	// lifecycle/retrieve actions.
 	if strings.EqualFold(rp.SubResource, "bootDiagnostics") {

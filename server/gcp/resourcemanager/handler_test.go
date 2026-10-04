@@ -3,8 +3,24 @@ package resourcemanager
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+// TestGetProject: projects.get reports the project ACTIVE with a number, which
+// Terraform's google_service_networking_connection resolves before it builds
+// the network name.
+func TestGetProject(t *testing.T) {
+	rec := httptest.NewRecorder()
+	New().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/projects/demo", nil))
+
+	body := rec.Body.String()
+	for _, want := range []string{`"projectId":"demo"`, `"projectNumber":"123456789012"`, `"lifecycleState":"ACTIVE"`} {
+		if rec.Code != http.StatusOK || !strings.Contains(body, want) {
+			t.Fatalf("GET project = %d %s, want 200 containing %s", rec.Code, body, want)
+		}
+	}
+}
 
 func TestMatches(t *testing.T) {
 	h := New()
@@ -24,10 +40,17 @@ func TestMatches(t *testing.T) {
 		{"sa colon verb", http.MethodPost, "/v1/projects/demo/serviceAccounts/x@y:getIamPolicy", false},
 		// Must NOT claim Firestore's project document paths.
 		{"firestore docs", http.MethodGet, "/v1/projects/demo/databases/(default)/documents", false},
+		// projects.get, which Terraform uses to resolve the project number.
+		{"get on project", http.MethodGet, "/v1/projects/demo", true},
+		{"get with verb", http.MethodGet, "/v1/projects/demo:getIamPolicy", false},
 		// Wrong method / no verb.
-		{"get on project", http.MethodGet, "/v1/projects/demo", false},
+		{"delete on project", http.MethodDelete, "/v1/projects/demo", false},
 		{"unknown verb", http.MethodPost, "/v1/projects/demo:frobnicate", false},
 		{"wrong prefix", http.MethodPost, "/v2/projects/demo:getIamPolicy", false},
+		{"org getIamPolicy", http.MethodPost, "/v1/organizations/123:getIamPolicy", true},
+		{"org setIamPolicy", http.MethodPost, "/v1/organizations/123:setIamPolicy", true},
+		{"org get", http.MethodGet, "/v1/organizations/123", false},
+		{"org roles", http.MethodPost, "/v1/organizations/123/roles", false},
 	}
 
 	for _, tc := range cases {

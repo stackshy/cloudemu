@@ -33,6 +33,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
@@ -250,6 +251,12 @@ func vaultScope(r *http.Request) (vault, kvPath string, ok bool) {
 
 			return host[:i], path, true
 		}
+	}
+
+	// A storage account host is never a Key Vault request, so a blob, file or
+	// queue path such as /data/keys/app.pem stays with the storage handlers.
+	if azurearm.IsStorageHost(host) {
+		return "", "", false
 	}
 
 	// Bare host: /{vault}/{keyword}/…: the vault is the leading segment. A bare

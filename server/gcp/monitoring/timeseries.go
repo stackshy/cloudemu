@@ -24,7 +24,7 @@ type seriesReader interface {
 func (h *Handler) serveTimeSeries(w http.ResponseWriter, r *http.Request, project string) {
 	switch r.Method {
 	case http.MethodGet:
-		h.listTimeSeries(w, r)
+		h.listTimeSeries(w, r, project)
 	case http.MethodPost:
 		h.createTimeSeries(w, r, project)
 	default:
@@ -32,7 +32,49 @@ func (h *Handler) serveTimeSeries(w http.ResponseWriter, r *http.Request, projec
 	}
 }
 
-func (h *Handler) createTimeSeries(w http.ResponseWriter, r *http.Request, _ string) {
+// projectLabel is the monitored-resource label naming the project a series
+// belongs to.
+const projectLabel = "project_id"
+
+// projectSeries returns the raw datums of key that belong to project. A datum
+// with no project_id label was written before project scoping and belongs to
+// the default project.
+func (h *Handler) projectSeries(reader seriesReader, key mondriver.MetricIdentifier, project string) []mondriver.MetricDatum {
+	raw := reader.GCPRawSeries(key.Namespace, key.MetricName)
+	out := raw[:0]
+
+	for i := range raw {
+		owner := raw[i].Dimensions[projectLabel]
+		if owner == "" {
+			owner = h.defaultProject
+		}
+
+		if owner == project {
+			out = append(out, raw[i])
+		}
+	}
+
+	return out
+}
+
+// withProject returns labels with project_id set to project unless the writer
+// already named one. labels is not modified.
+func withProject(labels map[string]string, project string) map[string]string {
+	if labels[projectLabel] != "" {
+		return labels
+	}
+
+	out := make(map[string]string, len(labels)+1)
+	for k, v := range labels {
+		out[k] = v
+	}
+
+	out[projectLabel] = project
+
+	return out
+}
+
+func (h *Handler) createTimeSeries(w http.ResponseWriter, r *http.Request, project string) {
 	var body createTimeSeriesRequest
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
@@ -55,12 +97,14 @@ func (h *Handler) createTimeSeries(w http.ResponseWriter, r *http.Request, _ str
 			return
 		}
 
+		labels := withProject(ts.Metric.Labels, project)
+
 		for _, p := range ts.Points {
 			data = append(data, mondriver.MetricDatum{
 				Namespace:  ns,
 				MetricName: metric,
 				Value:      pointValue(p.Value),
-				Dimensions: ts.Metric.Labels,
+				Dimensions: labels,
 				Timestamp:  pointTimestamp(p.Interval),
 			})
 		}
@@ -74,7 +118,7 @@ func (h *Handler) createTimeSeries(w http.ResponseWriter, r *http.Request, _ str
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
-func (h *Handler) listTimeSeries(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) listTimeSeries(w http.ResponseWriter, r *http.Request, project string) {
 	reader, ok := h.mon.(seriesReader)
 	if !ok {
 		writeError(w, http.StatusNotImplemented, "UNIMPLEMENTED", "timeSeries.list unsupported")
@@ -98,7 +142,7 @@ func (h *Handler) listTimeSeries(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		raw := reader.GCPRawSeries(key.Namespace, key.MetricName)
+		raw := h.projectSeries(reader, key, project)
 		out.TimeSeries = append(out.TimeSeries, buildSeries(fullType, raw, filter, start, end)...)
 	}
 

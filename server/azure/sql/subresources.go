@@ -449,6 +449,13 @@ func (h *Handler) serveFailoverGroup(w http.ResponseWriter, r *http.Request, rp 
 		return
 	}
 
+	// Only a POST verb may follow the group name; anything else is a nested
+	// type failover groups do not have.
+	if rp.SubResourceAction != "" && r.Method != http.MethodPost {
+		azurearm.WriteUnknownType(w, r, rp)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.writeFailoverGroup(w, r, rp, fg, false)

@@ -110,7 +110,20 @@ func parseRoute(urlPath string) (route, bool) {
 
 // knownResource reports whether seg is a resource collection this handler serves.
 func knownResource(seg string) bool {
-	return seg == vaultsColl || seg == operationsSeg
+	return seg == vaultsColl || seg == operationsSeg || unemulatedColl(seg)
+}
+
+// unemulatedColl reports the Backup and DR collections that exist on the real
+// API but are not emulated yet. They answer 501, so a Backup and DR client gets
+// a clear error rather than another service's response.
+func unemulatedColl(seg string) bool {
+	switch seg {
+	case "backupPlans", "backupPlanAssociations", "managementServers",
+		"dataSourceReferences", "resourceBackupConfigs", "serviceConfig":
+		return true
+	default:
+		return false
+	}
 }
 
 // Matches claims /v1/projects/{p}/locations/{l}/{backupVaults|operations}[/…]
@@ -140,6 +153,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if rt.resource == operationsSeg {
 		h.serveOperation(w, r)
+		return
+	}
+
+	if unemulatedColl(rt.resource) {
+		gcprest.WriteError(w, http.StatusNotImplemented, "notImplemented",
+			"Backup and DR "+rt.resource+" is not emulated yet")
+
 		return
 	}
 

@@ -13,7 +13,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `aad` | - | [Aad](./azure/aad.md) | - | - | 2 |
 | `accesscontextmanager` | - | - | [AccessContextManager](./gcp/accesscontextmanager.md) | - | 17 |
 | `acm` | [ACM](./aws/acm.md) | - | - | - | 17 |
-| `aks` | - | [AKS](./azure/aks.md) | - | - | 18 |
+| `aks` | - | [AKS](./azure/aks.md) | - | - | 19 |
 | `aoss` | [AOSS](./aws/aoss.md) | - | - | - | 18 |
 | `apigateway` | [APIGateway](./aws/apigateway.md) | - | - | - | 50 |
 | `apigatewaygcp` | - | - | [APIGateway](./gcp/apigateway.md) | - | 16 |
@@ -28,7 +28,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `aps` | [APS](./aws/aps.md) | - | - | - | 21 |
 | `athena` | [Athena](./aws/athena.md) | - | - | - | 26 |
 | `azureai` | - | [AI](./azure/ai.md) | - | - | 92 |
-| `azurefirewall` | - | [Firewall](./azure/firewall.md) | - | - | 8 |
+| `azurefirewall` | - | [Firewall](./azure/firewall.md) | - | - | 12 |
 | `azuresearch` | - | [Search](./azure/search.md) | - | - | 53 |
 | `backup` | [Backup](./aws/backup.md) | - | - | - | 25 |
 | `backupdr` | - | - | [BackupDR](./gcp/backupdr.md) | - | 6 |
@@ -47,7 +47,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cloudasset` | - | - | [Cloudasset](./gcp/cloudasset.md) | - | 11 |
 | `cloudbilling` | - | - | [Cloudbilling](./gcp/cloudbilling.md) | - | 14 |
 | `clouddeploy` | - | - | [CloudDeploy](./gcp/clouddeploy.md) | - | 11 |
-| `cloudformation` | [CloudFormation](./aws/cloudformation.md) | - | - | - | 22 |
+| `cloudformation` | [CloudFormation](./aws/cloudformation.md) | - | - | - | 26 |
 | `cloudfront` | [CloudFront](./aws/cloudfront.md) | - | - | - | 11 |
 | `cloudids` | - | - | [CloudIDS](./gcp/cloudids.md) | - | 6 |
 | `cloudrun` | - | - | [CloudRun](./gcp/cloudrun.md) | - | 18 |
@@ -60,7 +60,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `composer` | - | - | [Composer](./gcp/composer.md) | - | 6 |
 | `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | - | 37 |
 | `configservice` | [Config](./aws/config.md) | - | - | - | 102 |
-| `containerapps` | - | [ContainerApps](./azure/containerapps.md) | - | - | 19 |
+| `containerapps` | - | [ContainerApps](./azure/containerapps.md) | - | - | 28 |
 | `containerinstances` | - | [ContainerInstances](./azure/containerinstances.md) | - | - | 10 |
 | `containerregistry` | [ECR](./aws/ecr.md) | [ACR](./azure/acr.md) | [ArtifactRegistry](./gcp/artifactregistry.md) | - | 15 |
 | `cosmosaccount` | - | [Cosmosaccount](./azure/cosmosaccount.md) | - | - | 10 |
@@ -91,7 +91,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `filestore` | - | - | [Filestore](./gcp/filestore.md) | - | 5 |
 | `fis` | [FIS](./aws/fis.md) | - | - | - | 12 |
 | `frontdoor` | - | [FrontDoor](./azure/frontdoor.md) | - | - | 12 |
-| `gke` | - | - | [GKE](./gcp/gke.md) | - | 18 |
+| `gke` | - | - | [GKE](./gcp/gke.md) | - | 28 |
 | `gkebackup` | - | - | [GKEBackup](./gcp/gkebackup.md) | - | 11 |
 | `gkehub` | - | - | [GKEHub](./gcp/gkehub.md) | - | 16 |
 | `globalaccelerator` | [GlobalAccelerator](./aws/globalaccelerator.md) | - | - | - | 20 |
@@ -109,7 +109,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `kinesis` | [Kinesis](./aws/kinesis.md) | - | - | - | 39 |
 | `kinesisvideo` | [KinesisVideo](./aws/kinesisvideo.md) | - | - | - | 17 |
 | `kms` | [KMS](./aws/kms.md) | - | - | - | 46 |
-| `kms-gcp` | - | - | [KMS](./gcp/kms.md) | - | 17 |
+| `kms-gcp` | - | - | [KMS](./gcp/kms.md) | - | 22 |
 | `kusto` | - | [Kusto](./azure/kusto.md) | - | - | 14 |
 | `loadbalancer` | [ELB](./aws/elb.md) | [LB](./azure/lb.md) | [LB](./gcp/lb.md) | - | 19 |
 | `loadtesting` | - | [LoadTesting](./azure/loadtesting.md) | - | - | 8 |
@@ -120,7 +120,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `lro` | - | - | [LRO](./gcp/lro.md) | - | 1 |
 | `managedcassandra` | - | [ManagedCassandra](./azure/managedcassandra.md) | - | - | 15 |
 | `managedgrafana` | - | [ManagedGrafana](./azure/managedgrafana.md) | - | - | 8 |
-| `managedidentity` | - | [ManagedIdentity](./azure/managedidentity.md) | - | - | 8 |
+| `managedidentity` | - | [ManagedIdentity](./azure/managedidentity.md) | - | - | 12 |
 | `managedkafka` | - | - | [ManagedKafka](./gcp/managedkafka.md) | - | 11 |
 | `managedlustre` | - | [ManagedLustre](./azure/managedlustre.md) | - | - | 12 |
 | `memorydb` | [MemoryDB](./aws/memorydb.md) | - | - | - | 33 |

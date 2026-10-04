@@ -20,7 +20,11 @@ func (m *Mock) CreateKnowledgeBase(_ context.Context, cfg driver.KnowledgeBaseCo
 		return nil, err
 	}
 
-	id := newID(m.knowledge)
+	id, err := newID(m.knowledge)
+	if err != nil {
+		return nil, err
+	}
+
 	now := m.now()
 	kb := &driver.KnowledgeBase{
 		ID:                         id,

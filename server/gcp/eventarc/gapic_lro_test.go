@@ -7,6 +7,7 @@ import (
 
 	eventarc "cloud.google.com/go/eventarc/apiv1"
 	"cloud.google.com/go/eventarc/apiv1/eventarcpb"
+	"cloud.google.com/go/longrunning/autogen/longrunningpb"
 	"google.golang.org/api/option"
 
 	"github.com/stackshy/cloudemu/v2"
@@ -69,5 +70,25 @@ func TestGAPICCreateTriggerWait(t *testing.T) {
 
 	if trig == nil || trig.GetName() == "" {
 		t.Fatalf("Wait returned no trigger: %+v", trig)
+	}
+
+	// GLRO-05 / GAR-02: the delete mints its own operation (it used to reuse
+	// and overwrite "op-<trigger>") and resolves to the deleted Trigger.
+	del, err := client.DeleteTrigger(ctx, &eventarcpb.DeleteTriggerRequest{Name: trig.GetName()})
+	if err != nil {
+		t.Fatalf("DeleteTrigger: %v", err)
+	}
+
+	if del.Name() == op.Name() {
+		t.Fatalf("create and delete share operation name %q", del.Name())
+	}
+
+	gone, err := del.Wait(ctx)
+	if err != nil || gone.GetName() != trig.GetName() {
+		t.Fatalf("delete Wait: trigger=%v err=%v, want the deleted trigger", gone, err)
+	}
+
+	if _, err := client.GetOperation(ctx, &longrunningpb.GetOperationRequest{Name: op.Name()}); err != nil {
+		t.Fatalf("create operation lost after delete: %v", err)
 	}
 }

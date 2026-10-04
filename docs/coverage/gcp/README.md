@@ -38,11 +38,11 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [Firestore](./firestore.md) | `database` | 24 |
 | [GCE](./gce.md) | `compute` | 37 |
 | [GCS](./gcs.md) | `storage` | 35 |
-| [GKE](./gke.md) | (provider-native) | 18 |
+| [GKE](./gke.md) | (provider-native) | 28 |
 | [GKEBackup](./gkebackup.md) | `gkebackup` | 11 |
 | [GKEHub](./gkehub.md) | `gkehub` | 16 |
 | [IAM](./iam.md) | `iam` | 40 |
-| [KMS](./kms.md) | (provider-native) | 17 |
+| [KMS](./kms.md) | (provider-native) | 22 |
 | [LB](./lb.md) | `loadbalancer` | 19 |
 | [LRO](./lro.md) | (provider-native) | 1 |
 | [ManagedKafka](./managedkafka.md) | `managedkafka` | 11 |

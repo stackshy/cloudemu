@@ -1,11 +1,12 @@
 package sts
 
 import (
-	"crypto/rand"
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 )
 
 // Session is one set of temporary credentials STS minted, retained so the SigV4
@@ -58,56 +59,60 @@ func NewSessionStore(clock config.Clock) *SessionStore {
 	return &SessionStore{clock: clock, sessions: make(map[string]Session)}
 }
 
-// tempKeyRandomLen is the number of random uppercase-alphanumeric characters
-// after the ASIA prefix (real STS access key ids are 20 chars: 4 + 16).
-const tempKeyRandomLen = 16
-
-// secretLen is the length of a generated temporary secret (real STS secrets are
-// 40-character base64-ish strings; any high-entropy value works here).
-const secretLen = 40
-
-// sessionTokenRandomLen is the random suffix length of a generated session token.
-const sessionTokenRandomLen = 32
-
 // Mint generates a unique temporary credential set valid for dur acting as
-// owner, records it, and returns it. Each call yields a distinct access key id and a fresh
-// high-entropy secret, so a caller that does not hold the issued secret cannot
-// forge a valid signature. It fails closed on a crypto/rand read error rather
-// than issuing a predictable, forgeable credential.
+// owner, records it, and returns it. Each call yields a distinct ASIA access
+// key id, a fresh 40-character secret and a long session token, all from
+// crypto/rand, so a caller that does not hold the issued secret cannot forge a
+// valid signature. It fails closed on a crypto/rand error rather than issuing a
+// predictable credential.
 func (s *SessionStore) Mint(dur time.Duration, owner SessionOwner) (Session, error) {
 	if dur <= 0 {
 		dur = sessionDuration
 	}
 
-	akid, err := randUpperAlnum(tempKeyRandomLen)
+	secret, err := idgen.SecretAccessKey()
 	if err != nil {
 		return Session{}, err
 	}
 
-	secret, err := randUpperAlnum(secretLen)
-	if err != nil {
-		return Session{}, err
-	}
-
-	token, err := randUpperAlnum(sessionTokenRandomLen)
+	token, err := idgen.SessionToken()
 	if err != nil {
 		return Session{}, err
 	}
 
 	sess := Session{
-		AccessKeyID:     tempCredentialPrefix + akid,
 		SecretAccessKey: secret,
-		SessionToken:    "cloudemu-session-" + token,
+		SessionToken:    token,
 		Expiration:      s.clock.Now().UTC().Add(dur),
 		Owner:           owner,
 	}
 
 	s.mu.Lock()
-	s.sessions[sess.AccessKeyID] = sess
-	s.mu.Unlock()
+	defer s.mu.Unlock()
 
-	return sess, nil
+	for range maxKeyIDAttempts {
+		id, err := idgen.TempAccessKeyID()
+		if err != nil {
+			return Session{}, err
+		}
+
+		if _, taken := s.sessions[id]; !taken {
+			sess.AccessKeyID = id
+			s.sessions[id] = sess
+
+			return sess, nil
+		}
+	}
+
+	return Session{}, errKeyIDExhausted
 }
+
+// maxKeyIDAttempts bounds the retries when a freshly drawn access key id is
+// already taken. With 80 random bits a single collision is already unlikely.
+const maxKeyIDAttempts = 5
+
+// errKeyIDExhausted reports that every attempt drew an id already in use.
+var errKeyIDExhausted = errors.New("could not generate a unique temporary access key id")
 
 // Lookup returns the recorded session for id, if any. Expiry is not filtered
 // here: the gate compares the returned Expiration against its own clock so it
@@ -119,29 +124,4 @@ func (s *SessionStore) Lookup(id string) (Session, bool) {
 	sess, ok := s.sessions[id]
 
 	return sess, ok
-}
-
-// tempCredentialPrefix marks STS-issued temporary access key ids (real STS uses
-// the same "ASIA" prefix).
-const tempCredentialPrefix = "ASIA"
-
-// alnumUpper is the alphabet for generated key ids/secrets (AWS access key ids
-// are uppercase alphanumeric).
-const alnumUpper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-
-// randUpperAlnum returns n cryptographically-random uppercase-alphanumeric
-// characters drawn from crypto/rand. On the practically-impossible read error it
-// returns the error rather than a predictable fallback, so a caller never issues
-// a forgeable credential built from low-entropy bytes.
-func randUpperAlnum(n int) (string, error) {
-	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-
-	for i := range buf {
-		buf[i] = alnumUpper[int(buf[i])%len(alnumUpper)]
-	}
-
-	return string(buf), nil
 }

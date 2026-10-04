@@ -36,6 +36,7 @@ import (
 	"net/http"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 )
@@ -50,6 +51,9 @@ const (
 	// subRecordSets and subAll are the record-set list sub-paths.
 	subRecordSets = "recordsets"
 	subAll        = "all"
+
+	// childMaxDepth is the deepest child route: dnsZones/{z}/{type}/{name}.
+	childMaxDepth = 3
 )
 
 // Handler serves Microsoft.Network/dnsZones ARM requests against a dns driver.
@@ -79,9 +83,28 @@ type conditionalRecordDeleter interface {
 	DeleteRecordAtomic(ctx context.Context, zoneID, name, recordType, ifMatch string) error
 }
 
+// rgPurger is the optional capability the Azure dns.Mock exposes for the
+// resource-group delete cascade. The shared dns driver interface has no such
+// method, so the handler reaches it by type assertion.
+type rgPurger interface {
+	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+}
+
 // New returns an Azure DNS handler backed by d.
 func New(d dnsdriver.DNS) *Handler {
 	return &Handler{dns: d}
+}
+
+// PurgeResourceGroup deletes every DNS zone, and its record sets, in the
+// resource group, backing the resource-group cascade delete. A driver without
+// the capability is reported as an error rather than silently skipped.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	p, ok := h.dns.(rgPurger)
+	if !ok {
+		return cerrors.Newf(cerrors.Unimplemented, "dns driver %T cannot purge a resource group", h.dns)
+	}
+
+	return p.PurgeResourceGroup(ctx, subscription, resourceGroup)
 }
 
 // isZonesType reports whether the ARM resource type is dnsZones, case-
@@ -117,14 +140,35 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if azurearm.TooDeep(w, r, &rp, childMaxDepth) {
+		return
+	}
+
 	switch rp.SubResource {
 	case "":
 		h.serveZone(w, r, &rp)
 	case subRecordSets, subAll:
 		h.serveRecordSetCollection(w, r, &rp)
 	default:
-		// .../dnsZones/{zone}/{recordType}/{name}
+		// .../dnsZones/{zone}/{recordType}/{name}. The record type is itself
+		// an ARM nested type, so an unknown one is InvalidResourceType.
+		if !isRecordType(rp.SubResource) {
+			azurearm.WriteUnknownType(w, r, &rp)
+			return
+		}
+
 		h.serveRecordSet(w, r, &rp)
+	}
+}
+
+// isRecordType reports whether seg names a public DNS record-set type
+// (case-insensitive), including DS, NAPTR and TLSA from api 2023-07-01-preview.
+func isRecordType(seg string) bool {
+	switch strings.ToUpper(seg) {
+	case "A", "AAAA", "CAA", "CNAME", "DS", "MX", "NAPTR", "NS", "PTR", "SOA", "SRV", "TLSA", "TXT":
+		return true
+	default:
+		return false
 	}
 }
 

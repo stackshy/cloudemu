@@ -6,6 +6,7 @@ import (
 
 	sp "google.golang.org/api/spanner/v1"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	spdriver "github.com/stackshy/cloudemu/v2/services/spanner/driver"
 )
@@ -100,6 +101,17 @@ func (h *Handler) listDatabases(w http.ResponseWriter, r *http.Request, instance
 }
 
 func (h *Handler) serveDatabaseItem(w http.ResponseWriter, r *http.Request, name string) {
+	if db, verb := gcpiam.SplitVerb(name); verb != "" {
+		if _, err := h.db.GetDatabase(r.Context(), db); err != nil {
+			gcprest.WriteCErr(w, err)
+			return
+		}
+
+		gcpiam.Serve(w, r, verb, db, h.iam)
+
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.getDatabase(w, r, name)
@@ -125,6 +137,8 @@ func (h *Handler) dropDatabase(w http.ResponseWriter, r *http.Request, name stri
 		gcprest.WriteCErr(w, err)
 		return
 	}
+
+	h.iam.Delete(name)
 
 	gcprest.WriteJSON(w, http.StatusOK, struct{}{})
 }

@@ -92,6 +92,10 @@ func (h *Handler) routePublicIPPrefix(w http.ResponseWriter, r *http.Request, rp
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createPublicIPPrefix(w, r, rp, svc)

@@ -3,6 +3,8 @@ package dataplex
 import (
 	"encoding/json"
 	"errors"
+
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
 )
 
 // Zone type and resource-spec location-type enums, and the asset resource-spec
@@ -29,7 +31,7 @@ var (
 // unrelated update is not blocked.
 func validateZone(fields map[string]json.RawMessage) error {
 	if raw, ok := fields["type"]; ok {
-		if !validEnum(raw, zoneTypes) {
+		if !validEnum(raw, zoneEnums["type"], zoneTypes) {
 			return errZoneTypeRequired
 		}
 	}
@@ -39,7 +41,7 @@ func validateZone(fields map[string]json.RawMessage) error {
 		return nil
 	}
 
-	if raw, has := spec["locationType"]; has && !validEnum(raw, zoneLocationTypes) {
+	if raw, has := spec["locationType"]; has && !validEnum(raw, zoneEnums["resourceSpec.locationType"], zoneLocationTypes) {
 		return errZoneResourceSpecRequired
 	}
 
@@ -59,19 +61,17 @@ func validateAsset(fields map[string]json.RawMessage) error {
 		return nil
 	}
 
-	if !validEnum(raw, assetResourceType) {
+	if !validEnum(raw, assetEnums["resourceSpec.type"], assetResourceType) {
 		return errAssetResourceSpecType
 	}
 
 	return nil
 }
 
-// validEnum reports whether raw is a JSON string that is a member of allowed.
-func validEnum(raw json.RawMessage, allowed map[string]bool) bool {
-	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return false
-	}
+// validEnum reports whether raw, a value name or a proto enum number of e,
+// resolves to a member of allowed.
+func validEnum(raw json.RawMessage, e gcpenum.Enum, allowed map[string]bool) bool {
+	name, ok := gcpenum.Name(raw, e)
 
-	return allowed[s]
+	return ok && allowed[name]
 }

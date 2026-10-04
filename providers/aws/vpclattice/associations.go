@@ -53,7 +53,11 @@ func (m *Mock) CreateSNVpcAssociation(
 		return nil, err
 	}
 
-	id := idgen.GenerateLongID("snva-")
+	id, err := idgen.GenerateLongID("snva-")
+	if err != nil {
+		return nil, err
+	}
+
 	a := &driver.SNVpcAssociation{
 		ID:                 id,
 		ARN:                m.arn("servicenetworkvpcassociation/" + id),
@@ -161,7 +165,11 @@ func (m *Mock) CreateSNServiceAssociation(
 		return nil, serviceNotFound(idFromIdentifier(serviceID))
 	}
 
-	id := idgen.GenerateLongID("snsa-")
+	id, err := idgen.GenerateLongID("snsa-")
+	if err != nil {
+		return nil, err
+	}
+
 	a := &driver.SNServiceAssociation{
 		ID:                 id,
 		ARN:                m.arn("servicenetworkserviceassociation/" + id),
@@ -237,7 +245,12 @@ func (m *Mock) CreateSNResourceAssociation(
 	}
 
 	rcID := idFromIdentifier(resourceConfigID)
-	id := idgen.GenerateLongID("snra-")
+
+	id, err := idgen.GenerateLongID("snra-")
+	if err != nil {
+		return nil, err
+	}
+
 	a := &driver.SNResourceAssociation{
 		ID:                       id,
 		ARN:                      m.arn("servicenetworkresourceassociation/" + id),

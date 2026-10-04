@@ -6,8 +6,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 
+	"github.com/stackshy/cloudemu/v2/providers/azure/armoverlay"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
 
@@ -17,43 +17,41 @@ import (
 // reads, instead of silently discarding them. Real Azure preserves properties
 // it accepts, and a caller that sets one expects to read it back.
 //
-// The store is per-server: it is created in New alongside the handlers, so the
-// standalone server's reset flow (which rebuilds the whole server) starts each
-// run with an empty overlay.
+// The entries live in a PropertyStore. A served emulator passes the provider's
+// snapshottable store, so they survive a persisted restart; a reset builds a
+// fresh provider and so starts with an empty overlay.
 type propertyOverlay struct {
-	mu    sync.RWMutex
-	store map[string]map[string]any
+	store PropertyStore
 }
 
-func newPropertyOverlay() *propertyOverlay {
-	return &propertyOverlay{store: make(map[string]map[string]any)}
+// PropertyStore holds the overlay entries by resource id.
+// providers/azure/armoverlay.Mock implements it.
+type PropertyStore interface {
+	Capture(id string, props map[string]any)
+	Lookup(id string) map[string]any
+	EvictTree(id string)
+}
+
+// newPropertyOverlay returns an overlay over store; a nil store gets a private
+// in-memory one.
+func newPropertyOverlay(store PropertyStore) *propertyOverlay {
+	if store == nil {
+		store = armoverlay.New(nil)
+	}
+
+	return &propertyOverlay{store: store}
 }
 
 // capture records the unmodeled properties for id, replacing any previous
 // entry. An empty set clears the entry so a resource that no longer carries
 // unmodeled properties (e.g. re-created without them) does not keep stale ones.
 func (o *propertyOverlay) capture(id string, unmodeled map[string]any) {
-	id = normalizeOverlayKey(id)
-
-	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	if len(unmodeled) == 0 {
-		delete(o.store, id)
-		return
-	}
-
-	o.store[id] = unmodeled
+	o.store.Capture(normalizeOverlayKey(id), unmodeled)
 }
 
 // lookup returns the unmodeled properties recorded for id, or nil.
 func (o *propertyOverlay) lookup(id string) map[string]any {
-	id = normalizeOverlayKey(id)
-
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-
-	return o.store[id]
+	return o.store.Lookup(normalizeOverlayKey(id))
 }
 
 // normalizeOverlayKey lowercases the resource-group segment of an ARM resource
@@ -86,19 +84,19 @@ func normalizeOverlayKey(id string) string {
 	return id[:start] + strings.ToLower(id[start:end]) + id[end:]
 }
 
-// evict drops any entry for id. Called when a resource is deleted so the
-// store does not grow without bound across create/delete cycles.
-func (o *propertyOverlay) evict(id string) {
+// evictTree drops the entry for id and every entry nested under it. Called when
+// a resource is deleted, so a resource recreated with the same name does not
+// inherit the deleted one's unmodeled properties: deleting a resource group
+// clears every resource in it, and deleting a resource clears its
+// sub-resources. The comparison is fully lowercased and bounded by a trailing
+// slash, so deleting rg1 never touches rg10. normalizeOverlayKey is not used
+// because its marker is case-sensitive and would miss a /resourcegroups/ path.
+func (o *propertyOverlay) evictTree(id string) {
 	if id == "" {
 		return
 	}
 
-	id = normalizeOverlayKey(id)
-
-	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	delete(o.store, id)
+	o.store.EvictTree(id)
 }
 
 // echoUnmodeledProperties wraps next so that unmodeled properties on ARM
@@ -106,27 +104,49 @@ func (o *propertyOverlay) evict(id string) {
 // paths (which begin with /subscriptions/) so the storage/table/queue
 // data-plane handlers (which return XML or binary) are never buffered or
 // rewritten. Non-JSON responses, error responses, and responses without a
-// top-level id/properties pair pass through untouched.
-func echoUnmodeledProperties(next http.Handler, overlay *propertyOverlay) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/subscriptions/") || isTagsAtScope(r.URL.Path) {
-			next.ServeHTTP(w, r)
-			return
+// top-level id/properties pair pass through untouched. A successful DELETE also
+// clears the tags-at-scope sets of the deleted resource and everything under
+// it, so a resource recreated with the same id starts without stale tags.
+func echoUnmodeledProperties(next http.Handler, overlay *propertyOverlay, scopeTags treeEvicter) http.Handler {
+	return &overlayHandler{next: next, overlay: overlay, scopeTags: scopeTags}
+}
+
+// treeEvicter drops every entry at or under an ARM id.
+type treeEvicter interface {
+	EvictTree(id string)
+}
+
+// overlayHandler is the handler echoUnmodeledProperties returns: next wrapped
+// by the unmodeled-property overlay.
+type overlayHandler struct {
+	next      http.Handler
+	overlay   *propertyOverlay
+	scopeTags treeEvicter
+}
+
+func (h *overlayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.URL.Path, "/subscriptions/") || isTagsAtScope(r.URL.Path) {
+		h.next.ServeHTTP(w, r)
+		return
+	}
+
+	reqProps := readRequestProperties(r)
+
+	rec := &captureWriter{ResponseWriter: w}
+	h.next.ServeHTTP(rec, r)
+
+	if r.Method == http.MethodDelete && rec.status >= 200 && rec.status < 300 {
+		id := deletedIDFromPath(r.URL.Path)
+		h.overlay.evictTree(id)
+
+		if h.scopeTags != nil && id != "" {
+			h.scopeTags.EvictTree(id)
 		}
+	}
 
-		reqProps := readRequestProperties(r)
-
-		rec := &captureWriter{ResponseWriter: w}
-		next.ServeHTTP(rec, r)
-
-		if r.Method == http.MethodDelete && rec.status >= 200 && rec.status < 300 {
-			overlay.evict(resourceIDFromPath(r.URL.Path))
-		}
-
-		if !rec.rewrite(w, r, reqProps, overlay) {
-			rec.flush(w)
-		}
-	})
+	if !rec.rewrite(w, r, reqProps, h.overlay) {
+		rec.flush(w)
+	}
 }
 
 // isTagsAtScope reports whether path targets the Tags resource provider
@@ -141,6 +161,26 @@ func isTagsAtScope(path string) bool {
 
 	return len(trimmed) > len(suffix) &&
 		strings.EqualFold(trimmed[len(trimmed)-len(suffix):], suffix)
+}
+
+// deletedIDFromPath returns the id a DELETE of urlPath removes: a resource or
+// named sub-resource (see resourceIDFromPath), or a resource group
+// (/subscriptions/{sub}/resourceGroups/{rg}, either spelling). It returns ""
+// for any other path, in which case nothing is evicted.
+func deletedIDFromPath(urlPath string) string {
+	if id := resourceIDFromPath(urlPath); id != "" {
+		return id
+	}
+
+	const rgPathParts = 4
+
+	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
+	if len(parts) == rgPathParts && strings.EqualFold(parts[0], "subscriptions") &&
+		strings.EqualFold(parts[2], "resourceGroups") && parts[1] != "" && parts[3] != "" {
+		return "/" + strings.Join(parts, "/")
+	}
+
+	return ""
 }
 
 // resourceIDFromPath reconstructs the ARM resource id from a request path so a
@@ -423,8 +463,8 @@ func captureUnmodeled(
 // request-capture path and are correctly left alone.
 //
 // 2. Exact-match keys: the Notification Hubs PNS credential blocks, which
-// carry secrets but do not end in the suffixes, and the API Management
-// delegation validationKey (served only by its listSecrets action). toHubJSON (notificationhubs)
+// carry secrets but do not end in the suffixes, the Container Apps storage
+// accountKey, and the API Management delegation validationKey (served only by its listSecrets action). toHubJSON (notificationhubs)
 // models only name/registrationTtl and drops these; real Azure serves them only
 // via GetPnsCredentials, never the generic hub GET. Each is an object, so
 // denylisting the key skips the whole credential subtree.
@@ -460,7 +500,12 @@ func writeOnlyProperty(parent, key string) bool {
 		"admcredential", "baiducredential", "mpnscredential",
 		// API Management delegation settings: the validation key is accepted on
 		// PUT and served only by portalsettings/delegation/listSecrets.
-		"validationkey":
+		"validationkey",
+		// Container Apps environment storages: azureFile.accountKey is accepted
+		// on PUT and never returned.
+		"accountkey",
+		// VM extensions: protectedSettings is accepted on PUT and never returned.
+		"protectedsettings":
 		return true
 	default:
 		return false
@@ -506,8 +551,8 @@ func sanitizeUnmodeled(v any, parent string) any {
 
 // isZeroScalarJSON reports whether v is the JSON zero value for a scalar type:
 // null, "", false, or 0. Only scalars are classified; maps and slices always
-// return false here (an empty object/array is a much rarer "clear" signal and
-// is left to the existing verbatim-capture behavior).
+// return false here (missingEntry drops an empty object separately, and an
+// empty array is still captured verbatim).
 func isZeroScalarJSON(v any) bool {
 	switch t := v.(type) {
 	case nil:
@@ -575,6 +620,15 @@ func missingEntry(k string, reqVal, respVal any, present bool) (any, bool) {
 		// still captured verbatim below; this only narrows the false-positive
 		// case of a zero scalar.
 		if isZeroScalarJSON(reqVal) {
+			return nil, false
+		}
+
+		// An empty request object carries no data, and real ARM omits it from
+		// the read rather than echoing {}. azurerm sends
+		// "additionalCapabilities": {} on every VM PUT whose config has no
+		// additional_capabilities block; echoing it back made the provider
+		// flatten a block of false values and plan a permanent diff.
+		if obj, ok := reqVal.(map[string]any); ok && len(obj) == 0 {
 			return nil, false
 		}
 

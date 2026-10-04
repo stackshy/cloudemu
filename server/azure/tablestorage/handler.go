@@ -29,6 +29,8 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 	driver "github.com/stackshy/cloudemu/v2/services/tablestorage/driver"
 )
 
@@ -46,12 +48,16 @@ const (
 
 	// pathBatch is the entity-group-transaction endpoint path segment.
 	pathBatch = "$batch"
+
+	// pathTables is the table lifecycle collection path.
+	pathTables = "Tables"
 )
 
 // Handler serves Azure Table Storage REST requests against a TableStorage
 // driver.
 type Handler struct {
-	ts driver.TableStorage
+	ts       driver.TableStorage
+	accounts storagedriver.AzureStorageAccounts
 }
 
 // New returns a Table handler backed by ts.
@@ -64,30 +70,50 @@ func New(ts driver.TableStorage) *Handler {
 //
 //   - The path is /Tables or /Tables('name'): the table lifecycle surface,
 //     which no other service uses.
+//
 //   - The path's first segment carries an OData key predicate: it contains a
 //     "(": either "()" (query entities) or
 //     "(PartitionKey='…',RowKey='…')" (entity CRUD). Blob/Queue paths never
 //     contain parentheses, and ARM paths start with /subscriptions/, so this
 //     is unambiguous.
+//
 //   - POST /{table} (insert entity) is a bare single segment with a JSON body.
 //     Blob and Queue never use a bare POST on a single path segment, so the
 //     method+content-type discriminates it from their PUT/DELETE ops.
 //
+//   - The account-level service calls (?restype=service|account) on the root,
+//     on an {account}.table host or, on a bare host, from a Table client.
+//
+// A path-style /{account}/ prefix naming an existing storage account is
+// peeled before the shape checks (see resolve).
+//
 // Registered before the permissive Blob fallback so these shapes win.
-func (*Handler) Matches(r *http.Request) bool {
+func (h *Handler) Matches(r *http.Request) bool {
 	if strings.HasPrefix(r.URL.Path, "/subscriptions/") {
 		return false
 	}
 
-	path := strings.TrimPrefix(r.URL.Path, "/")
-
-	// /$batch: entity group transactions.
-	if path == pathBatch {
-		return true
+	// A storage host names its service, so a request to another service's
+	// host (such as {account}.blob.core.windows.net) is never a Table call.
+	_, svc, storageHost := azurearm.StorageHost(r.Host)
+	if storageHost && svc != azurearm.StorageServiceTable {
+		return false
 	}
 
-	// /Tables and /Tables('name').
-	if path == "Tables" || strings.HasPrefix(path, "Tables(") {
+	_, resolved := h.resolve(r)
+	path := strings.TrimPrefix(resolved, "/")
+
+	if path == "" {
+		return azurearm.IsStorageServiceOp(r.URL.Query()) && (storageHost || isTableClient(r))
+	}
+
+	return matchesTablePath(r, path)
+}
+
+// matchesTablePath reports whether a path below the account is a Table call.
+func matchesTablePath(r *http.Request, path string) bool {
+	// /$batch (entity group transactions), /Tables and /Tables('name').
+	if path == pathBatch || path == pathTables || strings.HasPrefix(path, "Tables(") {
 		return true
 	}
 
@@ -118,36 +144,39 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Ms-Version", xmsVersion)
 	w.Header().Set("Dataserviceversion", "3.0")
 
-	path := strings.TrimPrefix(r.URL.Path, "/")
+	account, resolved := h.resolve(r)
+	path := strings.TrimPrefix(resolved, "/")
 
 	switch {
+	case path == "" && azurearm.IsStorageServiceOp(r.URL.Query()):
+		azurearm.ServeStorageServiceOp(w, r)
 	case path == pathBatch:
-		h.batch(w, r)
-	case path == "Tables":
-		h.tablesCollectionOp(w, r)
+		h.batch(w, r, account)
+	case path == pathTables:
+		h.tablesCollectionOp(w, r, account)
 	case strings.HasPrefix(path, "Tables("):
-		h.deleteTable(w, r, tableNameFromDelete(path))
+		h.deleteTable(w, r, tableKey(account, tableNameFromDelete(path)))
 	case r.Method == http.MethodPost && !strings.ContainsRune(path, '('):
 		// POST /{table}: insert entity into a bare table path.
-		h.insertEntity(w, r, path)
+		h.insertEntity(w, r, tableKey(account, path))
 	default:
-		h.entityOp(w, r, path)
+		h.entityOp(w, r, account, path)
 	}
 }
 
 // tablesCollectionOp handles POST (create) and GET (list) on /Tables.
-func (h *Handler) tablesCollectionOp(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) tablesCollectionOp(w http.ResponseWriter, r *http.Request, account string) {
 	switch r.Method {
 	case http.MethodPost:
-		h.createTable(w, r)
+		h.createTable(w, r, account)
 	case http.MethodGet:
-		h.listTables(w, r)
+		h.listTables(w, r, account)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
 }
 
-func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) createTable(w http.ResponseWriter, r *http.Request, account string) {
 	var body struct {
 		TableName string `json:"TableName"`
 	}
@@ -157,7 +186,7 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.ts.CreateTable(r.Context(), body.TableName); err != nil {
+	if err := h.ts.CreateTable(r.Context(), tableKey(account, body.TableName)); err != nil {
 		// A duplicate table is TableAlreadyExists, distinct from the generic
 		// EntityAlreadyExists that a duplicate entity insert reports.
 		if cerrors.IsAlreadyExists(err) {
@@ -178,7 +207,7 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-func (h *Handler) listTables(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) listTables(w http.ResponseWriter, r *http.Request, account string) {
 	names, err := h.ts.ListTables(r.Context())
 	if err != nil {
 		writeErr(w, err)
@@ -186,8 +215,11 @@ func (h *Handler) listTables(w http.ResponseWriter, r *http.Request) {
 	}
 
 	value := make([]map[string]any, 0, len(names))
+
 	for _, n := range names {
-		value = append(value, map[string]any{"TableName": n})
+		if acct, name := storagedriver.SplitAzureContainerKey(n); acct == account {
+			value = append(value, map[string]any{"TableName": name})
+		}
 	}
 
 	resp := map[string]any{
@@ -214,12 +246,14 @@ func (h *Handler) deleteTable(w http.ResponseWriter, r *http.Request, name strin
 
 // entityOp routes entity-level requests: /{table}() (query) and
 // /{table}(PartitionKey='p',RowKey='r') (CRUD).
-func (h *Handler) entityOp(w http.ResponseWriter, r *http.Request, path string) {
+func (h *Handler) entityOp(w http.ResponseWriter, r *http.Request, account, path string) {
 	table, predicate, ok := splitEntityPath(path)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "InvalidUri", "unrecognized table path")
 		return
 	}
+
+	table = tableKey(account, table)
 
 	// Query: /{table}() with an empty predicate.
 	if strings.TrimSpace(predicate) == "" {
@@ -280,7 +314,7 @@ func (h *Handler) queryEntities(w http.ResponseWriter, r *http.Request, table st
 	}
 
 	resp := map[string]any{
-		"odata.metadata": fmt.Sprintf("%s://%s/$metadata#%s", scheme(r), r.Host, table),
+		"odata.metadata": fmt.Sprintf("%s://%s/$metadata#%s", scheme(r), r.Host, tableName(table)),
 		"value":          value,
 	}
 
@@ -295,7 +329,7 @@ func (h *Handler) getEntity(w http.ResponseWriter, r *http.Request, table, pk, r
 	}
 
 	out := entityToJSON(ent)
-	out["odata.metadata"] = fmt.Sprintf("%s://%s/$metadata#%s/@Element", scheme(r), r.Host, table)
+	out["odata.metadata"] = fmt.Sprintf("%s://%s/$metadata#%s/@Element", scheme(r), r.Host, tableName(table))
 
 	if etag := asString(ent[etagProp]); etag != "" {
 		w.Header().Set("ETag", etag)
@@ -322,7 +356,7 @@ func (h *Handler) insertEntity(w http.ResponseWriter, r *http.Request, table str
 
 	// Default (no Prefer header): return-content, echoing the entity with 201.
 	out := entityToJSON(ent)
-	out["odata.metadata"] = fmt.Sprintf("%s://%s/$metadata#%s/@Element", scheme(r), r.Host, table)
+	out["odata.metadata"] = fmt.Sprintf("%s://%s/$metadata#%s/@Element", scheme(r), r.Host, tableName(table))
 	out[etagProp] = etag
 
 	w.Header().Set("ETag", etag)

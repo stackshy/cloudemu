@@ -35,6 +35,10 @@
 //	UpdateTerminationProtection API.UpdateTerminationProtection
 //	DescribeAccountLimits      API.DescribeAccountLimits
 //	EstimateTemplateCost       API.EstimateTemplateCost
+//	SetStackPolicy             API.SetStackPolicy
+//	GetStackPolicy             API.GetStackPolicy
+//	CancelUpdateStack          API.CancelUpdateStack
+//	RollbackStack              API.RollbackStack
 //
 // Templates may be JSON or YAML, given inline (TemplateBody) or as an S3
 // object URL (TemplateURL).
@@ -46,6 +50,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsauthz"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	cfn "github.com/stackshy/cloudemu/v2/services/cloudformation"
 )
@@ -83,6 +88,11 @@ var cfnActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	actionUpdateTerminationProtection: {},
 	actionDescribeAccountLimits:       {},
 	actionEstimateTemplateCost:        {},
+
+	actionSetStackPolicy:    {},
+	actionGetStackPolicy:    {},
+	actionCancelUpdateStack: {},
+	actionRollbackStack:     {},
 }
 
 // Handler serves CloudFormation query-protocol requests against a stack API.
@@ -153,6 +163,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case actionListExports, actionListImports, actionUpdateTerminationProtection, actionDescribeAccountLimits,
 		actionEstimateTemplateCost:
 		h.serveAccount(w, r)
+	case actionSetStackPolicy, actionGetStackPolicy, actionCancelUpdateStack, actionRollbackStack:
+		h.serveStackControl(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction",
 			"unknown CloudFormation action: "+r.Form.Get("Action"))
@@ -184,4 +196,15 @@ func writeErr(w http.ResponseWriter, err error) {
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", msg)
 	}
+}
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "cloudformation" }
+
+// IAMChecks names the IAM action of a request from the form Action that
+// ServeHTTP dispatches on. An Action the handler does not know is authorized
+// as such and then answered with InvalidAction, so nothing runs.
+func (h *Handler) IAMChecks(r *http.Request, _ awsauthz.Scope) ([]awsauthz.Check, bool) {
+	return awsauthz.QueryChecks(r, h.IAMService())
 }

@@ -72,6 +72,10 @@ func (h *Handler) routeNATGateway(w http.ResponseWriter, r *http.Request, rp azu
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createNATGateway(w, r, rp)
@@ -103,8 +107,15 @@ func (h *Handler) createNATGateway(w http.ResponseWriter, r *http.Request, rp az
 	tags = mergeTags(tags, armNATGatewayRGTag, rp.ResourceGroup)
 
 	cfg := netdriver.NATGatewayConfig{
-		Tags:             tags,
-		ConnectivityType: "public",
+		Tags:               tags,
+		ConnectivityType:   "public",
+		Location:           req.Location,
+		IdleTimeoutMinutes: req.Properties.IdleTimeoutInMinutes,
+		Zones:              req.Zones,
+	}
+
+	if req.SKU != nil {
+		cfg.SKU = req.SKU.Name
 	}
 
 	allocationID, err := h.resolveNATGatewayAllocation(r.Context(), rp, req.Properties.PublicIPAddresses)
@@ -121,28 +132,7 @@ func (h *Handler) createNATGateway(w http.ResponseWriter, r *http.Request, rp az
 		return
 	}
 
-	loc := req.Location
-	if loc == "" {
-		loc = defaultLoc
-	}
-
-	body := h.natGatewayResponse(r.Context(), info, rp, loc)
-
-	// SKU / zones / idleTimeoutInMinutes aren't part of the cross-cloud NAT
-	// gateway model, so they don't survive a later GET; echo what the caller
-	// just submitted on the create response, matching real ARM's create-time
-	// body while keeping the driver AWS/Azure/GCP-portable.
-	if req.SKU != nil {
-		body.SKU = req.SKU
-	}
-
-	if len(req.Zones) > 0 {
-		body.Zones = req.Zones
-	}
-
-	if req.Properties.IdleTimeoutInMinutes > 0 {
-		body.Properties.IdleTimeoutInMinutes = req.Properties.IdleTimeoutInMinutes
-	}
+	body := h.natGatewayResponse(r.Context(), info, rp)
 
 	writeAcceptedAsync(w, r, rp.Subscription, "natgw-create-"+rp.ResourceName, body)
 }
@@ -190,7 +180,7 @@ func (h *Handler) resolveNATGatewayAllocation(
 func (h *Handler) upsertNATGateway(ctx context.Context, rg, name string, cfg netdriver.NATGatewayConfig) (*netdriver.NATGateway, error) {
 	if existing, err := findNATGatewayByName(ctx, h.net, rg, name); err == nil {
 		if meta, ok := h.azureMeta(); ok {
-			if uerr := meta.UpdateAzureNATGateway(ctx, existing.ID, cfg.AllocationID, cfg.Tags); uerr != nil {
+			if uerr := meta.UpdateAzureNATGateway(ctx, existing.ID, cfg); uerr != nil {
 				return nil, uerr
 			}
 
@@ -213,7 +203,7 @@ func (h *Handler) getNATGateway(w http.ResponseWriter, r *http.Request, rp azure
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, h.natGatewayResponse(r.Context(), info, rp, defaultLoc))
+	azurearm.WriteJSON(w, http.StatusOK, h.natGatewayResponse(r.Context(), info, rp))
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -261,7 +251,7 @@ func (h *Handler) listNATGateways(w http.ResponseWriter, r *http.Request, rp azu
 		scope := rp
 		scope.ResourceGroup = tagOr(infos[i].Tags, armNATGatewayRGTag, rp.ResourceGroup)
 		scope.ResourceName = tagOr(infos[i].Tags, armNATGatewayTag, infos[i].ID)
-		out.Value = append(out.Value, h.natGatewayResponse(r.Context(), &infos[i], scope, defaultLoc))
+		out.Value = append(out.Value, h.natGatewayResponse(r.Context(), &infos[i], scope))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, out)
@@ -292,26 +282,30 @@ func findNATGatewayByName(ctx context.Context, n netdriver.Networking, rg, name 
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) natGatewayResponse(
-	ctx context.Context, info *netdriver.NATGateway, rp azurearm.ResourcePath, location string,
+	ctx context.Context, info *netdriver.NATGateway, rp azurearm.ResourcePath,
 ) natGatewayResponse {
-	if location == "" {
-		location = defaultLoc
-	}
-
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeNATGateway, rp.ResourceName)
 
-	return natGatewayResponse{
+	out := natGatewayResponse{
 		ID:       id,
 		Name:     rp.ResourceName,
 		Type:     providerName + "/" + typeNATGateway,
-		Location: location,
+		Location: orDefault(info.Location, defaultLoc),
 		Tags:     stripInternal(info.Tags),
+		Zones:    info.Zones,
 		Properties: natGatewayResponseProps{
-			ProvisioningState: "Succeeded",
-			PublicIPAddresses: h.natGatewayPublicIPRefs(ctx, rp, info.AllocationID),
-			Subnets:           h.natGatewaySubnetRefs(ctx, rp, id),
+			ProvisioningState:    provisioningSucceeded,
+			IdleTimeoutInMinutes: info.IdleTimeoutMinutes,
+			PublicIPAddresses:    h.natGatewayPublicIPRefs(ctx, rp, info.AllocationID),
+			Subnets:              h.natGatewaySubnetRefs(ctx, rp, id),
 		},
 	}
+
+	if info.SKU != "" {
+		out.SKU = &natGatewaySKU{Name: info.SKU}
+	}
+
+	return out
 }
 
 // natGatewayPublicIPRefs resolves the NAT gateway's bound Elastic IP

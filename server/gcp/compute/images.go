@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	gcecompute "github.com/stackshy/cloudemu/v2/providers/gcp/compute"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -19,7 +21,6 @@ const gcpImageNameTag = "cloudemu:gcpImageName"
 const (
 	gcpImageSourceDiskTag     = "cloudemu:gcpImageSourceDisk"
 	gcpImageSourceSnapshotTag = "cloudemu:gcpImageSourceSnapshot"
-	gcpImageFamilyTag         = "cloudemu:gcpImageFamily"
 	gcpImageDiskSizeGbTag     = "cloudemu:gcpImageDiskSizeGb"
 )
 
@@ -46,13 +47,23 @@ type imageResponse struct {
 	Labels            map[string]string `json:"labels,omitempty"`
 	LabelFingerprint  string            `json:"labelFingerprint,omitempty"`
 	CreationTimestamp string            `json:"creationTimestamp,omitempty"`
+	Description       string            `json:"description,omitempty"`
+	Deprecated        *imageDeprecation `json:"deprecated,omitempty"`
+}
+
+// imageDeprecation is compute#deprecationStatus on an image a family has moved
+// past.
+type imageDeprecation struct {
+	State       string `json:"state"`
+	Replacement string `json:"replacement,omitempty"`
 }
 
 type imageListResponse struct {
-	Kind     string          `json:"kind"`
-	ID       string          `json:"id"`
-	Items    []imageResponse `json:"items"`
-	SelfLink string          `json:"selfLink"`
+	Kind          string          `json:"kind"`
+	ID            string          `json:"id"`
+	Items         []imageResponse `json:"items"`
+	NextPageToken string          `json:"nextPageToken,omitempty"`
+	SelfLink      string          `json:"selfLink"`
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -126,11 +137,17 @@ func (h *Handler) listImages(w http.ResponseWriter, r *http.Request, rp gcprest.
 		out = append(out, toImageResponse(&imgs[i], scope, host))
 	}
 
+	items, next, ok := gcplist.FilterPage(w, r, out, func(x imageResponse) string { return x.Name })
+	if !ok {
+		return
+	}
+
 	gcprest.WriteJSON(w, http.StatusOK, imageListResponse{
-		Kind:     "compute#imageList",
-		ID:       "projects/" + rp.Project + "/global/images",
-		Items:    out,
-		SelfLink: gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "images", ""),
+		Kind:          imageListKind,
+		ID:            "projects/" + rp.Project + "/global/images",
+		Items:         items,
+		NextPageToken: next,
+		SelfLink:      gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "images", ""),
 	})
 }
 
@@ -146,6 +163,8 @@ func (h *Handler) deleteImage(w http.ResponseWriter, r *http.Request, rp gcprest
 		gcprest.WriteCErr(w, err)
 		return
 	}
+
+	h.dropPolicy(rp)
 
 	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
 		"images", rp.ResourceName, "delete")
@@ -220,14 +239,14 @@ func toImageResponse(img *computedriver.ImageInfo, rp gcprest.ResourcePath, host
 	sourceDisk := img.Tags[gcpImageSourceDiskTag]
 
 	resp := imageResponse{
-		Kind:              "compute#image",
+		Kind:              imageKind,
 		ID:                numericID(img.ID),
 		Name:              name,
-		Status:            "READY",
+		Status:            diskStatusReady,
 		SelfLink:          gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "images", name),
 		SourceDisk:        sourceDisk,
 		SourceSnapshot:    img.Tags[gcpImageSourceSnapshotTag],
-		Family:            img.Tags[gcpImageFamilyTag],
+		Family:            img.Tags[gcecompute.ImageFamilyTag],
 		DiskSizeGb:        img.Tags[gcpImageDiskSizeGbTag],
 		Labels:            userLabels(img.Tags),
 		LabelFingerprint:  labelFingerprintFor(userLabels(img.Tags)),
@@ -256,7 +275,7 @@ func (h *Handler) mergeImageTags(ctx context.Context, in map[string]string, req 
 
 	putIfSet(out, gcpImageSourceDiskTag, req.SourceDisk)
 	putIfSet(out, gcpImageSourceSnapshotTag, req.SourceSnapshot)
-	putIfSet(out, gcpImageFamilyTag, req.Family)
+	putIfSet(out, gcecompute.ImageFamilyTag, req.Family)
 
 	if size := h.imageDiskSizeGb(ctx, req); size != "" {
 		out[gcpImageDiskSizeGbTag] = size

@@ -155,10 +155,24 @@ type InstanceConfig struct {
 	// "use the default" (true) rather than false; Cloud SQL-only, ignored by
 	// AWS RDS / Redshift.
 	GCPStorageAutoResize *bool
-	Tags                 map[string]string
+	// AzureFlex carries the Azure Flexible Server storage and backup toggles;
+	// an empty field means "use the service default". Other engines ignore it.
+	AzureFlex AzureFlexOptions
+	Tags      map[string]string
 	// Scope records where the resource lives (Azure subscription/resource
 	// group). Zero for AWS/GCP and unscoped portable callers.
 	Scope scope.Scope
+}
+
+// AzureFlexOptions are the Azure Database for MySQL Flexible Server
+// EnableStatusEnum toggles ("Enabled"/"Disabled") under properties.storage
+// (autoGrow, autoIoScaling, logOnDisk) and properties.backup
+// (geoRedundantBackup).
+type AzureFlexOptions struct {
+	StorageAutoGrow      string `json:"storageAutoGrow,omitempty"`
+	StorageAutoIOScaling string `json:"storageAutoIoScaling,omitempty"`
+	StorageLogOnDisk     string `json:"storageLogOnDisk,omitempty"`
+	GeoRedundantBackup   string `json:"geoRedundantBackup,omitempty"`
 }
 
 // Instance describes a managed database instance.
@@ -245,6 +259,9 @@ type Instance struct {
 	// read. It is resolved to a concrete value on create (defaulting to true),
 	// so a Get always reports it. False/unused for AWS RDS / Redshift.
 	GCPStorageAutoResize bool
+	// AzureFlex echoes the Azure Flexible Server storage and backup toggles,
+	// resolved to concrete values on create. Zero for other engines.
+	AzureFlex AzureFlexOptions
 	// Scope records where the resource lives (Azure subscription/resource
 	// group), echoed from the InstanceConfig it was created with. Zero for
 	// AWS/GCP and unscoped portable callers: Scope.Matches treats a zero
@@ -348,7 +365,10 @@ type ModifyInstanceInput struct {
 	// GCPStorageAutoResize updates the Cloud SQL settings.storageAutoResize flag; a
 	// nil pointer means "no change". Cloud SQL-only; RDS/Redshift ignore it.
 	GCPStorageAutoResize *bool
-	Tags                 map[string]string
+	// AzureFlex updates the Azure Flexible Server storage and backup toggles;
+	// an empty field means "no change". Other engines ignore it.
+	AzureFlex AzureFlexOptions
+	Tags      map[string]string
 	// ApplyImmediately controls when the deferrable changes above take effect
 	// (AWS RDS ModifyDBInstance ApplyImmediately, default false). When true the
 	// target fields are updated on the instance now and PendingModifiedValues is
@@ -900,6 +920,43 @@ type TransparentDataEncryptions interface {
 	ListTransparentDataEncryption(ctx context.Context, server, database string) ([]TransparentDataEncryption, error)
 }
 
+// ShortTermRetentionPolicy is a database's backupShortTermRetentionPolicies/
+// default: point-in-time restore retention and differential backup interval.
+type ShortTermRetentionPolicy struct {
+	Server                    string
+	Database                  string
+	RetentionDays             int
+	DiffBackupIntervalInHours int
+}
+
+// LongTermRetentionPolicy is a database's backupLongTermRetentionPolicies/
+// default. Retentions are ISO-8601 durations, stored verbatim.
+type LongTermRetentionPolicy struct {
+	Server           string
+	Database         string
+	WeeklyRetention  string
+	MonthlyRetention string
+	YearlyRetention  string
+	WeekOfYear       int
+}
+
+// DatabaseRetentionPolicies is an OPTIONAL Azure SQL capability, discovered by
+// type assertion. Every database has both policies; a database that never set
+// one reports the Azure default.
+type DatabaseRetentionPolicies interface {
+	SetShortTermRetention(ctx context.Context, p *ShortTermRetentionPolicy) (*ShortTermRetentionPolicy, error)
+	GetShortTermRetention(ctx context.Context, server, database string) (*ShortTermRetentionPolicy, error)
+	SetLongTermRetention(ctx context.Context, p *LongTermRetentionPolicy) (*LongTermRetentionPolicy, error)
+	GetLongTermRetention(ctx context.Context, server, database string) (*LongTermRetentionPolicy, error)
+}
+
+// ServerConnectionPolicies is an OPTIONAL Azure SQL capability: a server's
+// connectionPolicies/default connection type (Default, Proxy or Redirect).
+type ServerConnectionPolicies interface {
+	SetConnectionPolicy(ctx context.Context, server, connectionType string) (string, error)
+	GetConnectionPolicy(ctx context.Context, server string) (string, error)
+}
+
 // FirewallRuleConfig describes a server firewall rule to create or replace.
 type FirewallRuleConfig struct {
 	Server         string
@@ -1270,6 +1327,9 @@ type ManagedInstanceConfig struct {
 	// GeoRedundant/ZoneRedundant/LocalRedundant), a per-instance cost input.
 	StorageAccountType string
 	Tags               map[string]string
+	// Scope is the subscription and resource group the instance is created
+	// in, so a resource-group delete can find it.
+	Scope scope.Scope
 }
 
 // ManagedInstance is a SQL Managed Instance: a fully-managed instance that
@@ -1290,6 +1350,7 @@ type ManagedInstance struct {
 	FQDN               string
 	ARN                string
 	Tags               map[string]string
+	Scope              scope.Scope
 }
 
 // ManagedDatabaseConfig describes a database on a managed instance.
@@ -1851,6 +1912,11 @@ type AlloyDBClusterConfig struct {
 	ContinuousBackup       bool
 	MaintenanceDay         string // e.g. "SUNDAY"
 	Tags                   map[string]string
+	// Location is the request region the cluster lives in; empty means the
+	// provider's default region.
+	Location string
+	// AllocatedIPRange is networkConfig.allocatedIpRange, echoed back.
+	AllocatedIPRange string
 }
 
 // SecondaryClusterConfig configures a cross-region SECONDARY (read replica)
@@ -1859,6 +1925,7 @@ type SecondaryClusterConfig struct {
 	ID             string
 	PrimaryCluster string // source PRIMARY cluster ID
 	Tags           map[string]string
+	Location       string // request region; empty means the default region
 }
 
 // AlloyDBInstanceConfig carries AlloyDB-specific instance-create fields.
@@ -1869,6 +1936,7 @@ type AlloyDBInstanceConfig struct {
 	CPUCount         int
 	NodeCount        int    // READ_POOL node count
 	AvailabilityType string // "REGIONAL" | "ZONAL"
+	GceZone          string // ZONAL only; empty picks a zone in the cluster's region
 	Tags             map[string]string
 }
 
@@ -1881,6 +1949,7 @@ type AlloyDBClusterInfo struct {
 	ContinuousBackup       bool
 	MaintenanceDay         string
 	PrimaryCluster         string // set for a SECONDARY cluster
+	AllocatedIPRange       string
 	// UID is the server-generated system UID (distinct from the resource id).
 	UID string
 	// DisplayName is the caller-supplied display name, empty when unset.

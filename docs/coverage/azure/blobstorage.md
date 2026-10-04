@@ -56,6 +56,16 @@ AccountEncryptionConfig is an OPTIONAL Azure-specific capability,
 | `AccountEncryption` |  |
 | `SetAccountEncryption` |  |
 
+### AccountServiceSettings
+
+AccountServiceSettings is an OPTIONAL Azure-specific capability, discovered
+
+| Operation | Description |
+| --- | --- |
+| `AccountSetting` | AccountSetting returns the stored document, and false when none is set. |
+| `DeleteAccountSetting` | DeleteAccountSetting removes the document and reports whether it existed. |
+| `SetAccountSetting` | SetAccountSetting replaces the account's kind document and stamps its |
+
 ### AzureBlobExtensions
 
 AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,
@@ -125,6 +135,22 @@ AzureSoftDeleteBlob is an OPTIONAL Azure-specific capability, discovered by
 | `SoftDeleteEnabled` | SoftDeleteEnabled reports whether soft delete is currently in effect for |
 | `UndeleteBlob` | UndeleteBlob restores a soft-deleted blob to active (PUT ?comp=undelete). |
 
+### AzureStorageAccounts
+
+AzureStorageAccounts is an OPTIONAL Azure-only capability, discovered by type
+
+| Operation | Description |
+| --- | --- |
+| `ContainerEncryptionScope` |  |
+| `CreateStorageAccount` | CreateStorageAccount registers the account. It reports created=false and |
+| `DeleteStorageAccount` | DeleteStorageAccount removes the account and all of its data: containers |
+| `ForceDeleteContainer` | ForceDeleteContainer deletes a container together with its blobs, the |
+| `GetStorageAccount` |  |
+| `ListAccountContainers` | ListAccountContainers lists the containers of one account by bare name. |
+| `ListStorageAccounts` |  |
+| `PurgeResourceGroup` | PurgeResourceGroup deletes every account recorded under sub/rg. |
+| `SetContainerEncryptionScope` |  |
+
 ### AzureVersionedBlob
 
 AzureVersionedBlob is an OPTIONAL Azure-specific capability, discovered by
@@ -173,4 +199,5 @@ StorageAccountKeys is an OPTIONAL Azure-specific capability, discovered by
 
 ## Not in scope
 
-_Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
+- Azure: on the bare emulator host (such as `https://127.0.0.1:4568/`), Blob, Queue and Table share one endpoint, and the account-root calls (`GET /?comp=list`, `?restype=service`, `?restype=account`) look the same for each service. They go to Blob unless the User-Agent carries an Azure SDK Queue or Table product token (`azsdk-go-azqueue`, `azsdk-python-storage-queue`, `azsdk-java-azure-storage-queue`, `azsdk-js-storage-queue`, `azsdk-net-Storage.Queues`, and the matching `data-tables` clients). Other Queue and Table clients should use the `{account}.queue.core.windows.net` or `{account}.table.core.windows.net` host, or the path-style `/{account}/` form.
+- Azure: Queue and Table Set Service Properties validate the request and return 202, but do not store logging, metrics or CORS settings. Get Service Stats and Get User Delegation Key are not served.

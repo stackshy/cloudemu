@@ -213,6 +213,33 @@ func Restore(ctx context.Context, services Services, ps *ProviderState) error {
 		}
 	}
 
+	return restoreMissing(ctx, services, ps)
+}
+
+// restoreMissing gives each target service the snapshot has no entry for (one
+// added after the snapshot was written) the chance to rebuild its state from
+// the services just restored. A snapshot with no services at all is a fresh
+// provider, so there is nothing to rebuild from.
+func restoreMissing(ctx context.Context, services Services, ps *ProviderState) error {
+	if len(ps.Services) == 0 {
+		return nil
+	}
+
+	for _, name := range sortedKeys(services) {
+		if _, present := ps.Services[name]; present {
+			continue
+		}
+
+		m, ok := services[name].(snapshot.MissingRestorer)
+		if !ok {
+			continue
+		}
+
+		if err := m.RestoreMissing(ctx); err != nil {
+			return fmt.Errorf("restore missing %s: %w", name, err)
+		}
+	}
+
 	return nil
 }
 

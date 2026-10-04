@@ -321,6 +321,8 @@ func (m *Mock) DeleteDatabase(_ context.Context, server, name string) error {
 	}
 
 	m.tde.Delete(dbKey(server, name))
+	m.str.Delete(dbKey(server, name))
+	m.ltr.Delete(dbKey(server, name))
 	m.dbSettle.Clear(dbKey(server, name))
 
 	return nil

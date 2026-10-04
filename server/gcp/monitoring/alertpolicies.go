@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
@@ -43,7 +44,7 @@ func (h *Handler) serveAlertPolicies(w http.ResponseWriter, r *http.Request, pro
 	case http.MethodPatch, http.MethodPut:
 		h.patchPolicy(w, r, project, name)
 	case http.MethodDelete:
-		h.deletePolicy(w, r, name)
+		h.deletePolicy(w, r, project, name)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
 	}
@@ -99,7 +100,7 @@ func (h *Handler) createPolicy(w http.ResponseWriter, r *http.Request, project s
 	nameConditions(&body, project, id)
 
 	h.mu.Lock()
-	h.policies[id] = body
+	h.policies[projectctx.Key(project, id)] = body
 	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, body)
@@ -118,7 +119,7 @@ func nameConditions(pol *alertPolicy, project, policyID string) {
 
 func (h *Handler) getPolicy(w http.ResponseWriter, project, name string) {
 	h.mu.RLock()
-	pol, ok := h.policies[name]
+	pol, ok := h.policies[projectctx.Key(project, name)]
 	h.mu.RUnlock()
 
 	if !ok {
@@ -137,17 +138,21 @@ func (h *Handler) listPolicies(w http.ResponseWriter, _ *http.Request, project s
 	// Iterating the map directly yields a random order each call, which reads as
 	// perpetual drift to Terraform/clients that diff list output. Emit policies
 	// in stable creation order (ascending numeric id) so repeated lists match.
+	// Each project is its own metrics scope, so only its policies are listed.
 	ids := make([]string, 0, len(h.policies))
-	for id := range h.policies {
-		ids = append(ids, id)
+
+	for key := range h.policies {
+		if p, id, _ := projectctx.Split(key); p == project {
+			ids = append(ids, id)
+		}
 	}
 
 	sort.Slice(ids, func(i, j int) bool { return policyIDLess(ids[i], ids[j]) })
 
-	out := alertPoliciesList{AlertPolicies: make([]alertPolicy, 0, len(h.policies))}
+	out := alertPoliciesList{AlertPolicies: make([]alertPolicy, 0, len(ids))}
 
 	for _, id := range ids {
-		pol := h.policies[id]
+		pol := h.policies[projectctx.Key(project, id)]
 		pol.Name = policyResourceName(project, id)
 		out.AlertPolicies = append(out.AlertPolicies, pol)
 	}
@@ -193,7 +198,7 @@ func (h *Handler) patchPolicy(w http.ResponseWriter, r *http.Request, project, n
 
 	h.mu.Lock()
 
-	cur, ok := h.policies[name]
+	cur, ok := h.policies[projectctx.Key(project, name)]
 	if !ok {
 		h.mu.Unlock()
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "alertPolicy "+name+" not found")
@@ -233,7 +238,7 @@ func (h *Handler) patchPolicy(w http.ResponseWriter, r *http.Request, project, n
 	}
 
 	cur.MutationRecord = &mutationRecord{MutateTime: nowRFC3339(), MutatedBy: "cloudemu"}
-	h.policies[name] = cur
+	h.policies[projectctx.Key(project, name)] = cur
 	h.mu.Unlock()
 
 	// Re-sync the changed channels onto the driver alarm's AlarmActions so a
@@ -253,10 +258,10 @@ func (h *Handler) patchPolicy(w http.ResponseWriter, r *http.Request, project, n
 	writeJSON(w, http.StatusOK, cur)
 }
 
-func (h *Handler) deletePolicy(w http.ResponseWriter, r *http.Request, name string) {
+func (h *Handler) deletePolicy(w http.ResponseWriter, r *http.Request, project, name string) {
 	h.mu.Lock()
-	_, ok := h.policies[name]
-	delete(h.policies, name)
+	_, ok := h.policies[projectctx.Key(project, name)]
+	delete(h.policies, projectctx.Key(project, name))
 	h.mu.Unlock()
 
 	if !ok {

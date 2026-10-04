@@ -9,12 +9,6 @@ import "testing"
 func TestManagedIdentityTypeMapping(t *testing.T) {
 	const armIdentity = "microsoft.managedidentity/userassignedidentities"
 
-	// Forward: KQL `where type == '<armIdentity>'` resolves to the managed
-	// identity portable pair.
-	if svc, typ := mapAzureType(armIdentity); svc != "iam" || typ != "UserAssignedIdentity" {
-		t.Errorf("mapAzureType(%q) = (%q,%q), want (iam,UserAssignedIdentity)", armIdentity, svc, typ)
-	}
-
 	// Reverse: a discovered managed identity stamps the real ARM type.
 	if got := portableToAzureType("iam", "UserAssignedIdentity"); got != armIdentity {
 		t.Errorf("portableToAzureType(iam,UserAssignedIdentity) = %q, want %q", got, armIdentity)

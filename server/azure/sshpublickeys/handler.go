@@ -17,6 +17,7 @@ const (
 	resourceType    = "sshPublicKeys"
 	armNameTag      = "cloudemu:azureSSHKeyName"
 	rgTag           = "cloudemu:azureRG"
+	subTag          = "cloudemu:azureSub" // the subscription a resource was created in
 	publicKeyTag    = "cloudemu:publicKey"
 	defaultLocation = "eastus"
 )
@@ -48,13 +49,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// /sshPublicKeys/{name}/generateKeyPair is a POST sub-resource action.
-	if strings.EqualFold(rp.SubResource, "generateKeyPair") {
+	if strings.EqualFold(rp.SubResource, "generateKeyPair") && rp.SubResourceName == "" {
 		h.generateKeyPair(w, r, rp)
 		return
 	}
 
 	if rp.ResourceName == "" {
 		h.serveCollection(w, r, rp)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp) {
 		return
 	}
 
@@ -95,9 +100,16 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp azu
 			continue
 		}
 
+		if sub := tagOr(keys[i].Tags, subTag, ""); sub != "" && !strings.EqualFold(sub, rp.Subscription) {
+			continue
+		}
+
 		name := tagOr(keys[i].Tags, armNameTag, keys[i].Name)
 		scope := rp
 		scope.ResourceName = name
+		// A subscription-wide list has no resourceGroups segment, so each id
+		// takes the group the key was created in.
+		scope.ResourceGroup = tagOr(keys[i].Tags, rgTag, rp.ResourceGroup)
 		out = append(out, toSSHKeyResponse(&keys[i], scope, ""))
 	}
 
@@ -120,13 +132,14 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	cfg := computedriver.KeyPairConfig{
 		Name:    rp.ResourceName,
 		KeyType: "rsa",
-		Tags:    mergeTags(req.Tags, rp.ResourceName, req.Properties.PublicKey, rp.ResourceGroup),
+		Tags:    mergeTags(req.Tags, rp.ResourceName, req.Properties.PublicKey, rp.ResourceGroup, rp.Subscription),
 	}
 
 	// ARM CreateOrUpdate is idempotent: a repeated PUT replaces the resource
-	// in place rather than failing with AlreadyExists.
-	if _, err := findKeyByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); err == nil {
-		_ = h.compute.DeleteKeyPair(r.Context(), rp.ResourceName)
+	// in place rather than failing with AlreadyExists. Names are unique per
+	// resource group, so only this group's key is replaced.
+	if _, err := h.find(r.Context(), rp); err == nil {
+		_ = h.deleteKey(r.Context(), rp)
 	}
 
 	key, err := h.compute.CreateKeyPair(r.Context(), cfg)
@@ -162,7 +175,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 		return
 	}
 
-	existing, err := findKeyByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	existing, err := h.find(r.Context(), rp)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -186,9 +199,15 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 		userTags = req.Tags
 	}
 
-	merged := mergeTags(userTags, rp.ResourceName, publicKey, rp.ResourceGroup)
+	merged := mergeTags(userTags, rp.ResourceName, publicKey, rp.ResourceGroup, rp.Subscription)
 
-	updated, err := updater.UpdateKeyPair(r.Context(), rp.ResourceName, &publicKey, merged)
+	var updated *computedriver.KeyPairInfo
+	if s, ok := h.compute.(scopedSSHKeys); ok {
+		updated, err = s.UpdateKeyPairScoped(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, &publicKey, merged)
+	} else {
+		updated, err = updater.UpdateKeyPair(r.Context(), rp.ResourceName, &publicKey, merged)
+	}
+
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -199,7 +218,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	key, err := findKeyByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	key, err := h.find(r.Context(), rp)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -210,13 +229,12 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp azurearm.Resour
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
-	key, err := findKeyByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
-	if err != nil {
+	if _, err := h.find(r.Context(), rp); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	if err := h.compute.DeleteKeyPair(r.Context(), key.Name); err != nil {
+	if err := h.deleteKey(r.Context(), rp); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -246,7 +264,17 @@ func (h *Handler) generateKeyPair(w http.ResponseWriter, r *http.Request, rp azu
 		return
 	}
 
-	key, err := gen.GenerateKeyPair(r.Context(), rp.ResourceName)
+	var (
+		key *computedriver.KeyPairInfo
+		err error
+	)
+
+	if s, ok := h.compute.(scopedSSHKeys); ok {
+		key, err = s.GenerateKeyPairScoped(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	} else {
+		key, err = gen.GenerateKeyPair(r.Context(), rp.ResourceName)
+	}
+
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -257,6 +285,36 @@ func (h *Handler) generateKeyPair(w http.ResponseWriter, r *http.Request, rp azu
 		PublicKey:  key.PublicKey,
 		PrivateKey: key.PrivateKey,
 	})
+}
+
+// scopedSSHKeys is the per-resource-group key surface of the Azure compute
+// provider. SSH public key names are unique per resource group, so the wire
+// resolves through it when the backend supports it.
+type scopedSSHKeys interface {
+	GetKeyPairScoped(ctx context.Context, subscription, resourceGroup, name string) (*computedriver.KeyPairInfo, error)
+	UpdateKeyPairScoped(
+		ctx context.Context, subscription, resourceGroup, name string, publicKey *string, tags map[string]string,
+	) (*computedriver.KeyPairInfo, error)
+	GenerateKeyPairScoped(ctx context.Context, subscription, resourceGroup, name string) (*computedriver.KeyPairInfo, error)
+	DeleteKeyPairScoped(ctx context.Context, subscription, resourceGroup, name string) error
+}
+
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) find(ctx context.Context, rp azurearm.ResourcePath) (*computedriver.KeyPairInfo, error) {
+	if s, ok := h.compute.(scopedSSHKeys); ok {
+		return s.GetKeyPairScoped(ctx, rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	}
+
+	return findKeyByName(ctx, h.compute, rp.ResourceGroup, rp.ResourceName)
+}
+
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) deleteKey(ctx context.Context, rp azurearm.ResourcePath) error {
+	if s, ok := h.compute.(scopedSSHKeys); ok {
+		return s.DeleteKeyPairScoped(ctx, rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	}
+
+	return h.compute.DeleteKeyPair(ctx, rp.ResourceName)
 }
 
 func findKeyByName(ctx context.Context, c computedriver.Compute, resourceGroup, name string) (*computedriver.KeyPairInfo, error) {
@@ -306,7 +364,7 @@ func toSSHKeyResponse(key *computedriver.KeyPairInfo, rp azurearm.ResourcePath, 
 // the cloudemu-internal name, resource-group, and public-key tags.
 const extraSlots = 3
 
-func mergeTags(in map[string]string, name, publicKey, resourceGroup string) map[string]string {
+func mergeTags(in map[string]string, name, publicKey, resourceGroup, subscription string) map[string]string {
 	out := make(map[string]string, len(in)+extraSlots)
 
 	for k, v := range in {
@@ -317,6 +375,10 @@ func mergeTags(in map[string]string, name, publicKey, resourceGroup string) map[
 
 	if resourceGroup != "" {
 		out[rgTag] = resourceGroup
+	}
+
+	if subscription != "" {
+		out[subTag] = subscription
 	}
 
 	if publicKey != "" {
@@ -342,7 +404,7 @@ func stripInternalTags(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 
 	for k, v := range in {
-		if k == armNameTag || k == publicKeyTag || k == rgTag {
+		if k == armNameTag || k == publicKeyTag || k == rgTag || k == subTag {
 			continue
 		}
 

@@ -29,6 +29,7 @@
 //	PUT/GET/DELETE .../workspaces/{w}/tables/{name}          : TablesClient
 //	PUT/GET/DELETE .../workspaces/{w}/dataExports/{name}     : DataExportsClient
 //	POST   .../workspaces/{w}/sharedKeys                     : SharedKeysClient.GetSharedKeys
+//	GET    .../[resourceGroups/{rg}/]…/deletedWorkspaces     : DeletedWorkspacesClient.List[ByResourceGroup]
 package loganalytics
 
 import (
@@ -44,11 +45,16 @@ const (
 	// typeWorkspaces is the ARM resource type. The subscription-scoped list path
 	// may serialize it lowercase, so matching is case-insensitive.
 	typeWorkspaces = "workspaces"
+	// typeDeletedWorkspaces lists soft-deleted workspaces.
+	typeDeletedWorkspaces = "deletedWorkspaces"
 
 	subSavedSearches = "savedSearches"
 	subTables        = "tables"
 	subDataExports   = "dataExports"
 	subSharedKeys    = "sharedKeys"
+
+	// childMaxDepth is the deepest child route: workspaces/{w}/{child}/{name}.
+	childMaxDepth = 3
 )
 
 // Handler serves Microsoft.OperationalInsights/workspaces ARM requests against
@@ -79,7 +85,8 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	return rp.Provider == providerName && isWorkspacesType(rp.ResourceType)
+	return rp.Provider == providerName &&
+		(isWorkspacesType(rp.ResourceType) || strings.EqualFold(rp.ResourceType, typeDeletedWorkspaces))
 }
 
 // ServeHTTP routes on the parsed path shape and method.
@@ -87,6 +94,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "malformed ARM path")
+		return
+	}
+
+	if strings.EqualFold(rp.ResourceType, typeDeletedWorkspaces) {
+		serveDeletedWorkspaces(w, r, &rp)
 		return
 	}
 
@@ -131,13 +143,17 @@ func (h *Handler) serveWorkspace(w http.ResponseWriter, r *http.Request, rp *azu
 // action verb. An unknown sub-resource is a 404 rather than the old bug where
 // every child was misrouted to createOrUpdateWorkspace and echoed the workspace.
 func (h *Handler) serveSubResource(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, rp, childMaxDepth) {
+		return
+	}
+
 	switch rp.SubResource {
 	case subSharedKeys:
 		h.getSharedKeys(w, r, rp)
 	case subSavedSearches, subTables, subDataExports:
 		h.serveChild(w, r, rp)
 	default:
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unknown workspace sub-resource: "+rp.SubResource)
+		azurearm.WriteUnknownType(w, r, rp)
 	}
 }
 

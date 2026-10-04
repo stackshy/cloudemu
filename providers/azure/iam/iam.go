@@ -942,7 +942,11 @@ func (m *Mock) CreateAccessKey(
 	}
 
 	keyID := fmt.Sprintf("azure-key-%s", idgen.GenerateID(""))
-	secret := fmt.Sprintf("secret-%s", idgen.GenerateID(""))
+
+	secret, err := idgen.SecretAccessKey()
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.Internal, "generate access key secret: %v", err)
+	}
 
 	ak := &accessKeyData{
 		AccessKeyID:     keyID,

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -187,12 +189,17 @@ func (h *Handler) listRoleDefinitions(w http.ResponseWriter, r *http.Request, sc
 		return
 	}
 
+	filter := parseRoleDefinitionFilter(r.URL.Query().Get("$filter"))
 	out := roleDefinitionList{Value: make([]roleDefinitionEnvelope, 0, len(roles)+len(h.builtins))}
 
 	// Built-in roles are assignable at every scope, so they appear in a list at
 	// any scope, rooted at the caller's requested scope, matching real Azure.
-	for id := range h.builtins {
+	for _, id := range slices.Sorted(maps.Keys(h.builtins)) {
 		props := h.builtins[id]
+		if !filter.matches(&props) {
+			continue
+		}
+
 		out.Value = append(out.Value,
 			buildRoleDefinitionEnvelope(scope, id, &props))
 	}
@@ -204,7 +211,7 @@ func (h *Handler) listRoleDefinitions(w http.ResponseWriter, r *http.Request, sc
 		}
 
 		props, perr := decodeRoleProperties(role.AssumeRolePolicyDoc)
-		if perr != nil {
+		if perr != nil || !filter.matches(&props) {
 			continue
 		}
 
@@ -458,7 +465,7 @@ type roleAssignmentFilter struct {
 func parseRoleAssignmentFilter(raw string) roleAssignmentFilter {
 	var filter roleAssignmentFilter
 
-	for _, clause := range strings.Split(raw, " and ") {
+	for _, clause := range splitODataAnd(raw) {
 		clause = strings.TrimSpace(clause)
 
 		switch {
@@ -472,10 +479,78 @@ func parseRoleAssignmentFilter(raw string) roleAssignmentFilter {
 	return filter
 }
 
+// roleDefinitionFilter is the parsed subset of a roleDefinitions $filter that
+// cloudemu supports: roleName eq '{name}' (what azurerm sends to resolve
+// role_definition_name) and type eq 'BuiltInRole'|'CustomRole', combinable
+// with "and". Both compare case-insensitively, as real Azure does.
+type roleDefinitionFilter struct {
+	roleName string
+	roleType string
+}
+
+func parseRoleDefinitionFilter(raw string) roleDefinitionFilter {
+	var filter roleDefinitionFilter
+
+	for _, clause := range splitODataAnd(raw) {
+		clause = strings.TrimSpace(clause)
+		lower := strings.ToLower(clause)
+
+		switch {
+		case strings.HasPrefix(lower, "rolename eq "):
+			filter.roleName = trimODataString(clause[len("roleName eq "):])
+		case strings.HasPrefix(lower, "type eq "):
+			filter.roleType = trimODataString(clause[len("type eq "):])
+		}
+	}
+
+	return filter
+}
+
+func (f roleDefinitionFilter) matches(props *roleDefinitionProperties) bool {
+	if f.roleName != "" && !strings.EqualFold(f.roleName, props.RoleName) {
+		return false
+	}
+
+	return f.roleType == "" || strings.EqualFold(f.roleType, props.Type)
+}
+
+// splitODataAnd splits a $filter on its "and" combinators, ignoring any
+// " and " inside a single-quoted string literal (a role name such as
+// 'Reader and Data Access'). An escaped quote (two single quotes) inside a
+// literal toggles the quote state twice, so escapes need no special case.
+func splitODataAnd(raw string) []string {
+	const sep = " and "
+
+	var (
+		clauses []string
+		start   int
+		quoted  bool
+	)
+
+	for i := 0; i < len(raw); i++ {
+		switch {
+		case raw[i] == '\'':
+			quoted = !quoted
+		case !quoted && i+len(sep) <= len(raw) && strings.EqualFold(raw[i:i+len(sep)], sep):
+			clauses = append(clauses, raw[start:i])
+			start = i + len(sep)
+			i += len(sep) - 1
+		}
+	}
+
+	return append(clauses, raw[start:])
+}
+
 // trimODataString strips the single or double quotes an OData string literal
-// ('...' or "...") is wrapped in.
+// ('...' or "...") is wrapped in and unescapes each pair of single quotes
+// inside a single-quoted literal to one.
 func trimODataString(s string) string {
-	return strings.Trim(strings.TrimSpace(s), `'"`)
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 && s[0] == '\'' && s[len(s)-1] == '\'' {
+		return strings.ReplaceAll(s[1:len(s)-1], "''", "'")
+	}
+
+	return strings.Trim(s, `'"`)
 }
 
 // scopeAssignmentMatches reports whether a stored assignment's scope is
@@ -496,6 +571,9 @@ func scopeAssignmentMatches(query, stored string) bool {
 func buildRoleDefinitionEnvelope(
 	scope, id string, props *roleDefinitionProperties,
 ) roleDefinitionEnvelope {
+	// The tenant root scope "/" yields "/providers/...", not "//providers/...".
+	scope = strings.TrimSuffix(scope, "/")
+
 	return roleDefinitionEnvelope{
 		ID:         scope + providerSegmentCanonical + roleDefinitionsCanonical + "/" + id,
 		Name:       id,

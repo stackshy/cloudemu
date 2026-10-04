@@ -69,9 +69,10 @@ type listTriggersResponse struct {
 // are async; the mock returns a completed operation immediately with the
 // resulting resource in Response (create) or nil (delete).
 type operationJSON struct {
-	Name     string `json:"name"`
-	Done     bool   `json:"done"`
-	Response any    `json:"response,omitempty"`
+	Name     string          `json:"name"`
+	Done     bool            `json:"done"`
+	Metadata json.RawMessage `json:"metadata,omitempty"`
+	Response any             `json:"response,omitempty"`
 }
 
 // triggerResourceName builds the fully-qualified Eventarc trigger name.

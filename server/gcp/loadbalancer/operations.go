@@ -7,13 +7,14 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
@@ -37,7 +38,7 @@ func (h *Handler) insertBackendService(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	if err := h.validateHealthCheckRefs(r.Context(), rp, req.HealthChecks); err != nil {
+	if err := h.validateHealthCheckRefs(r.Context(), rp, req.LoadBalancingScheme, req.HealthChecks); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
@@ -51,6 +52,10 @@ func (h *Handler) insertBackendService(w http.ResponseWriter, r *http.Request, r
 	tags[bsCreationTag] = time.Now().UTC().Format(time.RFC3339)
 	tags[bsNameTag] = req.Name
 	tags[bsScopeTag] = scopeKeyOf(rp)
+
+	if req.Network != "" {
+		tags[bsNetworkTag] = req.Network
+	}
 
 	if _, err := h.lb.CreateTargetGroup(r.Context(), lbdriver.TargetGroupConfig{
 		// A scope-prefixed driver name keeps a global and a regional backend
@@ -91,33 +96,28 @@ func (h *Handler) patchBackendService(w http.ResponseWriter, r *http.Request, rp
 		return
 	}
 
-	if err := h.validateHealthCheckRefs(r.Context(), rp, req.HealthChecks); err != nil {
+	if err := h.validateBackendServicePatch(r.Context(), rp, &req); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	if err := h.validateBackendRefs(r.Context(), req.Backends); err != nil {
-		gcprest.WriteCErr(w, err)
-		return
-	}
+	stale := false
 
 	err := patcher.PatchGCPBackendService(r.Context(), scopedDriverName(rp, rp.ResourceName), func(tg *lbdriver.TargetGroupInfo) {
-		if req.Protocol != "" {
-			tg.Protocol = req.Protocol
-		}
-
-		if req.Port != 0 {
-			tg.Port = req.Port
-		}
-
-		if tg.Tags == nil {
-			tg.Tags = map[string]string{}
-		}
-
-		mergeBackendServiceTags(tg.Tags, &req)
+		stale = applyBackendServicePatch(tg, &req)
 	})
-	if err != nil {
+
+	switch {
+	case cerrors.IsNotFound(err):
+		// The provider names the scope-qualified store key; answer with the
+		// client-facing name, as GET does.
+		gcprest.WriteCErr(w, cerrors.Newf(cerrors.NotFound, "backend service %q not found", rp.ResourceName))
+		return
+	case err != nil:
 		gcprest.WriteCErr(w, err)
+		return
+	case stale:
+		writeConditionNotMet(w, "Fingerprint either invalid or resource has changed")
 		return
 	}
 
@@ -125,6 +125,44 @@ func (h *Handler) patchBackendService(w http.ResponseWriter, r *http.Request, rp
 		resourceBackendServices, rp.ResourceName, "patch")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// validateBackendServicePatch checks the health check and backend references a
+// backend-service patch carries, judging health check scope by the stored scheme.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) validateBackendServicePatch(ctx context.Context, rp gcprest.ResourcePath, req *backendServiceRequest) error {
+	if err := h.validateHealthCheckRefs(ctx, rp, h.storedBSScheme(ctx, rp, req.LoadBalancingScheme),
+		req.HealthChecks); err != nil {
+		return err
+	}
+
+	return h.validateBackendRefs(ctx, req.Backends)
+}
+
+// applyBackendServicePatch merges req onto tg and bumps its generation. It
+// reports true, leaving tg untouched, when req carries a stale fingerprint.
+func applyBackendServicePatch(tg *lbdriver.TargetGroupInfo, req *backendServiceRequest) bool {
+	if req.Fingerprint != "" && req.Fingerprint != generationFingerprint(tg.Name, tg.Tags, bsGenerationTag) {
+		return true
+	}
+
+	if req.Protocol != "" {
+		tg.Protocol = req.Protocol
+	}
+
+	if req.Port != 0 {
+		tg.Port = req.Port
+	}
+
+	if tg.Tags == nil {
+		tg.Tags = map[string]string{}
+	}
+
+	mergeBackendServiceTags(tg.Tags, req)
+	bumpGeneration(tg.Tags, bsGenerationTag)
+
+	return false
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -193,7 +231,7 @@ func (h *Handler) instanceGroupMembers(ctx context.Context, group string) []stri
 	}
 
 	collection, scope, name := parseGroupRef(group)
-	if collection == "" {
+	if collection == "" || !refInProject(group, projectctx.ProjectOr(ctx, "")) {
 		return nil
 	}
 
@@ -243,8 +281,6 @@ func (h *Handler) listBackendServices(w http.ResponseWriter, r *http.Request, rp
 
 	host := hostOf(r)
 	scopeKey := scopeKeyOf(rp)
-	filter := r.URL.Query().Get("filter")
-
 	items := make([]backendServiceResponse, 0, len(tgs))
 
 	for i := range tgs {
@@ -254,25 +290,19 @@ func (h *Handler) listBackendServices(w http.ResponseWriter, r *http.Request, rp
 			continue
 		}
 
-		if resp := toBackendServiceResponse(&tgs[i], rp, host); gcprest.NameMatches(filter, resp.Name) {
-			items = append(items, resp)
-		}
+		items = append(items, toBackendServiceResponse(&tgs[i], rp, host))
 	}
 
-	sort.SliceStable(items, func(i, j int) bool { return items[i].Name < items[j].Name })
-
-	page, err := pagination.Paginate(items, r.URL.Query().Get("pageToken"),
-		gcprest.MaxResults(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	page, next, ok := gcplist.FilterPage(w, r, items, func(b backendServiceResponse) string { return b.Name })
+	if !ok {
 		return
 	}
 
 	out := backendServiceListResponse{
 		Kind:          "compute#backendServiceList",
 		ID:            "projects/" + rp.Project + "/" + listScopeSegment(rp) + "/backendServices",
-		Items:         page.Items,
-		NextPageToken: page.NextPageToken,
+		Items:         page,
+		NextPageToken: next,
 		SelfLink:      gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, resourceBackendServices, ""),
 	}
 
@@ -303,6 +333,8 @@ func (h *Handler) deleteBackendService(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
+	h.iam.Delete(gcpiam.ComputeName(rp))
+
 	op := h.ops.RecordDone(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
 		resourceBackendServices, rp.ResourceName, "delete")
 
@@ -328,7 +360,7 @@ func (h *Handler) insertForwardingRule(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	if err := h.validateForwardingRuleTarget(r.Context(), rp, &req); err != nil {
+	if err := h.validateForwardingRuleInsert(r.Context(), rp, &req); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
@@ -367,32 +399,49 @@ func (h *Handler) insertForwardingRule(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	// A forwarding rule that references a backend service becomes a listener
-	// linking the load balancer to that target group. A dangling reference to a
-	// non-existent backend service is an error (as in real GCP), and a failed
-	// link must not be swallowed into a phantom success.
-	if bsName := backendServiceName(req.BackendService); bsName != "" {
-		tg, ferr := h.findTGByName(r.Context(), rp, bsName)
-		if ferr != nil {
-			gcprest.WriteCErr(w, ferr)
-			return
-		}
-
-		if _, lerr := h.lb.CreateListener(r.Context(), lbdriver.ListenerConfig{
-			LBARN:          lb.ARN,
-			Protocol:       req.IPProtocol,
-			Port:           firstPort(req.PortRange),
-			TargetGroupARN: tg.ARN,
-		}); lerr != nil {
-			gcprest.WriteCErr(w, lerr)
-			return
-		}
+	if err := h.linkForwardingRuleBackend(r.Context(), rp, &req, lb.ARN); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
 	}
 
-	op := h.ops.RecordDone(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
-		resourceForwardingRules, req.Name, "insert")
+	op := h.ops.RecordDoneTarget(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
+		resourceForwardingRules, req.Name, numericID(lb.ID), "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// linkForwardingRuleBackend turns a rule's backendService reference into a
+// listener linking the load balancer to that target group. A dangling reference
+// to a non-existent backend service is an error (as in real GCP), and a failed
+// link must not be swallowed into a phantom success.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) linkForwardingRuleBackend(ctx context.Context, rp gcprest.ResourcePath,
+	req *forwardingRuleRequest, lbARN string,
+) error {
+	bsName := backendServiceName(req.BackendService)
+	if bsName == "" {
+		return nil
+	}
+
+	// An internal passthrough rule uses a backend service of its own project.
+	if !refInProject(req.BackendService, rp.Project) {
+		return invalidRefErr("backendService", req.BackendService, "backend service")
+	}
+
+	tg, err := h.findTGByName(ctx, rp, bsName)
+	if err != nil {
+		return err
+	}
+
+	_, err = h.lb.CreateListener(ctx, lbdriver.ListenerConfig{
+		LBARN:          lbARN,
+		Protocol:       req.IPProtocol,
+		Port:           firstPort(req.PortRange),
+		TargetGroupARN: tg.ARN,
+	})
+
+	return err
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -416,8 +465,6 @@ func (h *Handler) listForwardingRules(w http.ResponseWriter, r *http.Request, rp
 
 	host := hostOf(r)
 	scopeKey := scopeKeyOf(rp)
-	filter := r.URL.Query().Get("filter")
-
 	items := make([]forwardingRuleResponse, 0, len(lbs))
 
 	for i := range lbs {
@@ -425,25 +472,19 @@ func (h *Handler) listForwardingRules(w http.ResponseWriter, r *http.Request, rp
 			continue
 		}
 
-		if resp := h.toForwardingRuleResponse(r.Context(), &lbs[i], rp, host); gcprest.NameMatches(filter, resp.Name) {
-			items = append(items, resp)
-		}
+		items = append(items, h.toForwardingRuleResponse(r.Context(), &lbs[i], rp, host))
 	}
 
-	sort.SliceStable(items, func(i, j int) bool { return items[i].Name < items[j].Name })
-
-	page, err := pagination.Paginate(items, r.URL.Query().Get("pageToken"),
-		gcprest.MaxResults(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	page, next, ok := gcplist.FilterPage(w, r, items, func(f forwardingRuleResponse) string { return f.Name })
+	if !ok {
 		return
 	}
 
 	out := forwardingRuleListResponse{
 		Kind:          "compute#forwardingRuleList",
 		ID:            "projects/" + rp.Project + "/" + listScopeSegment(rp) + "/forwardingRules",
-		Items:         page.Items,
-		NextPageToken: page.NextPageToken,
+		Items:         page,
+		NextPageToken: next,
 		SelfLink:      gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, resourceForwardingRules, ""),
 	}
 
@@ -543,9 +584,13 @@ func toBackendServiceResponse(tg *lbdriver.TargetGroupInfo, rp gcprest.ResourceP
 	resp.LoadBalancingScheme = tg.Tags[bsSchemeTag]
 	resp.SessionAffinity = tg.Tags[bsSessionAffinityTag]
 	resp.CreationTimestamp = tg.Tags[bsCreationTag]
-	// A non-empty fingerprint is required for every future patch; real GCP always
-	// returns one, so derive a stable value from the resource name.
-	resp.Fingerprint = fingerprintOf(name)
+	// Real GCP always returns a fingerprint and changes it on every mutation, so
+	// a patch carrying a stale one can be rejected.
+	resp.Fingerprint = generationFingerprint(tg.Name, tg.Tags, bsGenerationTag)
+
+	if rp.Scope == gcprest.ScopeRegions {
+		resp.Region = regionLink(host, rp.Project, rp.ScopeName)
+	}
 
 	if ts := tg.Tags[bsTimeoutSecTag]; ts != "" {
 		if n, err := strconv.Atoi(ts); err == nil {
@@ -562,6 +607,7 @@ func toBackendServiceResponse(tg *lbdriver.TargetGroupInfo, rp gcprest.ResourceP
 	decodeJSONTag(tg.Tags, bsCdnPolicyTag, &resp.CdnPolicy)
 	backendServiceKeyNames(tg.Tags, &resp)
 	resp.EnableCDN = boolTag(tg.Tags, bsEnableCDNTag)
+	resp.Network = tg.Tags[bsNetworkTag]
 
 	return resp
 }
@@ -618,6 +664,7 @@ const (
 	bsConnDrainTag       = "cloudemu:gcpBsConnectionDraining"
 	bsCdnPolicyTag       = "cloudemu:gcpBsCdnPolicy"
 	bsEnableCDNTag       = "cloudemu:gcpBsEnableCDN"
+	bsNetworkTag         = "cloudemu:gcpBsNetwork"
 	// bsNameTag/bsScopeTag carry the client-facing name and scope key so a
 	// scope-prefixed driver record re-emits its real name at its real scope.
 	bsNameTag  = "cloudemu:gcpBsName"
@@ -709,12 +756,16 @@ func (h *Handler) toForwardingRuleResponse(ctx context.Context, lb *lbdriver.LBI
 	}
 
 	h.applyPSCFields(ctx, &out, lb)
+	applyForwardingRuleExtras(&out, lb, rp, host)
 
 	// A linked listener (a rule referencing a backend service) supersedes the
 	// round-tripped protocol/portRange and adds the backendService self-link.
 	if listeners, err := h.lb.DescribeListeners(ctx, lb.ARN); err == nil && len(listeners) > 0 {
 		out.IPProtocol = protocolOrDefault(listeners[0].Protocol)
-		out.PortRange = strconv.Itoa(listeners[0].Port)
+		// An allPorts or ports[] rule has no portRange; never report "0".
+		if listeners[0].Port > 0 && !usesPortList(lb.Tags) {
+			out.PortRange = strconv.Itoa(listeners[0].Port)
+		}
 
 		if tgName := h.tgNameByARN(ctx, listeners[0].TargetGroupARN); tgName != "" {
 			out.BackendService = gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName,
@@ -809,7 +860,7 @@ func (h *Handler) urlMapRefBackendService(ctx context.Context, rp gcprest.Resour
 	}
 
 	for i := range maps {
-		if bodyRefsBackendService(maps[i].Body, bsName) {
+		if bodyRefsBackendService(maps[i].Body, bsName, rp.Project) {
 			return maps[i].Name
 		}
 	}
@@ -818,14 +869,14 @@ func (h *Handler) urlMapRefBackendService(ctx context.Context, rp gcprest.Resour
 }
 
 // bodyRefsBackendService walks an opaque url-map body for any "service" /
-// "defaultService" member whose reference resolves to bsName.
-func bodyRefsBackendService(v any, bsName string) bool {
+// "defaultService" member whose reference resolves to bsName in project.
+func bodyRefsBackendService(v any, bsName, project string) bool {
 	switch t := v.(type) {
 	case map[string]any:
-		return mapRefsBackendService(t, bsName)
+		return mapRefsBackendService(t, bsName, project)
 	case []any:
 		for i := range t {
-			if bodyRefsBackendService(t[i], bsName) {
+			if bodyRefsBackendService(t[i], bsName, project) {
 				return true
 			}
 		}
@@ -836,15 +887,15 @@ func bodyRefsBackendService(v any, bsName string) bool {
 
 // mapRefsBackendService checks one map node for a backend-service reference and
 // recurses into its members.
-func mapRefsBackendService(m map[string]any, bsName string) bool {
+func mapRefsBackendService(m map[string]any, bsName, project string) bool {
 	for k, val := range m {
 		if k == "service" || k == "defaultService" {
-			if s, ok := val.(string); ok && backendServiceName(s) == bsName {
+			if s, ok := val.(string); ok && backendServiceName(s) == bsName && refInProject(s, project) {
 				return true
 			}
 		}
 
-		if bodyRefsBackendService(val, bsName) {
+		if bodyRefsBackendService(val, bsName, project) {
 			return true
 		}
 	}
@@ -853,13 +904,14 @@ func mapRefsBackendService(m map[string]any, bsName string) bool {
 }
 
 // validateHealthCheckRefs rejects a create/patch whose healthChecks[] names a
-// health check that does not exist in the same scope, matching real GCP's
-// "Invalid value for field 'resource.healthChecks[N]'" rejection. It is a no-op
-// when the driver has no GCP resource store (the health checks can't be
-// resolved) so non-GCP drivers stay unaffected.
+// health check that does not exist, matching real GCP's "Invalid value for
+// field 'resource.healthChecks[N]'" rejection. Each ref is resolved in the scope
+// it names: a regional backend service may use a global health check only for
+// the schemes globalHCAllowed accepts. It is a no-op when the driver has no
+// GCP resource store, so non-GCP drivers stay unaffected.
 //
 //nolint:gocritic // rp is a request-scoped value
-func (h *Handler) validateHealthCheckRefs(ctx context.Context, rp gcprest.ResourcePath, refs []string) error {
+func (h *Handler) validateHealthCheckRefs(ctx context.Context, rp gcprest.ResourcePath, scheme string, refs []string) error {
 	if len(refs) == 0 {
 		return nil
 	}
@@ -869,12 +921,19 @@ func (h *Handler) validateHealthCheckRefs(ctx context.Context, rp gcprest.Resour
 		return nil
 	}
 
-	scope := scopeKeyOf(rp)
+	own := scopeKeyOf(rp)
 
 	for i, ref := range refs {
-		name := lastPathSegment(ref)
+		scope := hcRefScope(ref, own)
+		if err := checkHealthCheckScope(i, ref, own, scope, scheme); err != nil {
+			return err
+		}
 
-		_, err := store.GetGCPResource(ctx, resourceHealthChecks, scope, name)
+		err := errOtherProject
+		if refInProject(ref, rp.Project) {
+			_, err = store.GetGCPResource(ctx, resourceHealthChecks, scope, lastPathSegment(ref))
+		}
+
 		if err == nil {
 			continue
 		}
@@ -888,6 +947,84 @@ func (h *Handler) validateHealthCheckRefs(ctx context.Context, rp gcprest.Resour
 	}
 
 	return nil
+}
+
+// globalHCAllowed reports whether a regional backend service with scheme may
+// use a global health check. Only the internal passthrough NLB (INTERNAL) can;
+// every other regional load balancer requires a regional one.
+func globalHCAllowed(scheme string) bool {
+	return scheme == schemeInternal
+}
+
+// schemeInternal is the default scheme of a regional backend service.
+const schemeInternal = "INTERNAL"
+
+// checkHealthCheckScope enforces the health-check scope rules for the i-th ref:
+// a global backend service uses global checks only, and a regional one uses
+// checks in its own region, or global ones when globalHCAllowed. A
+// regional backend service with no scheme is INTERNAL, the API default.
+func checkHealthCheckScope(i int, ref, own, scope, scheme string) error {
+	if scope == own {
+		return nil
+	}
+
+	if own != gcprest.ScopeGlobal && scope == gcprest.ScopeGlobal {
+		if scheme == "" {
+			scheme = schemeInternal
+		}
+
+		if globalHCAllowed(scheme) {
+			return nil
+		}
+
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"Invalid value for field 'resource.healthChecks[%d]': '%s'. "+
+				"A regional backend service with load balancing scheme %s must use a regional health check.", i, ref, scheme)
+	}
+
+	return cerrors.Newf(cerrors.InvalidArgument,
+		"Invalid value for field 'resource.healthChecks[%d]': '%s'. "+
+			"The health check must be in the same scope as the backend service.", i, ref)
+}
+
+// hcRefScope returns the scope a health-check reference names: "global" for a
+// .../global/healthChecks/x ref, the region for .../regions/{r}/healthChecks/x,
+// and ownScope for a bare name. It accepts full URLs and the relative
+// projects/p/... form Terraform uses as a resource id.
+func hcRefScope(ref, ownScope string) string {
+	parts := strings.Split(ref, "/")
+
+	for i := 1; i < len(parts); i++ {
+		if parts[i] != resourceHealthChecks {
+			continue
+		}
+
+		if parts[i-1] == gcprest.ScopeGlobal {
+			return gcprest.ScopeGlobal
+		}
+
+		if i >= 2 && parts[i-2] == gcprest.ScopeRegions {
+			return parts[i-1]
+		}
+	}
+
+	return ownScope
+}
+
+// storedBSScheme returns reqScheme, or the stored scheme of the backend service
+// being patched when the request omits it.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) storedBSScheme(ctx context.Context, rp gcprest.ResourcePath, reqScheme string) string {
+	if reqScheme != "" {
+		return reqScheme
+	}
+
+	if tg, err := h.findTGByName(ctx, rp, rp.ResourceName); err == nil {
+		return tg.Tags[bsSchemeTag]
+	}
+
+	return ""
 }
 
 // firstPort parses the low end of a GCP portRange (e.g. "80" or "80-80").
@@ -1042,6 +1179,8 @@ func forwardingRuleTags(req *forwardingRuleRequest) map[string]string {
 	if req.Subnetwork != "" {
 		tags[frSubnetworkTag] = req.Subnetwork
 	}
+
+	mergeForwardingRuleExtraTags(tags, req)
 
 	return tags
 }

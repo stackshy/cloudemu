@@ -28,7 +28,11 @@ func (m *Mock) CreateResourceConfiguration(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	id := idgen.GenerateLongID("rc-")
+	id, err := idgen.GenerateLongID("rc-")
+	if err != nil {
+		return nil, err
+	}
+
 	c := &driver.ResourceConfiguration{
 		ID:                       id,
 		ARN:                      m.arn("resourceconfiguration/" + id),

@@ -1217,8 +1217,17 @@ func (m *Mock) CreateAccessKey(
 			"Cannot exceed quota for AccessKeysPerUser: %d", maxAccessKeysPerUser)
 	}
 
-	keyID := idgen.AccessKeyID()
-	secret := fmt.Sprintf("secret-%s", idgen.GenerateID(""))
+	keyID, err := m.newAccessKeyID()
+	if err != nil {
+		return nil, err
+	}
+
+	// The secret signs SigV4 requests, so it must be unguessable even to a
+	// caller who knows the key id.
+	secret, err := idgen.SecretAccessKey()
+	if err != nil {
+		return nil, errors.Newf(errors.Internal, "generate access key secret: %v", err)
+	}
 
 	ak := &accessKeyData{
 		AccessKeyID:     keyID,
@@ -1232,6 +1241,26 @@ func (m *Mock) CreateAccessKey(
 	info := toAccessKeyInfo(ak)
 
 	return &info, nil
+}
+
+// maxKeyIDAttempts bounds the retries when a freshly drawn access key id is
+// already taken. With 80 random bits a single collision is already unlikely.
+const maxKeyIDAttempts = 5
+
+// newAccessKeyID draws an AKIA id not already held by another key.
+func (m *Mock) newAccessKeyID() (string, error) {
+	for range maxKeyIDAttempts {
+		id, err := idgen.AccessKeyID()
+		if err != nil {
+			return "", errors.Newf(errors.Internal, "generate access key id: %v", err)
+		}
+
+		if !m.accessKeys.Has(id) {
+			return id, nil
+		}
+	}
+
+	return "", errors.Newf(errors.Internal, "could not generate a unique access key id")
 }
 
 // DeleteAccessKey deletes an access key.

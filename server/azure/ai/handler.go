@@ -76,6 +76,10 @@ func (h *CognitiveServicesHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if rp.SubResource != "" && azurearm.TooDeep(w, r, &rp, childMaxDepth) {
+		return
+	}
+
 	switch {
 	case rp.ResourceName == "":
 		h.serveAccountCollection(w, r, &rp)

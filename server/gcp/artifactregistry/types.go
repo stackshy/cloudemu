@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 )
 
@@ -175,9 +176,10 @@ type listFilesResponse struct {
 // operationJSON is a google.longrunning.Operation. Artifact Registry's create
 // and delete are async; the mock returns a completed operation immediately.
 type operationJSON struct {
-	Name     string `json:"name"`
-	Done     bool   `json:"done"`
-	Response any    `json:"response,omitempty"`
+	Name     string          `json:"name"`
+	Done     bool            `json:"done"`
+	Metadata json.RawMessage `json:"metadata,omitempty"`
+	Response any             `json:"response,omitempty"`
 }
 
 const (
@@ -254,6 +256,12 @@ func toRepositoryJSON(project, location string, r *crdriver.Repository, sizeByte
 	return out
 }
 
+// cleanupPolicyEnums is the enum table for the stored cleanupPolicies map,
+// keyed by policy id.
+//
+//nolint:gochecknoglobals // immutable view of the generated enum table
+var cleanupPolicyEnums = gcpenum.Sub(repositoryEnums, "cleanupPolicies")
+
 // repoExtrasFromTags reconstructs the GCP-only Repository fields (dockerConfig,
 // cleanupPolicies, cleanupPolicyDryRun) that the driver stores as reserved tags
 // so they round-trip on get/list without Terraform drift.
@@ -265,8 +273,11 @@ func repoExtrasFromTags(
 	}
 
 	if raw := tags[cleanupPolicyTag]; raw != "" {
+		// A gapic client could store numeric action/tagState values before
+		// create bodies were normalized; render them as names. The tag itself
+		// is never rewritten.
 		var m map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(raw), &m); err == nil {
+		if err := json.Unmarshal(gcpenum.NormalizeStored([]byte(raw), cleanupPolicyEnums), &m); err == nil {
 			policies = m
 		}
 	}

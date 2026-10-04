@@ -13,6 +13,9 @@ const (
 	registryTypeFull       = "Microsoft.ContainerRegistry/registries"
 	webhookTypeFull        = "Microsoft.ContainerRegistry/registries/webhooks"
 	replicationTypeFull    = "Microsoft.ContainerRegistry/registries/replications"
+
+	// replicationMaxDepth is the deepest replication route: replications/{name}.
+	replicationMaxDepth = 3
 )
 
 // armRegistry mirrors armcontainerregistry.Registry.

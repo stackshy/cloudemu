@@ -11,6 +11,28 @@ import (
 // serveSystemTopicSubscription routes
 // .../systemTopics/{t}/eventSubscriptions[/{name}].
 func (h *Handler) serveSystemTopicSubscription(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if action := eventSubActionOf(rp); action != "" {
+		h.mu.RLock()
+
+		var (
+			props json.RawMessage
+			found bool
+		)
+
+		if rec := h.systemTopics[storeKey(rp.Subscription, rp.ResourceGroup, rp.ResourceName)]; rec != nil {
+			props, found = rec.subscriptions[rp.SubResourceName]
+		}
+		h.mu.RUnlock()
+
+		serveEventSubAction(w, r, action, props, found)
+
+		return
+	}
+
+	if azurearm.TooDeep(w, r, rp, childMaxDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)

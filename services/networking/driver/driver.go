@@ -179,6 +179,13 @@ type NATGateway struct {
 	PrivateIP          string
 	NetworkInterfaceID string
 	ConnectivityType   string
+	// Location, SKU, IdleTimeoutMinutes and Zones round-trip the Azure-only
+	// fields set in NATGatewayConfig; the Azure provider defaults SKU to
+	// Standard and the idle timeout to 4 minutes. Empty/zero for AWS and GCP.
+	Location           string
+	SKU                string
+	IdleTimeoutMinutes int
+	Zones              []string
 }
 
 // NATGatewayConfig configures a NAT gateway.
@@ -189,6 +196,13 @@ type NATGatewayConfig struct {
 	// gateway; ConnectivityType selects "public" (default) or "private".
 	AllocationID     string
 	ConnectivityType string
+	// Location, SKU, IdleTimeoutMinutes and Zones are Azure NAT-gateway-only
+	// fields (region, sku.name, properties.idleTimeoutInMinutes, zones) that
+	// ARM reports on every GET. Empty/zero for AWS and GCP.
+	Location           string
+	SKU                string
+	IdleTimeoutMinutes int
+	Zones              []string
 }
 
 // FlowLog represents a VPC flow log configuration.
@@ -316,6 +330,9 @@ type ElasticIPConfig struct {
 	// properties.publicIPAddressVersion. Empty for AWS and GCP.
 	SKUTier   string
 	IPVersion string
+	// Location is the Azure public-IP region, echoed as location and used to
+	// build dnsSettings.fqdn. Empty for AWS and GCP.
+	Location string
 }
 
 // ElasticIP represents an elastic IP address.
@@ -352,6 +369,8 @@ type ElasticIP struct {
 	// address's lifetime, regenerated only on release + re-allocation. Empty
 	// for AWS and GCP.
 	ResourceGUID string
+	// Location round-trips the Azure public-IP region set in ElasticIPConfig.
+	Location string
 }
 
 // AssociateAddressInput carries the target of an AssociateAddress call. Exactly

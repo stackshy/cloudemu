@@ -93,8 +93,9 @@ type uniformBucketLevelAccess struct {
 }
 
 type bucketsListResponse struct {
-	Kind  string           `json:"kind"`
-	Items []bucketResource `json:"items"`
+	Kind          string           `json:"kind"`
+	Items         []bucketResource `json:"items"`
+	NextPageToken string           `json:"nextPageToken,omitempty"`
 }
 
 // anywhereCachesListResponse is the Buckets anywhereCaches: list response. Its

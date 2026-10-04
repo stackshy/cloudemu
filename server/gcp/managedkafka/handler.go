@@ -50,15 +50,15 @@
 package managedkafka
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"slices"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
+	"github.com/stackshy/cloudemu/v2/server/wire"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	mkdriver "github.com/stackshy/cloudemu/v2/services/managedkafka/driver"
 )
@@ -222,8 +222,10 @@ func (h *Handler) Matches(r *http.Request) bool {
 	switch {
 	case rt.resource == operationsSeg:
 		return false
-	case standalone || rt.topics:
+	case standalone || rt.topics || sharedpath.Is(r, sharedpath.ManagedKafka):
 		return true
+	case sharedpath.Yield(r, sharedpath.ManagedKafka, sharedpath.Container, sharedpath.AlloyDB):
+		return false
 	case rt.cluster != "":
 		return h.claimsItem(r, &rt)
 	case r.Method == http.MethodPost:
@@ -281,9 +283,7 @@ func probeBody(r *http.Request) map[string]json.RawMessage {
 		return nil
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxProbeBytes))
-	_ = r.Body.Close()
-	r.Body = io.NopCloser(bytes.NewReader(raw))
+	raw, err := wire.PeekBody(r, maxProbeBytes)
 
 	if err != nil {
 		return nil

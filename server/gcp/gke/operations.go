@@ -17,6 +17,10 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, p *gkePa
 		return
 	}
 
+	if h.sharedCreateConflict(w, r, p, body.Cluster.Name) {
+		return
+	}
+
 	in := gke.CreateClusterInput{
 		Name:              body.Cluster.Name,
 		Location:          p.location,
@@ -55,7 +59,7 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, p *gkePa
 	// Register a backing MIG for every node pool the cluster materialized (the
 	// default pool plus any caller-specified pools), so their node counts read
 	// back through compute instanceGroupManagers.
-	h.reconcileClusterMIGs(r.Context(), p.location, body.Cluster.Name)
+	h.reconcileClusterMIGs(r.Context(), p.project, p.location, body.Cluster.Name)
 
 	writeJSON(w, http.StatusOK, toOperationResource(op, p.project))
 }
@@ -155,7 +159,7 @@ func (h *Handler) updateCluster(w http.ResponseWriter, r *http.Request, p *gkePa
 func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request, p *gkePath) {
 	// Remove the pools' backing MIGs before the cluster (and its pools) are torn
 	// down, while the pools are still enumerable.
-	h.removeClusterMIGs(r.Context(), p.location, p.name)
+	h.removeClusterMIGs(r.Context(), p.project, p.location, p.name)
 
 	op, err := h.gke.DeleteCluster(r.Context(), p.location, p.name)
 	if err != nil {
@@ -360,7 +364,7 @@ func (h *Handler) createNodePool(w http.ResponseWriter, r *http.Request, p *gkeP
 		return
 	}
 
-	h.syncNodePoolMIG(np)
+	h.syncNodePoolMIG(p.project, np)
 
 	writeJSON(w, http.StatusOK, toOperationResource(op, p.project))
 }
@@ -421,7 +425,7 @@ func (h *Handler) deleteNodePool(w http.ResponseWriter, r *http.Request, p *gkeP
 		return
 	}
 
-	h.removeNodePoolMIG(p.location, p.name, p.subName)
+	h.removeNodePoolMIG(p.project, p.location, p.name, p.subName)
 
 	writeJSON(w, http.StatusOK, toOperationResource(op, p.project))
 }
@@ -459,7 +463,7 @@ func (h *Handler) setNodePoolSize(w http.ResponseWriter, r *http.Request, p *gke
 	}
 
 	if np, gerr := h.gke.GetNodePool(r.Context(), p.location, p.name, p.subName); gerr == nil {
-		h.syncNodePoolMIG(np)
+		h.syncNodePoolMIG(p.project, np)
 	}
 
 	writeJSON(w, http.StatusOK, toOperationResource(op, p.project))

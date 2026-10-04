@@ -229,9 +229,9 @@ func TestGetOperationDone(t *testing.T) {
 		t.Fatalf("GetOperation recorded: %v op=%+v", err, op)
 	}
 
-	// An unknown operation is reported done (synchronous completion).
+	// An operation that was never created is NOT_FOUND, as in real Spanner.
 	unknown, err := m.GetOperation(context.Background(), inst.Name+"/operations/does-not-exist")
-	if err != nil || !unknown.Done {
-		t.Fatalf("GetOperation unknown: %v op=%+v", err, unknown)
+	if !cerrors.IsNotFound(err) {
+		t.Fatalf("GetOperation unknown: want NotFound, got op=%+v err=%v", unknown, err)
 	}
 }

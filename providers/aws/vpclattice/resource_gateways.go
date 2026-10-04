@@ -26,7 +26,11 @@ func (m *Mock) CreateResourceGateway(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	id := idgen.GenerateLongID("rg-")
+	id, err := idgen.GenerateLongID("rg-")
+	if err != nil {
+		return nil, err
+	}
+
 	g := &driver.ResourceGateway{
 		ID:                          id,
 		ARN:                         m.arn("resourcegateway/" + id),

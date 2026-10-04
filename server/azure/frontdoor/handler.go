@@ -39,6 +39,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	fddriver "github.com/stackshy/cloudemu/v2/services/frontdoor/driver"
 )
@@ -121,6 +122,10 @@ func (h *Handler) serveProfile(w http.ResponseWriter, r *http.Request, rp *azure
 		writeMethodNotAllowed(w)
 	}
 }
+
+// PurgePhase orders this purger in the resource-group cascade: Front Door is a
+// network consumer, so it goes before the virtual network purge.
+func (*Handler) PurgePhase() int { return resourcegroups.PhaseNetworkConsumers }
 
 // PurgeResourceGroup deletes every Front Door profile (cascading its endpoints and
 // origin groups) stored under the given resource group, backing the resource-group

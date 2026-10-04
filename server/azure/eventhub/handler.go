@@ -177,6 +177,8 @@ func (h *Handler) serveChild(w http.ResponseWriter, r *http.Request, ep ehPath) 
 		h.serveEventHubTree(w, r, ep)
 	case eq(ep.segs[0], segAuthRules):
 		h.authRuleDispatch(w, r, ep.segs[1:], func() (authTarget, bool) { return h.nsAuthTargetLocked(ep) })
+	case eq(ep.segs[0], segNetworkRuleSets):
+		h.serveNetworkRuleSet(w, r, ep)
 	default:
 		notImplemented(w)
 	}
@@ -209,6 +211,15 @@ func (h *Handler) getNS(ep ehPath) (*namespaceState, bool) {
 
 func writeNSNotFound(w http.ResponseWriter, name string) {
 	azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "namespace not found: "+name)
+}
+
+// writeNamespaceNameTaken answers a PUT for a namespace name another resource
+// group or subscription already owns. Namespace names are global DNS labels,
+// so real Azure rejects the PUT with 409 Conflict instead of touching the
+// existing namespace.
+func writeNamespaceNameTaken(w http.ResponseWriter, name string) {
+	azurearm.WriteError(w, http.StatusConflict, "Conflict",
+		"Namespace name '"+name+"' is not available. The specified name is already in use.")
 }
 
 func sortedKeys[V any](m map[string]V) []string {

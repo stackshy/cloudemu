@@ -3,7 +3,7 @@
 
 provider-native `gke` wire service (GCP-only) · no portable driver · [GCP index](./README.md)
 
-## Operations (18)
+## Operations (28)
 
 | Operation | Description |
 | --- | --- |
@@ -22,6 +22,16 @@ provider-native `gke` wire service (GCP-only) · no portable driver · [GCP inde
 | `ListNodePools` |  |
 | `ListOperations` |  |
 | `RollbackNodePool` |  |
+| `SetClusterLogging` |  |
+| `SetClusterMonitoring` |  |
+| `SetLegacyAbac` |  |
+| `SetMaintenancePolicy` |  |
+| `SetMasterAuth` |  |
+| `SetNetworkPolicy` |  |
+| `SetNodePoolAutoscaling` |  |
+| `SetNodePoolManagement` |  |
+| `SetNodePoolSize` |  |
+| `SetResourceLabels` |  |
 | `StartIPRotation` |  |
 | `UpdateCluster` |  |
 | `UpdateNodePool` |  |

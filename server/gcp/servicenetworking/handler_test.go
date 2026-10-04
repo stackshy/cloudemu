@@ -131,3 +131,101 @@ func TestUpsert_BodyIsCapped(t *testing.T) {
 		t.Errorf("stored %d bytes — the body cap did not apply", len(stored))
 	}
 }
+
+// TestCreateListDelete_KeyedByBodyNetwork: a create names its network only in
+// the body, the list filters by it, and a DeleteConnectionRequest (with or
+// without the :deleteConnection verb in the path) removes it, the sequence
+// Terraform's google_service_networking_connection drives.
+func TestCreateListDelete_KeyedByBodyNetwork(t *testing.T) {
+	t.Parallel()
+
+	const network = "projects/123/global/networks/n1"
+
+	tests := []struct {
+		name       string
+		deletePath string
+	}{
+		{name: "deleteConnection verb", deletePath: connPath + "/servicenetworking-googleapis-com:deleteConnection"},
+		{name: "verb dropped", deletePath: connPath + "/servicenetworking-googleapis-com"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := New()
+			serve := func(method, path, body string) string {
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
+
+				if rec.Code != http.StatusOK {
+					t.Fatalf("%s %s: got %d", method, path, rec.Code)
+				}
+
+				return rec.Body.String()
+			}
+
+			serve(http.MethodPost, connPath, `{"network":"`+network+`","reservedPeeringRanges":["r1"]}`)
+
+			if got := serve(http.MethodGet, connPath+"?network="+network, ""); !strings.Contains(got, `"r1"`) {
+				t.Fatalf("list after create = %s, want the connection", got)
+			}
+
+			if got := serve(http.MethodPost, tt.deletePath, `{"consumerNetwork":"`+network+`"}`); !strings.Contains(got, "google.protobuf.Empty") {
+				t.Fatalf("delete op = %s, want an Empty response", got)
+			}
+
+			if got := connectionCount(t, h); got != 0 {
+				t.Fatalf("got %d connections after delete, want 0", got)
+			}
+		})
+	}
+}
+
+// TestDeleteIsDecidedByMethodAndPath: a body carrying consumerNetwork deletes
+// only on POST to a single connection; a PATCH or a POST to the collection with
+// the same body keeps the connection, and a create reports service and peering.
+func TestDeleteIsDecidedByMethodAndPath(t *testing.T) {
+	t.Parallel()
+
+	const network = "projects/123/global/networks/n2"
+
+	tests := []struct {
+		name      string
+		method    string
+		path      string
+		wantCount int
+	}{
+		{name: "patch keeps it", method: http.MethodPatch, path: connPath + "/-?updateMask=reservedPeeringRanges", wantCount: 1},
+		{name: "collection post keeps it", method: http.MethodPost, path: connPath, wantCount: 1},
+		{name: "post to the connection deletes it", method: http.MethodPost, path: connPath + "/" + peeringName, wantCount: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := New()
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, connPath,
+				strings.NewReader(`{"network":"`+network+`","reservedPeeringRanges":["r2"]}`)))
+
+			if !strings.Contains(rec.Body.String(), `"peering":"`+peeringName+`"`) ||
+				!strings.Contains(rec.Body.String(), `"service":"services/servicenetworking.googleapis.com"`) {
+				t.Fatalf("create = %s, want service and peering", rec.Body)
+			}
+
+			rec = httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(tt.method, tt.path, strings.NewReader(`{"consumerNetwork":"`+network+`"}`)))
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s %s: got %d", tt.method, tt.path, rec.Code)
+			}
+
+			if got := connectionCount(t, h); got != tt.wantCount {
+				t.Fatalf("got %d connections, want %d", got, tt.wantCount)
+			}
+		})
+	}
+}

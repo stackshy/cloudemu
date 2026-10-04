@@ -20,6 +20,7 @@
 package mysqlflex
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -39,6 +40,9 @@ const (
 	subFirewallRules  = "firewallRules"
 	subConfigurations = "configurations"
 	subUpdateConfigs  = "updateConfigurations"
+
+	// childMaxDepth is the deepest child route: flexibleServers/{s}/{child}/{name}.
+	childMaxDepth = 3
 )
 
 // Handler serves Microsoft.DBforMySQL/flexibleServers ARM requests against a
@@ -50,6 +54,12 @@ type Handler struct {
 // New returns a MySQL Flexible Server handler backed by db.
 func New(db rdsdriver.RelationalDB) *Handler {
 	return &Handler{db: db}
+}
+
+// PurgeResourceGroup deletes every flexible server in the resource group, with
+// its child resources, backing the resource-group cascade.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	return azurearm.PurgeVia(ctx, h.db, subscription, resourceGroup)
 }
 
 // Matches returns true for ARM Microsoft.DBforMySQL/flexibleServers paths.
@@ -72,6 +82,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Child resources and server actions live under a server name.
 	if rp.SubResource != "" {
+		if azurearm.TooDeep(w, r, &rp, childMaxDepth) {
+			return
+		}
+
 		switch rp.SubResource {
 		case subDatabases:
 			h.serveDatabase(w, r, &rp)
@@ -84,7 +98,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case subStart, subStop, subRestart, subFailover:
 			h.serveAction(w, r, &rp)
 		default:
-			azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported sub-resource: "+rp.SubResource)
+			azurearm.WriteUnknownType(w, r, &rp)
 		}
 
 		return

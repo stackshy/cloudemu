@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	stderrors "errors"
 	"fmt"
 	"maps"
 	"path"
@@ -54,6 +55,10 @@ type cacheItem struct {
 type cacheData struct {
 	info  driver.CacheInfo
 	items *memstore.Store[cacheItem]
+	// patch and fw are the cache's patch schedule and firewall rules. They are
+	// never mutated in place: a writer clones them inside caches.Update.
+	patch []driver.PatchScheduleEntry
+	fw    map[string]driver.FirewallRule
 }
 
 // Mock is an in-memory mock implementation of Azure Cache for Redis.
@@ -197,6 +202,23 @@ func (m *Mock) DeleteCache(ctx context.Context, name string) error {
 	return nil
 }
 
+// PurgeResourceGroup deletes every cache recorded under the resource group,
+// tearing down any engine backing it. It backs the ARM resource-group delete
+// cascade. An unscoped cache is never selected.
+func (m *Mock) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	var errs []error
+
+	for _, name := range m.caches.Keys() {
+		if cd, ok := m.caches.Get(name); ok && cd.info.Scope.InResourceGroup(subscription, resourceGroup) {
+			if err := m.DeleteCache(ctx, name); err != nil && !errors.IsNotFound(err) {
+				errs = append(errs, err)
+			}
+		}
+	}
+
+	return stderrors.Join(errs...)
+}
+
 // GetCache retrieves information about an Azure Cache for Redis instance.
 func (m *Mock) GetCache(_ context.Context, name string) (*driver.CacheInfo, error) {
 	cd, ok := m.caches.Get(name)
@@ -228,19 +250,42 @@ func (m *Mock) ListCaches(_ context.Context, filter scope.Scope) ([]driver.Cache
 // CreateOrUpdate-on-existing semantics (node type and tags come from the
 // request; identity, endpoint, and CreatedAt are preserved).
 func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.CacheInfo, error) {
-	cd, ok := m.caches.Get(cfg.Name)
+	var result driver.CacheInfo
+
+	// Mutate a copy inside the store lock, never the shared stored pointer:
+	// GetCache snapshots cd.info without a lock, and a Get-then-Set would lose
+	// a concurrent child write. The items store pointer is preserved (data
+	// plane survives the update).
+	ok := m.caches.Update(cfg.Name, func(cd *cacheData) *cacheData {
+		updated := *cd
+		applyCacheConfig(&updated.info, &cfg)
+		result = updated.info
+
+		return &updated
+	})
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "cache %q not found", cfg.Name)
 	}
 
-	// Mutate a copy, never the shared stored pointer: GetCache snapshots
-	// cd.info without a lock, so in-place writes here would be a torn read
-	// under concurrency. The items store pointer is preserved (data plane
-	// survives the update).
-	updated := *cd
+	return &result, nil
+}
 
+// Access key names accepted by RegenerateCacheKey.
+const (
+	keyPrimary   = "Primary"
+	keySecondary = "Secondary"
+)
+
+// applyCacheConfig applies the supplied mutable fields of cfg to info.
+func applyCacheConfig(info *driver.CacheInfo, cfg *driver.CacheConfig) {
+	applyCacheSizing(info, cfg)
+	applyCacheSettings(info, cfg)
+}
+
+// applyCacheSizing applies the node type, SKU and clustering fields.
+func applyCacheSizing(info *driver.CacheInfo, cfg *driver.CacheConfig) {
 	if cfg.NodeType != "" {
-		updated.info.NodeType = cfg.NodeType
+		info.NodeType = cfg.NodeType
 	}
 
 	// The ARM SKU is atomic: a request carries name+family+capacity together. A
@@ -250,53 +295,50 @@ func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 	// silently dropped. A family-less update (no SKU supplied) leaves both fields
 	// unchanged.
 	if cfg.SKUFamily != "" {
-		updated.info.SKUFamily = cfg.SKUFamily
-		updated.info.SKUCapacity = cfg.SKUCapacity
+		info.SKUFamily = cfg.SKUFamily
+		info.SKUCapacity = cfg.SKUCapacity
 	}
 
 	if cfg.ShardCount > 0 {
-		updated.info.ShardCount = cfg.ShardCount
+		info.ShardCount = cfg.ShardCount
 	}
 
 	if cfg.ReplicasPerPrimary > 0 {
-		updated.info.ReplicasPerPrimary = cfg.ReplicasPerPrimary
+		info.ReplicasPerPrimary = cfg.ReplicasPerPrimary
 	}
+}
 
+// applyCacheSettings applies the Redis settings, tags and scope.
+func applyCacheSettings(info *driver.CacheInfo, cfg *driver.CacheConfig) {
 	// Nil/empty means "not supplied" on a partial update: a tags-only or
 	// scale-only PATCH must not wipe redisConfiguration/enableNonSslPort/etc.
 	if cfg.RedisConfiguration != nil {
-		updated.info.RedisConfiguration = cloneStringMap(cfg.RedisConfiguration)
+		info.RedisConfiguration = cloneStringMap(cfg.RedisConfiguration)
 	}
 
 	if cfg.EnableNonSSLPort != nil {
-		updated.info.EnableNonSSLPort = cfg.EnableNonSSLPort
+		info.EnableNonSSLPort = cfg.EnableNonSSLPort
 	}
 
 	if cfg.MinimumTLSVersion != "" {
-		updated.info.MinimumTLSVersion = cfg.MinimumTLSVersion
+		info.MinimumTLSVersion = cfg.MinimumTLSVersion
 	}
 
 	if cfg.PublicNetworkAccess != "" {
-		updated.info.PublicNetworkAccess = cfg.PublicNetworkAccess
+		info.PublicNetworkAccess = cfg.PublicNetworkAccess
 	}
 
 	if cfg.RedisVersion != "" {
-		updated.info.RedisVersion = cfg.RedisVersion
+		info.RedisVersion = cfg.RedisVersion
 	}
 
 	if cfg.Tags != nil {
-		updated.info.Tags = maps.Clone(cfg.Tags)
+		info.Tags = maps.Clone(cfg.Tags)
 	}
 
 	if !cfg.Scope.IsZero() {
-		updated.info.Scope = cfg.Scope
+		info.Scope = cfg.Scope
 	}
-
-	m.caches.Set(cfg.Name, &updated)
-
-	result := updated.info
-
-	return &result, nil
 }
 
 // ListCacheKeys returns the cache's current primary and secondary access keys.
@@ -312,28 +354,31 @@ func (m *Mock) ListCacheKeys(_ context.Context, name string) (primary, secondary
 // RegenerateCacheKey rotates the requested key ("Primary" or "Secondary") and
 // returns both current keys.
 func (m *Mock) RegenerateCacheKey(_ context.Context, name, keyType string) (primary, secondary string, err error) {
-	cd, ok := m.caches.Get(name)
+	if keyType != keyPrimary && keyType != keySecondary {
+		return "", "", errors.Newf(errors.InvalidArgument, "keyType %q must be Primary or Secondary", keyType)
+	}
+
+	// Mutate a copy and swap it in under the store lock, never the shared
+	// stored pointer: GetCache snapshots cd.info without a lock, and a
+	// Get-then-Set would drop a concurrent child write.
+	ok := m.caches.Update(name, func(cd *cacheData) *cacheData {
+		updated := *cd
+
+		if keyType == keySecondary {
+			updated.info.SecondaryKey = generateAccessKey()
+		} else {
+			updated.info.PrimaryKey = generateAccessKey()
+		}
+
+		primary, secondary = updated.info.PrimaryKey, updated.info.SecondaryKey
+
+		return &updated
+	})
 	if !ok {
 		return "", "", errors.Newf(errors.NotFound, "cache %q not found", name)
 	}
 
-	// Mutate a copy and swap it in, never the shared stored pointer: GetCache
-	// snapshots cd.info without a lock, so an in-place write would be a torn
-	// read under concurrency.
-	updated := *cd
-
-	switch keyType {
-	case "Secondary":
-		updated.info.SecondaryKey = generateAccessKey()
-	case "Primary":
-		updated.info.PrimaryKey = generateAccessKey()
-	default:
-		return "", "", errors.Newf(errors.InvalidArgument, "keyType %q must be Primary or Secondary", keyType)
-	}
-
-	m.caches.Set(name, &updated)
-
-	return updated.info.PrimaryKey, updated.info.SecondaryKey, nil
+	return primary, secondary, nil
 }
 
 // cloneStringMap returns a copy of m, or nil when m is nil, so stored cache

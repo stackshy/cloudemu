@@ -59,14 +59,14 @@
 package securesourcemanager
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
+	"github.com/stackshy/cloudemu/v2/server/wire"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	ssmdriver "github.com/stackshy/cloudemu/v2/services/securesourcemanager/driver"
 )
@@ -212,9 +212,17 @@ func (h *Handler) Matches(r *http.Request) bool {
 	case operationsSeg:
 		return h.ops == nil
 	case repositoriesColl:
-		return h.matchesRepository(r, rt)
+		if sharedpath.Yield(r, sharedpath.SecureSourceManager, sharedpath.ArtifactRegistry, sharedpath.Dataform) {
+			return false
+		}
+
+		return sharedpath.Is(r, sharedpath.SecureSourceManager) || h.matchesRepository(r, rt)
 	default: // instancesColl
-		return h.matchesInstance(r, rt)
+		if sharedpath.Yield(r, sharedpath.SecureSourceManager, sharedpath.File, sharedpath.Redis, sharedpath.DataFusion) {
+			return false
+		}
+
+		return sharedpath.Is(r, sharedpath.SecureSourceManager) || h.matchesInstance(r, rt)
 	}
 }
 
@@ -263,9 +271,7 @@ func bodyHasInstanceRef(r *http.Request) bool {
 		return false
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxProbeBytes))
-	_ = r.Body.Close()
-	r.Body = io.NopCloser(bytes.NewReader(raw))
+	raw, err := wire.PeekBody(r, maxProbeBytes)
 
 	if err != nil {
 		return false
@@ -327,9 +333,7 @@ func bodyLooksLikeSSMInstance(r *http.Request) bool {
 		return true
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxProbeBytes))
-	_ = r.Body.Close()
-	r.Body = io.NopCloser(bytes.NewReader(raw))
+	raw, err := wire.PeekBody(r, maxProbeBytes)
 
 	if err != nil {
 		return false

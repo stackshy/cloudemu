@@ -11,6 +11,9 @@ import (
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	aiprov "github.com/stackshy/cloudemu/v2/providers/azure/insightscomponents"
+	lockprov "github.com/stackshy/cloudemu/v2/providers/azure/managementlocks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/tagsatscope"
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/azure/aad"
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
@@ -186,6 +189,12 @@ type Drivers struct {
 	DigitalTwins digitaltwinssrv.Store
 	// ManagedGrafana serves Microsoft.Dashboard/grafana.
 	ManagedGrafana managedgrafanasrv.Store
+	// AppInsights, ManagementLocks and ScopeTags are the persisted stores behind
+	// the always-on components, locks and tags-at-scope handlers. A nil store
+	// gives that handler a private, unpersisted one.
+	AppInsights     *aiprov.Mock
+	ManagementLocks *lockprov.Mock
+	ScopeTags       *tagsatscope.Mock
 	// DevCenter serves Microsoft.DevCenter/devcenters.
 	DevCenter devcentersrv.Store
 	// Purview serves Microsoft.Purview/accounts.
@@ -296,6 +305,13 @@ type Drivers struct {
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
 	// the same backend. Leave nil to disable Kubernetes data-plane support.
 	K8sAPI *kubernetes.APIServer
+	// ResourceGroups stores ARM resource groups. Leave nil for a private
+	// in-memory store that is not part of any snapshot.
+	ResourceGroups resourcegroups.Store
+	// PropertyOverlay stores the request properties echoed back although no
+	// handler models them. Leave nil for a private in-memory store that is not
+	// part of any snapshot.
+	PropertyOverlay PropertyStore
 	// ResourceDiscovery is the cross-service inventory engine. Required to
 	// serve Azure Resource Graph (armresourcegraph) requests. Leave nil to
 	// omit the handler. SubscriptionID is needed for the subscription-scoping
@@ -345,7 +361,7 @@ func New(d Drivers) http.Handler {
 	// Management locks are constructed once and shared: the same instance is
 	// registered as the CRUD handler and handed to the enforcement gate below,
 	// so the gate reads the exact store callers write to.
-	locksHandler := locks.New()
+	locksHandler := locks.New(d.ManagementLocks)
 
 	tenantID := d.TenantID
 	if tenantID == "" {
@@ -393,12 +409,39 @@ func New(d Drivers) http.Handler {
 	// backs the always-on enforcement gate wired via SetPreDispatch below.
 	srv.Register(locksHandler)
 
+	// IAM matches /providers/Microsoft.Authorization/role{Definitions,Assignments}
+	// and denyAssignments at any scope, including the extension form under an
+	// individual resource (.../virtualNetworks/vn/providers/Microsoft.
+	// Authorization/roleAssignments/{id}). Like locks it must register before
+	// every per-resource-type handler, whose ParsePath match would otherwise
+	// claim the leading /providers/{ns}/{type} pair and apply the write to the
+	// parent resource. Its Matches is a substring test no resource handler
+	// produces, so registering it early shadows nothing.
+	//
+	// The Drivers.IAM field stays typed as the shared iamdriver.IAM (rather
+	// than iam.Driver) so the docs/coverage generator's registration check
+	// (which recognizes only services/<name>/driver package types) still
+	// links this field to the "iam" service. The handler additionally needs
+	// the Azure-only RoleAssignment surface (see iam.Driver): every real
+	// driver behind this field is *azureiam.Mock (providers/azure/iam),
+	// which implements it, so the assertion below always succeeds in
+	// practice; it fails fast at server construction, not at request time,
+	// if a future caller ever wires in some other iamdriver.IAM.
+	if d.IAM != nil {
+		drv, ok := d.IAM.(iam.Driver)
+		if !ok {
+			panic(fmt.Sprintf("azure: Drivers.IAM (%T) does not implement iam.Driver (role assignments)", d.IAM))
+		}
+
+		srv.Register(iam.New(drv))
+	}
+
 	// Build the per-service handlers that own resource-group-scoped resources up
-	// front so they can be handed to the resource-group cascade below and then
-	// registered at their normal positions. A resource group is a pure
-	// container, so deleting it must delete the resources created under it;
-	// each of these handlers implements ResourceGroupPurger to tear its own
-	// resources down. Other resource types are not cascaded yet.
+	// front; they are registered at their normal positions further below. A
+	// resource group is a pure container, so deleting it must delete the
+	// resources created under it. Every registered handler that implements
+	// ResourceGroupPurger joins that cascade automatically (see SetPurgers at
+	// the end of New), ordered by its PurgePhase.
 	var (
 		vnetHandler      *vnet.Handler
 		vmHandler        *virtualmachines.Handler
@@ -409,21 +452,18 @@ func New(d Drivers) http.Handler {
 		bastionHandler   *bastionsrv.Handler
 		frontDoorHandler *frontdoorsrv.Handler
 		privateDNS       *privatednssrv.Handler
-		rgPurgers        []resourcegroups.ResourceGroupPurger
 	)
 
 	// Virtual machines are purged before the networking resources they consume
-	// (NICs, subnets): tearing a VM down first clears its NICs' virtualMachine
-	// back-reference, so the vnet purger's NIC delete is not blocked by the
-	// attached-NIC guard.
+	// (NICs, subnets), via PhaseCompute: tearing a VM down first clears its NICs'
+	// virtualMachine back-reference, so the vnet purger's NIC delete is not
+	// blocked by the attached-NIC guard.
 	if d.VirtualMachines != nil {
 		vmHandler = virtualmachines.New(d.VirtualMachines, d.Network)
-		rgPurgers = append(rgPurgers, vmHandler)
 	}
 
 	if d.Network != nil {
 		vnetHandler = vnet.New(d.Network)
-		rgPurgers = append(rgPurgers, vnetHandler)
 	}
 
 	if d.LB != nil {
@@ -436,14 +476,12 @@ func New(d Drivers) http.Handler {
 			lbHandler.SetNICResolver(nics)
 		}
 
-		rgPurgers = append(rgPurgers, lbHandler)
 	}
 
 	// Application Gateway is a resource-group-scoped Microsoft.Network resource,
 	// so its handler joins the purge cascade. Registered further below.
 	if d.AppGateway != nil {
 		appGwHandler = appgatewaysrv.New(d.AppGateway)
-		rgPurgers = append(rgPurgers, appGwHandler)
 	}
 
 	// Azure Firewall + Firewall Policy are resource-group-scoped
@@ -451,14 +489,12 @@ func New(d Drivers) http.Handler {
 	// Registered further below.
 	if d.Firewall != nil {
 		firewallHandler = azurefirewallsrv.New(d.Firewall)
-		rgPurgers = append(rgPurgers, firewallHandler)
 	}
 
 	// Azure Bastion is a resource-group-scoped Microsoft.Network resource, so its
 	// handler joins the purge cascade. Registered further below.
 	if d.Bastion != nil {
 		bastionHandler = bastionsrv.New(d.Bastion)
-		rgPurgers = append(rgPurgers, bastionHandler)
 	}
 
 	// Azure Front Door (Microsoft.Cdn/profiles) is a resource-group-scoped
@@ -466,7 +502,6 @@ func New(d Drivers) http.Handler {
 	// handler joins the purge cascade. Registered further below.
 	if d.FrontDoor != nil {
 		frontDoorHandler = frontdoorsrv.New(d.FrontDoor)
-		rgPurgers = append(rgPurgers, frontDoorHandler)
 	}
 
 	// Private DNS zones (and their vnet links and records) are resource-group-
@@ -474,12 +509,10 @@ func New(d Drivers) http.Handler {
 	// cascade. Registered further below.
 	if d.PrivateDNS != nil {
 		privateDNS = privatednssrv.New(d.PrivateDNS)
-		rgPurgers = append(rgPurgers, privateDNS)
 	}
 
 	if d.BlobStorage != nil {
 		storageHandler = storageaccountsrv.New(d.BlobStorage)
-		rgPurgers = append(rgPurgers, storageHandler)
 	}
 
 	// User-assigned managed identities: a resource-group-scoped resource, so its
@@ -487,7 +520,6 @@ func New(d Drivers) http.Handler {
 	var managedIdentityHandler *managedidentitysrv.Handler
 	if d.ManagedIdentity != nil {
 		managedIdentityHandler = managedidentitysrv.New(d.ManagedIdentity)
-		rgPurgers = append(rgPurgers, managedIdentityHandler)
 	}
 
 	// Load tests: a resource-group-scoped resource, so its handler joins the
@@ -495,7 +527,6 @@ func New(d Drivers) http.Handler {
 	var loadTestingHandler *loadtestingsrv.Handler
 	if d.LoadTesting != nil {
 		loadTestingHandler = loadtestingsrv.New(d.LoadTesting)
-		rgPurgers = append(rgPurgers, loadTestingHandler)
 	}
 
 	// SignalR: a resource-group-scoped resource, so its handler joins the purge
@@ -503,7 +534,6 @@ func New(d Drivers) http.Handler {
 	var signalRHandler *signalrsrv.Handler
 	if d.SignalR != nil {
 		signalRHandler = signalrsrv.New(d.SignalR)
-		rgPurgers = append(rgPurgers, signalRHandler)
 	}
 
 	// Web PubSub: a resource-group-scoped resource, so its handler joins the
@@ -511,7 +541,6 @@ func New(d Drivers) http.Handler {
 	var webPubSubHandler *webpubsubsrv.Handler
 	if d.WebPubSub != nil {
 		webPubSubHandler = webpubsubsrv.New(d.WebPubSub)
-		rgPurgers = append(rgPurgers, webPubSubHandler)
 	}
 
 	// Communication Services: a resource-group-scoped resource, so its handler
@@ -519,7 +548,6 @@ func New(d Drivers) http.Handler {
 	var communicationHandler *communicationsrv.Handler
 	if d.Communication != nil {
 		communicationHandler = communicationsrv.New(d.Communication)
-		rgPurgers = append(rgPurgers, communicationHandler)
 	}
 
 	// Digital Twins: a resource-group-scoped resource, so its handler joins the
@@ -527,7 +555,6 @@ func New(d Drivers) http.Handler {
 	var digitalTwinsHandler *digitaltwinssrv.Handler
 	if d.DigitalTwins != nil {
 		digitalTwinsHandler = digitaltwinssrv.New(d.DigitalTwins)
-		rgPurgers = append(rgPurgers, digitalTwinsHandler)
 	}
 
 	// Managed Grafana: a resource-group-scoped resource, so its handler joins the
@@ -535,7 +562,6 @@ func New(d Drivers) http.Handler {
 	var managedGrafanaHandler *managedgrafanasrv.Handler
 	if d.ManagedGrafana != nil {
 		managedGrafanaHandler = managedgrafanasrv.New(d.ManagedGrafana)
-		rgPurgers = append(rgPurgers, managedGrafanaHandler)
 	}
 
 	// Dev Center: a resource-group-scoped resource, so its handler joins the
@@ -543,7 +569,6 @@ func New(d Drivers) http.Handler {
 	var devCenterHandler *devcentersrv.Handler
 	if d.DevCenter != nil {
 		devCenterHandler = devcentersrv.New(d.DevCenter)
-		rgPurgers = append(rgPurgers, devCenterHandler)
 	}
 
 	// Purview: a resource-group-scoped resource, so its handler joins the purge
@@ -551,7 +576,6 @@ func New(d Drivers) http.Handler {
 	var purviewHandler *purviewsrv.Handler
 	if d.Purview != nil {
 		purviewHandler = purviewsrv.New(d.Purview)
-		rgPurgers = append(rgPurgers, purviewHandler)
 	}
 
 	// Chaos Studio: a resource-group-scoped resource, so its handler joins the
@@ -559,7 +583,6 @@ func New(d Drivers) http.Handler {
 	var chaosStudioHandler *chaosstudiosrv.Handler
 	if d.ChaosStudio != nil {
 		chaosStudioHandler = chaosstudiosrv.New(d.ChaosStudio)
-		rgPurgers = append(rgPurgers, chaosStudioHandler)
 	}
 
 	// Elastic SAN: a resource-group-scoped resource, so its handler joins the
@@ -567,7 +590,6 @@ func New(d Drivers) http.Handler {
 	var elasticSanHandler *elasticsansrv.Handler
 	if d.ElasticSan != nil {
 		elasticSanHandler = elasticsansrv.New(d.ElasticSan)
-		rgPurgers = append(rgPurgers, elasticSanHandler)
 	}
 
 	// Managed Lustre: a resource-group-scoped resource, so its handler joins the
@@ -575,7 +597,6 @@ func New(d Drivers) http.Handler {
 	var managedLustreHandler *managedlustresrv.Handler
 	if d.ManagedLustre != nil {
 		managedLustreHandler = managedlustresrv.New(d.ManagedLustre)
-		rgPurgers = append(rgPurgers, managedLustreHandler)
 	}
 
 	// App Configuration: a resource-group-scoped resource, so its handler joins
@@ -583,7 +604,6 @@ func New(d Drivers) http.Handler {
 	var appConfigHandler *appconfigsrv.Handler
 	if d.AppConfiguration != nil {
 		appConfigHandler = appconfigsrv.New(d.AppConfiguration)
-		rgPurgers = append(rgPurgers, appConfigHandler)
 	}
 
 	// Redis Enterprise: a resource-group-scoped resource, so its handler joins the
@@ -592,7 +612,6 @@ func New(d Drivers) http.Handler {
 	var redisEnterpriseHandler *redisenterprisesrv.Handler
 	if d.RedisEnterprise != nil {
 		redisEnterpriseHandler = redisenterprisesrv.New(d.RedisEnterprise)
-		rgPurgers = append(rgPurgers, redisEnterpriseHandler)
 	}
 
 	// Health Data Services: a resource-group-scoped resource, so its handler joins
@@ -601,7 +620,6 @@ func New(d Drivers) http.Handler {
 	var healthcareApisHandler *healthcareapissrv.Handler
 	if d.HealthcareApis != nil {
 		healthcareApisHandler = healthcareapissrv.New(d.HealthcareApis)
-		rgPurgers = append(rgPurgers, healthcareApisHandler)
 	}
 
 	// Mongo clusters: a resource-group-scoped resource, so its handler joins the
@@ -610,7 +628,6 @@ func New(d Drivers) http.Handler {
 	var mongoClusterHandler *mongoclustersrv.Handler
 	if d.MongoCluster != nil {
 		mongoClusterHandler = mongoclustersrv.New(d.MongoCluster)
-		rgPurgers = append(rgPurgers, mongoClusterHandler)
 	}
 
 	// Batch: a resource-group-scoped resource, so its handler joins the purge
@@ -619,7 +636,6 @@ func New(d Drivers) http.Handler {
 	var batchHandler *batchsrv.Handler
 	if d.Batch != nil {
 		batchHandler = batchsrv.New(d.Batch)
-		rgPurgers = append(rgPurgers, batchHandler)
 	}
 
 	// Stream Analytics: a resource-group-scoped resource, so its handler joins
@@ -628,7 +644,6 @@ func New(d Drivers) http.Handler {
 	var streamAnalyticsHandler *streamanalyticssrv.Handler
 	if d.StreamAnalytics != nil {
 		streamAnalyticsHandler = streamanalyticssrv.New(d.StreamAnalytics)
-		rgPurgers = append(rgPurgers, streamAnalyticsHandler)
 	}
 
 	// Recovery Services: a resource-group-scoped resource, so its handler joins
@@ -637,7 +652,6 @@ func New(d Drivers) http.Handler {
 	var recoveryServicesHandler *recoveryservicessrv.Handler
 	if d.RecoveryServices != nil {
 		recoveryServicesHandler = recoveryservicessrv.New(d.RecoveryServices)
-		rgPurgers = append(rgPurgers, recoveryServicesHandler)
 	}
 
 	// IoT Hub: a resource-group-scoped resource, so its handler joins the purge
@@ -646,7 +660,6 @@ func New(d Drivers) http.Handler {
 	var iotHubHandler *iothubsrv.Handler
 	if d.IoTHub != nil {
 		iotHubHandler = iothubsrv.New(d.IoTHub)
-		rgPurgers = append(rgPurgers, iotHubHandler)
 	}
 
 	// API Management: a resource-group-scoped resource, so its handler joins the
@@ -655,7 +668,6 @@ func New(d Drivers) http.Handler {
 	var apiManagementHandler *apimanagementsrv.Handler
 	if d.APIManagement != nil {
 		apiManagementHandler = apimanagementsrv.New(d.APIManagement)
-		rgPurgers = append(rgPurgers, apiManagementHandler)
 	}
 
 	// Logic Apps workflows: a resource-group-scoped resource, so its handler joins
@@ -664,7 +676,6 @@ func New(d Drivers) http.Handler {
 	var logicHandler *logicsrv.Handler
 	if d.Logic != nil {
 		logicHandler = logicsrv.New(d.Logic)
-		rgPurgers = append(rgPurgers, logicHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -673,7 +684,6 @@ func New(d Drivers) http.Handler {
 	var sqlVMHandler *sqlvirtualmachinesrv.Handler
 	if d.SQLVirtualMachine != nil {
 		sqlVMHandler = sqlvirtualmachinesrv.New(d.SQLVirtualMachine)
-		rgPurgers = append(rgPurgers, sqlVMHandler)
 	}
 
 	// Container Apps (managed environments + container apps): resource-group-scoped
@@ -681,42 +691,45 @@ func New(d Drivers) http.Handler {
 	var containerAppsHandler *containerappssrv.Handler
 	if d.ContainerApps != nil {
 		containerAppsHandler = containerappssrv.New(d.ContainerApps)
-		rgPurgers = append(rgPurgers, containerAppsHandler)
 	}
 
 	// Synapse workspaces are resource-group-scoped, so the (always-on,
 	// driverless) Synapse handler joins the purge cascade. Registered further below.
 	synapseHandler := synapsesrv.New()
-	rgPurgers = append(rgPurgers, synapseHandler)
 
 	// Application Insights components (Microsoft.Insights/components) are
 	// resource-group-scoped, so the (always-on, driverless) handler joins the
 	// purge cascade. Registered further below.
-	appInsightsHandler := appinsightssrv.New()
-	rgPurgers = append(rgPurgers, appInsightsHandler)
+	appInsightsHandler := appinsightssrv.New(d.AppInsights)
 
 	// Data Factory (Microsoft.DataFactory/factories) is a resource-group-scoped
 	// resource, so its handler joins the purge cascade. Registered further below.
 	var dataFactoryHandler *datafactorysrv.Handler
 	if d.DataFactory != nil {
 		dataFactoryHandler = datafactorysrv.New(d.DataFactory)
-		rgPurgers = append(rgPurgers, dataFactoryHandler)
 	}
 
 	// Resource groups have no driver of their own: they are containers, and the
 	// emulator tracks membership by the ids resources already carry. The
 	// discovery engine (nil-safe) lets exportTemplate enumerate that membership;
-	// the purgers cascade a group delete into its resources.
-	rgHandler := resourcegroups.New(d.ResourceDiscovery, rgPurgers...)
+	// the purgers (collected once every handler is registered) cascade a group
+	// delete into its resources.
+	rgHandler := resourcegroups.NewWithStore(d.ResourceGroups, d.ResourceDiscovery)
 	srv.Register(rgHandler)
 
-	// Tags resource provider (Microsoft.Resources/tags/default). Self-contained
-	// (no driver): it owns the per-scope tag sets an armresources TagsClient
-	// manages at subscription or resource scope. Its path suffix
+	// Tags resource provider (Microsoft.Resources/tags/default). Resource-group
+	// and resource scopes read and write the resource's own tags through the
+	// router (wired at the end); the store keeps subscription tag sets. Its path suffix
 	// /providers/Microsoft.Resources/tags/default is disjoint from the
 	// resource-group paths above and the Microsoft.ResourceGraph/generic-resources
 	// listings, so registration order is unconstrained.
-	srv.Register(tagssrv.New())
+	scopeTags := d.ScopeTags
+	if scopeTags == nil {
+		scopeTags = tagsatscope.New()
+	}
+
+	tagsHandler := tagssrv.New(scopeTags)
+	srv.Register(tagsHandler)
 
 	// microsoft.insights extension resources (metrics, metricDefinitions,
 	// diagnosticSettings) hang off an arbitrary resource URI, so they must claim
@@ -1170,28 +1183,6 @@ func New(d Drivers) http.Handler {
 		srv.Register(containerAppsHandler)
 	}
 
-	// IAM matches /providers/Microsoft.Authorization/role{Definitions,Assignments}
-	// at any scope, distinct from every other ARM provider name, so
-	// registration order is unconstrained.
-	//
-	// The Drivers.IAM field stays typed as the shared iamdriver.IAM (rather
-	// than iam.Driver) so the docs/coverage generator's registration check
-	// (which recognizes only services/<name>/driver package types) still
-	// links this field to the "iam" service. The handler additionally needs
-	// the Azure-only RoleAssignment surface (see iam.Driver): every real
-	// driver behind this field is *azureiam.Mock (providers/azure/iam),
-	// which implements it, so the assertion below always succeeds in
-	// practice; it fails fast at server construction, not at request time,
-	// if a future caller ever wires in some other iamdriver.IAM.
-	if d.IAM != nil {
-		drv, ok := d.IAM.(iam.Driver)
-		if !ok {
-			panic(fmt.Sprintf("azure: Drivers.IAM (%T) does not implement iam.Driver (role assignments)", d.IAM))
-		}
-
-		srv.Register(iam.New(drv))
-	}
-
 	// ACR data-plane catalog API matches /acr/v1/…, disjoint from ARM, and
 	// must register before the permissive BlobStorage fallback below.
 	if d.ACR != nil {
@@ -1246,8 +1237,12 @@ func New(d Drivers) http.Handler {
 	// that contain parentheses or a bare JSON POST, disjoint from Blob's
 	// container/blob paths and Queue's /messages surface. Registered before the
 	// permissive Blob fallback.
+	// Storage accounts scope the queue and table namespaces the same way they
+	// scope blob containers.
+	storageAccounts, _ := d.BlobStorage.(storagedriver.AzureStorageAccounts)
+
 	if d.TableStorage != nil {
-		srv.Register(tablesrv.New(d.TableStorage))
+		srv.Register(tablesrv.New(d.TableStorage).WithAccounts(storageAccounts))
 	}
 
 	// Queue Storage matches the queue data-plane surface (/{queue}/messages,
@@ -1256,7 +1251,7 @@ func New(d Drivers) http.Handler {
 	// carries OData parentheses). Registered before the permissive Blob
 	// fallback.
 	if d.QueueStorage != nil {
-		srv.Register(queue.New(d.QueueStorage))
+		srv.Register(queue.New(d.QueueStorage).WithAccounts(storageAccounts))
 	}
 
 	// Storage-account ARM control plane (Microsoft.Storage/storageAccounts).
@@ -1298,7 +1293,16 @@ func New(d Drivers) http.Handler {
 		srv.SetObserver(func(r *http.Request) { recordActivityLogEvent(rec, r) })
 	}
 
-	return echoUnmodeledProperties(srv, newPropertyOverlay())
+	// Every handler is registered now, so collect the resource-group purgers.
+	rgHandler.SetPurgers(resourcegroups.CollectPurgers(srv.Handlers()))
+
+	router := echoUnmodeledProperties(srv, newPropertyOverlay(d.PropertyOverlay), scopeTags)
+
+	// The Tags API reads and writes resource and resource-group tags on the
+	// resource itself, through the full router so locks and overlays apply.
+	tagsHandler.SetRouter(router)
+
+	return router
 }
 
 // registerDatabricksDataPlane registers the Databricks workspace data-plane

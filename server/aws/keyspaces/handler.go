@@ -107,3 +107,7 @@ func wireMessage(err error) string {
 
 	return err.Error()
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "cassandra" }

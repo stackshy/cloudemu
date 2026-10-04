@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
@@ -115,14 +116,27 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		return fmt.Errorf("cloudlogging: parse snapshot: %w", err)
 	}
 
-	for name, gs := range snap.Groups {
+	adopted := 0
+
+	for key, gs := range snap.Groups {
 		g, err := restoreGroup(gs)
 		if err != nil {
 			return err
 		}
 
-		m.groups.Set(name, g)
+		// A log from a snapshot taken before project scoping has no project in
+		// its Scope and was keyed by bare name: adopt it into the default
+		// project.
+		if g.info.Scope.Project == "" {
+			g.info.Scope.Project = m.opts.ProjectID
+			key = projectctx.Key(m.opts.ProjectID, key)
+			adopted++
+		}
+
+		m.groups.Set(key, g)
 	}
+
+	projectctx.WarnAdopted("logging", adopted, m.opts.ProjectID)
 
 	if err := loadInto(snap.Sinks, m.sinks.LoadSnapshot); err != nil {
 		return err

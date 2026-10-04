@@ -173,3 +173,7 @@ func splitPath(p string) []string {
 
 	return out
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "airflow" }

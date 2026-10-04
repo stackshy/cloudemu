@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"google.golang.org/api/container/v1"
@@ -75,11 +76,17 @@ func TestSDKGKEDataPlane_TLSValidatesAdvertisedCA(t *testing.T) {
 		t.Fatal("advertised CA is empty")
 	}
 
+	// Real GKE's endpoint is a bare host: gcloud and the Terraform kubernetes
+	// provider build the server URL as "https://" + endpoint.
+	if strings.Contains(got.Endpoint, "://") {
+		t.Fatalf("endpoint must be a bare host for https://${endpoint}, got %q", got.Endpoint)
+	}
+
 	// Build a client-go config exactly as gcloud would: endpoint + CA, no
 	// skip-verify. If the CA doesn't certify the serving cert this fails at the
 	// TLS handshake.
 	cfg := &rest.Config{
-		Host:            got.Endpoint,
+		Host:            "https://" + got.Endpoint,
 		BearerToken:     "cloudemu-anonymous",
 		TLSClientConfig: rest.TLSClientConfig{CAData: caPEM},
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -17,16 +18,17 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // the driver-typed stores round-trip through the generic memstore helper. The
 // state machine is rebuilt from each restored instance's stored state.
 type gceSnapshot struct {
-	Instances    map[string]*instanceSnapshot `json:"instances,omitempty"`
-	SpotRequests json.RawMessage              `json:"spotRequests,omitempty"`
-	Templates    json.RawMessage              `json:"templates,omitempty"`
-	Volumes      json.RawMessage              `json:"volumes,omitempty"`
-	Snapshots    json.RawMessage              `json:"snapshots,omitempty"`
-	Images       json.RawMessage              `json:"images,omitempty"`
-	KeyPairs     json.RawMessage              `json:"keyPairs,omitempty"`
-	Migs         json.RawMessage              `json:"migs,omitempty"`
-	ASGs         map[string]*asgSnapshot      `json:"asgs,omitempty"`
-	Counters     countersSnapshot             `json:"counters"`
+	Instances     map[string]*instanceSnapshot `json:"instances,omitempty"`
+	SpotRequests  json.RawMessage              `json:"spotRequests,omitempty"`
+	Templates     json.RawMessage              `json:"templates,omitempty"`
+	Volumes       json.RawMessage              `json:"volumes,omitempty"`
+	Snapshots     json.RawMessage              `json:"snapshots,omitempty"`
+	Images        json.RawMessage              `json:"images,omitempty"`
+	KeyPairs      json.RawMessage              `json:"keyPairs,omitempty"`
+	Migs          json.RawMessage              `json:"migs,omitempty"`
+	InstTemplates json.RawMessage              `json:"instanceTemplates,omitempty"`
+	ASGs          map[string]*asgSnapshot      `json:"asgs,omitempty"`
+	Counters      countersSnapshot             `json:"counters"`
 }
 
 type countersSnapshot struct {
@@ -108,6 +110,7 @@ func (m *Mock) snapshotStores(snap *gceSnapshot) error {
 		{&snap.Images, m.images.Snapshot},
 		{&snap.KeyPairs, m.keyPairs.Snapshot},
 		{&snap.Migs, m.migs.Snapshot},
+		{&snap.InstTemplates, m.instTemplates.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -161,6 +164,8 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		return err
 	}
 
+	m.adoptLegacyRecords()
+
 	c := snap.Counters
 	m.ipCounter.Store(c.IP)
 	m.volCounter.Store(c.Vol)
@@ -196,6 +201,7 @@ func (m *Mock) restoreStores(snap *gceSnapshot) error {
 		{snap.Images, m.images.LoadSnapshot},
 		{snap.KeyPairs, m.keyPairs.LoadSnapshot},
 		{snap.Migs, m.migs.LoadSnapshot},
+		{snap.InstTemplates, m.instTemplates.LoadSnapshot},
 	}
 
 	for _, l := range loads {
@@ -224,4 +230,54 @@ func (m *Mock) restoreASGs(asgs map[string]*asgSnapshot) error {
 	}
 
 	return nil
+}
+
+// adoptLegacyRecords places instances, disks, images and snapshots restored
+// from a snapshot taken before project scoping in the default project, and
+// logs once how many it adopted.
+func (m *Mock) adoptLegacyRecords() {
+	p := m.opts.ProjectID
+	n := adoptLegacy(m.instances, p, func(d *instanceData) *map[string]string { return &d.Tags })
+	n += adoptLegacy(m.volumes, p, func(v *driver.VolumeInfo) *map[string]string { return &v.Tags })
+	n += adoptLegacy(m.snapshots, p, func(v *driver.SnapshotInfo) *map[string]string { return &v.Tags })
+	n += adoptLegacy(m.images, p, func(v *driver.ImageInfo) *map[string]string { return &v.Tags })
+	n += m.adoptLegacyMIGs()
+
+	projectctx.WarnAdopted("compute", n, p)
+}
+
+// adoptLegacyMIGs rekeys managed instance groups and instance templates
+// restored with no project into the default project.
+func (m *Mock) adoptLegacyMIGs() int {
+	n := 0
+
+	migs := m.migs.All()
+	for key := range migs {
+		igm := migs[key]
+		if igm.Project != "" {
+			continue
+		}
+
+		m.migs.Delete(key)
+
+		igm.Project = m.opts.ProjectID
+		m.migs.Set(migKey(igm.Project, igm.Scope(), igm.Name), igm)
+
+		n++
+	}
+
+	for key, t := range m.instTemplates.All() {
+		if t.Project != "" {
+			continue
+		}
+
+		m.instTemplates.Delete(key)
+
+		t.Project = m.opts.ProjectID
+		m.instTemplates.Set(projectctx.Key(t.Project, t.Name), t)
+
+		n++
+	}
+
+	return n
 }

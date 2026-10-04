@@ -3,17 +3,21 @@
 
 provider-native `managedidentity` wire service (Azure-only) · no portable driver · [Azure index](./README.md)
 
-## Operations (8)
+## Operations (12)
 
 | Operation | Description |
 | --- | --- |
 | `ARMID` |  |
 | `CreateOrUpdate` |  |
+| `CreateOrUpdateFIC` |  |
 | `Delete` |  |
+| `DeleteFIC` |  |
 | `DiscoverIdentities` |  |
 | `Get` |  |
+| `GetFIC` |  |
 | `ListByResourceGroup` |  |
 | `ListBySubscription` |  |
+| `ListFICs` |  |
 | `PurgeResourceGroup` |  |
 
 ## Not in scope

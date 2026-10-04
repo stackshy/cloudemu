@@ -49,6 +49,17 @@ Azure's `compute` service · portable interface `driver.Compute` · [Azure index
 
 Discovered by type assertion; only some providers implement these.
 
+### AzureAvailabilitySets
+
+AzureAvailabilitySets is an optional Azure-only capability for availability
+
+| Operation | Description |
+| --- | --- |
+| `DeleteAvailabilitySet` |  |
+| `GetAvailabilitySet` |  |
+| `ListAvailabilitySets` | ListAvailabilitySets lists the sets of a subscription, narrowed to one |
+| `PutAvailabilitySet` | PutAvailabilitySet creates or replaces the set. Out-of-range domain |
+
 ### AzureDiskAccessor
 
 AzureDiskAccessor is an optional Azure-only capability for the managed-disk
@@ -74,6 +85,14 @@ AzureDiskUpdater is an optional Azure-only capability for an in-place managed
 | --- | --- |
 | `UpdateVolume` | UpdateVolume mutates the existing volume id in place from cfg (size, sku/ |
 
+### AzureResourceGroupPurger
+
+AzureResourceGroupPurger is an optional Azure-only capability that tears down
+
+| Operation | Description |
+| --- | --- |
+| `PurgeComputeResourceGroup` |  |
+
 ### AzureSSHKeyUpdater
 
 AzureSSHKeyUpdater is an optional Azure-only capability for the sshPublicKeys
@@ -93,6 +112,25 @@ AzureVMController is an optional Azure-only capability supporting the ARM
 | `PatchInstance` | PatchInstance applies a merge-patch (ARM PATCH Update / BeginUpdate) to an |
 | `PowerOff` | PowerOff stops the guest OS while keeping the VM allocated |
 | `UpdateInstance` | UpdateInstance overwrites the mutable configuration of an existing |
+
+### AzureVMDeleter
+
+AzureVMDeleter is an optional Azure-only capability that removes VMs
+
+| Operation | Description |
+| --- | --- |
+| `DeleteInstances` |  |
+
+### AzureVMExtensions
+
+AzureVMExtensions is an optional Azure-only capability for VM extensions.
+
+| Operation | Description |
+| --- | --- |
+| `DeleteVMExtension` |  |
+| `GetVMExtension` |  |
+| `ListVMExtensions` |  |
+| `PutVMExtension` | PutVMExtension creates or replaces the extension on the VM, reporting |
 
 ### ConsoleReader
 

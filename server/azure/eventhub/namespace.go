@@ -1,6 +1,7 @@
 package eventhub
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"maps"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 func (h *Handler) serveNamespace(w http.ResponseWriter, r *http.Request, ep ehPath) {
@@ -47,6 +49,13 @@ func (h *Handler) createNamespace(w http.ResponseWriter, r *http.Request, ep ehP
 	h.mu.Lock()
 
 	ns, existed := h.namespaces.Get(nsKey(ep.namespace))
+	if existed && (!strings.EqualFold(ns.Subscription, ep.sub) || !strings.EqualFold(ns.ResourceGroup, ep.rg)) {
+		h.mu.Unlock()
+		writeNamespaceNameTaken(w, ep.namespace)
+
+		return
+	}
+
 	if !existed {
 		ns = &namespaceState{
 			Name:          ep.namespace,
@@ -181,6 +190,28 @@ func (h *Handler) deleteNamespace(w http.ResponseWriter, ep ehPath) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// PurgeResourceGroup deletes every namespace recorded under the resource
+// group, with its event hubs, consumer groups and authorization rules (all held
+// on the namespace record), backing the resource-group cascade.
+func (h *Handler) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for _, key := range h.namespaces.Keys() {
+		ns, ok := h.namespaces.Get(key)
+		if !ok {
+			continue
+		}
+
+		sc := scope.Scope{Subscription: ns.Subscription, ResourceGroup: ns.ResourceGroup}
+		if sc.InResourceGroup(subscription, resourceGroup) {
+			h.namespaces.Delete(key)
+		}
+	}
+
+	return nil
+}
+
 func (h *Handler) listNamespaces(w http.ResponseWriter, r *http.Request, ep ehPath) {
 	if r.Method != http.MethodGet {
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
@@ -270,6 +301,12 @@ func toNamespaceResource(ns *namespaceState) namespaceResource {
 	props.MetricID = ns.Subscription + ":" + ns.Name
 	props.CreatedAt = &created
 	props.UpdatedAt = &updated
+
+	// Real Azure always reports maximumThroughputUnits, 0 when auto-inflate is
+	// off; azurerm dereferences it on every namespace read.
+	if props.MaximumThroughputUnits == nil {
+		props.MaximumThroughputUnits = new(int32)
+	}
 
 	return namespaceResource{
 		ID:       azurearm.BuildResourceID(ns.Subscription, ns.ResourceGroup, providerName, resourceType, ns.Name),

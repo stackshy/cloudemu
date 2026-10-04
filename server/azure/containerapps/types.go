@@ -129,8 +129,32 @@ type appTrafficWeight struct {
 }
 
 type appSecret struct {
-	Name  string `json:"name,omitempty"`
-	Value string `json:"value,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Value       string `json:"value,omitempty"`
+	Identity    string `json:"identity,omitempty"`
+	KeyVaultURL string `json:"keyVaultUrl,omitempty"`
+}
+
+// toAppSecrets renders stored secrets onto the wire shape. withValues is true
+// only for the listSecrets action; a GET returns names and Key Vault
+// references, never values.
+func toAppSecrets(in []containerapps.AppSecret, withValues bool) []appSecret {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]appSecret, 0, len(in))
+
+	for i := range in {
+		s := appSecret{Name: in[i].Name, Identity: in[i].Identity, KeyVaultURL: in[i].KeyVaultURL}
+		if withValues {
+			s.Value = in[i].Value
+		}
+
+		out = append(out, s)
+	}
+
+	return out
 }
 
 type appTemplate struct {
@@ -195,7 +219,10 @@ func toAppInput(req *appRequest) containerapps.AppInput {
 		in.Ingress = toIngressModel(c.Ingress)
 
 		for i := range c.Secrets {
-			in.SecretNames = append(in.SecretNames, c.Secrets[i].Name)
+			sec := &c.Secrets[i]
+			in.Secrets = append(in.Secrets, containerapps.AppSecret{
+				Name: sec.Name, Value: sec.Value, Identity: sec.Identity, KeyVaultURL: sec.KeyVaultURL,
+			})
 		}
 	}
 
@@ -311,7 +338,7 @@ func toIdentityResponse(a *containerapps.ContainerApp) *armManagedIdentity {
 }
 
 func toConfigResponse(a *containerapps.ContainerApp) *appConfig {
-	if a.ActiveRevMode == "" && a.Ingress == nil && len(a.SecretNames) == 0 {
+	if a.ActiveRevMode == "" && a.Ingress == nil && len(a.Secrets) == 0 {
 		return nil
 	}
 
@@ -329,9 +356,7 @@ func toConfigResponse(a *containerapps.ContainerApp) *appConfig {
 	}
 
 	// Real Azure returns secret names only, never values, on a read.
-	for _, name := range a.SecretNames {
-		cfg.Secrets = append(cfg.Secrets, appSecret{Name: name})
-	}
+	cfg.Secrets = toAppSecrets(a.Secrets, false)
 
 	return cfg
 }

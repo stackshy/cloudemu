@@ -21,6 +21,7 @@
 package sql
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -39,10 +40,17 @@ const (
 	subFailoverGroups = "failoverGroups"
 	subAdministrators = "administrators"
 
-	// subTDE is the transparentDataEncryption sub-resource of a database; the
-	// trailing "/current" name segment is dropped by the 4-segment ParsePath, so
-	// it surfaces as rp.SubResourceAction under a database path.
+	// subTDE is the transparentDataEncryption sub-resource of a database. It
+	// surfaces as rp.SubResourceAction under a database path, and its
+	// "current" name as rp.Rest.
 	subTDE = "transparentDataEncryption"
+
+	// serverChildMaxDepth is servers/{s}/{child}/{name}; failover groups add a
+	// POST verb segment, and database children add {child}/{name} below the
+	// database.
+	serverChildMaxDepth   = 3
+	failoverActionDepth   = 4
+	databaseChildMaxDepth = 5
 
 	subMIStart    = "start"
 	subMIStop     = "stop"
@@ -64,6 +72,12 @@ type Handler struct {
 // New returns an Azure SQL handler backed by db.
 func New(db rdsdriver.RelationalDB) *Handler {
 	return &Handler{db: db}
+}
+
+// PurgeResourceGroup deletes every logical server in the resource group, with
+// its databases and child resources, backing the resource-group cascade.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	return azurearm.PurgeVia(ctx, h.db, subscription, resourceGroup)
 }
 
 // Matches returns true for ARM Microsoft.Sql server and managed-instance paths.
@@ -111,6 +125,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // serveServerChild dispatches a .../servers/{srv}/{type}[/{name}] path to the
 // matching child-resource handler.
 func (h *Handler) serveServerChild(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	maxDepth := serverChildMaxDepth
+	if rp.SubResource == subFailoverGroups {
+		maxDepth = failoverActionDepth
+	}
+
+	if rp.SubResource != subResourceDatabases && azurearm.TooDeep(w, r, rp, maxDepth) {
+		return
+	}
+
 	switch rp.SubResource {
 	case subResourceDatabases:
 		h.serveDatabaseRoute(w, r, rp)
@@ -124,8 +147,18 @@ func (h *Handler) serveServerChild(w http.ResponseWriter, r *http.Request, rp *a
 		h.serveFailoverGroup(w, r, rp)
 	case subAdministrators:
 		h.serveAADAdmin(w, r, rp)
+	case subConnectionPolicies:
+		h.serveConnectionPolicy(w, r, rp)
+	case subRestorableDropped:
+		// cloudemu keeps no dropped databases, so the list is empty.
+		azurearm.ServeDeferredChild(w, r, rp)
 	default:
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unsupported sub-resource: "+rp.SubResource)
+		if props, ok := serverSingletonProps(rp.SubResource); ok {
+			h.serveServerSingleton(w, r, rp, props)
+			return
+		}
+
+		azurearm.WriteUnknownType(w, r, rp)
 	}
 }
 
@@ -173,10 +206,10 @@ func (h *Handler) serveDatabaseRoute(w http.ResponseWriter, r *http.Request, rp 
 		return
 	}
 
-	// .../databases/{d}/transparentDataEncryption[/current]: a database
-	// sub-resource, not a database verb.
-	if rp.SubResourceAction == subTDE {
-		h.serveTDE(w, r, rp)
+	// .../databases/{d}/{child}[/{name}]: a database sub-resource, not a
+	// database verb.
+	if rp.SubResourceAction != "" || rp.Rest != "" {
+		h.serveDatabaseChild(w, r, rp)
 		return
 	}
 

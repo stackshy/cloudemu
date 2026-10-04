@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/server/gcp/opmeta"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 )
@@ -16,7 +18,7 @@ func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request, rt *r
 	repoID := repositoryIDParam(r)
 
 	var body repositoryJSON
-	if !gcprest.DecodeJSON(w, r, &body) {
+	if !gcpenum.DecodeJSON(w, r, &body, repositoryEnums) {
 		return
 	}
 
@@ -40,7 +42,7 @@ func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request, rt *r
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, repoID,
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt,
 		typedResponse(repositoryTypeURL, toRepositoryJSON(rt.project, rt.location, repo, 0))))
 }
 
@@ -303,7 +305,7 @@ func (h *Handler) patchRepository(w http.ResponseWriter, r *http.Request, rt *ro
 	}
 
 	var body repositoryJSON
-	if !gcprest.DecodeJSON(w, r, &body) {
+	if !gcpenum.DecodeJSON(w, r, &body, repositoryEnums) {
 		return
 	}
 
@@ -417,11 +419,9 @@ func (h *Handler) deleteRepository(w http.ResponseWriter, r *http.Request, rt *r
 		return
 	}
 
-	h.mu.Lock()
-	delete(h.policies, repositoryResourceName(rt.project, rt.location, rt.repository))
-	h.mu.Unlock()
+	h.iam.Delete(repositoryResourceName(rt.project, rt.location, rt.repository))
 
-	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, rt.repository, nil))
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, nil))
 }
 
 func (h *Handler) listDockerImages(w http.ResponseWriter, r *http.Request, rt *route) {
@@ -489,21 +489,34 @@ func pageSize(r *http.Request) int {
 	return n
 }
 
+// opMetaTypeURL is the Any type URL of Artifact Registry's (field-less)
+// OperationMetadata.
+const opMetaTypeURL = "type.googleapis.com/google.devtools.artifactregistry.v1.OperationMetadata"
+
 // doneOperation builds a completed long-running operation envelope and records
 // it with the shared LRO poller so a client polling the returned name resolves
-// the same done operation (with its typed response) in the full server.
-func (h *Handler) doneOperation(rt *route, id string, response any) operationJSON {
-	name := "projects/" + rt.project + "/locations/" + rt.location + "/operations/op-" + id
+// the same done operation (with its typed response) in the full server. A nil
+// response is a delete, whose result is google.protobuf.Empty. Each call mints
+// a fresh operation id.
+func (h *Handler) doneOperation(rt *route, response any) operationJSON {
+	name := "projects/" + rt.project + "/locations/" + rt.location + "/operations/" + opmeta.NewID(h.clock.Now())
+
+	if response == nil {
+		response = opmeta.Empty()
+	}
+
+	meta := opmeta.Response(struct{}{}, opMetaTypeURL)
 
 	// A standalone package server (New without SetOperationRegistry) has no shared
 	// poller and answers its own /operations/ polls, so only register when wired.
 	if h.ops != nil {
-		h.ops.Register(name, response)
+		h.ops.RegisterWithMetadata(name, response, meta)
 	}
 
 	return operationJSON{
 		Name:     name,
 		Done:     true,
+		Metadata: meta,
 		Response: response,
 	}
 }

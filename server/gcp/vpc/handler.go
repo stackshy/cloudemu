@@ -27,14 +27,20 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"hash/fnv"
+	"math"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -87,13 +93,6 @@ const (
 // creationTimestamp on every resource.
 func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
 
-// nameMatches reports whether name satisfies a GCP list filter, delegating to
-// the shared gcprest codec so every GCP handler applies filters identically.
-func nameMatches(filter, name string) bool { return gcprest.NameMatches(filter, name) }
-
-// maxResultsOf parses the maxResults query param, defaulting when absent/invalid.
-func maxResultsOf(raw string) int { return gcprest.MaxResults(raw) }
-
 // instanceLister is the minimal, optional compute-side lookup the subnetwork
 // delete guard needs: it lists instances so the handler can reject deleting a
 // subnet that still has instances attached. Kept as a local interface (satisfied
@@ -117,6 +116,12 @@ type Handler struct {
 	// handler's shared /operations route (which serves these polls) resolves a
 	// real operation and 404s a bogus one. Nil in a package-level server.
 	ops *gcprest.OperationRegistry
+	// iam keeps subnetwork policies keyed by full resource name.
+	iam gcpiam.Store
+	// peeringMu serializes peering changes. Each one reads a network's
+	// peerings, checks the peer network, and writes the list back, so two
+	// concurrent changes must not interleave.
+	peeringMu sync.Mutex
 }
 
 // New returns a networks handler. compute is optional (may be nil): when
@@ -128,8 +133,13 @@ func New(n netdriver.Networking, compute instanceLister) *Handler {
 		routers:   newRouterStore(),
 		addresses: newAddressStore(n),
 		routes:    newRouteStore(),
+		iam:       resourceiam.New(),
 	}
 }
+
+// SetIAMStore makes the handler keep subnetwork policies in s, the store
+// shared with the other GCP handlers.
+func (h *Handler) SetIAMStore(s gcpiam.Store) { h.iam = s }
 
 // SetOperationRegistry wires the shared compute-operation registry so the
 // operations this handler mints are resolvable (and unknown names 404) through
@@ -167,6 +177,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r = r.WithContext(projectctx.WithProject(r.Context(), rp.Project))
+
 	switch rp.ResourceType {
 	case resourceNetworks:
 		h.routeNetworks(w, r, rp)
@@ -197,6 +209,11 @@ func (h *Handler) routeNetworks(w http.ResponseWriter, r *http.Request, rp gcpre
 			gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
 		}
 
+		return
+	}
+
+	if rp.Action != "" {
+		h.routeNetworkAction(w, r, rp)
 		return
 	}
 
@@ -233,6 +250,15 @@ func (h *Handler) routeSubnetworks(w http.ResponseWriter, r *http.Request, rp gc
 		default:
 			gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
 		}
+
+		return
+	}
+
+	if gcpiam.IsVerb(rp.Action) {
+		gcpiam.ServeCompute(w, r, rp, h.iam, func() error {
+			_, err := findSubnetByName(r.Context(), h.net, rp.ResourceName, rp.ScopeName)
+			return err
+		})
 
 		return
 	}
@@ -278,8 +304,10 @@ func (h *Handler) routeFirewalls(w http.ResponseWriter, r *http.Request, rp gcpr
 	switch r.Method {
 	case http.MethodGet:
 		h.getFirewall(w, r, rp)
-	case http.MethodPatch, http.MethodPut:
+	case http.MethodPatch:
 		h.patchFirewall(w, r, rp)
+	case http.MethodPut:
+		h.updateFirewall(w, r, rp)
 	case http.MethodDelete:
 		h.deleteFirewall(w, r, rp)
 	default:
@@ -321,13 +349,21 @@ func (h *Handler) insertNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 		Tags:      tags,
 	}
 
-	if _, err := h.net.CreateVPC(r.Context(), cfg); err != nil {
+	v, err := h.net.CreateVPC(r.Context(), cfg)
+	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
-		"networks", req.Name, "insert")
+	if tags[autoSubnetTag] == trueValue {
+		if err := h.createAutoSubnets(r.Context(), v.ID, req.Name); err != nil {
+			gcprest.WriteCErr(w, err)
+			return
+		}
+	}
+
+	op := h.ops.RecordDoneTarget(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
+		"networks", req.Name, numericID(v.ID), "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
@@ -379,7 +415,12 @@ func (h *Handler) getNetwork(w http.ResponseWriter, r *http.Request, rp gcprest.
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, toNetworkResponse(v, rp, hostOf(r)))
+	host := hostOf(r)
+	resp := toNetworkResponse(v, rp, host)
+	resp.Subnetworks = h.subnetLinksByNetwork(r.Context(), rp.Project, host)[v.ID]
+	resp.Peerings = h.peeringsView(r.Context(), v, rp.Project, host)
+
+	gcprest.WriteJSON(w, http.StatusOK, resp)
 }
 
 //nolint:gocritic,dupl // rp is a request-scoped value; list-shape duplicates by-design across resources
@@ -391,33 +432,29 @@ func (h *Handler) listNetworks(w http.ResponseWriter, r *http.Request, rp gcpres
 	}
 
 	host := hostOf(r)
-	filter := r.URL.Query().Get("filter")
-
 	items := make([]networkResponse, 0, len(infos))
+	subnetLinks := h.subnetLinksByNetwork(r.Context(), rp.Project, host)
 
 	for i := range infos {
 		scope := rp
 		scope.ResourceName = tagOr(infos[i].Tags, netNameTag, infos[i].ID)
 
 		resp := toNetworkResponse(&infos[i], scope, host)
-		if nameMatches(filter, resp.Name) {
-			items = append(items, resp)
-		}
+		resp.Subnetworks = subnetLinks[infos[i].ID]
+		resp.Peerings = h.peeringsView(r.Context(), &infos[i], rp.Project, host)
+		items = append(items, resp)
 	}
 
-	page, err := pagination.PaginateSorted(items,
-		func(a, b networkResponse) bool { return a.Name < b.Name },
-		r.URL.Query().Get("pageToken"), maxResultsOf(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	page, next, ok := gcplist.FilterPage(w, r, items, func(n networkResponse) string { return n.Name })
+	if !ok {
 		return
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, networkListResponse{
 		Kind:          "compute#networkList",
 		ID:            "projects/" + rp.Project + "/global/networks",
-		Items:         page.Items,
-		NextPageToken: page.NextPageToken,
+		Items:         page,
+		NextPageToken: next,
 		SelfLink:      gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "networks", ""),
 	})
 }
@@ -436,7 +473,12 @@ func (h *Handler) deleteNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 	// 400 resourceInUseByAnotherResource rather than the generic 409 conditionNotMet
 	// WriteCErr maps FailedPrecondition to, so translate that one case here, and
 	// re-derive the child's user-facing name so the message names the resource the
-	// caller typed, not the provider error's internal driver id.
+	// caller typed, not the provider error's internal driver id. An auto mode
+	// network's own subnetworks go with it.
+	if !h.releaseAutoSubnets(w, r, rp, v.ID) {
+		return
+	}
+
 	if err := h.net.DeleteVPC(r.Context(), v.ID); err != nil {
 		if cerrors.IsFailedPrecondition(err) {
 			gcprest.WriteError(w, http.StatusBadRequest, "resourceInUseByAnotherResource",
@@ -545,13 +587,14 @@ func (h *Handler) insertSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 		Tags:             subnetTags(&req),
 	}
 
-	if _, err := h.net.CreateSubnet(r.Context(), cfg); err != nil {
+	sub, err := h.net.CreateSubnet(r.Context(), cfg)
+	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
-		"subnetworks", req.Name, "insert")
+	op := h.ops.RecordDoneTarget(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
+		"subnetworks", req.Name, numericID(sub.ID), "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
@@ -613,8 +656,6 @@ func (h *Handler) listSubnetworks(w http.ResponseWriter, r *http.Request, rp gcp
 	}
 
 	host := hostOf(r)
-	filter := r.URL.Query().Get("filter")
-
 	items := make([]subnetworkResponse, 0, len(infos))
 
 	for i := range infos {
@@ -626,25 +667,19 @@ func (h *Handler) listSubnetworks(w http.ResponseWriter, r *http.Request, rp gcp
 		scope := rp
 		scope.ResourceName = tagOr(infos[i].Tags, subnetNameTag, infos[i].ID)
 
-		resp := toSubnetworkResponse(&infos[i], scope, host)
-		if nameMatches(filter, resp.Name) {
-			items = append(items, resp)
-		}
+		items = append(items, toSubnetworkResponse(&infos[i], scope, host))
 	}
 
-	page, err := pagination.PaginateSorted(items,
-		func(a, b subnetworkResponse) bool { return a.Name < b.Name },
-		r.URL.Query().Get("pageToken"), maxResultsOf(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	page, next, ok := gcplist.FilterPage(w, r, items, func(s subnetworkResponse) string { return s.Name })
+	if !ok {
 		return
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, subnetworkListResponse{
 		Kind:          "compute#subnetworkList",
 		ID:            "projects/" + rp.Project + "/regions/" + rp.ScopeName + "/subnetworks",
-		Items:         page.Items,
-		NextPageToken: page.NextPageToken,
+		Items:         page,
+		NextPageToken: next,
 		SelfLink:      gcprest.SelfLink(host, rp.Project, gcprest.ScopeRegions, rp.ScopeName, "subnetworks", ""),
 	})
 }
@@ -657,12 +692,12 @@ func (h *Handler) deleteSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 		return
 	}
 
-	// Real GCP refuses to delete a subnetwork that still has instances in it,
-	// returning 400 resourceInUseByAnotherResource (mirrors the network delete
-	// guard against live subnets above). Scan instances whose networkInterfaces
-	// subnet references this subnet and reject; delete succeeds once empty.
+	// Real GCP refuses to delete a subnetwork that still has instances or
+	// reserved internal addresses in it, returning 400
+	// resourceInUseByAnotherResource (mirrors the network delete guard against
+	// live subnets above); delete succeeds once empty.
 	host := hostOf(r)
-	if inst, scanErr := h.instanceInSubnet(r.Context(), host, rp.Project, rp.ResourceName, rp.ScopeName); scanErr != nil {
+	if inst, scanErr := h.subnetUser(r.Context(), host, rp.Project, rp.ResourceName, rp.ScopeName); scanErr != nil {
 		gcprest.WriteCErr(w, scanErr)
 		return
 	} else if inst != "" {
@@ -677,6 +712,8 @@ func (h *Handler) deleteSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 		gcprest.WriteCErr(w, err)
 		return
 	}
+
+	h.iam.Delete(gcpiam.ComputeName(rp))
 
 	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
 		"subnetworks", rp.ResourceName, "delete")
@@ -846,8 +883,7 @@ func (h *Handler) aggregatedListSubnetworks(w http.ResponseWriter, r *http.Reque
 	}
 
 	host := hostOf(r)
-	filter := r.URL.Query().Get("filter")
-	items := map[string]subnetworksScopedList{}
+	all := make([]gcplist.Scoped[subnetworkResponse], 0, len(infos))
 
 	for i := range infos {
 		region := infos[i].AvailabilityZone
@@ -857,15 +893,19 @@ func (h *Handler) aggregatedListSubnetworks(w http.ResponseWriter, r *http.Reque
 		scope.ScopeName = region
 		scope.ResourceName = tagOr(infos[i].Tags, subnetNameTag, infos[i].ID)
 
-		resp := toSubnetworkResponse(&infos[i], scope, host)
-		if !nameMatches(filter, resp.Name) {
-			continue
-		}
+		all = append(all, gcplist.Scoped[subnetworkResponse]{
+			Scope: "regions/" + region, Item: toSubnetworkResponse(&infos[i], scope, host),
+		})
+	}
 
-		key := "regions/" + region
-		bucket := items[key]
-		bucket.Subnetworks = append(bucket.Subnetworks, resp)
-		items[key] = bucket
+	grouped, next, ok := gcplist.AggregatedPage(w, r, all, func(s subnetworkResponse) string { return s.Name })
+	if !ok {
+		return
+	}
+
+	items := make(map[string]subnetworksScopedList, len(grouped))
+	for key, list := range grouped {
+		items[key] = subnetworksScopedList{Subnetworks: list}
 	}
 
 	// Real GCP always includes a global bucket; subnetworks are regional, so it
@@ -877,10 +917,11 @@ func (h *Handler) aggregatedListSubnetworks(w http.ResponseWriter, r *http.Reque
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, subnetworkAggregatedListResponse{
-		Kind:     "compute#subnetworkAggregatedList",
-		ID:       "projects/" + rp.Project + "/aggregated/subnetworks",
-		Items:    items,
-		SelfLink: host + "/compute/v1/projects/" + rp.Project + "/aggregated/subnetworks",
+		Kind:          "compute#subnetworkAggregatedList",
+		ID:            "projects/" + rp.Project + "/aggregated/subnetworks",
+		Items:         items,
+		SelfLink:      host + "/compute/v1/projects/" + rp.Project + "/aggregated/subnetworks",
+		NextPageToken: next,
 	})
 }
 
@@ -914,20 +955,7 @@ func (h *Handler) insertFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
-	// GCP stamps defaults a minimal firewall omits; populate them at insert so
-	// the resource reads back with a concrete direction/priority.
-	if req.Direction == "" {
-		req.Direction = defaultFirewallDirection
-	}
-
-	// Priority 0 is a valid GCP value (highest precedence), so distinguish an
-	// omitted priority (nil) from an explicit 0: only the former defaults to
-	// 1000. Forcing 0→1000 would silently alter rule precedence and drive a
-	// perpetual terraform diff.
-	if req.Priority == nil {
-		p := defaultFirewallPriority
-		req.Priority = &p
-	}
+	applyFirewallDefaults(&req)
 
 	// Firewalls map onto driver SecurityGroups; the driver requires a VPC ID.
 	// A supplied network must exist. Real GCP rejects a firewall insert that
@@ -967,18 +995,19 @@ func (h *Handler) insertFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 
 	cfg := netdriver.SecurityGroupConfig{
 		Name:        req.Name,
-		Description: req.Description,
+		Description: derefStr(req.Description),
 		VPCID:       vpcID,
 		Tags:        tags,
 	}
 
-	if _, err := h.net.CreateSecurityGroup(r.Context(), cfg); err != nil {
+	sg, err := h.net.CreateSecurityGroup(r.Context(), cfg)
+	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
-		"firewalls", req.Name, "insert")
+	op := h.ops.RecordDoneTarget(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
+		"firewalls", req.Name, numericID(sg.ID), "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
@@ -1003,33 +1032,25 @@ func (h *Handler) listFirewalls(w http.ResponseWriter, r *http.Request, rp gcpre
 	}
 
 	host := hostOf(r)
-	filter := r.URL.Query().Get("filter")
-
 	items := make([]firewallResponse, 0, len(infos))
 
 	for i := range infos {
 		scope := rp
 		scope.ResourceName = tagOr(infos[i].Tags, firewallNameTag, infos[i].ID)
 
-		resp := toFirewallResponse(&infos[i], scope, host)
-		if nameMatches(filter, resp.Name) {
-			items = append(items, resp)
-		}
+		items = append(items, toFirewallResponse(&infos[i], scope, host))
 	}
 
-	page, err := pagination.PaginateSorted(items,
-		func(a, b firewallResponse) bool { return a.Name < b.Name },
-		r.URL.Query().Get("pageToken"), maxResultsOf(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	page, next, ok := gcplist.FilterPage(w, r, items, func(f firewallResponse) string { return f.Name })
+	if !ok {
 		return
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, firewallListResponse{
 		Kind:          "compute#firewallList",
 		ID:            "projects/" + rp.Project + "/global/firewalls",
-		Items:         page.Items,
-		NextPageToken: page.NextPageToken,
+		Items:         page,
+		NextPageToken: next,
 		SelfLink:      gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "firewalls", ""),
 	})
 }
@@ -1053,12 +1074,61 @@ func (h *Handler) deleteFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 
+// applyFirewallDefaults stamps the defaults GCP fills in when a firewall body
+// omits them, so the resource reads back with a concrete direction/priority.
+// Priority 0 is a valid GCP value (highest precedence), so only an omitted
+// priority (nil) defaults to 1000; forcing 0 to 1000 would alter rule
+// precedence and drive a perpetual terraform diff.
+func applyFirewallDefaults(req *firewallRequest) {
+	if req.Direction == "" {
+		req.Direction = defaultFirewallDirection
+	}
+
+	if req.Priority == nil {
+		p := defaultFirewallPriority
+		req.Priority = &p
+	}
+}
+
 // patchFirewall applies GCP merge-patch semantics to the stored firewall spec:
 // only fields present in the patch body overwrite the existing rule, so a
 // caller adjusting one field (e.g. allowed) keeps everything else intact.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) patchFirewall(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	h.writeFirewall(w, r, rp, "patch", mergeFirewallPatch)
+}
+
+// updateFirewall implements firewalls.update (PUT): the body replaces the whole
+// rule, so fields it omits fall back to their GCP defaults rather than keeping
+// the old values. The network is immutable and is kept when the body omits it.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) updateFirewall(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	h.writeFirewall(w, r, rp, "update", replaceFirewallSpec)
+}
+
+// replaceFirewallSpec overwrites spec with the full PUT body.
+func replaceFirewallSpec(spec *firewallSpec, req *firewallRequest) {
+	network := spec.Network
+
+	applyFirewallDefaults(req)
+
+	*spec = specFromFirewallRequest(req)
+	if spec.Network == "" {
+		spec.Network = network
+	}
+
+	desc := derefStr(req.Description)
+	spec.Description = &desc
+}
+
+// writeFirewall loads the named firewall's stored spec, lets apply rewrite it
+// from the request body, and persists the result.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) writeFirewall(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath,
+	opType string, apply func(spec *firewallSpec, req *firewallRequest)) {
 	f, err := findFirewallByName(r.Context(), h.net, rp.ResourceName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
@@ -1072,7 +1142,14 @@ func (h *Handler) patchFirewall(w http.ResponseWriter, r *http.Request, rp gcpre
 	}
 
 	spec, _ := unmarshalFirewallSpec(f.Tags[firewallSpecTag])
-	mergeFirewallPatch(&spec, &req)
+	if spec.Description == nil {
+		// Rules stored before the description moved into the spec keep it on
+		// the security group; seed the spec so a merge patch preserves it.
+		desc := f.Description
+		spec.Description = &desc
+	}
+
+	apply(&spec, &req)
 
 	b, mErr := json.Marshal(spec)
 	if mErr != nil {
@@ -1087,7 +1164,7 @@ func (h *Handler) patchFirewall(w http.ResponseWriter, r *http.Request, rp gcpre
 	}
 
 	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
-		"firewalls", rp.ResourceName, "patch")
+		"firewalls", rp.ResourceName, opType)
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
@@ -1102,6 +1179,11 @@ func mergeFirewallPatch(spec *firewallSpec, req *firewallRequest) {
 
 // mergeFirewallScalars merges the scalar and single-value firewall fields.
 func mergeFirewallScalars(spec *firewallSpec, req *firewallRequest) {
+	if req.Description != nil {
+		desc := *req.Description
+		spec.Description = &desc
+	}
+
 	if req.Network != "" {
 		spec.Network = req.Network
 	}
@@ -1240,20 +1322,24 @@ func (h *Handler) networkInUseMessage(ctx context.Context, vpcID, netName string
 // (server/gcp/compute) so this handler can name an in-subnet instance in the
 // delete-in-use error without importing the compute server package.
 const (
-	instNameTag = "cloudemu:gcpName"
-	instZoneTag = "cloudemu:gcp:zone"
+	instNameTag    = "cloudemu:gcpName"
+	instZoneTag    = "cloudemu:gcp:zone"
+	instProjectTag = "cloudemu:gcp:project"
 )
 
 // instanceInSubnet returns the self-link of the first instance whose
 // networkInterfaces subnet references the given subnet (by name, scoped to the
-// subnet's region), or "" when none. It underpins the delete-in-use guard for
-// subnetworks. A nil compute driver (compute not wired) reports no users.
+// subnet's region and project), or "" when none. It underpins the delete-in-use
+// guard for subnetworks. Instances of every project are scanned, because a
+// Shared VPC service-project VM may use a host-project subnet, but each counts
+// only when its subnet reference resolves to the subnet's own project. A nil
+// compute driver (compute not wired) reports no users.
 func (h *Handler) instanceInSubnet(ctx context.Context, host, project, subnetName, region string) (string, error) {
 	if h.compute == nil {
 		return "", nil
 	}
 
-	instances, err := h.compute.DescribeInstances(ctx, nil, nil)
+	instances, err := h.compute.DescribeInstances(projectctx.AllProjects(ctx), nil, nil)
 	if err != nil {
 		return "", err
 	}
@@ -1263,10 +1349,21 @@ func (h *Handler) instanceInSubnet(ctx context.Context, host, project, subnetNam
 			continue
 		}
 
+		instProject := tagOr(instances[i].Tags, instProjectTag, project)
+		refProject := projectctx.FromPath(instances[i].SubnetID)
+
+		if refProject == "" {
+			refProject = instProject
+		}
+
+		if refProject != project {
+			continue
+		}
+
 		name := tagOr(instances[i].Tags, instNameTag, instances[i].ID)
 		zone := tagOr(instances[i].Tags, instZoneTag, "")
 
-		return gcprest.SelfLink(host, project, gcprest.ScopeZones, zone, "instances", name), nil
+		return gcprest.SelfLink(host, instProject, gcprest.ScopeZones, zone, "instances", name), nil
 	}
 
 	return "", nil
@@ -1340,6 +1437,29 @@ func resolveNetwork(ctx context.Context, n netdriver.Networking, ref string) (st
 }
 
 // Response shaping.
+
+// subnetLinksByNetwork maps each network's driver id to the sorted self-links
+// of its subnetworks, the subnetworks[] a network GET returns.
+func (h *Handler) subnetLinksByNetwork(ctx context.Context, project, host string) map[string][]string {
+	out := map[string][]string{}
+
+	subnets, err := h.net.DescribeSubnets(ctx, nil)
+	if err != nil {
+		return out
+	}
+
+	for i := range subnets {
+		s := &subnets[i]
+		out[s.VPCID] = append(out[s.VPCID], gcprest.SelfLink(host, project, gcprest.ScopeRegions,
+			s.AvailabilityZone, resourceSubnetworks, tagOr(s.Tags, subnetNameTag, s.ID)))
+	}
+
+	for _, links := range out {
+		sort.Strings(links)
+	}
+
+	return out
+}
 
 //nolint:gocritic // rp is a request-scoped value
 func toNetworkResponse(info *netdriver.VPCInfo, rp gcprest.ResourcePath, host string) networkResponse {
@@ -1497,6 +1617,10 @@ func toFirewallResponse(info *netdriver.SecurityGroupInfo, rp gcprest.ResourcePa
 	}
 
 	if spec, ok := unmarshalFirewallSpec(info.Tags[firewallSpecTag]); ok {
+		if spec.Description != nil {
+			resp.Description = *spec.Description
+		}
+
 		resp.Network = spec.Network
 		resp.Priority = spec.Priority
 		resp.Direction = spec.Direction
@@ -1531,6 +1655,9 @@ type firewallSpec struct {
 	TargetServiceAccounts []string           `json:"targetServiceAccounts,omitempty"`
 	LogConfig             *firewallLogConfig `json:"logConfig,omitempty"`
 	Disabled              *bool              `json:"disabled,omitempty"`
+	// Description is set once a patch or update has written it; nil means the
+	// rule's insert-time description on the security group is current.
+	Description *string `json:"description,omitempty"`
 }
 
 func marshalFirewallSpec(req *firewallRequest) string {
@@ -1576,6 +1703,15 @@ func unmarshalFirewallSpec(s string) (firewallSpec, bool) {
 	return spec, true
 }
 
+// derefStr returns the pointed-to string, or "" when the pointer is nil.
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+
+	return *p
+}
+
 // derefInt returns the pointed-to int, or 0 when the pointer is nil.
 func derefInt(p *int) int {
 	if p == nil {
@@ -1595,6 +1731,7 @@ func tagOr(m map[string]string, key, fallback string) string {
 
 // numericID returns a stable uint64-shaped string derived from a driver ID.
 // GCP wire IDs are uint64 and proto JSON unmarshalling rejects anything else.
+// The top bit is cleared because Terraform reads subnetwork_id into an int64.
 func numericID(driverID string) string {
 	const fnvOffset uint64 = 14695981039346656037
 
@@ -1606,7 +1743,7 @@ func numericID(driverID string) string {
 		h *= fnvPrime
 	}
 
-	return strconv.FormatUint(h, 10)
+	return strconv.FormatUint(h&math.MaxInt64, 10)
 }
 
 func hostOf(r *http.Request) string {

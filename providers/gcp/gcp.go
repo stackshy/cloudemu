@@ -41,6 +41,7 @@ import (
 	gkebackupprov "github.com/stackshy/cloudemu/v2/providers/gcp/gkebackup"
 	gkehubprov "github.com/stackshy/cloudemu/v2/providers/gcp/gkehub"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/iam"
+	kmsprov "github.com/stackshy/cloudemu/v2/providers/gcp/kms"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/loadbalancer"
 	managedkafkaprov "github.com/stackshy/cloudemu/v2/providers/gcp/managedkafka"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/memorystore"
@@ -49,6 +50,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/networkconnectivity"
 	privatecaprov "github.com/stackshy/cloudemu/v2/providers/gcp/privateca"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/pubsub"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/scheduler"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/secretmanager"
 	securesourcemanagerprov "github.com/stackshy/cloudemu/v2/providers/gcp/securesourcemanager"
@@ -118,6 +120,7 @@ type Provider struct {
 	CertificateManager   *certmanagerprov.Mock
 	AccessContextManager *acmprov.Mock
 	PrivateCA            *privatecaprov.Mock
+	KMS                  *kmsprov.Mock
 	Dataplex             *dataplexprov.Mock
 	Metastore            *metastoreprov.Mock
 	VPCAccess            *vpcaccessprov.Mock
@@ -139,6 +142,9 @@ type Provider struct {
 	GKEBackup            *gkebackupprov.Mock
 	GKEHub               *gkehubprov.Mock
 	DataFusion           *datafusionprov.Mock
+	// ResourceIAM holds the getIamPolicy/setIamPolicy policies of resources
+	// with no IAM model of their own (BigQuery, Spanner, Cloud DNS, ...).
+	ResourceIAM *resourceiam.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -190,6 +196,7 @@ func New(opts ...config.Option) *Provider {
 		CertificateManager:   certmanagerprov.New(o),
 		AccessContextManager: acmprov.New(o),
 		PrivateCA:            privatecaprov.New(o),
+		KMS:                  kmsprov.New(o),
 		Dataplex:             dataplexprov.New(o),
 		Metastore:            metastoreprov.New(o),
 		VPCAccess:            vpcaccessprov.New(o),
@@ -211,6 +218,7 @@ func New(opts ...config.Option) *Provider {
 		GKEBackup:            gkebackupprov.New(o),
 		GKEHub:               gkehubprov.New(o),
 		DataFusion:           datafusionprov.New(o),
+		ResourceIAM:          resourceiam.New(),
 		ProjectID:            o.ProjectID,
 		Region:               o.Region,
 		Clock:                o.Clock,

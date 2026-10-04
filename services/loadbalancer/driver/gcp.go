@@ -49,6 +49,17 @@ type GCPBackendServicePatcher interface {
 	PatchGCPBackendService(ctx context.Context, name string, mutate func(*TargetGroupInfo)) error
 }
 
+// GCPForwardingRulePatcher is an OPTIONAL, type-asserted capability implemented
+// only by the GCP load-balancer provider. It applies mutate to the
+// forwarding-rule-backed load balancer under the store lock
+// (forwardingRules.setLabels / patch). mutate receives a copy whose Tags map is
+// not shared with the stored record; when it returns an error the record is left
+// unchanged and that error is returned. Returns NotFound when the rule does not
+// exist.
+type GCPForwardingRulePatcher interface {
+	PatchGCPForwardingRule(ctx context.Context, name string, mutate func(*LBInfo) error) error
+}
+
 // GCPBackendBucketCollection is the Collection a Cloud CDN backend bucket is
 // stored under; backend buckets are always global.
 const GCPBackendBucketCollection = "backendBuckets"

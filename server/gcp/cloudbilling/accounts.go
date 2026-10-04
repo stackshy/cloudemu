@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -24,8 +25,25 @@ func (h *Handler) serveAccountCollection(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// serveAccount dispatches /v1/billingAccounts/{id}.
+// serveAccount dispatches /v1/billingAccounts/{id} and its IAM verbs
+// (/v1/billingAccounts/{id}:getIamPolicy, GET or POST, and the POST
+// :setIamPolicy / :testIamPermissions).
 func (h *Handler) serveAccount(w http.ResponseWriter, r *http.Request, rt route) {
+	if id, verb := gcpiam.SplitVerb(rt.accountID); verb != "" {
+		h.mu.RLock()
+		_, ok := h.accounts[id]
+		h.mu.RUnlock()
+
+		if !ok {
+			gcprest.WriteError(w, http.StatusNotFound, "notFound", "billing account not found: "+id)
+			return
+		}
+
+		gcpiam.Serve(w, r, verb, billingAccountsName+id, h.iam)
+
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.getAccount(w, rt)

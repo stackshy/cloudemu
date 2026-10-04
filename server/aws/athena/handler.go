@@ -127,3 +127,7 @@ func writeErr(w http.ResponseWriter, err error) {
 		wire.WriteJSONError(w, http.StatusInternalServerError, athenadriver.ExInternalServer, msg)
 	}
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "athena" }

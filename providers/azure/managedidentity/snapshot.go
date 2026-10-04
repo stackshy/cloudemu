@@ -17,6 +17,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // the same tenant after a restore.
 type miSnapshot struct {
 	Identities json.RawMessage `json:"identities,omitempty"`
+	FICs       json.RawMessage `json:"federatedIdentityCredentials,omitempty"`
 	TenantID   string          `json:"tenantId,omitempty"`
 }
 
@@ -31,7 +32,12 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 		return nil, fmt.Errorf("managedidentity: snapshot store: %w", err)
 	}
 
-	return json.Marshal(miSnapshot{Identities: ids, TenantID: m.tenantID})
+	fics, err := m.fics.Snapshot()
+	if err != nil {
+		return nil, fmt.Errorf("managedidentity: snapshot credentials: %w", err)
+	}
+
+	return json.Marshal(miSnapshot{Identities: ids, FICs: fics, TenantID: m.tenantID})
 }
 
 // Restore rebuilds every identity under its original id and restores the estate
@@ -47,6 +53,12 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 
 	if snap.TenantID != "" {
 		m.tenantID = snap.TenantID
+	}
+
+	if len(snap.FICs) > 0 {
+		if err := m.fics.LoadSnapshot(snap.FICs); err != nil {
+			return fmt.Errorf("managedidentity: restore credentials: %w", err)
+		}
 	}
 
 	if len(snap.Identities) == 0 {

@@ -180,7 +180,7 @@ func (h *Handler) serveV2Call(w http.ResponseWriter, r *http.Request, p v2Path) 
 	}
 
 	var req callRequest
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSON(w, r, &req, nil) {
 		return
 	}
 

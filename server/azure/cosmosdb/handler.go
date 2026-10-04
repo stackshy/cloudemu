@@ -34,6 +34,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	"github.com/stackshy/cloudemu/v2/services/database/driver/cosmossql"
 )
@@ -243,10 +244,16 @@ func (h *Handler) cascadeDeleteDatabase(ctx context.Context, account, db string)
 // listener) is left unpeeled so Matches declines it and the request falls
 // through to the blob handler. This keeps an account literally named "dbs" or
 // "offers" reachable while never stealing a blob path.
-func (h *Handler) splitAccount(p string) (account, rest string) {
+//
+// With no account path prefix, a request on the real account host
+// ({account}.documents.azure.com, or the regional {account}-{region} form)
+// resolves to that account, so a client pointed at the real endpoint through
+// DNS or a hosts entry reaches the databases and containers the ARM control
+// plane created for it.
+func (h *Handler) splitAccount(host, p string) (account, rest string) {
 	trimmed := strings.Trim(p, "/")
 	if trimmed == "" {
-		return "", "/"
+		return h.hostAccount(host), "/"
 	}
 
 	first := trimmed
@@ -255,7 +262,7 @@ func (h *Handler) splitAccount(p string) (account, rest string) {
 	}
 
 	if !h.isAccount(first) {
-		return "", p
+		return h.hostAccount(host), p
 	}
 
 	rest = strings.TrimPrefix(p, "/"+first)
@@ -264,6 +271,37 @@ func (h *Handler) splitAccount(p string) (account, rest string) {
 	}
 
 	return first, rest
+}
+
+// cosmosHostSuffixes are the Cosmos DB data-plane DNS suffixes across the
+// public, China and US Gov clouds.
+//
+//nolint:gochecknoglobals // read-only lookup table, not mutable state
+var cosmosHostSuffixes = []string{".documents.azure.com", ".documents.azure.cn", ".documents.azure.us"}
+
+// hostAccount returns the registered account a Cosmos account host names, or
+// "" (the default account) when host is not a Cosmos host or names no
+// registered account. A trailing :port is ignored.
+func (h *Handler) hostAccount(host string) string {
+	host, _, _ = strings.Cut(strings.ToLower(host), ":")
+
+	for _, suffix := range cosmosHostSuffixes {
+		label, found := strings.CutSuffix(host, suffix)
+		if !found || label == "" || strings.Contains(label, ".") {
+			continue
+		}
+
+		if h.isAccount(label) {
+			return label
+		}
+
+		// Regional endpoint: {account}-{region}.documents.azure.com.
+		if i := strings.LastIndexByte(label, '-'); i > 0 && h.isAccount(label[:i]) {
+			return label[:i]
+		}
+	}
+
+	return ""
 }
 
 // accountLister is the optional capability the shared database driver exposes to
@@ -300,7 +338,13 @@ func (h *Handler) isAccount(name string) bool {
 // root probe (GET / or GET /{account}), the /dbs/... resource tree, and the
 // /offers throughput resource, each optionally under a /{account} prefix.
 func (h *Handler) Matches(r *http.Request) bool {
-	account, rest := h.splitAccount(r.URL.Path)
+	// A storage account host is never a Cosmos request, so a blob container
+	// named "dbs" stays with the storage handlers.
+	if azurearm.IsStorageHost(r.Host) {
+		return false
+	}
+
+	account, rest := h.splitAccount(r.Host, r.URL.Path)
 
 	// A bare "/{account}" carrying a query string is more likely a blob
 	// container/root operation than a Cosmos account probe (which carries none),
@@ -309,10 +353,12 @@ func (h *Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	// A root "GET /?comp=list" is a Storage service call (list queues / list
-	// containers), not a Cosmos account probe (which carries no query). Decline
-	// it so the Queue and Blob handlers, registered after this one, serve it.
-	if rest == "/" && r.URL.Query().Get("comp") == "list" {
+	// A root request carrying comp= or restype= is a Storage account-level call
+	// (list queues or containers, service properties, account information,
+	// find blobs by tags), not a Cosmos account probe (which carries no query).
+	// Decline it so the Queue, Table and Blob handlers, registered after this
+	// one, serve it.
+	if q := r.URL.Query(); rest == "/" && (q.Has("comp") || q.Has("restype")) {
 		return false
 	}
 
@@ -323,7 +369,7 @@ func (h *Handler) Matches(r *http.Request) bool {
 // ServeHTTP routes the request based on URL path shape, after peeling off the
 // optional /{account} prefix that scopes the data plane to one account.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	account, rest := h.splitAccount(r.URL.Path)
+	account, rest := h.splitAccount(r.Host, r.URL.Path)
 
 	if rest == "/" {
 		h.accountProperties(w, r)

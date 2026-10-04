@@ -1735,3 +1735,7 @@ func writeThrottle(w http.ResponseWriter, msg string) {
 		"Reason":  reservedConcurrencyReason,
 	})
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "lambda" }

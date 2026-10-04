@@ -86,6 +86,10 @@ type Mock struct {
 	databases *memstore.Store[rdsdriver.Database]
 	// transparent-data-encryption records, key = "server/database"
 	tde *memstore.Store[rdsdriver.TransparentDataEncryption]
+	// retention policies, key = "server/database"; connPolicies key = server
+	str          *memstore.Store[rdsdriver.ShortTermRetentionPolicy]
+	ltr          *memstore.Store[rdsdriver.LongTermRetentionPolicy]
+	connPolicies *memstore.Store[string]
 
 	// instSettle overlays a transient Creating / Updating window over a database
 	// instance's stored available state on the portable relationaldb path
@@ -114,6 +118,9 @@ func New(opts *config.Options) *Mock {
 		aadAdmins:        memstore.New[rdsdriver.AADAdmin](),
 		databases:        memstore.New[rdsdriver.Database](),
 		tde:              memstore.New[rdsdriver.TransparentDataEncryption](),
+		str:              memstore.New[rdsdriver.ShortTermRetentionPolicy](),
+		ltr:              memstore.New[rdsdriver.LongTermRetentionPolicy](),
+		connPolicies:     memstore.New[string](),
 		managedInstances: memstore.New[rdsdriver.ManagedInstance](),
 		managedDatabases: memstore.New[rdsdriver.ManagedDatabase](),
 		instSettle:       settle.NewSet(),
@@ -619,14 +626,41 @@ func (m *Mock) DeleteCluster(_ context.Context, id string) error {
 		return cerrors.Newf(cerrors.NotFound, "Azure SQL server %q not found", id)
 	}
 
+	m.deleteClusterLocked(id, &cluster)
+
+	return nil
+}
+
+// PurgeResourceGroup deletes every logical server recorded under the resource
+// group, cascading to its databases, firewall and vnet rules, elastic pools,
+// failover groups, AAD admin, TDE and retention policies and connection
+// policy, and every managed instance with its databases. It backs the ARM
+// resource-group delete cascade. An unscoped server or instance is never
+// selected.
+func (m *Mock) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.purgeManagedInstancesLocked(subscription, resourceGroup)
+
+	for _, id := range m.clusters.Keys() {
+		if cluster, ok := m.clusters.Get(id); ok && cluster.Scope.InResourceGroup(subscription, resourceGroup) {
+			m.deleteClusterLocked(id, &cluster)
+		}
+	}
+
+	return nil
+}
+
+// deleteClusterLocked removes a server and everything under it. The caller
+// holds the write lock.
+func (m *Mock) deleteClusterLocked(id string, cluster *rdsdriver.Cluster) {
 	for _, member := range cluster.Members {
 		m.instances.Delete(instanceKey(id, member))
 	}
 
 	m.clusters.Delete(id)
 	m.deleteChildren(id)
-
-	return nil
 }
 
 // deleteByPrefix removes every entry of store whose key starts with prefix.
@@ -651,12 +685,15 @@ func (m *Mock) deleteChildren(server string) {
 
 	deleteByPrefix(m.databases, prefix)
 	deleteByPrefix(m.tde, prefix)
+	deleteByPrefix(m.str, prefix)
+	deleteByPrefix(m.ltr, prefix)
 	deleteByPrefix(m.firewallRules, prefix)
 	deleteByPrefix(m.vnetRules, prefix)
 	deleteByPrefix(m.elasticPools, prefix)
 	deleteByPrefix(m.failoverGroups, prefix)
 
 	m.aadAdmins.Delete(server)
+	m.connPolicies.Delete(server)
 }
 
 // StartCluster / StopCluster are no-ops on Azure SQL servers. They aren't

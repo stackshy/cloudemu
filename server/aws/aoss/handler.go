@@ -120,3 +120,7 @@ func statusFor(exception string) int {
 
 	return http.StatusBadRequest
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "aoss" }

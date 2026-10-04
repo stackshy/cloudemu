@@ -17,6 +17,7 @@ const (
 	defaultInputSchema          = "EventGridSchema"
 	defaultPublicNetworkAccess  = "Enabled"
 	subEventSubscriptions       = "eventSubscriptions"
+	childMaxDepth               = 3 // {type}/{name}/{child}/{childName}
 	actionListKeys              = "listKeys"
 	subscriptionResourceType    = "Microsoft.EventGrid/topics/eventSubscriptions"
 	subscriptionProvisionedGood = "Succeeded"

@@ -1,5 +1,6 @@
 // Package containerapps serves the Azure Container Apps ARM API
-// (Microsoft.App/managedEnvironments and Microsoft.App/containerApps). Real
+// (Microsoft.App/managedEnvironments, their daprComponents and storages
+// children, and Microsoft.App/containerApps). Real
 // armappcontainers ManagedEnvironmentsClient and ContainerAppsClient requests
 // hit this handler the same way they hit management.azure.com.
 //
@@ -27,6 +28,7 @@ const (
 	// subResourceRevisions is the sub-resource segment for a container app's
 	// revisions (.../containerApps/{app}/revisions[/{rev}[/{action}]]).
 	subResourceRevisions = "revisions"
+	revisionActionDepth  = 4
 
 	actionActivate   = "activate"
 	actionDeactivate = "deactivate"
@@ -51,12 +53,25 @@ type Store interface {
 	DeleteApp(ctx context.Context, sub, rg, name string) (bool, error)
 	ListAppsByResourceGroup(ctx context.Context, sub, rg string) ([]containerapps.ContainerApp, error)
 	ListAppsBySubscription(ctx context.Context, sub string) ([]containerapps.ContainerApp, error)
+	ListAppSecrets(ctx context.Context, sub, rg, name string) ([]containerapps.AppSecret, error)
 
 	ListRevisions(ctx context.Context, sub, rg, app string) ([]containerapps.Revision, error)
 	GetRevision(ctx context.Context, sub, rg, app, rev string) (containerapps.Revision, error)
 	ActivateRevision(ctx context.Context, sub, rg, app, rev string) error
 	DeactivateRevision(ctx context.Context, sub, rg, app, rev string) error
 	RestartRevision(ctx context.Context, sub, rg, app, rev string) error
+
+	PutDaprComponent(
+		ctx context.Context, sub, rg, env string, c *containerapps.DaprComponent,
+	) (containerapps.DaprComponent, error)
+	GetDaprComponent(ctx context.Context, sub, rg, env, name string) (containerapps.DaprComponent, error)
+	DeleteDaprComponent(ctx context.Context, sub, rg, env, name string) (bool, error)
+	ListDaprComponents(ctx context.Context, sub, rg, env string) ([]containerapps.DaprComponent, error)
+
+	PutEnvStorage(ctx context.Context, sub, rg, env string, s *containerapps.EnvStorage) (containerapps.EnvStorage, error)
+	GetEnvStorage(ctx context.Context, sub, rg, env, name string) (containerapps.EnvStorage, error)
+	DeleteEnvStorage(ctx context.Context, sub, rg, env, name string) (bool, error)
+	ListEnvStorages(ctx context.Context, sub, rg, env string) ([]containerapps.EnvStorage, error)
 
 	PurgeResourceGroup(ctx context.Context, sub, rg string) error
 }
@@ -108,6 +123,19 @@ func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resource
 func (h *Handler) serveEnvironment(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	if rp.ResourceName == "" {
 		h.listEnvironments(w, r, rp)
+		return
+	}
+
+	switch {
+	case strings.EqualFold(rp.SubResource, subResourceDapr):
+		h.serveDapr(w, r, rp)
+		return
+	case strings.EqualFold(rp.SubResource, subResourceStorages):
+		h.serveEnvStorage(w, r, rp)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, rp, "certificates", "managedCertificates") {
 		return
 	}
 
@@ -184,6 +212,15 @@ func (h *Handler) serveApp(w http.ResponseWriter, r *http.Request, rp *azurearm.
 		return
 	}
 
+	if strings.EqualFold(rp.SubResource, actionListSecrets) && rp.SubResourceName == "" {
+		h.listAppSecrets(w, r, rp)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, rp, "authConfigs", "sourcecontrols") {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut, http.MethodPatch:
 		h.putApp(w, r, rp)
@@ -218,6 +255,28 @@ func (h *Handler) putApp(w http.ResponseWriter, r *http.Request, rp *azurearm.Re
 	azurearm.WriteJSON(w, createStatus(created), toAppResponse(&app))
 }
 
+// listAppSecrets serves POST containerApps/{app}/listSecrets, the only read
+// that returns secret values (azurerm_container_app reads them here).
+func (h *Handler) listAppSecrets(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if r.Method != http.MethodPost {
+		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		return
+	}
+
+	secrets, err := h.store.ListAppSecrets(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	out := toAppSecrets(secrets, true)
+	if out == nil {
+		out = []appSecret{}
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, listEnvelope[appSecret]{Value: out})
+}
+
 func (h *Handler) getApp(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	app, err := h.store.GetApp(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
@@ -249,6 +308,11 @@ func (h *Handler) listApps(w http.ResponseWriter, r *http.Request, rp *azurearm.
 //	GET  .../revisions/{rev}          → get
 //	POST .../revisions/{rev}/{action} → activate | deactivate | restart
 func (h *Handler) serveRevision(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	// revisions/{r}/{action} is the deepest revision route.
+	if azurearm.TooDeep(w, r, rp, revisionActionDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		h.listRevisions(w, r, rp)
 		return

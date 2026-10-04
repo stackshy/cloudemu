@@ -6,6 +6,8 @@
 // contains.
 package scope
 
+import "strings"
+
 // Scope locates a resource. The zero value means "unscoped": AWS resources
 // and portable-API callers that don't care about scoping use it, and it
 // matches every filter.
@@ -45,4 +47,33 @@ func (s Scope) Matches(f Scope) bool {
 		return false
 	}
 	return true
+}
+
+// InResourceGroup reports whether a resource created in scope s belongs to the
+// Azure resource group resourceGroup in subscription. Unlike Matches it never
+// treats the zero scope as a wildcard, so an unscoped (portable API) resource
+// is never selected for a resource-group delete. Names compare
+// case-insensitively, as ARM does. An empty subscription on either side
+// matches any subscription: the emulator serves a single estate.
+func (s Scope) InResourceGroup(subscription, resourceGroup string) bool {
+	if s.ResourceGroup == "" || !strings.EqualFold(s.ResourceGroup, resourceGroup) {
+		return false
+	}
+
+	return s.Subscription == "" || subscription == "" || strings.EqualFold(s.Subscription, subscription)
+}
+
+// IDInResourceGroup reports whether the ARM resource id or scope string id is
+// the resource group resourceGroup of subscription, or lies under it. Leading
+// and trailing slashes are ignored and segments compare case-insensitively.
+// The match stops at a segment boundary, so rg1 never selects rg10.
+func IDInResourceGroup(id, subscription, resourceGroup string) bool {
+	if subscription == "" || resourceGroup == "" {
+		return false
+	}
+
+	got := strings.ToLower(strings.Trim(id, "/"))
+	want := strings.ToLower("subscriptions/" + subscription + "/resourcegroups/" + resourceGroup)
+
+	return got == want || strings.HasPrefix(got, want+"/")
 }

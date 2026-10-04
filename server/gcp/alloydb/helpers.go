@@ -3,11 +3,14 @@ package alloydb
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	alloydb "google.golang.org/api/alloydb/v1"
+	"google.golang.org/api/googleapi"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/gcp/opmeta"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -65,24 +68,51 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
+// AlloyDB Any type URLs a done operation carries.
+const (
+	clusterTypeURL  = "type.googleapis.com/google.cloud.alloydb.v1.Cluster"
+	instanceTypeURL = "type.googleapis.com/google.cloud.alloydb.v1.Instance"
+	backupTypeURL   = "type.googleapis.com/google.cloud.alloydb.v1.Backup"
+	opMetaTypeURL   = "type.googleapis.com/google.cloud.alloydb.v1.OperationMetadata"
+)
+
 // doneOperation builds a completed AlloyDB LRO envelope carrying the resource as
-// its response. AlloyDB REST callers receive a terminal operation, and a client
-// that polls the returned name resolves the same done operation (with its
-// response) via the shared LRO poller in the full server.
-func (h *Handler) doneOperation(p *alloyPath, verb string, response any) *alloydb.Operation {
-	name := "projects/" + p.project + "/locations/" + p.location + "/operations/op-" + verb
+// a typed Any response (google.protobuf.Empty when response is nil, i.e. a
+// delete) plus an OperationMetadata Any, and records it with the shared poller
+// so a client that polls the returned name resolves the same done operation.
+// verb is "<verb>-<kind>" (e.g. "create-cluster"); its first word is the
+// metadata verb. Each call mints a fresh operation id.
+func (h *Handler) doneOperation(p *alloyPath, verb, typeURL string, response any) *alloydb.Operation {
+	now := h.clock.Now()
+	name := "projects/" + p.project + "/locations/" + p.location + "/operations/" + opmeta.NewID(now)
 
-	op := &alloydb.Operation{Name: name, Done: true}
-
+	resp := opmeta.Empty()
 	if response != nil {
-		if raw, err := json.Marshal(response); err == nil {
-			op.Response = raw
-		}
+		resp = opmeta.Response(response, typeURL)
 	}
 
-	h.ops.Register(name, op.Response)
+	metaVerb, _, _ := strings.Cut(verb, "-")
+	meta := opmeta.Metadata(opMetaTypeURL, now, p.target(), metaVerb)
 
-	return op
+	h.ops.RegisterWithMetadata(name, resp, meta)
+
+	return &alloydb.Operation{Name: name, Done: true, Response: googleapi.RawMessage(resp), Metadata: googleapi.RawMessage(meta)}
+}
+
+// target is the resource name an operation on p acts on.
+func (p *alloyPath) target() string {
+	base := "projects/" + p.project + "/locations/" + p.location
+
+	switch {
+	case p.backupID != "":
+		return base + "/backups/" + p.backupID
+	case p.clusterID != "" && p.subID != "":
+		return base + "/clusters/" + p.clusterID + "/" + p.sub + "/" + p.subID
+	case p.clusterID != "":
+		return base + "/clusters/" + p.clusterID
+	default:
+		return base + "/" + p.collection
+	}
 }
 
 // alloyCap returns the AlloyDB optional capability, or false if unsupported.
@@ -119,6 +149,10 @@ func (*Handler) toWireCluster(c *rdsdriver.Cluster, info *rdsdriver.AlloyDBClust
 		},
 	}
 
+	if info.Network != "" || info.AllocatedIPRange != "" {
+		out.NetworkConfig = &alloydb.NetworkConfig{Network: info.Network, AllocatedIpRange: info.AllocatedIPRange}
+	}
+
 	if info.PrimaryCluster != "" {
 		out.SecondaryConfig = &alloydb.SecondaryConfig{PrimaryClusterName: info.PrimaryCluster}
 	}
@@ -137,20 +171,29 @@ func formatTime(t time.Time) string {
 }
 
 func (*Handler) toWireInstance(inst *rdsdriver.Instance, info *rdsdriver.AlloyDBInstanceInfo) *alloydb.Instance {
-	return &alloydb.Instance{
+	out := &alloydb.Instance{
 		Name:             inst.ARN,
 		DisplayName:      inst.ID,
 		InstanceType:     info.InstanceType,
 		AvailabilityType: info.AvailabilityType,
 		IpAddress:        info.IPAddress,
-		GceZone:          info.GceZone,
 		State:            alloyDBState(inst.State),
 		Uid:              inst.ID,
+		Labels:           inst.Tags,
 		CreateTime:       formatTime(info.CreateTime),
 		UpdateTime:       formatTime(info.UpdateTime),
 		MachineConfig:    &alloydb.MachineConfig{CpuCount: int64(info.CPUCount)},
 	}
+
+	// gceZone applies only to a ZONAL instance; a REGIONAL one has none.
+	if info.AvailabilityType == availabilityZonal {
+		out.GceZone = info.GceZone
+	}
+
+	return out
 }
+
+const availabilityZonal = "ZONAL"
 
 // alloyDBState maps the relationaldb driver's lifecycle state to AlloyDB's
 // wire state enum, so a just-created or stopped resource reports its real

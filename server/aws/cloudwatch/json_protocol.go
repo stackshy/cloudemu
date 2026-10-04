@@ -78,7 +78,7 @@ func jsonOperation(r *http.Request) string {
 }
 
 // serveJSON handles a CloudWatch awsJson1_0 request.
-func (h *Handler) serveJSON(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) serveJSON(w http.ResponseWriter, r *http.Request, op string) {
 	jw := &jsonWriter{w: w}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
@@ -95,19 +95,48 @@ func (h *Handler) serveJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.dispatch(jw, r, jsonOperation(r), body)
+	h.dispatch(jw, r, op, body)
 }
 
 // jsonWriter is the http.ResponseWriter the per-op handlers get for a JSON
 // request. writeCBORResponse and writeCBORError hand their payload to it, so
-// every op answers in JSON without a JSON twin of its handler.
+// every op answers in JSON without a JSON twin of its handler. Every response
+// it sends carries the awsJson1_0 content type and nosniff, so a browser never
+// sniffs a reflected value in the body as HTML.
 type jsonWriter struct {
-	w http.ResponseWriter
+	w           http.ResponseWriter
+	wroteHeader bool
 }
 
-func (j *jsonWriter) Header() http.Header         { return j.w.Header() }
-func (j *jsonWriter) Write(b []byte) (int, error) { return j.w.Write(b) }
-func (j *jsonWriter) WriteHeader(status int)      { j.w.WriteHeader(status) }
+func (j *jsonWriter) Header() http.Header { return j.w.Header() }
+
+// Write sends the body. The safe headers are set here as well as in
+// WriteHeader so they sit right next to the body write; once the status is out
+// the extra Set calls are no-ops.
+func (j *jsonWriter) Write(b []byte) (int, error) {
+	hdr := j.w.Header()
+	hdr.Set("Content-Type", jsonContentType)
+	hdr.Set("X-Content-Type-Options", "nosniff")
+
+	if !j.wroteHeader {
+		j.WriteHeader(http.StatusOK)
+	}
+
+	return j.w.Write(b)
+}
+
+func (j *jsonWriter) WriteHeader(status int) {
+	if j.wroteHeader {
+		return
+	}
+
+	j.wroteHeader = true
+
+	hdr := j.w.Header()
+	hdr.Set("Content-Type", jsonContentType)
+	hdr.Set("X-Content-Type-Options", "nosniff")
+	j.w.WriteHeader(status)
+}
 
 // writeResult encodes a CBOR wire struct as a JSON response body.
 func (j *jsonWriter) writeResult(payload any) {
@@ -117,9 +146,8 @@ func (j *jsonWriter) writeResult(payload any) {
 		return
 	}
 
-	j.w.Header().Set("Content-Type", jsonContentType)
-	j.w.WriteHeader(http.StatusOK)
-	_, _ = j.w.Write(body)
+	j.WriteHeader(http.StatusOK)
+	_, _ = j.Write(body)
 }
 
 // writeError writes an awsJson1_0 error: the model shape name in __type and
@@ -138,11 +166,10 @@ func (j *jsonWriter) writeError(status int, code, msg string) {
 	body, _ := json.Marshal(map[string]string{"__type": shape, "message": msg})
 
 	hdr := j.w.Header()
-	hdr.Set("Content-Type", jsonContentType)
 	hdr.Set(errTypeHeader, shape)
 	hdr.Set(queryErrorHeader, code+";"+fault)
-	j.w.WriteHeader(status)
-	_, _ = j.w.Write(body)
+	j.WriteHeader(status)
+	_, _ = j.Write(body)
 }
 
 // jsonToCBOR re-encodes a JSON request body as CBOR for the shared decoders.

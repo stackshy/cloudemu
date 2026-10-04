@@ -153,7 +153,7 @@ Flag names and defaults mirror `cloudemu serve`.
 | `--tls-host`          | —                                        | extra SAN host/IP for the self-signed cert (repeatable) |
 | `--log-requests`      | `false`                                  | log every HTTP request (method, path, status, duration) |
 | `--quiet`             | `false`                                  | suppress the startup banner                |
-| `--enforce-auth`      | `false`                                  | require authentication on each request (AWS SigV4 → 403 on an unregistered key; Azure Bearer-claims) |
+| `--enforce-auth`      | `false`                                  | require authentication on each request (AWS SigV4 → 403 on an unregistered key; Azure Bearer-claims), then IAM authorization for AWS (see below) |
 | `--endpoints-file`    | *(none)*                                 | write the resolved endpoints as JSON to this path |
 | `--shutdown-timeout`  | `10s`                                    | grace period for in-flight requests        |
 
@@ -161,6 +161,34 @@ The OCI endpoint (`--providers` includes `oci`) and the shared Kubernetes
 data-plane (`--k8s-port`) are wired through the same `server/serverkit` assembly
 as `cloudemu serve`. The Kubernetes port serves HTTPS with its own self-signed
 serving certificate (`--tls-cert`/`--tls-key` apply only to the Azure endpoint).
+
+### IAM authorization under `--enforce-auth`
+
+With `--enforce-auth`, every signed AWS request is also checked against the
+caller's IAM policies. The check is bound to the service handler that will
+actually run the request, so neither the SigV4 signing scope nor a forged
+`X-Amz-Target` header can change which action is checked.
+
+- Query services (IAM, STS, EC2 and Auto Scaling, RDS, Redshift, ElastiCache,
+  ELBv2, SNS, CloudFormation, CloudWatch), SageMaker, and the JSON-RPC
+  services are checked per operation, for example `iam:CreateUser` or
+  `autoscaling:CreateAutoScalingGroup`. A denied EC2 call returns
+  `UnauthorizedOperation`, and other query services return `AccessDenied`.
+  `sts:GetCallerIdentity` needs no permission, and `sts:GetSessionToken` is
+  blocked only by an explicit `Deny`.
+- REST services (S3, Lambda, API Gateway, EKS, Route 53, CloudFront and the
+  rest) are checked at service level for now. A request passes only when the
+  caller's policies allow every action of that service on every resource,
+  such as `s3:*` on `*` or `AdministratorAccess`. **A fine-grained or
+  resource-scoped REST policy (for example `s3:GetObject` on one bucket) is
+  denied until that service gets per-operation checks.** A `Deny` that touches
+  the service also denies the request.
+- The account root and IAM users with no policies are unrestricted, so a
+  freshly created user can bootstrap others. Role sessions are always
+  evaluated on the role's policies.
+- `/_cloudemu/*` admin endpoints, operations AWS serves without credentials
+  (Cognito sign-in, API Gateway invoke), and the Kubernetes data plane are not
+  IAM-authorized.
 
 ## Admin, persistence & seeding
 

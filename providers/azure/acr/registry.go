@@ -10,6 +10,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 const (
@@ -26,6 +27,9 @@ const (
 var (
 	_ driver.AzureRegistryManager  = (*Mock)(nil)
 	_ driver.AzureRepositoryWriter = (*Mock)(nil)
+	_ interface {
+		PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+	} = (*Mock)(nil)
 )
 
 // registryData is the stored ARM registry plus its admin credential pair.
@@ -72,6 +76,7 @@ func (m *Mock) CreateOrUpdateRegistry(
 			password2: synthCredential("password2/" + rg + "/" + name),
 		}
 		rd.reg.CreationDate = now
+		rd.reg.Subscription = cfg.Subscription
 	}
 
 	sku := defaultIfEmpty(cfg.SKUName, defaultRegistrySKU)
@@ -212,6 +217,31 @@ func (m *Mock) DeleteRegistry(_ context.Context, rg, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	return m.deleteRegistryLocked(rg, name)
+}
+
+// PurgeResourceGroup deletes every registry, with its webhooks and
+// replications, in the resource group. It backs the ARM resource-group delete
+// cascade. A registry matches on its subscription and resource group,
+// case-insensitively, so a same-named group in another subscription keeps its
+// registries.
+func (m *Mock) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, rd := range m.registries.All() {
+		at := scope.Scope{Subscription: rd.reg.Subscription, ResourceGroup: rd.reg.ResourceGroup}
+		if at.InResourceGroup(subscription, resourceGroup) {
+			_ = m.deleteRegistryLocked(rd.reg.ResourceGroup, rd.reg.Name)
+		}
+	}
+
+	return nil
+}
+
+// deleteRegistryLocked removes a registry and its webhooks and replications.
+// The caller holds m.mu.
+func (m *Mock) deleteRegistryLocked(rg, name string) error {
 	if !m.registries.Delete(registryStoreKey(rg, name)) {
 		return errors.Newf(errors.NotFound, "registry %q not found in resource group %q", name, rg)
 	}

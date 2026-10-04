@@ -28,6 +28,7 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		CertificateManager:   p.CertificateManager,
 		AccessContextManager: p.AccessContextManager,
 		PrivateCA:            p.PrivateCA,
+		KMS:                  p.KMS,
 		GKEBackup:            p.GKEBackup,
 		GKEHub:               p.GKEHub,
 		DataFusion:           p.DataFusion,
@@ -62,10 +63,11 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		FCM:                  p.FCM,
 		// K8sAPI is left nil; injected by the caller when a shared cluster is desired.
 		K8sAPI: nil,
-		// AlloyDB is left nil: its REST paths collide with GKE's, so callers that
-		// want AlloyDB inject p.AlloyDB explicitly (in place of GKE).
-		AlloyDB:           nil,
+		// AlloyDB shares the clusters paths with GKE and Managed Kafka; the
+		// handlers split them by hint, path shape and ownership.
+		AlloyDB:           p.AlloyDB,
 		ResourceDiscovery: p.ResourceDiscovery,
+		ResourceIAM:       p.ResourceIAM,
 		ProjectID:         p.ProjectID,
 		Clock:             p.Clock,
 	}
@@ -76,9 +78,10 @@ func NewFromProvider(p *gcpprovider.Provider) *server.Server {
 	return New(DriversFrom(p))
 }
 
-// DriversFromWithAlloyDB is like DriversFrom but enables AlloyDB in place of
-// GKE: the two serve identical REST paths and cannot coexist on one server, so
-// this helper wires AlloyDB and nils GKE to avoid the ambiguity.
+// DriversFromWithAlloyDB is like DriversFrom but leaves GKE out, so every
+// clusters path is AlloyDB's.
+//
+// Deprecated: DriversFrom mounts AlloyDB beside GKE.
 func DriversFromWithAlloyDB(p *gcpprovider.Provider) Drivers {
 	d := DriversFrom(p)
 	d.AlloyDB = p.AlloyDB

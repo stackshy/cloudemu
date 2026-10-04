@@ -127,11 +127,11 @@ func buildPubsubMessage(id string, msg *storedMessage) pubsubMessage {
 
 // pushSubscribersLocked snapshots the push subscriptions on a topic: those with
 // a pushConfig.pushEndpoint set that are not detached. The caller holds h.mu.
-func (h *Handler) pushSubscribersLocked(topicShort string) []pushSub {
+func (h *Handler) pushSubscribersLocked(topicKey string) []pushSub {
 	var subs []pushSub
 
 	for name, sub := range h.subs {
-		if sub.topic != topicShort || sub.cfg.Detached {
+		if sub.topic != topicKey || sub.cfg.Detached {
 			continue
 		}
 
@@ -170,16 +170,18 @@ func pushEndpoint(raw json.RawMessage) string {
 func (h *Handler) PublishToTopic(ctx context.Context, project, topicShort string, data []byte, attributes map[string]string) {
 	publishTime := time.Now().UTC()
 
+	topicKey := h.keyFor(project, topicShort)
+
 	h.mu.Lock()
 	sm := storedMessage{
 		body:        string(data),
 		attributes:  attributes,
 		publishTime: publishTime,
 	}
-	id := h.appendMessageLocked(topicShort, &sm)
-	ts := h.topicLog(topicShort)
+	id := h.appendMessageLocked(topicKey, &sm)
+	ts := h.topicLog(topicKey)
 	msg := publishedMessage{idx: len(ts.messages) - 1, msg: buildPubsubMessage(id, &sm)}
-	pushSubs := h.pushSubscribersLocked(topicShort)
+	pushSubs := h.pushSubscribersLocked(topicKey)
 	h.mu.Unlock()
 
 	h.dispatchPublished(ctx, project, topicShort, []publishedMessage{msg}, pushSubs)

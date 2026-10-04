@@ -62,6 +62,8 @@ type Input struct {
 type Mock struct {
 	mu    sync.RWMutex
 	store *memstore.Store[Identity]
+	// fics holds federated identity credentials keyed by ficKey.
+	fics *memstore.Store[FederatedCredential]
 
 	// tenantID is the single AAD tenant this estate belongs to. Every identity
 	// reports it, matching real Azure where all identities in a subscription
@@ -73,6 +75,7 @@ type Mock struct {
 func New(_ *config.Options) *Mock {
 	return &Mock{
 		store:    memstore.New[Identity](),
+		fics:     memstore.New[FederatedCredential](),
 		tenantID: idgen.UUID(),
 	}
 }
@@ -134,7 +137,10 @@ func (m *Mock) Delete(_ context.Context, sub, rg, name string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return m.store.Delete(key(sub, rg, name)), nil
+	k := key(sub, rg, name)
+	m.deleteFICsUnder(k)
+
+	return m.store.Delete(k), nil
 }
 
 // ListByResourceGroup returns every identity in the given resource group,
@@ -165,6 +171,7 @@ func (m *Mock) PurgeResourceGroup(_ context.Context, sub, rg string) error {
 
 	for k, id := range m.store.All() {
 		if strings.EqualFold(id.Subscription, sub) && strings.EqualFold(id.ResourceGroup, rg) {
+			m.deleteFICsUnder(k)
 			m.store.Delete(k)
 		}
 	}

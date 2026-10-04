@@ -206,7 +206,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // serveGet implements Operations.Get.
 func (h *Handler) serveGet(w http.ResponseWriter, name string) {
-	e, found := h.reg.lookup(name)
+	ServeGet(w, h.reg, name)
+}
+
+// ServeGet answers Operations.Get for name from reg. It serves the services
+// whose operation paths this Handler does not route (Cloud Run and Functions
+// gen2 under /v2, Functions gen1 and Service Networking at the service root
+// /v1/operations/{op}), so their polls replay the stored operation too. A name
+// that was never registered, or a nil reg, is 404 NOT_FOUND.
+func ServeGet(w http.ResponseWriter, reg *Registry, name string) {
+	if reg == nil {
+		notFound(w, name)
+		return
+	}
+
+	e, found := reg.lookup(name)
 	if !found {
 		notFound(w, name)
 		return

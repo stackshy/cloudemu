@@ -6,6 +6,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
+	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -144,6 +145,7 @@ const (
 	TypeSecret            = "Secret"
 	TypeVault             = "Vault"
 	TypeRepository        = "Repository"
+	TypeRegistry          = "Registry"
 	TypeQueue             = "Queue"
 	TypeTopic             = "Topic"
 	TypeZone              = "Zone"
@@ -315,12 +317,13 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 
 	out := make([]Resource, 0, len(instances))
 
-	// Map each instance to its resource group so an attached volume's managedBy
-	// back-reference resolves to the same id the VM carries (both RG-aware),
-	// instead of a "default" id that would not exist in the inventory.
-	rgByInstance := make(map[string]string, len(instances))
+	// Map each instance to its id so an attached volume's managedBy
+	// back-reference resolves to the same id the VM row carries (RG-aware and,
+	// on Azure, under its ARM name), instead of an id not in the inventory.
+	armByInstance := make(map[string]string, len(instances))
 	for i := range instances {
-		rgByInstance[instances[i].ID] = instances[i].ResourceGroup
+		inst := &instances[i]
+		armByInstance[inst.ID] = e.computeInstanceARN(e.azureName(inst.Tags, azureVMNameTag, inst.ID), inst.ResourceGroup)
 	}
 
 	for i := range instances {
@@ -349,8 +352,8 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 			Provider: e.provider,
 			Service:  ServiceCompute,
 			Type:     TypeInstance,
-			ID:       inst.ID,
-			ARN:      e.computeInstanceARN(inst.ID, inst.ResourceGroup),
+			ID:       e.azureName(inst.Tags, azureVMNameTag, inst.ID),
+			ARN:      armByInstance[inst.ID],
 			Region:   region,
 			Tags:     copyTags(inst.Tags),
 			SKU:      inst.InstanceType,
@@ -365,7 +368,7 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 		})
 	}
 
-	vols, err := e.walkVolumes(ctx, rgByInstance)
+	vols, err := e.walkVolumes(ctx, armByInstance)
 	if err != nil {
 		return nil, err
 	}
@@ -412,8 +415,8 @@ func (e *Engine) walkSQLVirtualMachines(instances []computedriver.Instance) []Re
 			Provider: e.provider,
 			Service:  ServiceCompute,
 			Type:     TypeSQLVirtualMachine,
-			ID:       inst.ID,
-			ARN:      e.computeSQLVirtualMachineARN(inst.ID, inst.ResourceGroup),
+			ID:       e.azureName(inst.Tags, azureVMNameTag, inst.ID),
+			ARN:      e.computeSQLVirtualMachineARN(e.azureName(inst.Tags, azureVMNameTag, inst.ID), inst.ResourceGroup),
 			Region:   region,
 			Tags:     copyTags(inst.Tags),
 		})
@@ -432,6 +435,10 @@ func (e *Engine) walkSnapshots(ctx context.Context) ([]Resource, error) {
 
 	return e.emitSimple(ServiceCompute, TypeSnapshot, len(snaps),
 		func(i int) (string, string, map[string]string) {
+			if name, id, ok := e.azureNamedID(snaps[i].Tags, azureSnapshotNameTag, "Microsoft.Compute", "snapshots"); ok {
+				return name, id, snaps[i].Tags
+			}
+
 			return shortName(snaps[i].ID), e.computeSnapshotARN(snaps[i].ID, e.azureRGFromTags(snaps[i].Tags)), snaps[i].Tags
 		}), nil
 }
@@ -439,7 +446,7 @@ func (e *Engine) walkSnapshots(ctx context.Context) ([]Resource, error) {
 // walkVolumes surfaces block volumes (EBS / Azure managed disks / GCE PDs) as
 // first-class resources, so a discoverer sees them the way the real cloud APIs
 // do. ManagedBy links the volume to its owning instance.
-func (e *Engine) walkVolumes(ctx context.Context, rgByInstance map[string]string) ([]Resource, error) {
+func (e *Engine) walkVolumes(ctx context.Context, armByInstance map[string]string) ([]Resource, error) {
 	vols, err := e.drivers.Compute.DescribeVolumes(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("walkCompute volumes: %w", err)
@@ -458,15 +465,20 @@ func (e *Engine) walkVolumes(ctx context.Context, rgByInstance map[string]string
 
 		managedBy := ""
 		if v.AttachedTo != "" {
-			managedBy = e.computeInstanceARN(v.AttachedTo, rgByInstance[v.AttachedTo])
+			managedBy = firstNonEmpty(armByInstance[v.AttachedTo], e.computeInstanceARN(v.AttachedTo, ""))
+		}
+
+		id, arn := shortName(v.ID), e.computeVolumeARN(v.ID, e.azureRGFromTags(v.Tags))
+		if name, armID, ok := e.azureNamedID(v.Tags, azureDiskNameTag, "Microsoft.Compute", "disks"); ok {
+			id, arn = name, armID
 		}
 
 		out = append(out, Resource{
 			Provider: e.provider,
 			Service:  ServiceCompute,
 			Type:     TypeVolume,
-			ID:       shortName(v.ID),
-			ARN:      e.computeVolumeARN(v.ID, e.azureRGFromTags(v.Tags)),
+			ID:       id,
+			ARN:      arn,
 			// Azure managed disks record their region on VolumeInfo.Location; it is
 			// empty for AWS/GCP, so those fall back to e.region unchanged.
 			Region:     firstNonEmpty(v.Location, e.region),
@@ -535,17 +547,21 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 		return nil, fmt.Errorf("walkNetworking vpcs: %w", err)
 	}
 
+	vnets := make(map[string]azureVNetRef, len(vpcs))
+
 	for _, v := range vpcs {
 		var props map[string]any
 		if v.CIDRBlock != "" {
 			props = map[string]any{"addressSpace": map[string]any{"addressPrefixes": []string{v.CIDRBlock}}}
 		}
 
+		id, arn := e.netIdentity(netKindVPC, v.ID, v.Tags, azureVNetNameTag)
+		region := e.azureNetLocation(ctx, azMeta, netKindVPC, v.ID)
+		vnets[v.ID] = azureVNetRef{name: id, rg: azureResourceGroupOrDefault(e.azureRGFromTags(v.Tags)), location: region}
+
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeVPC,
-			ID:     v.ID,
-			ARN:    e.networkARN(netKindVPC, v.ID, e.azureRGFromTags(v.Tags)),
-			Region: e.azureNetLocation(ctx, azMeta, netKindVPC, v.ID), Tags: copyTags(v.Tags),
+			ID: id, ARN: arn, Region: region, Tags: copyTags(v.Tags),
 			Properties: props,
 		})
 	}
@@ -561,13 +577,16 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 			props = map[string]any{"addressPrefix": s.CIDRBlock}
 		}
 
-		out = append(out, Resource{
+		row := Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeSubnet,
 			ID:     s.ID,
 			ARN:    e.networkARN(netKindSubnet, s.ID, e.azureRGFromTags(s.Tags)),
 			Region: e.region, Tags: copyTags(s.Tags),
 			Properties: props,
-		})
+		}
+		e.azureSubnetIdentity(&row, s.VPCID, vnets)
+
+		out = append(out, row)
 	}
 
 	sgs, err := e.drivers.Networking.DescribeSecurityGroups(ctx, nil)
@@ -576,10 +595,10 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 	}
 
 	for _, sg := range sgs {
+		id, arn := e.netIdentity(netKindSecurityGroup, sg.ID, sg.Tags, azureNSGNameTag)
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeSecurityGroup,
-			ID:     sg.ID,
-			ARN:    e.networkARN(netKindSecurityGroup, sg.ID, e.azureRGFromTags(sg.Tags)),
+			ID: id, ARN: arn,
 			Region: e.azureNetLocation(ctx, azMeta, netKindSecurityGroup, sg.ID), Tags: copyTags(sg.Tags),
 		})
 	}
@@ -595,11 +614,11 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 			props = map[string]any{"publicIPAllocationMethod": eip.AllocationMethod}
 		}
 
+		id, arn := e.netIdentity(netKindElasticIP, eip.AllocationID, eip.Tags, azurePublicIPNameTag)
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeElasticIP,
-			ID:     eip.AllocationID,
-			ARN:    e.networkARN(netKindElasticIP, eip.AllocationID, e.azureRGFromTags(eip.Tags)),
-			Region: e.region, Tags: copyTags(eip.Tags),
+			ID: id, ARN: arn,
+			Region: firstNonEmpty(eip.Location, e.region), Tags: copyTags(eip.Tags),
 			SKU:        eip.SKU,
 			Properties: props,
 		})
@@ -611,11 +630,11 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 	}
 
 	for _, ng := range natgws {
+		id, arn := e.netIdentity(netKindNATGateway, ng.ID, ng.Tags, azureNATGatewayNameTag)
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeNATGateway,
-			ID:     ng.ID,
-			ARN:    e.networkARN(netKindNATGateway, ng.ID, e.azureRGFromTags(ng.Tags)),
-			Region: e.region, Tags: copyTags(ng.Tags),
+			ID: id, ARN: arn,
+			Region: firstNonEmpty(ng.Location, e.region), Tags: copyTags(ng.Tags),
 		})
 	}
 
@@ -653,10 +672,10 @@ func (e *Engine) walkNetworking(ctx context.Context) ([]Resource, error) {
 	}
 
 	for _, rt := range rts {
+		id, arn := e.netIdentity(netKindRouteTable, rt.ID, rt.Tags, azureRouteTableNameTag)
 		out = append(out, Resource{
 			Provider: e.provider, Service: ServiceNetworking, Type: TypeRouteTable,
-			ID:     rt.ID,
-			ARN:    e.networkARN(netKindRouteTable, rt.ID, e.azureRGFromTags(rt.Tags)),
+			ID: id, ARN: arn,
 			Region: e.azureNetLocation(ctx, azMeta, netKindRouteTable, rt.ID), Tags: copyTags(rt.Tags),
 		})
 	}
@@ -743,6 +762,10 @@ func (e *Engine) walkApplicationSecurityGroups(ctx context.Context) []Resource {
 // nothing rather than failing the whole walk: a cloud that has no interfaces
 // has none to discover, which is not an error.
 func (e *Engine) walkNetworkInterfaces(ctx context.Context) ([]Resource, error) {
+	if azNICs, ok := e.drivers.Networking.(netdriver.AzureNetworkInterfaces); ok && e.provider == ProviderAzure {
+		return e.walkAzureNetworkInterfaces(ctx, azNICs)
+	}
+
 	enisDriver, ok := e.drivers.Networking.(netdriver.NetworkInterfaces)
 	if !ok {
 		return nil, nil
@@ -776,9 +799,18 @@ func (e *Engine) walkStorage(ctx context.Context) ([]Resource, error) {
 		return nil, fmt.Errorf("walkStorage: %w", err)
 	}
 
-	out := make([]Resource, 0, len(buckets))
+	out, accounts, err := e.walkStorageAccounts(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	for _, b := range buckets {
+		// A legacy default-namespace container that shares an account's name
+		// is reported once, as the account.
+		if accounts[b.Name] {
+			continue
+		}
+
 		tags, tagErr := e.drivers.Storage.GetBucketTagging(ctx, b.Name)
 		if tagErr != nil {
 			// NotFound means the bucket was deleted between ListBuckets and
@@ -803,7 +835,7 @@ func (e *Engine) walkStorage(ctx context.Context) ([]Resource, error) {
 			Region: region, Tags: tags,
 		}
 
-		if err := e.applyStorageAttrs(ctx, &res, b.Name); err != nil {
+		if err := e.applyStorageAttrs(ctx, &res, b.Name, e.storageBucketARN); err != nil {
 			return nil, err
 		}
 
@@ -813,13 +845,57 @@ func (e *Engine) walkStorage(ctx context.Context) ([]Resource, error) {
 	return out, nil
 }
 
+// walkStorageAccounts emits one row per storage account for a driver that
+// models accounts as their own resource (Azure), and returns the set of
+// account names. Other drivers contribute nothing.
+func (e *Engine) walkStorageAccounts(ctx context.Context) ([]Resource, map[string]bool, error) {
+	lister, ok := e.drivers.Storage.(storagedriver.AzureStorageAccounts)
+	if !ok {
+		return nil, nil, nil
+	}
+
+	accounts, err := lister.ListStorageAccounts(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("walkStorage accounts: %w", err)
+	}
+
+	out := make([]Resource, 0, len(accounts))
+	names := make(map[string]bool, len(accounts))
+
+	for i := range accounts {
+		a := &accounts[i]
+		names[a.Name] = true
+
+		res := Resource{
+			Provider: e.provider, Service: ServiceStorage, Type: TypeBucket,
+			ID:     a.Name,
+			ARN:    e.storageAccountARN(a.Name, a.ResourceGroup),
+			Region: e.region, Tags: map[string]string{},
+		}
+
+		if attrer, ok := e.drivers.Storage.(storagedriver.BucketAttributes); ok {
+			if attrs, aErr := attrer.BucketAttributes(ctx, a.Name); aErr == nil && len(attrs.Tags) > 0 {
+				res.Tags = copyTags(attrs.Tags)
+			}
+		}
+
+		if err := e.applyStorageAttrs(ctx, &res, a.Name, e.storageAccountARN); err != nil {
+			return nil, nil, err
+		}
+
+		out = append(out, res)
+	}
+
+	return out, names, nil
+}
+
 // applyStorageAttrs folds a bucket's optional storage-account attributes onto
 // res: SKU/kind/access-tier for cost discovery, plus (for Azure) the account's
 // real resource group and region, since the cross-cloud bucket carries neither.
 // These keep ARG / exportTemplate from reporting "default"/us-east-1. A non-nil
 // error is load-bearing (a silent drop would lose the cost fields), so it
 // propagates. Providers without the capability leave res unchanged.
-func (e *Engine) applyStorageAttrs(ctx context.Context, res *Resource, name string) error {
+func (e *Engine) applyStorageAttrs(ctx context.Context, res *Resource, name string, arnOf func(name, rg string) string) error {
 	attrer, ok := e.drivers.Storage.(storagedriver.BucketAttributes)
 	if !ok {
 		return nil
@@ -834,7 +910,7 @@ func (e *Engine) applyStorageAttrs(ctx context.Context, res *Resource, name stri
 	res.Kind = a.Kind
 
 	if a.ResourceGroup != "" {
-		res.ARN = e.storageBucketARN(name, a.ResourceGroup)
+		res.ARN = arnOf(name, a.ResourceGroup)
 	}
 
 	if a.Location != "" {
@@ -1339,6 +1415,10 @@ func keyVaultARMID(v *secretsdriver.KVVaultInfo) string {
 // walkContainerRegistry surfaces container repositories (ECR / Artifact Registry
 // / ACR) so they appear in the inventory/search APIs.
 func (e *Engine) walkContainerRegistry(ctx context.Context) ([]Resource, error) {
+	if regs, ok := e.drivers.ContainerReg.(crdriver.AzureRegistryManager); ok && e.provider == ProviderAzure {
+		return e.walkAzureRegistries(ctx, regs)
+	}
+
 	repos, err := e.drivers.ContainerReg.ListRepositories(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("walkContainerRegistry: %w", err)

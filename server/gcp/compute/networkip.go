@@ -2,8 +2,11 @@ package compute
 
 import (
 	"context"
-	"encoding/binary"
-	"net"
+	"encoding/json"
+
+	"github.com/stackshy/cloudemu/v2/internal/ipalloc"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 // subnetNameTag mirrors the tag the GCP VPC wire handler stamps the
@@ -12,10 +15,9 @@ import (
 // without importing the vpc handler package.
 const subnetNameTag = "cloudemu:gcpSubnetName"
 
-// ipReservedLowAddrs is the count of low addresses GCP reserves in every
-// subnet (network, gateway, and two more). The broadcast (highest) address is
-// reserved separately.
-const ipReservedLowAddrs = 4
+// subnetNetworkTag mirrors the VPC handler's tag holding the subnetwork's
+// parent network name.
+const subnetNetworkTag = "cloudemu:gcpSubnetNet"
 
 // privateIPFor decides the private networkIP for a launching instance. An
 // explicit networkIP on the request is honored verbatim. Otherwise, when a
@@ -37,7 +39,65 @@ func (h *Handler) privateIPFor(ctx context.Context, req *instanceRequest, subnet
 		return ""
 	}
 
-	return allocateFromCIDR(cidr, h.usedIPsInSubnet(ctx, subnet))
+	used := h.usedIPsInSubnet(ctx, subnet)
+	h.addReservedInternalIPs(ctx, subnet, zone, used)
+
+	return ipalloc.FirstFree(cidr, used)
+}
+
+// autoSubnetFor resolves the subnetwork a NIC lands in when it names only a
+// network: real GCP places it in the network's subnetwork of the instance's
+// region, which for an auto mode network is the one named after the network.
+// It returns "" when the network has no such subnetwork.
+func (h *Handler) autoSubnetFor(ctx context.Context, network, zone string) string {
+	if h.net == nil || network == "" {
+		return ""
+	}
+
+	subnets, err := h.net.DescribeSubnets(projectctx.WithProject(ctx, projectctx.FromPath(network)), nil)
+	if err != nil {
+		return ""
+	}
+
+	netName := lastSegment(network)
+	region := regionFromZone(zone)
+
+	for i := range subnets {
+		s := &subnets[i]
+		if s.Tags[subnetNameTag] == netName && s.Tags[subnetNetworkTag] == netName && s.AvailabilityZone == region {
+			return "regions/" + region + "/subnetworks/" + netName
+		}
+	}
+
+	return ""
+}
+
+// addReservedInternalIPs marks the IPs held by INTERNAL addresses reserved in
+// the subnet as used, so an instance never takes an IP someone reserved.
+func (h *Handler) addReservedInternalIPs(ctx context.Context, subnetRef, zone string, used map[string]bool) {
+	store, ok := h.net.(netdriver.GCPAddressStore)
+	if !ok {
+		return
+	}
+
+	region, name := parseSubnetRef(subnetRef, zone)
+	project := subnetProject(subnetRef, projectctx.ProjectOr(ctx, ""))
+
+	addrs, err := store.ListGCPAddresses(ctx, project, region)
+	if err != nil {
+		return
+	}
+
+	for i := range addrs {
+		var a struct {
+			Address    string `json:"address"`
+			Subnetwork string `json:"subnetwork"`
+		}
+
+		if json.Unmarshal(addrs[i].Body, &a) == nil && a.Address != "" && lastSegment(a.Subnetwork) == name {
+			used[a.Address] = true
+		}
+	}
 }
 
 // firstNetworkIP returns the first explicit networkIP the caller set on a NIC.
@@ -55,7 +115,8 @@ func firstNetworkIP(nics []networkInterface) string {
 // stored subnet's CIDR, matching by the VPC handler's name tag and, when the
 // reference carries a region, the subnet's region.
 func (h *Handler) subnetCIDR(ctx context.Context, subnetRef, zone string) (string, bool) {
-	subnets, err := h.net.DescribeSubnets(ctx, nil)
+	// A Shared VPC reference names the host project's subnet by URL.
+	subnets, err := h.net.DescribeSubnets(projectctx.WithProject(ctx, projectctx.FromPath(subnetRef)), nil)
 	if err != nil {
 		return "", false
 	}
@@ -79,19 +140,26 @@ func (h *Handler) subnetCIDR(ctx context.Context, subnetRef, zone string) (strin
 }
 
 // usedIPsInSubnet collects the private IPs already assigned to instances in the
-// referenced subnet, so a fresh allocation avoids colliding with them.
+// referenced subnet, so a fresh allocation avoids colliding with them. Every
+// project is scanned, because Shared VPC instances of other projects draw from
+// the same subnet; an instance counts only when its subnet is in the same
+// project as the referenced one.
 func (h *Handler) usedIPsInSubnet(ctx context.Context, subnetRef string) map[string]bool {
 	used := make(map[string]bool)
 
-	instances, err := h.compute.DescribeInstances(ctx, nil, nil)
+	instances, err := h.compute.DescribeInstances(projectctx.AllProjects(ctx), nil, nil)
 	if err != nil {
 		return used
 	}
 
 	name := lastSegment(subnetRef)
+	project := subnetProject(subnetRef, projectctx.ProjectOr(ctx, ""))
 
 	for i := range instances {
-		if instances[i].PrivateIP != "" && lastSegment(instances[i].SubnetID) == name {
+		inst := &instances[i]
+		owner := subnetProject(inst.SubnetID, tagOr(inst.Tags, keyProject, projectctx.ProjectOr(ctx, "")))
+
+		if inst.PrivateIP != "" && lastSegment(inst.SubnetID) == name && owner == project {
 			used[instances[i].PrivateIP] = true
 		}
 	}
@@ -99,43 +167,12 @@ func (h *Handler) usedIPsInSubnet(ctx context.Context, subnetRef string) map[str
 	return used
 }
 
-// allocateFromCIDR returns the lowest free IPv4 host address in cidr, skipping
-// the reserved low addresses and the broadcast address and any address already
-// in use. It returns "" for a non-IPv4 CIDR, a range too small to host a VM, or
-// an exhausted range, leaving the caller to fall back to the provider.
-func allocateFromCIDR(cidr string, used map[string]bool) string {
-	_, ipnet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return ""
+// subnetProject returns the project a subnet reference names, or fallback for
+// a bare name or a relative reference with no project.
+func subnetProject(ref, fallback string) string {
+	if p := projectctx.FromPath(ref); p != "" {
+		return p
 	}
 
-	base := ipnet.IP.To4()
-	if base == nil || len(ipnet.Mask) != net.IPv4len {
-		return ""
-	}
-
-	netInt := binary.BigEndian.Uint32(base)
-	broadcast := netInt | ^binary.BigEndian.Uint32(ipnet.Mask)
-
-	// The range must hold the reserved low addresses plus at least one host
-	// below the broadcast address.
-	if broadcast-netInt <= ipReservedLowAddrs {
-		return ""
-	}
-
-	first := netInt + ipReservedLowAddrs
-	last := broadcast - 1 // exclude the broadcast (highest) address
-
-	for v := first; v <= last; v++ {
-		var buf [net.IPv4len]byte
-
-		binary.BigEndian.PutUint32(buf[:], v)
-
-		ip := net.IP(buf[:]).String()
-		if !used[ip] {
-			return ip
-		}
-	}
-
-	return ""
+	return fallback
 }

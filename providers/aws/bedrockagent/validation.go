@@ -129,11 +129,15 @@ func paginate[T any](items []T, page driver.Page) (pageItems []T, nextToken stri
 }
 
 // newID mints a 10-character bedrock-agent id not already used in store.
-func newID[V any](store *memstore.Store[V]) string {
+func newID[V any](store *memstore.Store[V]) (string, error) {
 	for {
-		id := idgen.BedrockAgentResourceID()
+		id, err := idgen.BedrockAgentResourceID()
+		if err != nil {
+			return "", err
+		}
+
 		if !store.Has(id) {
-			return id
+			return id, nil
 		}
 	}
 }

@@ -72,6 +72,14 @@ type vmRequestProps struct {
 	// cost inputs the SDK sends under properties; we carry them to the driver.
 	Priority    string `json:"priority,omitempty"`
 	LicenseType string `json:"licenseType,omitempty"`
+	// AvailabilitySet must name an existing availability set; the reference
+	// itself is echoed back by the property overlay.
+	AvailabilitySet *subResource `json:"availabilitySet,omitempty"`
+}
+
+// subResource is an ARM {"id": ...} reference.
+type subResource struct {
+	ID string `json:"id,omitempty"`
 }
 
 type hardwareProfile struct {

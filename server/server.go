@@ -23,7 +23,9 @@ type Handler interface {
 // InitiateAuth, or an API Gateway invoke). PublicRequest reports whether the
 // handler serves r as one of those public operations. It must answer true only
 // for the exact public routes the handler itself serves, since an
-// authentication hook lets such requests through unsigned.
+// authentication hook lets such requests through unsigned. It must decide from
+// the method, URL and headers alone and leave the body unread, because the
+// same request is then authorized from its body.
 type PublicRequester interface {
 	PublicRequest(r *http.Request) bool
 }
@@ -54,6 +56,15 @@ func New(handlers ...Handler) *Server {
 // register more specific handlers before catch-all ones.
 func (s *Server) Register(h Handler) {
 	s.handlers = append(s.handlers, h)
+}
+
+// Handlers returns the registered handlers in registration order. The slice is
+// a copy, so a caller cannot reorder or replace the server's handlers through it.
+func (s *Server) Handlers() []Handler {
+	out := make([]Handler, len(s.handlers))
+	copy(out, s.handlers)
+
+	return out
 }
 
 // SetObserver installs a post-dispatch hook called with each request a handler

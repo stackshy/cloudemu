@@ -3,11 +3,10 @@ package loadbalancer
 import (
 	"context"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
-	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
@@ -225,50 +224,47 @@ func (h *Handler) listGCPResource(w http.ResponseWriter, r *http.Request, rp gcp
 	writeGCPResourceList(w, r, rp, items)
 }
 
-// writeGCPResourceList filters (name), sorts, paginates (maxResults/pageToken)
-// and writes a compute#…List envelope over items of rp's collection.
+// gcpResourceListResponse is the compute#…List envelope for the generic
+// resource collections.
+type gcpResourceListResponse struct {
+	Kind          string           `json:"kind"`
+	ID            string           `json:"id"`
+	Items         []map[string]any `json:"items"`
+	NextPageToken string           `json:"nextPageToken,omitempty"`
+	SelfLink      string           `json:"selfLink"`
+}
+
+// writeGCPResourceList filters, sorts, paginates (maxResults/pageToken) and
+// writes a compute#…List envelope over items of rp's collection. The filter
+// runs over each item's wire JSON, so any field the resource returns can be
+// filtered on.
 //
 //nolint:gocritic // rp is a request-scoped value
 func writeGCPResourceList(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, items []lbdriver.GCPResource) {
-	filter := r.URL.Query().Get("filter")
-
-	matched := make([]lbdriver.GCPResource, 0, len(items))
+	host := hostOf(r)
+	all := make([]map[string]any, 0, len(items))
 
 	for i := range items {
-		if gcprest.NameMatches(filter, items[i].Name) {
-			matched = append(matched, items[i])
-		}
+		scope := rp
+		scope.ResourceName = items[i].Name
+		all = append(all, gcpResourceJSON(&items[i], scope, host))
 	}
 
-	sort.SliceStable(matched, func(i, j int) bool { return matched[i].Name < matched[j].Name })
-
-	page, err := pagination.Paginate(matched, r.URL.Query().Get("pageToken"),
-		gcprest.MaxResults(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	page, next, ok := gcplist.FilterPage(w, r, all, func(m map[string]any) string {
+		name, _ := m["name"].(string)
+		return name
+	})
+	if !ok {
 		return
 	}
 
-	host := hostOf(r)
-	out := make([]map[string]any, 0, len(page.Items))
-
-	for i := range page.Items {
-		scope := rp
-		scope.ResourceName = page.Items[i].Name
-		out = append(out, gcpResourceJSON(&page.Items[i], scope, host))
-	}
-
-	envelope := map[string]any{
-		"kind":     resourceKind[rp.ResourceType] + "List",
-		"id":       "projects/" + rp.Project + "/" + listScopeSegment(rp) + "/" + rp.ResourceType,
-		"items":    out,
-		"selfLink": gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, rp.ResourceType, ""),
-	}
-	if page.NextPageToken != "" {
-		envelope["nextPageToken"] = page.NextPageToken
-	}
-
-	gcprest.WriteJSON(w, http.StatusOK, envelope)
+	gcprest.WriteJSON(w, http.StatusOK, gcpResourceListResponse{
+		Kind:          resourceKind[rp.ResourceType] + "List",
+		ID:            "projects/" + rp.Project + "/" + listScopeSegment(rp) + "/" + rp.ResourceType,
+		Items:         page,
+		NextPageToken: next,
+		SelfLink:      gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, rp.ResourceType, ""),
+	})
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -342,9 +338,10 @@ func gcpResourceJSON(res *lbdriver.GCPResource, rp gcprest.ResourcePath, host st
 	return out
 }
 
-// healthCheckInUse returns the name of a same-scope backend service whose
-// healthChecks[] references the health check being deleted, or "" when none
-// does.
+// healthCheckInUse returns the name of a backend service whose healthChecks[]
+// references the health check being deleted, or "" when none does. Refs are
+// matched on the scope they name, so a regional backend service using a global
+// check pins it, and a same-named check in another scope does not.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) healthCheckInUse(ctx context.Context, rp gcprest.ResourcePath) string {
@@ -356,17 +353,14 @@ func (h *Handler) healthCheckInUse(ctx context.Context, rp gcprest.ResourcePath)
 	scope := scopeKeyOf(rp)
 
 	for i := range tgs {
-		if tgs[i].Tags[bsScopeTag] != scope {
-			continue
-		}
-
 		refs := tgs[i].Tags[bsHealthChecksTag]
 		if refs == "" {
 			continue
 		}
 
 		for _, ref := range strings.Split(refs, ",") {
-			if lastPathSegment(ref) == rp.ResourceName {
+			if lastPathSegment(ref) == rp.ResourceName && hcRefScope(ref, tgs[i].Tags[bsScopeTag]) == scope &&
+				refInProject(ref, rp.Project) {
 				return displayName(tgs[i].Tags, bsNameTag, tgs[i].Name)
 			}
 		}

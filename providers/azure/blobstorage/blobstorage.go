@@ -31,7 +31,7 @@ const (
 	// blob URL host and the Event Grid system-topic routing key both derive from
 	// it, so a system-topic subscription created for this account (a bus of this
 	// name on the Event Grid mock) receives the account's Blob events.
-	AccountName     = "cloudemu"
+	AccountName     = driver.AzureDefaultStorageAccount
 	blobHoursPerDay = 24
 )
 
@@ -145,6 +145,9 @@ type containerMeta struct {
 	// accessPolicies are the container's stored access policies (Set/Get
 	// Container ACL).
 	accessPolicies []driver.SignedIdentifier
+	// encryptionScope is the ARM blob container's encryption scope setting,
+	// guarded by mu.
+	encryptionScope driver.ContainerEncryptionScope
 	// staging holds uncommitted blocks (Put Block) keyed by blob name.
 	staging *memstore.Store[*blockStaging]
 	// snapshots holds immutable blob snapshots keyed by snapshotKey(blob, id).
@@ -182,7 +185,17 @@ type blockStaging struct {
 
 // Mock is an in-memory mock implementation of Azure Blob Storage.
 type Mock struct {
+	// containers is keyed by driver.AzureContainerKey: the bare name for the
+	// default account, "account/name" for any other account.
 	containers *memstore.Store[*containerMeta]
+	// accounts holds the ARM storage accounts, keyed by name. An account is its
+	// own resource: it is not a container and owns the containers under its
+	// key prefix.
+	accounts *memstore.Store[driver.StorageAccountRef]
+	// accountMu serializes account create/delete against qualified container
+	// creates, so a container can never be created under an account that is
+	// being deleted.
+	accountMu sync.Mutex
 	// bucketAttrs holds Azure storage-account attributes (SKU/kind/access tier/
 	// location/tags) per container, for the BucketAttributes discovery capability.
 	bucketAttrs *memstore.Store[driver.AccountAttributes]
@@ -197,8 +210,11 @@ type Mock struct {
 	// configuration (Properties.Encryption), for the AccountEncryptionConfig
 	// capability. Kept separate from bucketAttrs so that struct stays small.
 	accountEncryption *memstore.Store[driver.AccountEncryption]
-	opts              *config.Options
-	monitoring        mondriver.Monitoring
+	// acctSettings holds the account-level settings documents (queue, table
+	// and file service properties, management policy) keyed account/kind.
+	acctSettings *memstore.Store[driver.AccountSetting]
+	opts         *config.Options
+	monitoring   mondriver.Monitoring
 	// eventgrid, when wired, receives a Microsoft.Storage.BlobCreated/BlobDeleted
 	// event on every blob write/delete so an Event Grid system-topic subscription
 	// for this account can deliver it. nil in library/typed use, where blob writes
@@ -268,10 +284,12 @@ func metricUnit(name string) string {
 func New(opts *config.Options) *Mock {
 	return &Mock{
 		containers:        memstore.New[*containerMeta](),
+		accounts:          memstore.New[driver.StorageAccountRef](),
 		bucketAttrs:       memstore.New[driver.AccountAttributes](),
 		accountKeys:       memstore.New[[]driver.AccountKey](),
 		blobServiceProps:  memstore.New[driver.BlobServiceProperties](),
 		accountEncryption: memstore.New[driver.AccountEncryption](),
+		acctSettings:      memstore.New[driver.AccountSetting](),
 		opts:              opts,
 	}
 }
@@ -363,10 +381,21 @@ func (m *Mock) AccountEncryption(_ context.Context, account string) (driver.Acco
 	return enc, nil
 }
 
-// CreateBucket creates a new blob container.
+// CreateBucket creates a new blob container. A qualified "account/name" key
+// (see driver.AzureContainerKey) creates the container in that account, which
+// must exist.
 func (m *Mock) CreateBucket(_ context.Context, name string) error {
 	if name == "" {
 		return cerrors.New(cerrors.InvalidArgument, "container name cannot be empty")
+	}
+
+	if strings.Contains(name, "/") {
+		m.accountMu.Lock()
+		defer m.accountMu.Unlock()
+
+		if err := m.checkQualifiedContainer(name); err != nil {
+			return err
+		}
 	}
 
 	if m.containers.Has(name) {
@@ -404,7 +433,9 @@ func (m *Mock) DeleteBucket(_ context.Context, name string) error {
 	return nil
 }
 
-// ListBuckets lists all blob containers.
+// ListBuckets lists the default account's blob containers. Containers of
+// other storage accounts are reached through ListAccountContainers, so the
+// portable contract never sees a qualified key.
 func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
 	keys := m.containers.Keys()
 	sort.Strings(keys)
@@ -412,6 +443,10 @@ func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
 	result := make([]driver.BucketInfo, 0, len(keys))
 
 	for _, k := range keys {
+		if strings.Contains(k, "/") {
+			continue
+		}
+
 		ctr, ok := m.containers.Get(k)
 		if !ok {
 			continue
