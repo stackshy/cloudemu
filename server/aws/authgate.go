@@ -2,6 +2,7 @@ package aws
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"io"
 	"net/http"
 	"strings"
@@ -22,6 +23,10 @@ import (
 // a long-term AKIA key, and a forged ASIA credential (unknown/wrong secret)
 // is rejected.
 const tempCredentialPrefix = "ASIA"
+
+// securityTokenParam carries an STS session token, as a header or, on a
+// presigned URL, a query parameter.
+const securityTokenParam = "X-Amz-Security-Token" //nolint:gosec // a header name, not a credential
 
 // newAuthGate builds the SigV4 authentication pre-dispatch hook. It buffers and
 // restores the request body (downstream Matches/ParseForm read it), resolves
@@ -105,7 +110,8 @@ func newAuthGate(
 
 // verifyTempCredential authenticates an STS temporary (ASIA) credential. It
 // resolves the secret STS recorded for the presented access key id, rejects an
-// unknown key (InvalidClientTokenId) or an expired session (ExpiredToken), then
+// unknown key or one sent without its session token (InvalidClientTokenId) or an
+// expired session (ExpiredToken), then
 // SigV4-verifies the signature against that secret. When no session store is
 // wired the credential is unverifiable, so it fails closed. The principal is
 // the session's owner (see stssrv.SessionOwner), and roleSession reports
@@ -124,7 +130,7 @@ func verifyTempCredential(
 	}
 
 	sess, ok := sessions.Lookup(akid)
-	if !ok {
+	if !ok || !sessionTokenMatches(r, sess.SessionToken) {
 		return authctx.Principal{}, false, invalid
 	}
 
@@ -149,6 +155,19 @@ func verifyTempCredential(
 	principal, aerr = sigv4.Verify(r, body, lookup, clock)
 
 	return principal, sess.Owner.Role, aerr
+}
+
+// sessionTokenMatches reports whether the request carries the session token
+// STS issued with the credential, in the X-Amz-Security-Token header or, for a
+// presigned URL, the query string. Real STS rejects a temporary key id presented
+// without its token.
+func sessionTokenMatches(r *http.Request, want string) bool {
+	got := r.Header.Get(securityTokenParam)
+	if got == "" {
+		got = r.URL.Query().Get(securityTokenParam)
+	}
+
+	return got != "" && subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 // resolverLookup adapts the IAM access-key resolver to sigv4.LookupFunc,

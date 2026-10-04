@@ -1247,7 +1247,16 @@ func (m *Mock) CreateAccessKey(
 	}
 
 	keyID := idgen.AccessKeyID()
-	secret := fmt.Sprintf("secret-%s", idgen.GenerateID(""))
+	for m.accessKeys.Has(keyID) {
+		keyID = idgen.AccessKeyID()
+	}
+
+	// The secret signs SigV4 requests, so it must be unguessable even to a
+	// caller who knows the key id.
+	secret, err := idgen.SecretAccessKey()
+	if err != nil {
+		return nil, errors.Newf(errors.Internal, "generate access key secret: %v", err)
+	}
 
 	ak := &accessKeyData{
 		AccessKeyID:     keyID,

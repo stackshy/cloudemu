@@ -150,6 +150,61 @@ func AccessKeyID() string { return "AKIA" + randString(accessKeyRandLen, base32U
 // prefix), used for assumed-role / session credentials.
 func TempAccessKeyID() string { return "ASIA" + randString(accessKeyRandLen, base32Upper) }
 
+// Signing secrets. These authenticate callers, so unlike the ids above they
+// never fall back to a predictable value: a crypto/rand failure is returned.
+const (
+	base64Alphabet  = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	ociTokenSymbols = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789:;<>()#_.-+/"
+
+	secretAccessKeyLen = 40
+	sessionTokenLen    = 356
+	ociAuthTokenLen    = 20
+
+	byteRange = 256
+)
+
+// secureString returns n characters drawn uniformly from alphabet via
+// crypto/rand. Rejection sampling keeps alphabets whose size does not divide
+// 256 free of modulo bias.
+func secureString(n int, alphabet string) (string, error) {
+	// Bytes at or above limit would favor the first 256%len characters.
+	limit := byteRange - byteRange%len(alphabet)
+
+	out := make([]byte, 0, n)
+	buf := make([]byte, n)
+
+	for len(out) < n {
+		if _, err := rand.Read(buf); err != nil {
+			return "", fmt.Errorf("generate secret: %w", err)
+		}
+
+		for _, b := range buf {
+			if int(b) >= limit {
+				continue
+			}
+
+			out = append(out, alphabet[int(b)%len(alphabet)])
+			if len(out) == n {
+				break
+			}
+		}
+	}
+
+	return string(out), nil
+}
+
+// SecretAccessKey returns a 40-character secret drawn from the base64
+// alphabet, the shape of an AWS secret access key.
+func SecretAccessKey() (string, error) { return secureString(secretAccessKeyLen, base64Alphabet) }
+
+// SessionToken returns a long random token from the base64 alphabet, standing
+// in for the opaque session token STS issues with temporary credentials.
+func SessionToken() (string, error) { return secureString(sessionTokenLen, base64Alphabet) }
+
+// OCIAuthToken returns a 20-character OCI auth token, which mixes letters,
+// digits and punctuation.
+func OCIAuthToken() (string, error) { return secureString(ociAuthTokenLen, ociTokenSymbols) }
+
 // longIDRandLen is the hex-suffix length AWS's newer resource ids use.
 const longIDRandLen = 17
 
