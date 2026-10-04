@@ -229,12 +229,33 @@ func containsStar(resources []string) bool {
 }
 
 // anyCoversService reports whether one pattern matches every action of svc.
-// Matching the pattern against the literal "svc:*" does that: "*", "s3:*" and
-// "s*" cover s3, "s3:Get*" does not.
 func anyCoversService(patterns []string, svc string) bool {
 	for _, p := range patterns {
-		if wildcardMatch(p, svc+":*") {
+		if coversService(p, svc) {
 			return true
+		}
+	}
+
+	return false
+}
+
+// coversService reports whether pattern matches every "svc:Action". It holds
+// when the pattern is some head followed only by '*'s and the head matches a
+// prefix of "svc:": the trailing stars then take the rest of any action. So "*",
+// "s3:*" and "s*" cover s3 while "s3:Get*" and "s3:?" do not. It may say no for
+// an odd pattern that does cover the service ("s3:?*"), never the reverse,
+// which is the safe direction for both callers.
+func coversService(pattern, svc string) bool {
+	pattern = strings.ToLower(pattern)
+	prefix := strings.ToLower(svc) + ":"
+
+	for i := len(pattern) - 1; i >= 0 && pattern[i] == '*'; i-- {
+		head := pattern[:i]
+
+		for k := 0; k <= len(prefix); k++ {
+			if globMatch(head, prefix[:k]) {
+				return true
+			}
 		}
 	}
 
@@ -255,20 +276,22 @@ func anyCouldMatchService(patterns []string, svc string) bool {
 // may say yes for a pattern that cannot really match, never the reverse, which
 // is the safe direction for both of its callers.
 func couldMatchService(pattern, svc string) bool {
+	pattern, svc = strings.ToLower(pattern), strings.ToLower(svc)
+
 	if head, _, ok := strings.Cut(pattern, ":"); ok {
 		// Actions carry exactly one colon, so the pattern's first colon lines up
 		// with it and the head must match the service name.
-		return wildcardMatch(head, svc)
+		return globMatch(head, svc)
 	}
 
-	// With no colon, only a '*' can span the separator, so the text before the
-	// first '*' must be a prefix of the service name.
-	star := strings.IndexByte(pattern, '*')
-	if star < 0 {
+	// With no colon, only a wildcard can stand in for the separator, so the
+	// text before the first '*' or '?' must be a prefix of the service name.
+	wild := strings.IndexAny(pattern, "*?")
+	if wild < 0 {
 		return false
 	}
 
-	return strings.HasPrefix(svc, pattern[:star])
+	return strings.HasPrefix(svc, pattern[:wild])
 }
 
 // EvaluatePermission reports the tri-state decision for one action. With

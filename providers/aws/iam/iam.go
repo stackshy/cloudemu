@@ -806,35 +806,6 @@ func (s *policyStatement) resourceMatches(resource string) bool {
 	}
 }
 
-func wildcardMatch(pattern, value string) bool {
-	if pattern == "*" {
-		return true
-	}
-
-	pParts := strings.Split(pattern, "*")
-
-	if len(pParts) == 1 {
-		return pattern == value
-	}
-
-	if !strings.HasPrefix(value, pParts[0]) {
-		return false
-	}
-
-	remaining := value[len(pParts[0]):]
-
-	for i := 1; i < len(pParts); i++ {
-		idx := strings.Index(remaining, pParts[i])
-		if idx < 0 {
-			return false
-		}
-
-		remaining = remaining[idx+len(pParts[i]):]
-	}
-
-	return true
-}
-
 func toStringSlice(v any) []string {
 	switch val := v.(type) {
 	case string:
@@ -856,7 +827,7 @@ func toStringSlice(v any) []string {
 
 func matchesAction(actions []string, action string) bool {
 	for _, a := range actions {
-		if wildcardMatch(a, action) {
+		if actionMatch(a, action) {
 			return true
 		}
 	}
@@ -866,7 +837,7 @@ func matchesAction(actions []string, action string) bool {
 
 func matchesResource(resources []string, resource string) bool {
 	for _, r := range resources {
-		if wildcardMatch(r, resource) {
+		if globMatch(r, resource) {
 			return true
 		}
 	}
