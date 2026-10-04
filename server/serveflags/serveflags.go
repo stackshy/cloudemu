@@ -243,7 +243,8 @@ func registerEnforceAuthFlag(fs *flag.FlagSet, c *CommonConfig) {
 			"recorded when it issued them, and unknown or expired sessions are rejected. Each request is then authorized against "+
 			"the caller's IAM policies: per operation for query and JSON-RPC services, and at service level for REST services "+
 			"(only a service-wide grant such as s3:* passes, so fine-grained REST policies are denied until per-operation "+
-			"checks land). Root and users with no policies are unrestricted. Azure: "+
+			"checks land). Root and users with no policies are unrestricted. AssumeRole is decided by the role's trust policy "+
+			"for the signed caller, and signed AssumeRoleWithWebIdentity/SAML calls are refused. Azure: "+
 			"validate each request's Bearer token claims (accepted audience, expiry, a principal claim) and reject "+
 			"missing/malformed/expired/wrong-audience tokens with 401. The token signature is not verified (no Azure AD signing "+
 			"key), so this is claims-based authentication only; RBAC authorization is a follow-up. The /_cloudemu admin endpoints "+

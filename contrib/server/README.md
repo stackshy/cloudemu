@@ -188,6 +188,20 @@ actually run the request, so neither the SigV4 signing scope nor a forged
 - The account root and IAM users with no policies are unrestricted, so a
   freshly created user can bootstrap others. Role sessions are always
   evaluated on the role's policies.
+- `sts:AssumeRole` is decided by the role's trust policy for the real caller.
+  A trust that names the caller's ARN is enough on its own; a trust that names
+  the account (`arn:aws:iam::ACCOUNT:root`) also needs an identity policy that
+  allows `sts:AssumeRole`. Trust conditions such as `sts:ExternalId` are
+  checked, passing tags needs `sts:TagSession` and passing a source identity
+  needs `sts:SetSourceIdentity`. The `RoleArn` must match the role's ARN,
+  including its account and path.
+- Temporary credentials are limited like in AWS: `GetFederationToken`
+  credentials cannot call IAM or STS (except `GetCallerIdentity`),
+  `GetSessionToken` credentials cannot call IAM or STS (except `AssumeRole`
+  and `GetCallerIdentity`), and role sessions cannot call `GetSessionToken` or
+  `GetFederationToken`.
+- Signed `AssumeRoleWithWebIdentity` and `AssumeRoleWithSAML` calls are
+  refused, because the token or assertion is not validated yet.
 - Operations AWS serves without credentials (Cognito sign-in, API Gateway
   invoke) and the Kubernetes data plane are not IAM-authorized. The
   `/_cloudemu/*` admin endpoints use the admin token instead (next section).

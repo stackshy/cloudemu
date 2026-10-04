@@ -9100,6 +9100,15 @@
             "name": "PrincipalHasPolicies"
           }
         ]
+      },
+      {
+        "name": "TrustEvaluator",
+        "doc": "TrustEvaluator is an optional capability: an IAM implementation that",
+        "operations": [
+          {
+            "name": "EvaluateTrust"
+          }
+        ]
       }
     ],
     "providers": {

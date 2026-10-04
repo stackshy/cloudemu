@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
@@ -321,6 +322,99 @@ func TestEnforceAuthAuthorizesQueryAndREST(t *testing.T) {
 	t.Run("admin reset with the token", func(t *testing.T) {
 		adminCall(t, http.MethodPost, endpoint+"/_cloudemu/reset", nil)
 	})
+}
+
+// TestEnforceAuthAssumeRoleTrust checks AssumeRole under --enforce-auth is
+// decided by the role's trust policy for the real caller: ExternalId is
+// enforced, a role trusting someone else is refused, and the session gets the
+// role's policies.
+func TestEnforceAuthAssumeRoleTrust(t *testing.T) {
+	endpoint, stop := enforceAuthServer(t)
+	defer stop()
+
+	ctx := context.Background()
+	boot := clientsFor(t, endpoint, seedBootUser(t, endpoint))
+	caller := boot.newUser(t, "caller", allowDoc("dynamodb:ListTables"))
+
+	got, err := boot.iam.GetUser(ctx, &iam.GetUserInput{UserName: aws.String("caller")})
+	wantOK(t, "GetUser", err)
+
+	callerARN := aws.ToString(got.User.Arn)
+	otherARN := strings.TrimSuffix(callerARN, "caller") + "other"
+	trusts := map[string]string{
+		"withext": `{"Effect":"Allow","Principal":{"AWS":"` + callerARN + `"},"Action":"sts:AssumeRole",` +
+			`"Condition":{"StringEquals":{"sts:ExternalId":"ext-1"}}}`,
+		"someoneelse": `{"Effect":"Allow","Principal":{"AWS":"` + otherARN + `"},"Action":"sts:AssumeRole"}`,
+	}
+
+	arns := map[string]string{}
+
+	for name, stmt := range trusts {
+		out, err := boot.iam.CreateRole(ctx, &iam.CreateRoleInput{
+			RoleName: aws.String(name), AssumeRolePolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[` + stmt + `]}`),
+		})
+		wantOK(t, "CreateRole "+name, err)
+
+		arns[name] = aws.ToString(out.Role.Arn)
+	}
+
+	_, err = boot.iam.PutRolePolicy(ctx, &iam.PutRolePolicyInput{
+		RoleName: aws.String("withext"), PolicyName: aws.String("ddb"), PolicyDocument: aws.String(allowDoc("dynamodb:*")),
+	})
+	wantOK(t, "PutRolePolicy", err)
+
+	assume := func(role, externalID string) (int, string) {
+		form := url.Values{"Action": {"AssumeRole"}, "Version": {"2011-06-15"}, "RoleArn": {arns[role]}, "RoleSessionName": {"s"}}
+		if externalID != "" {
+			form.Set("ExternalId", externalID)
+		}
+
+		return signedForm(t, endpoint, caller, "sts", form)
+	}
+
+	if status, body := assume("withext", ""); status != http.StatusForbidden || !strings.Contains(body, "AccessDenied") {
+		t.Fatalf("AssumeRole without ExternalId: %d %s", status, body)
+	}
+
+	if status, body := assume("someoneelse", ""); status != http.StatusForbidden {
+		t.Fatalf("AssumeRole of a role trusting another user: %d %s", status, body)
+	}
+
+	status, body := assume("withext", "ext-1")
+	if status != http.StatusOK {
+		t.Fatalf("AssumeRole with ExternalId: %d %s", status, body)
+	}
+
+	field := func(name string) string {
+		_, rest, _ := strings.Cut(body, "<"+name+">")
+		v, _, _ := strings.Cut(rest, "</"+name+">")
+
+		return v
+	}
+
+	session := aws.Credentials{
+		AccessKeyID: field("AccessKeyId"), SecretAccessKey: field("SecretAccessKey"), SessionToken: field("SessionToken"),
+	}
+
+	cfg, err := awsconfig.LoadDefaultConfig(ctx,
+		awsconfig.WithRegion("us-east-1"), awsconfig.WithRetryMaxAttempts(1),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			session.AccessKeyID, session.SecretAccessKey, session.SessionToken)),
+	)
+	wantOK(t, "session config", err)
+
+	ddb := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) { o.BaseEndpoint = aws.String(endpoint) })
+	_, err = ddb.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName:            aws.String("t1"),
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{{AttributeName: aws.String("pk"), AttributeType: ddbtypes.ScalarAttributeTypeS}},
+		KeySchema:            []ddbtypes.KeySchemaElement{{AttributeName: aws.String("pk"), KeyType: ddbtypes.KeyTypeHash}},
+		BillingMode:          ddbtypes.BillingModePayPerRequest,
+	})
+	wantOK(t, "CreateTable with the role session", err)
+
+	roleIAM := iam.NewFromConfig(cfg, func(o *iam.Options) { o.BaseEndpoint = aws.String(endpoint) })
+	_, err = roleIAM.ListUsers(ctx, &iam.ListUsersInput{})
+	wantCode(t, "ListUsers with the role session", err, "AccessDenied")
 }
 
 // signedForm sends a SigV4-signed query-protocol POST and returns the status
