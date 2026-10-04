@@ -22,6 +22,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 	"github.com/stackshy/cloudemu/v2/services/storage/storageengine"
@@ -89,8 +90,11 @@ type gcsMultipartUpload struct {
 }
 
 type bucketMeta struct {
-	Name       string
-	Region     string
+	Name   string
+	Region string
+	// Project owns the bucket. Bucket names are global across projects, so the
+	// store stays keyed by name and only buckets.list filters on the owner.
+	Project    string
 	CreatedAt  string
 	objects    *memstore.Store[*gcsObject]
 	lifecycle  *driver.LifecycleConfig
@@ -198,7 +202,7 @@ func New(opts *config.Options) *Mock {
 	}
 }
 
-func (m *Mock) CreateBucket(_ context.Context, name string) error {
+func (m *Mock) CreateBucket(ctx context.Context, name string) error {
 	if name == "" {
 		return cerrors.New(cerrors.InvalidArgument, "bucket name cannot be empty")
 	}
@@ -212,6 +216,7 @@ func (m *Mock) CreateBucket(_ context.Context, name string) error {
 	m.buckets.Set(name, &bucketMeta{
 		Name:           name,
 		Region:         m.opts.Region,
+		Project:        projectctx.ProjectOr(ctx, m.opts.ProjectID),
 		CreatedAt:      now,
 		objects:        memstore.New[*gcsObject](),
 		multiparts:     memstore.New[*gcsMultipartUpload](),
@@ -292,6 +297,18 @@ func bucketHasNoncurrentVersions(bkt *bucketMeta) bool {
 	return false
 }
 
+// BucketProject returns the project that owns bucket name.
+func (m *Mock) BucketProject(_ context.Context, name string) (string, error) {
+	bkt, ok := m.buckets.Get(name)
+	if !ok {
+		return "", cerrors.Newf(cerrors.NotFound, "bucket %q not found", name)
+	}
+
+	return bkt.Project, nil
+}
+
+// ListBuckets lists every bucket in every project. Bucket names are global, so
+// the GCS wire layer filters buckets.list by owner through BucketProject.
 func (m *Mock) ListBuckets(_ context.Context) ([]driver.BucketInfo, error) {
 	keys := m.buckets.Keys()
 	sort.Strings(keys)

@@ -3,8 +3,8 @@ package cloudlogging
 
 import (
 	"context"
-	"github.com/stackshy/cloudemu/v2/services/scope"
 	"maps"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -13,8 +13,10 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/services/logging/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 const (
@@ -99,12 +101,14 @@ func New(opts *config.Options) *Mock {
 }
 
 // CreateLogGroup creates a new Cloud Logging log bucket.
-func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*driver.LogGroupInfo, error) {
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) CreateLogGroup(ctx context.Context, cfg driver.LogGroupConfig) (*driver.LogGroupInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "log group name is required")
 	}
 
-	if m.groups.Has(cfg.Name) {
+	if m.groups.Has(m.gkey(ctx, cfg.Name)) {
 		return nil, errors.Newf(errors.AlreadyExists, "log group %q already exists", cfg.Name)
 	}
 
@@ -113,16 +117,20 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 		retentionDays = defaultRetentionDays
 	}
 
-	selfLink := idgen.GCPID(m.opts.ProjectID, "logs", cfg.Name)
+	selfLink := idgen.GCPID(m.project(ctx), "logs", cfg.Name)
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
 		tags[k] = v
 	}
 
+	// The log's project rides in its Scope so a snapshot keeps it.
+	sc := cfg.Scope
+	sc.Project = m.project(ctx)
+
 	info := driver.LogGroupInfo{
 		Name:          cfg.Name,
-		Scope:         cfg.Scope,
+		Scope:         sc,
 		ResourceID:    selfLink,
 		RetentionDays: retentionDays,
 		CreatedAt:     m.opts.Clock.Now().UTC().Format(time.RFC3339),
@@ -137,7 +145,7 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 		subFilters:    memstore.New[*driver.SubscriptionFilterInfo](),
 	}
 
-	m.groups.Set(cfg.Name, g)
+	m.groups.Set(m.gkey(ctx, cfg.Name), g)
 
 	result := info
 
@@ -145,8 +153,8 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 }
 
 // DeleteLogGroup deletes a Cloud Logging log bucket by name.
-func (m *Mock) DeleteLogGroup(_ context.Context, name string) error {
-	if !m.groups.Delete(name) {
+func (m *Mock) DeleteLogGroup(ctx context.Context, name string) error {
+	if !m.groups.Delete(m.gkey(ctx, name)) {
 		return errors.Newf(errors.NotFound, "log group %q not found", name)
 	}
 
@@ -154,8 +162,8 @@ func (m *Mock) DeleteLogGroup(_ context.Context, name string) error {
 }
 
 // GetLogGroup retrieves information about a Cloud Logging log bucket.
-func (m *Mock) GetLogGroup(_ context.Context, name string) (*driver.LogGroupInfo, error) {
-	g, ok := m.groups.Get(name)
+func (m *Mock) GetLogGroup(ctx context.Context, name string) (*driver.LogGroupInfo, error) {
+	g, ok := m.groups.Get(m.gkey(ctx, name))
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", name)
 	}
@@ -165,24 +173,44 @@ func (m *Mock) GetLogGroup(_ context.Context, name string) (*driver.LogGroupInfo
 	return &result, nil
 }
 
-// ListLogGroups lists all Cloud Logging log buckets.
-func (m *Mock) ListLogGroups(_ context.Context, filter scope.Scope) ([]driver.LogGroupInfo, error) {
-	all := m.groups.SortedValues()
+// ListLogGroups lists the logs of the request project, or of every project
+// under projectctx.AllProjects.
+func (m *Mock) ListLogGroups(ctx context.Context, filter scope.Scope) ([]driver.LogGroupInfo, error) {
+	keys := m.groups.Keys()
+	sort.Strings(keys)
 
-	groups := make([]driver.LogGroupInfo, 0, len(all))
-	for _, g := range all {
-		if !g.info.Scope.Matches(filter) {
+	project, every := m.project(ctx), projectctx.IsAllProjects(ctx)
+	groups := make([]driver.LogGroupInfo, 0, len(keys))
+
+	for _, key := range keys {
+		g, ok := m.groups.Get(key)
+		if !ok || !g.info.Scope.Matches(filter) {
 			continue
 		}
+
+		if p, _, _ := projectctx.Split(key); !every && p != project {
+			continue
+		}
+
 		groups = append(groups, g.info)
 	}
 
 	return groups, nil
 }
 
+// project is the request project, or the default project when none is stamped.
+func (m *Mock) project(ctx context.Context) string {
+	return projectctx.ProjectOr(ctx, m.opts.ProjectID)
+}
+
+// gkey is the store key of log name in the request project.
+func (m *Mock) gkey(ctx context.Context, name string) string {
+	return projectctx.Key(m.project(ctx), name)
+}
+
 // CreateLogStream creates a new log stream in a log bucket.
-func (m *Mock) CreateLogStream(_ context.Context, logGroup, streamName string) (*driver.LogStreamInfo, error) {
-	g, ok := m.groups.Get(logGroup)
+func (m *Mock) CreateLogStream(ctx context.Context, logGroup, streamName string) (*driver.LogStreamInfo, error) {
+	g, ok := m.groups.Get(m.gkey(ctx, logGroup))
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", logGroup)
 	}
@@ -213,8 +241,8 @@ func (m *Mock) CreateLogStream(_ context.Context, logGroup, streamName string) (
 }
 
 // DeleteLogStream deletes a log stream from a log bucket.
-func (m *Mock) DeleteLogStream(_ context.Context, logGroup, streamName string) error {
-	g, ok := m.groups.Get(logGroup)
+func (m *Mock) DeleteLogStream(ctx context.Context, logGroup, streamName string) error {
+	g, ok := m.groups.Get(m.gkey(ctx, logGroup))
 	if !ok {
 		return errors.Newf(errors.NotFound, "log group %q not found", logGroup)
 	}
@@ -227,8 +255,8 @@ func (m *Mock) DeleteLogStream(_ context.Context, logGroup, streamName string) e
 }
 
 // ListLogStreams lists all log streams in a log bucket.
-func (m *Mock) ListLogStreams(_ context.Context, logGroup string) ([]driver.LogStreamInfo, error) {
-	g, ok := m.groups.Get(logGroup)
+func (m *Mock) ListLogStreams(ctx context.Context, logGroup string) ([]driver.LogStreamInfo, error) {
+	g, ok := m.groups.Get(m.gkey(ctx, logGroup))
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", logGroup)
 	}
@@ -248,7 +276,7 @@ func (m *Mock) ListLogStreams(_ context.Context, logGroup string) ([]driver.LogS
 
 // PutLogEvents writes log events to a stream.
 func (m *Mock) PutLogEvents(ctx context.Context, groupName, streamName string, events []driver.LogEvent) error {
-	g, ok := m.groups.Get(groupName)
+	g, ok := m.groups.Get(m.gkey(ctx, groupName))
 	if !ok {
 		return errors.Newf(errors.NotFound, "log group %q not found", groupName)
 	}
@@ -278,7 +306,7 @@ func (m *Mock) PutLogEvents(ctx context.Context, groupName, streamName string, e
 	// Copy-on-write: never mutate the stored *logGroup's info in place, or a
 	// concurrent GetLogGroup/ListLogGroups reading g.info without the store
 	// lock could observe a torn write.
-	m.groups.Update(groupName, func(lg *logGroup) *logGroup {
+	m.groups.Update(m.gkey(ctx, groupName), func(lg *logGroup) *logGroup {
 		updated := *lg
 		updated.info.StoredBytes += totalBytes
 
@@ -293,8 +321,8 @@ func (m *Mock) PutLogEvents(ctx context.Context, groupName, streamName string, e
 }
 
 // GetLogEvents retrieves log events matching the query.
-func (m *Mock) GetLogEvents(_ context.Context, input *driver.LogQueryInput) ([]driver.LogEvent, error) {
-	g, ok := m.groups.Get(input.LogGroup)
+func (m *Mock) GetLogEvents(ctx context.Context, input *driver.LogQueryInput) ([]driver.LogEvent, error) {
+	g, ok := m.groups.Get(m.gkey(ctx, input.LogGroup))
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", input.LogGroup)
 	}
@@ -374,10 +402,10 @@ func (*Mock) filterEvents(
 
 // FilterLogEvents filters log events across streams using a pattern.
 func (m *Mock) FilterLogEvents(
-	_ context.Context,
+	ctx context.Context,
 	input *driver.FilterLogEventsInput,
 ) ([]driver.FilteredLogEvent, error) {
-	g, ok := m.groups.Get(input.LogGroup)
+	g, ok := m.groups.Get(m.gkey(ctx, input.LogGroup))
 	if !ok {
 		return nil, errors.Newf(
 			errors.NotFound, "log group %q not found", input.LogGroup,
@@ -460,10 +488,10 @@ func (*Mock) matchEvents(
 
 // PutMetricFilter creates or updates a metric filter for a log group.
 func (m *Mock) PutMetricFilter(
-	_ context.Context,
+	ctx context.Context,
 	cfg *driver.MetricFilterConfig,
 ) error {
-	g, ok := m.groups.Get(cfg.LogGroup)
+	g, ok := m.groups.Get(m.gkey(ctx, cfg.LogGroup))
 	if !ok {
 		return errors.Newf(
 			errors.NotFound, "log group %q not found", cfg.LogGroup,
@@ -493,10 +521,10 @@ func (m *Mock) PutMetricFilter(
 
 // DeleteMetricFilter deletes a metric filter from a log group.
 func (m *Mock) DeleteMetricFilter(
-	_ context.Context,
+	ctx context.Context,
 	logGroup, filterName string,
 ) error {
-	g, ok := m.groups.Get(logGroup)
+	g, ok := m.groups.Get(m.gkey(ctx, logGroup))
 	if !ok {
 		return errors.Newf(
 			errors.NotFound, "log group %q not found", logGroup,
@@ -516,10 +544,10 @@ func (m *Mock) DeleteMetricFilter(
 
 // DescribeMetricFilters lists all metric filters for a log group.
 func (m *Mock) DescribeMetricFilters(
-	_ context.Context,
+	ctx context.Context,
 	logGroup string,
 ) ([]driver.MetricFilterInfo, error) {
-	g, ok := m.groups.Get(logGroup)
+	g, ok := m.groups.Get(m.gkey(ctx, logGroup))
 	if !ok {
 		return nil, errors.Newf(
 			errors.NotFound, "log group %q not found", logGroup,
@@ -540,8 +568,8 @@ func (m *Mock) DescribeMetricFilters(
 // Logging has no native cross-service log-event streaming equivalent; the CRUD
 // is implemented so the shared driver interface is satisfied and portable
 // callers can round-trip filters, but no delivery is performed.
-func (m *Mock) PutSubscriptionFilter(_ context.Context, cfg *driver.SubscriptionFilterConfig) error {
-	g, ok := m.groups.Get(cfg.LogGroup)
+func (m *Mock) PutSubscriptionFilter(ctx context.Context, cfg *driver.SubscriptionFilterConfig) error {
+	g, ok := m.groups.Get(m.gkey(ctx, cfg.LogGroup))
 	if !ok {
 		return errors.Newf(errors.NotFound, "log group %q not found", cfg.LogGroup)
 	}
@@ -564,8 +592,8 @@ func (m *Mock) PutSubscriptionFilter(_ context.Context, cfg *driver.Subscription
 }
 
 // DeleteSubscriptionFilter removes a subscription filter from a log group.
-func (m *Mock) DeleteSubscriptionFilter(_ context.Context, logGroup, filterName string) error {
-	g, ok := m.groups.Get(logGroup)
+func (m *Mock) DeleteSubscriptionFilter(ctx context.Context, logGroup, filterName string) error {
+	g, ok := m.groups.Get(m.gkey(ctx, logGroup))
 	if !ok {
 		return errors.Newf(errors.NotFound, "log group %q not found", logGroup)
 	}
@@ -579,8 +607,8 @@ func (m *Mock) DeleteSubscriptionFilter(_ context.Context, logGroup, filterName 
 }
 
 // DescribeSubscriptionFilters lists all subscription filters for a log group.
-func (m *Mock) DescribeSubscriptionFilters(_ context.Context, logGroup string) ([]driver.SubscriptionFilterInfo, error) {
-	g, ok := m.groups.Get(logGroup)
+func (m *Mock) DescribeSubscriptionFilters(ctx context.Context, logGroup string) ([]driver.SubscriptionFilterInfo, error) {
+	g, ok := m.groups.Get(m.gkey(ctx, logGroup))
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", logGroup)
 	}
@@ -601,10 +629,12 @@ func (m *Mock) DescribeSubscriptionFilters(_ context.Context, logGroup string) (
 // runs under the store's lock (via Update) rather than mutating the stored
 // *logGroup's info in place, so a concurrent GetLogGroup can never observe a
 // torn write.
-func (m *Mock) UpdateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*driver.LogGroupInfo, error) {
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) UpdateLogGroup(ctx context.Context, cfg driver.LogGroupConfig) (*driver.LogGroupInfo, error) {
 	var result driver.LogGroupInfo
 
-	found := m.groups.Update(cfg.Name, func(g *logGroup) *logGroup {
+	found := m.groups.Update(m.gkey(ctx, cfg.Name), func(g *logGroup) *logGroup {
 		updated := *g
 
 		if cfg.RetentionDays != 0 {
@@ -617,6 +647,7 @@ func (m *Mock) UpdateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 
 		if !cfg.Scope.IsZero() {
 			updated.info.Scope = cfg.Scope
+			updated.info.Scope.Project = g.info.Scope.Project
 		}
 
 		result = updated.info

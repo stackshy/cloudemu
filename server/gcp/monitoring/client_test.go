@@ -51,15 +51,28 @@ func TestTimeSeriesListAutoMetrics(t *testing.T) {
 
 	svc := newClient(t, ts)
 
-	resp, err := svc.Projects.TimeSeries.List("projects/p1").
-		Filter(`metric.type="compute.googleapis.com/instance/cpu/utilization"`).
-		IntervalStartTime(time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)).
-		IntervalEndTime(time.Now().Add(time.Hour).UTC().Format(time.RFC3339)).
-		Do()
-	if err != nil {
-		t.Fatalf("timeSeries.list: %v", err)
+	list := func(project string) *monitoring.ListTimeSeriesResponse {
+		t.Helper()
+
+		resp, err := svc.Projects.TimeSeries.List("projects/" + project).
+			Filter(`metric.type="compute.googleapis.com/instance/cpu/utilization"`).
+			IntervalStartTime(time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)).
+			IntervalEndTime(time.Now().Add(time.Hour).UTC().Format(time.RFC3339)).
+			Do()
+		if err != nil {
+			t.Fatalf("timeSeries.list %s: %v", project, err)
+		}
+
+		return resp
 	}
 
+	// The instance was launched through the typed API, so it belongs to the
+	// default project. Another project's metrics scope does not see it.
+	if other := list("p1"); len(other.TimeSeries) != 0 {
+		t.Fatalf("project p1 sees %d series of a mock-project instance", len(other.TimeSeries))
+	}
+
+	resp := list("mock-project")
 	if len(resp.TimeSeries) == 0 {
 		t.Fatal("timeSeries.list returned no series for a launched instance")
 	}
