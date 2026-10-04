@@ -60,7 +60,6 @@ func TestEnforcedGateBypassAttempts(t *testing.T) {
 		{"/_cognito path, public target", cognitoOn("", "/_cognito/x", "InitiateAuth")},
 		{"well-known path, ListUserPools", rawReq{method: http.MethodGet, path: "/us-east-1_abcDEF123/.well-known/jwks.json",
 			header: map[string]string{"X-Amz-Target": idpTarget + "ListUserPools"}}},
-		{"jwks GET before Cognito serves it", rawReq{method: http.MethodGet, path: "/us-east-1_abcDEF123/.well-known/jwks.json"}},
 		{"cognito CreateUserPool", cognitoOn("", "/", "CreateUserPool")},
 		{"cognito AdminInitiateAuth", cognitoOn("", "/", "AdminInitiateAuth")},
 		{"cognito lower-case op", cognitoOn("", "/", "initiateAuth")},

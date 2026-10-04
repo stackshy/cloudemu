@@ -1,12 +1,14 @@
 // Package driver defines the interface and types for AWS Cognito user pools
 // (cognito-idp). It models user pools, their app clients, hosted-UI domains,
-// resource tagging, and the users of a pool with the admin user-management
-// operations.
-//
-// Sign-up, sign-in and token issuance are not modeled yet.
+// resource tagging, the users of a pool with the admin user-management
+// operations, groups, self sign-up, and password sign-in with RS256 tokens.
 package driver
 
-import "context"
+import (
+	"context"
+
+	"github.com/stackshy/cloudemu/v2/internal/jwtsign"
+)
 
 // Cognito is the interface an AWS Cognito user-pools backend implements. It
 // covers user pools, app clients, hosted-UI domains, and resource tagging.
@@ -16,6 +18,9 @@ type Cognito interface {
 	userPoolDomainAPI
 	tagAPI
 	userAPI
+	groupAPI
+	signUpAPI
+	authAPI
 }
 
 // userPoolAPI covers the user-pool control plane.
@@ -104,4 +109,68 @@ type userAPI interface {
 	AdminDisableUser(ctx context.Context, userPoolID, username string) error
 	// AdminResetUserPassword moves the user to RESET_REQUIRED.
 	AdminResetUserPassword(ctx context.Context, userPoolID, username string) error
+}
+
+// groupAPI covers user-pool groups and group membership.
+type groupAPI interface {
+	// CreateGroup creates a group. A name already in the pool fails with
+	// GroupExistsException.
+	CreateGroup(ctx context.Context, in CreateGroupInput) (*Group, error)
+	GetGroup(ctx context.Context, userPoolID, groupName string) (*Group, error)
+	// UpdateGroup changes the fields the input sets and returns the group.
+	UpdateGroup(ctx context.Context, in UpdateGroupInput) (*Group, error)
+	// DeleteGroup removes a group and every membership in it.
+	DeleteGroup(ctx context.Context, userPoolID, groupName string) error
+	ListGroups(ctx context.Context, userPoolID string, page Pagination) ([]Group, string, error)
+	AdminAddUserToGroup(ctx context.Context, userPoolID, username, groupName string) error
+	AdminRemoveUserFromGroup(ctx context.Context, userPoolID, username, groupName string) error
+	AdminListGroupsForUser(ctx context.Context, userPoolID, username string, page Pagination) ([]Group, string, error)
+	ListUsersInGroup(ctx context.Context, userPoolID, groupName string, page Pagination) ([]User, string, error)
+}
+
+// signUpAPI covers self-service registration through an app client.
+type signUpAPI interface {
+	// SignUp registers an UNCONFIRMED user, checks the password against the
+	// pool policy, and issues a confirmation code.
+	SignUp(ctx context.Context, in SignUpInput) (*SignUpOutput, error)
+	// ConfirmSignUp confirms a user with the code SignUp or
+	// ResendConfirmationCode issued.
+	ConfirmSignUp(ctx context.Context, in ConfirmSignUpInput) error
+	ResendConfirmationCode(ctx context.Context, in ClientUserInput) (*CodeDeliveryDetails, error)
+	AdminConfirmSignUp(ctx context.Context, userPoolID, username string) error
+}
+
+// authAPI covers password sign-in, challenges, and the token-authenticated
+// user operations. Tokens are RS256 JWTs signed with per-pool keys.
+type authAPI interface {
+	// InitiateAuth runs USER_PASSWORD_AUTH or REFRESH_TOKEN_AUTH for a client.
+	InitiateAuth(ctx context.Context, in InitiateAuthInput) (*AuthResult, error)
+	// AdminInitiateAuth runs ADMIN_USER_PASSWORD_AUTH, ADMIN_NO_SRP_AUTH or
+	// REFRESH_TOKEN_AUTH for a client of in.UserPoolID.
+	AdminInitiateAuth(ctx context.Context, in InitiateAuthInput) (*AuthResult, error)
+	// RespondToAuthChallenge answers the NEW_PASSWORD_REQUIRED challenge.
+	RespondToAuthChallenge(ctx context.Context, in RespondToAuthChallengeInput) (*AuthResult, error)
+	AdminRespondToAuthChallenge(ctx context.Context, in RespondToAuthChallengeInput) (*AuthResult, error)
+	// GetUser returns the user an access token was issued to.
+	GetUser(ctx context.Context, accessToken string) (*User, error)
+	// GlobalSignOut revokes every token issued to the access token's user.
+	GlobalSignOut(ctx context.Context, accessToken string) error
+	AdminUserGlobalSignOut(ctx context.Context, userPoolID, username string) error
+	// RevokeToken revokes a refresh token and the access and ID tokens minted
+	// from the same authentication.
+	RevokeToken(ctx context.Context, in RevokeTokenInput) error
+}
+
+// KeySetProvider publishes a user pool's token-signing keys and issuer for the
+// /{poolId}/.well-known endpoints. It is not a cognito-idp API operation.
+type KeySetProvider interface {
+	// SigningKeys returns the pool's issuer URL and its public JSON Web Key Set.
+	SigningKeys(ctx context.Context, userPoolID string) (issuer string, keys jwtsign.JWKSet, err error)
+}
+
+// CodeInspector exposes the confirmation codes the emulator would have sent by
+// email or SMS, so a test can complete ConfirmSignUp. It is not a cognito-idp
+// API operation.
+type CodeInspector interface {
+	ConfirmationCode(ctx context.Context, userPoolID, username string) (*IssuedCode, error)
 }

@@ -4082,6 +4082,12 @@
         "doc": "AddCustomAttributes appends custom attributes to a pool's schema. Names get"
       },
       {
+        "name": "AdminAddUserToGroup"
+      },
+      {
+        "name": "AdminConfirmSignUp"
+      },
+      {
         "name": "AdminCreateUser",
         "doc": "AdminCreateUser creates a user in FORCE_CHANGE_PASSWORD with a generated"
       },
@@ -4101,8 +4107,21 @@
         "name": "AdminGetUser"
       },
       {
+        "name": "AdminInitiateAuth",
+        "doc": "AdminInitiateAuth runs ADMIN_USER_PASSWORD_AUTH, ADMIN_NO_SRP_AUTH or"
+      },
+      {
+        "name": "AdminListGroupsForUser"
+      },
+      {
+        "name": "AdminRemoveUserFromGroup"
+      },
+      {
         "name": "AdminResetUserPassword",
         "doc": "AdminResetUserPassword moves the user to RESET_REQUIRED."
+      },
+      {
+        "name": "AdminRespondToAuthChallenge"
       },
       {
         "name": "AdminSetUserPassword",
@@ -4110,6 +4129,17 @@
       },
       {
         "name": "AdminUpdateUserAttributes"
+      },
+      {
+        "name": "AdminUserGlobalSignOut"
+      },
+      {
+        "name": "ConfirmSignUp",
+        "doc": "ConfirmSignUp confirms a user with the code SignUp or"
+      },
+      {
+        "name": "CreateGroup",
+        "doc": "CreateGroup creates a group. A name already in the pool fails with"
       },
       {
         "name": "CreateUserPool",
@@ -4121,6 +4151,10 @@
       },
       {
         "name": "CreateUserPoolDomain"
+      },
+      {
+        "name": "DeleteGroup",
+        "doc": "DeleteGroup removes a group and every membership in it."
       },
       {
         "name": "DeleteUserPool",
@@ -4144,8 +4178,26 @@
         "doc": "DescribeUserPoolDomain returns a domain's description. An unknown domain"
       },
       {
+        "name": "GetGroup"
+      },
+      {
+        "name": "GetUser",
+        "doc": "GetUser returns the user an access token was issued to."
+      },
+      {
         "name": "GetUserPoolMfaConfig",
         "doc": "GetUserPoolMfaConfig returns a pool's MFA configuration. The Terraform AWS"
+      },
+      {
+        "name": "GlobalSignOut",
+        "doc": "GlobalSignOut revokes every token issued to the access token's user."
+      },
+      {
+        "name": "InitiateAuth",
+        "doc": "InitiateAuth runs USER_PASSWORD_AUTH or REFRESH_TOKEN_AUTH for a client."
+      },
+      {
+        "name": "ListGroups"
       },
       {
         "name": "ListTagsForResource"
@@ -4163,8 +4215,26 @@
         "doc": "ListUsers returns users sorted by username, filtered by an optional"
       },
       {
+        "name": "ListUsersInGroup"
+      },
+      {
+        "name": "ResendConfirmationCode"
+      },
+      {
+        "name": "RespondToAuthChallenge",
+        "doc": "RespondToAuthChallenge answers the NEW_PASSWORD_REQUIRED challenge."
+      },
+      {
+        "name": "RevokeToken",
+        "doc": "RevokeToken revokes a refresh token and the access and ID tokens minted"
+      },
+      {
         "name": "SetUserPoolMfaConfig",
         "doc": "SetUserPoolMfaConfig replaces a pool's MFA configuration and returns the"
+      },
+      {
+        "name": "SignUp",
+        "doc": "SignUp registers an UNCONFIRMED user, checks the password against the"
       },
       {
         "name": "TagResource"
@@ -4173,12 +4243,37 @@
         "name": "UntagResource"
       },
       {
+        "name": "UpdateGroup",
+        "doc": "UpdateGroup changes the fields the input sets and returns the group."
+      },
+      {
         "name": "UpdateUserPool",
         "doc": "UpdateUserPool applies the mutable pool settings. A nil field is left"
       },
       {
         "name": "UpdateUserPoolClient",
         "doc": "UpdateUserPoolClient replaces the client's settings and returns the result."
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "CodeInspector",
+        "doc": "CodeInspector exposes the confirmation codes the emulator would have sent by",
+        "operations": [
+          {
+            "name": "ConfirmationCode"
+          }
+        ]
+      },
+      {
+        "name": "KeySetProvider",
+        "doc": "KeySetProvider publishes a user pool's token-signing keys and issuer for the",
+        "operations": [
+          {
+            "name": "SigningKeys",
+            "doc": "SigningKeys returns the pool's issuer URL and its public JSON Web Key Set."
+          }
+        ]
       }
     ],
     "providers": {

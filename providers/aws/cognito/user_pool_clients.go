@@ -32,6 +32,10 @@ func (m *Mock) CreateUserPoolClient(_ context.Context, in driver.CreateUserPoolC
 		return nil, invalidParameter("ClientName is required")
 	}
 
+	if err := checkTokenValidity(&in); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -73,6 +77,10 @@ func (m *Mock) DescribeUserPoolClient(_ context.Context, userPoolID, clientID st
 //
 //nolint:gocritic // hugeParam: taken by value to match the driver interface
 func (m *Mock) UpdateUserPoolClient(_ context.Context, in driver.CreateUserPoolClientInput) (*driver.UserPoolClient, error) {
+	if err := checkTokenValidity(&in); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -141,9 +149,9 @@ func buildClient(in driver.CreateUserPoolClientInput) driver.UserPoolClient {
 	return driver.UserPoolClient{
 		ClientName:                      in.ClientName,
 		UserPoolID:                      in.UserPoolID,
-		RefreshTokenValidity:            int32OrDefault(in.RefreshTokenValidity, defaultRefreshTokenValidity),
-		AccessTokenValidity:             copyInt32Ptr(in.AccessTokenValidity),
-		IDTokenValidity:                 copyInt32Ptr(in.IDTokenValidity),
+		RefreshTokenValidity:            int32OrDefault(setValidity(in.RefreshTokenValidity), defaultRefreshTokenValidity),
+		AccessTokenValidity:             setValidity(in.AccessTokenValidity),
+		IDTokenValidity:                 setValidity(in.IDTokenValidity),
 		TokenValidityUnits:              copyTokenValidityUnits(in.TokenValidityUnits),
 		ExplicitAuthFlows:               resolveExplicitAuthFlows(in.ExplicitAuthFlows),
 		AuthSessionValidity:             int32OrDefault(in.AuthSessionValidity, defaultAuthSessionValidity),

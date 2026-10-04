@@ -90,7 +90,7 @@ func TestHandlerIAMServicesMatchTable(t *testing.T) {
 		"*dynamodb.Handler": "dynamodb", "*dynamodb.StreamsHandler": "dynamodb", "*sqs.Handler": "sqs", "*ssm.Handler": "ssm",
 		"*kms.Handler": "kms", "*acm.Handler": "acm", "*sfn.Handler": "states", "*kinesis.Handler": "kinesis",
 		"*cloudtrail.Handler": "cloudtrail", "*glue.Handler": "glue", "*aoss.Handler": "aoss", "*kendra.Handler": "kendra",
-		"*athena.Handler": "athena", "*cognito.Handler": "cognito-idp", "*configservice.Handler": "config",
+		"*athena.Handler": "athena", "*cognito.Handler": "cognito-idp", "*cognito.WellKnown": "cognito-idp", "*configservice.Handler": "config",
 		"*wafv2.Handler": "wafv2", "*ecs.Handler": "ecs", "*ecr.Handler": "ecr", "*route53resolver.Handler": "route53resolver",
 		"*eventbridge.Handler": "events", "*cloudwatchlogs.Handler": "logs", "*secretsmanager.Handler": "secretsmanager",
 		"*keyspaces.Handler": "cassandra", "*memorydb.Handler": "memorydb", "*networkfirewall.Handler": "network-firewall",
