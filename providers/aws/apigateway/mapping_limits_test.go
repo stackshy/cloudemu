@@ -3,6 +3,7 @@ package apigateway_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/apigateway/driver"
@@ -99,4 +100,24 @@ func TestMappingTemplateSizeQuota(t *testing.T) {
 	})
 	assertMessage(t, err, errors.IsInvalidArgument,
 		"Mapping template for content type text/plain exceeds the maximum size of 300 KB")
+}
+
+// TestMockJSONPathWalkHonoursDeadline runs a descent that multiplies over a
+// deep, wide body. The template deadline must end it as a 500.
+func TestMockJSONPathWalkHonoursDeadline(t *testing.T) {
+	m := newMock(t)
+	reqTmpl := `#set($x = $input.path('$..*..*..zz')){"statusCode": 200}`
+	apiID, _ := mockMethod(t, m, map[string]string{"application/json": reqTmpl}, "", "")
+
+	body := strings.Repeat("[1,2,3,", 900) + "0" + strings.Repeat("]", 900)
+	start := time.Now()
+
+	resp := invokeMock(t, m, apiID, driver.ProxyRequest{Body: body})
+	if resp.StatusCode != 500 {
+		t.Fatalf("status = %d %s", resp.StatusCode, resp.Body)
+	}
+
+	if d := time.Since(start); d > 4*time.Second {
+		t.Fatalf("walk took %v", d)
+	}
 }

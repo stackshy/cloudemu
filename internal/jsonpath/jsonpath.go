@@ -15,6 +15,7 @@
 package jsonpath
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
@@ -40,6 +41,26 @@ const maxDepth = 1000
 // maxMatches caps the values one EvalAll step may collect, so chained
 // wildcards and descents cannot multiply a document into a huge result.
 const maxMatches = 1 << 20
+
+// ctxCheckEvery is how many visited nodes pass between deadline checks.
+const ctxCheckEvery = 1024
+
+// walker carries EvalAll's deadline and counts the nodes it visits.
+type walker struct {
+	ctx    context.Context
+	visits int
+}
+
+// visit counts one node and reports the context's error every ctxCheckEvery
+// nodes.
+func (w *walker) visit() error {
+	w.visits++
+	if w.visits%ctxCheckEvery == 0 {
+		return w.ctx.Err()
+	}
+
+	return nil
+}
 
 // Error reports a malformed or unsupported path.
 type Error struct {
@@ -85,8 +106,9 @@ func Eval(path string, root any) (value any, present bool, err error) {
 // EvalAll evaluates a path that may use wildcards or recursive descent.
 // indefinite reports whether the path can match more than one value (it uses
 // a wildcard or descent), in which case callers present the matches as a list.
-// For a definite path values holds at most one element.
-func EvalAll(path string, root any) (values []any, indefinite bool, err error) {
+// For a definite path values holds at most one element. The walk stops with
+// ctx's error once ctx is done.
+func EvalAll(ctx context.Context, path string, root any) (values []any, indefinite bool, err error) {
 	if rootErr := checkRoot(path); rootErr != nil {
 		return nil, false, rootErr
 	}
@@ -101,6 +123,7 @@ func EvalAll(path string, root any) (values []any, indefinite bool, err error) {
 	}
 
 	cur := []any{root}
+	w := &walker{ctx: ctx}
 
 	for _, t := range toks {
 		indefinite = indefinite || t.wildcard || t.descent
@@ -108,7 +131,9 @@ func EvalAll(path string, root any) (values []any, indefinite bool, err error) {
 		var next []any
 
 		for _, v := range cur {
-			next = t.collect(v, next)
+			if next, err = t.collect(w, v, next); err != nil {
+				return nil, true, err
+			}
 
 			if len(next) > maxMatches {
 				return nil, true, errorf("JSONPath %q matches more than %d values", path, maxMatches)
@@ -149,9 +174,9 @@ func (t token) apply(cur any) (any, bool) {
 }
 
 // collect appends every match of t under v to out.
-func (t token) collect(v any, out []any) []any {
+func (t token) collect(w *walker, v any, out []any) ([]any, error) {
 	if !t.descent {
-		return t.collectHere(v, out)
+		return t.collectHere(v, out), w.visit()
 	}
 
 	// Walk v and all of its descendants in document order.
@@ -168,6 +193,14 @@ func (t token) collect(v any, out []any) []any {
 
 		out = t.collectHere(f.v, out)
 
+		if err := w.visit(); err != nil {
+			return nil, err
+		}
+
+		if len(out) > maxMatches {
+			return out, nil
+		}
+
 		if f.depth >= maxDepth {
 			continue
 		}
@@ -178,7 +211,7 @@ func (t token) collect(v any, out []any) []any {
 		}
 	}
 
-	return out
+	return out, nil
 }
 
 // collectHere appends the matches of t directly under v.

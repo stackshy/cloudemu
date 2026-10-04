@@ -90,15 +90,15 @@ type Mock struct {
 	templates *vtl.Cache
 }
 
-// templateCacheSize bounds the parsed mapping templates kept in memory.
-const templateCacheSize = 512
+// templateCacheBytes bounds the memory of the parsed mapping templates kept.
+const templateCacheBytes = 64 << 20
 
 // New creates a new API Gateway mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
 		apis: memstore.New[*apiData](), opts: opts,
 		certs: map[string]*driver.ClientCertificate{}, account: defaultAccount(),
-		templates: vtl.NewCache(templateCacheSize),
+		templates: vtl.NewCache(templateCacheBytes),
 	}
 }
 

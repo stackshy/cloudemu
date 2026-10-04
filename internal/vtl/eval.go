@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"runtime"
 	"strings"
 )
 
@@ -17,6 +18,11 @@ const (
 	// ctxCheckEvery is how often (in steps) the context deadline is checked.
 	ctxCheckEvery = 64
 )
+
+// renderSlots bounds concurrent renders to the CPU count. A host Object must
+// not render another template from inside a render, or it could wait on a
+// slot its own caller holds.
+var renderSlots = make(chan struct{}, runtime.GOMAXPROCS(0)) //nolint:gochecknoglobals // process-wide limit
 
 // ErrStepBudget is returned when a render exceeds its step budget.
 var ErrStepBudget = errors.New("vtl: template exceeded its execution step budget")
@@ -44,7 +50,19 @@ func (t *Template) Render(ctx context.Context, vars map[string]any, opts RenderO
 		vars = map[string]any{}
 	}
 
-	st := newState(ctx, vars, opts.MaxSteps, &budget{})
+	// Bound how many renders run at once, so concurrent requests cannot
+	// multiply the per-render memory budget.
+	select {
+	case renderSlots <- struct{}{}:
+		defer func() { <-renderSlots }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	mem := newSharedBudget()
+	defer mem.release()
+
+	st := newState(ctx, vars, opts.MaxSteps, mem)
 	if st.maxSteps <= 0 {
 		st.maxSteps = DefaultMaxSteps
 	}
@@ -59,6 +77,13 @@ func (t *Template) Render(ctx context.Context, vars map[string]any, opts RenderO
 	case errors.As(err, &ret):
 		return &Result{Output: st.out.String(), Returned: true, ReturnValue: ret.value}, nil
 	default:
+		if errors.Is(err, ErrMemoryLimit) || errors.Is(err, ErrOutputLimit) {
+			// A render that ran out of budget leaves up to a budget's worth of
+			// garbage. Collect it now, before concurrent abusive renders pile
+			// it up faster than the pacer would.
+			runtime.GC()
+		}
+
 		return nil, err
 	}
 }

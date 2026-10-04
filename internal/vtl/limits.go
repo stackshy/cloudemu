@@ -3,6 +3,7 @@ package vtl
 import (
 	"errors"
 	"strings"
+	"sync/atomic"
 )
 
 // Size and depth limits. A template that hits one fails with an error instead
@@ -17,6 +18,9 @@ const (
 	// MaxAllocBytes caps the strings and collection entries one render may
 	// create, so a loop that keeps doubling a value fails fast.
 	MaxAllocBytes = 64 << 20
+	// MaxInFlightAllocBytes caps MaxAllocBytes-style charges summed over every
+	// render running at once.
+	MaxInFlightAllocBytes = 2 * MaxAllocBytes
 	// MaxTemplateDepth caps how deeply directives, expressions and string
 	// interpolations may nest.
 	MaxTemplateDepth = 100
@@ -27,8 +31,9 @@ const (
 	// walks recursively.
 	maxOperatorChain = 1000
 	// slotBytes is what one list or map entry is charged against
-	// MaxAllocBytes: the 16-byte interface plus room for slice growth.
-	slotBytes = 32
+	// MaxAllocBytes: the 16-byte interface, the boxed value behind it and room
+	// for slice growth.
+	slotBytes = 64
 )
 
 // Limit errors.
@@ -39,14 +44,45 @@ var (
 	ErrCyclicValue = errors.New("vtl: cannot encode a value that contains itself")
 )
 
-// budget tracks the bytes a render has created.
+// inFlightBytes is what all renders running now have charged. It is capped
+// at MaxInFlightAllocBytes, so many concurrent renders cannot each use a full
+// budget at once.
+var inFlightBytes atomic.Int64 //nolint:gochecknoglobals // process-wide memory accounting
+
+// budget tracks the bytes a render has created. A shared budget also counts
+// toward inFlightBytes and must be released when the render ends.
 type budget struct {
-	used int
+	used   int
+	shared bool
+}
+
+func newSharedBudget() *budget { return &budget{shared: true} }
+
+// release returns a shared budget's bytes to the process-wide pool.
+func (b *budget) release() {
+	if b.shared {
+		inFlightBytes.Add(-int64(b.used))
+	}
+}
+
+// check reports whether n more bytes would fit, without charging them.
+func (b *budget) check(n int) error {
+	if b.used+n > MaxAllocBytes || b.shared && inFlightBytes.Load()+int64(n) > MaxInFlightAllocBytes {
+		return ErrMemoryLimit
+	}
+
+	return nil
 }
 
 func (b *budget) charge(n int) error {
 	b.used += n
-	if b.used > MaxAllocBytes {
+
+	inFlight := int64(0)
+	if b.shared {
+		inFlight = inFlightBytes.Add(int64(n))
+	}
+
+	if b.used > MaxAllocBytes || inFlight > MaxInFlightAllocBytes {
 		return ErrMemoryLimit
 	}
 

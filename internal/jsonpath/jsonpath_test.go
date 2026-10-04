@@ -1,6 +1,7 @@
 package jsonpath
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"testing"
@@ -99,14 +100,14 @@ func TestEvalAll(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		got, indefinite, err := EvalAll(c.path, root)
+		got, indefinite, err := EvalAll(context.Background(), c.path, root)
 		if err != nil || fmt.Sprint(got) != c.want && !(len(got) == 0 && c.want == "[]") || indefinite != c.indefinite {
 			t.Errorf("EvalAll(%q) = %v %v %v, want %s %v", c.path, got, indefinite, err, c.want, c.indefinite)
 		}
 	}
 
 	for _, bad := range []string{"x", "$[?(@.a)]", "$..", "$.a[", "$[x]"} {
-		if _, _, err := EvalAll(bad, root); err == nil {
+		if _, _, err := EvalAll(context.Background(), bad, root); err == nil {
 			t.Errorf("EvalAll(%q) accepted", bad)
 		}
 	}
@@ -117,7 +118,7 @@ func TestEvalAll(t *testing.T) {
 		deep = []any{deep}
 	}
 
-	if _, _, err := EvalAll("$..*", deep); err != nil {
+	if _, _, err := EvalAll(context.Background(), "$..*", deep); err != nil {
 		t.Fatalf("deep descent: %v", err)
 	}
 }
@@ -129,7 +130,23 @@ func TestEvalAllCapsMatches(t *testing.T) {
 		items = []any{items, 2}
 	}
 
-	if _, _, err := EvalAll("$..*..*..*", items); err == nil {
+	if _, _, err := EvalAll(context.Background(), "$..*..*..*", items); err == nil {
 		t.Fatal("multiplying path not capped")
+	}
+}
+
+func TestEvalAllStopsAtDeadline(t *testing.T) {
+	// A wide, deep document: descent over it is slow enough to pass a
+	// cancelled context's first check.
+	var doc any = 1
+	for range 500 {
+		doc = []any{doc, 1, 2, 3}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, _, err := EvalAll(ctx, "$..*..zz", doc); err == nil {
+		t.Fatal("cancelled walk did not stop")
 	}
 }

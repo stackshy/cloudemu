@@ -1,10 +1,5 @@
 package vtl
 
-import (
-	"regexp"
-	"strings"
-)
-
 // Method names shared by more than one receiver type.
 const (
 	mIsEmpty  = "isEmpty"
@@ -18,48 +13,28 @@ const (
 	mKeySet   = "keySet"
 	mValues   = "values"
 	mEntrySet = "entrySet"
+	mAddAll   = "addAll"
+	mPutAll   = "putAll"
 )
 
 // pairArgs is the argument count of a two-argument method such as put or set.
 const pairArgs = 2
 
 type (
-	stringFn func(s string, args []any) (any, error)
-	listFn   func(l *List, args []any) any
-	mapFn    func(m *Map, args []any) any
+	listFn func(l *List, args []any) any
+	mapFn  func(m *Map, args []any) any
 )
 
-// The Java-like method bridge for strings, lists and maps.
+// The Java-like method bridge for lists and maps.
 //
 //nolint:gochecknoglobals // read-only dispatch tables
 var (
-	stringMethods = map[string]stringFn{
-		"length":           func(s string, _ []any) (any, error) { return int64(len([]rune(s))), nil },
-		mIsEmpty:           func(s string, _ []any) (any, error) { return s == "", nil },
-		mContains:          strPredicate(strings.Contains),
-		"startsWith":       strPredicate(strings.HasPrefix),
-		"endsWith":         strPredicate(strings.HasSuffix),
-		"equalsIgnoreCase": strPredicate(strings.EqualFold),
-		mIndexOf:           strIndex(strings.Index),
-		"lastIndexOf":      strIndex(strings.LastIndex),
-		"substring":        func(s string, args []any) (any, error) { return substring(s, args), nil },
-		"replace":          strReplace,
-		"replaceAll":       func(s string, args []any) (any, error) { return regexReplace(s, true, args) },
-		"replaceFirst":     func(s string, args []any) (any, error) { return regexReplace(s, false, args) },
-		"split":            strSplit,
-		"toLowerCase":      func(s string, _ []any) (any, error) { return strings.ToLower(s), nil },
-		"toUpperCase":      func(s string, _ []any) (any, error) { return strings.ToUpper(s), nil },
-		"trim":             func(s string, _ []any) (any, error) { return strings.TrimSpace(s), nil },
-		"matches":          strMatches,
-		"charAt":           strCharAt,
-	}
-
 	listMethods = map[string]listFn{
 		mSize:     func(l *List, _ []any) any { return int64(len(l.Items)) },
 		mIsEmpty:  func(l *List, _ []any) any { return len(l.Items) == 0 },
 		mGet:      listGet,
 		"add":     listAdd,
-		"addAll":  listAddAll,
+		mAddAll:   listAddAll,
 		mContains: func(l *List, args []any) any { return len(args) == 1 && listIndexOf(l, args[0]) >= 0 },
 		mIndexOf:  listIndexOfMethod,
 		mRemove:   listRemove,
@@ -69,7 +44,7 @@ var (
 	mapMethods = map[string]mapFn{
 		mGet:          mapGet,
 		mPut:          mapPut,
-		"putAll":      mapPutAll,
+		mPutAll:       mapPutAll,
 		"containsKey": mapContainsKey,
 		mRemove:       func(m *Map, args []any) any { return m.Remove(Stringify(firstArg(args))) },
 		mKeySet:       func(m *Map, _ []any) any { return stringList(m.keys) },
@@ -119,7 +94,7 @@ func callString(mem *budget, s, name string, args []any) (any, error) {
 		return nil, nil
 	}
 
-	r, err := fn(s, args)
+	r, err := fn(mem, s, args)
 	if err != nil {
 		return nil, err
 	}
@@ -131,8 +106,6 @@ func callString(mem *budget, s, name string, args []any) (any, error) {
 		}
 
 		return t, mem.charge(len(t))
-	case *List:
-		return t, mem.charge(len(t.Items) * slotBytes)
 	default:
 		return r, nil
 	}
@@ -145,6 +118,11 @@ func callCollection(mem *budget, v any, name string, args []any) (any, error) {
 		r      any
 		before = collectionLen(v)
 	)
+
+	// Refuse growth that would not fit before the method allocates it.
+	if err := mem.check(expectedGrowth(v, name, args) * slotBytes); err != nil {
+		return nil, err
+	}
 
 	switch t := v.(type) {
 	case *List:
@@ -177,6 +155,19 @@ func callCollection(mem *budget, v any, name string, args []any) (any, error) {
 	}
 
 	return r, nil
+}
+
+// expectedGrowth estimates the entries a list or map method is about to add
+// or build.
+func expectedGrowth(v any, name string, args []any) int {
+	switch {
+	case name == mAddAll || name == mPutAll:
+		return collectionLen(firstArg(args))
+	case creatingMethods[name]:
+		return collectionLen(v)
+	default:
+		return 1
+	}
 }
 
 func collectionLen(v any) int {
@@ -228,171 +219,6 @@ func firstArg(args []any) any {
 	}
 
 	return args[0]
-}
-
-func strPredicate(pred func(s, arg string) bool) stringFn {
-	return func(s string, args []any) (any, error) {
-		a, ok := strArg(args, 0)
-
-		return ok && pred(s, a), nil
-	}
-}
-
-// strIndex converts a byte offset to a character offset (-1 stays -1).
-func strIndex(find func(s, sub string) int) stringFn {
-	return func(s string, args []any) (any, error) {
-		a, _ := strArg(args, 0)
-
-		i := find(s, a)
-		if i < 0 {
-			return int64(-1), nil
-		}
-
-		return int64(len([]rune(s[:i]))), nil
-	}
-}
-
-func strReplace(s string, args []any) (any, error) {
-	from, ok1 := strArg(args, 0)
-	to, ok2 := strArg(args, 1)
-
-	if !ok1 || !ok2 {
-		return nil, nil
-	}
-
-	return literalReplace(s, from, to, true)
-}
-
-// literalReplace replaces from with to (every occurrence, or the first),
-// checking the result size before building it.
-func literalReplace(s, from, to string, all bool) (any, error) {
-	n := 1
-	if all {
-		n = strings.Count(s, from)
-	}
-
-	if strings.Contains(s, from) && len(s)+n*(len(to)-len(from)) > MaxOutputBytes {
-		return nil, ErrOutputLimit
-	}
-
-	if !all {
-		return strings.Replace(s, from, to, 1), nil
-	}
-
-	return strings.ReplaceAll(s, from, to), nil
-}
-
-func strMatches(s string, args []any) (any, error) {
-	pattern, _ := strArg(args, 0)
-
-	re, err := compile("^(?:" + pattern + ")$")
-	if err != nil {
-		return nil, err
-	}
-
-	return re.MatchString(s), nil
-}
-
-func strCharAt(s string, args []any) (any, error) {
-	i, ok := intArg(args, 0)
-	r := []rune(s)
-
-	if !ok || i < 0 || i >= len(r) {
-		return nil, nil
-	}
-
-	return string(r[i]), nil
-}
-
-func substring(s string, args []any) any {
-	r := []rune(s)
-
-	begin, ok := intArg(args, 0)
-	if !ok || begin < 0 || begin > len(r) {
-		return nil
-	}
-
-	end := len(r)
-
-	if e, ok := intArg(args, 1); ok {
-		if e < begin || e > len(r) {
-			return nil
-		}
-
-		end = e
-	}
-
-	return string(r[begin:end])
-}
-
-func compile(pattern string) (*regexp.Regexp, error) {
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return nil, errorf("invalid regular expression %q: %v", pattern, err)
-	}
-
-	return re, nil
-}
-
-func regexReplace(s string, all bool, args []any) (any, error) {
-	pattern, _ := strArg(args, 0)
-	repl, _ := strArg(args, 1)
-
-	// A literal pattern and replacement need no regex engine.
-	if regexp.QuoteMeta(pattern) == pattern && !strings.ContainsAny(repl, `$\`) && pattern != "" {
-		return literalReplace(s, pattern, repl, all)
-	}
-
-	re, err := compile(pattern)
-	if err != nil {
-		return nil, err
-	}
-
-	limit := 1
-	if all {
-		limit = -1
-	}
-
-	// Build the result match by match so it can stop at the size limit.
-	var (
-		out  []byte
-		last int
-	)
-
-	for _, loc := range re.FindAllStringSubmatchIndex(s, limit) {
-		out = append(out, s[last:loc[0]]...)
-		out = re.ExpandString(out, repl, s, loc)
-		last = loc[1]
-
-		if len(out) > MaxOutputBytes {
-			return nil, ErrOutputLimit
-		}
-	}
-
-	out = append(out, s[last:]...)
-	if len(out) > MaxOutputBytes {
-		return nil, ErrOutputLimit
-	}
-
-	return string(out), nil
-}
-
-// strSplit follows Java's String.split: the argument is a regex and trailing
-// empty strings are dropped.
-func strSplit(s string, args []any) (any, error) {
-	pattern, _ := strArg(args, 0)
-
-	re, err := compile(pattern)
-	if err != nil {
-		return nil, err
-	}
-
-	parts := re.Split(s, -1)
-	for len(parts) > 0 && parts[len(parts)-1] == "" {
-		parts = parts[:len(parts)-1]
-	}
-
-	return stringList(parts), nil
 }
 
 func listGet(l *List, args []any) any {

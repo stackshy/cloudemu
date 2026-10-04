@@ -3,6 +3,9 @@ package vtl
 import (
 	"context"
 	"errors"
+	"fmt"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -161,4 +164,70 @@ func TestParseIsLinear(t *testing.T) {
 func isLimit(err error) bool {
 	return errors.Is(err, ErrMemoryLimit) || errors.Is(err, ErrOutputLimit) || errors.Is(err, ErrStepBudget) ||
 		errors.Is(err, context.DeadlineExceeded)
+}
+
+// TestStringMethodsAllocateWithinBudget runs splits and regex replacements over
+// a 6 MB string with millions of matches. Each must stop at the memory budget
+// and allocate no more than about twice the budget on the way.
+func TestStringMethodsAllocateWithinBudget(t *testing.T) {
+	body := strings.Repeat("&a", 3<<20)
+
+	for name, src := range map[string]string{
+		"literal split":  `#set($p = $b.split("&"))`,
+		"regex split":    `#set($p = $b.split("[&]"))`,
+		"regex replace":  `#set($p = $b.replaceAll("(&)", "$1"))`,
+		"empty split":    `#set($p = $b.split(""))`,
+		"anchored split": `#set($p = $b.split("\b"))`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var before, after runtime.MemStats
+
+			runtime.GC()
+			runtime.ReadMemStats(&before)
+
+			err := renderErr(t, src, map[string]any{"b": body})
+
+			runtime.ReadMemStats(&after)
+
+			if !isLimit(err) {
+				t.Fatalf("err = %v, want a limit error", err)
+			}
+
+			if alloc := after.TotalAlloc - before.TotalAlloc; !raceEnabled && alloc > 2*MaxAllocBytes {
+				t.Fatalf("allocated %d MB, budget is %d MB", alloc>>20, MaxAllocBytes>>20)
+			}
+		})
+	}
+
+	// A modest split still works and keeps Java's trailing-empty rule.
+	if got := render(t, `$b.split("&").size()`, map[string]any{"b": "a&b&&"}); got != "2" {
+		t.Fatalf("split size = %s", got)
+	}
+
+	if got := render(t, `$b.split("")`, map[string]any{"b": "abc"}); got != "[a, b, c]" {
+		t.Fatalf("empty split = %s", got)
+	}
+}
+
+// TestEachMatchAgreesWithFindAll checks the incremental matcher against Go's
+// FindAll on patterns with empty and overlapping candidates.
+func TestEachMatchAgreesWithFindAll(t *testing.T) {
+	for _, c := range []struct{ pattern, s string }{
+		{"a*", "baaacaa"}, {"", "héllo"}, {"x?", "axxbx"}, {"(a)(b)?", "abaab"},
+		{"[&]", "&a&&b&"}, {"\\b", "ab cd"}, {"^a", "aaa"}, {"é|", "aéb"},
+	} {
+		re := regexp.MustCompile(c.pattern)
+		want := fmt.Sprint(re.FindAllStringSubmatchIndex(c.s, -1))
+
+		var got [][]int
+
+		err := eachMatch(&budget{}, re, c.s, -1, func(loc []int) error {
+			got = append(got, loc)
+
+			return nil
+		})
+		if err != nil || fmt.Sprint(got) != want {
+			t.Errorf("%q on %q: got %v, want %s", c.pattern, c.s, got, want)
+		}
+	}
 }

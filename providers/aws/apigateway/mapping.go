@@ -102,7 +102,7 @@ func (mc *mappingContext) render(ctx context.Context, src, body string) (string,
 	}
 
 	vars := map[string]any{
-		"input":          &inputObject{body: body, params: mc.params()},
+		"input":          &inputObject{ctx: ctx, body: body, params: mc.params()},
 		"context":        mc.context,
 		"stageVariables": vtl.StringMap(mc.route.stageVariables),
 		"util":           utilObject{},
@@ -161,6 +161,8 @@ func (mc *mappingContext) responseOverride() (status int, headers map[string]str
 
 // inputObject is $input.
 type inputObject struct {
+	// ctx is the render's deadline, which bounds JSONPath walks.
+	ctx    context.Context
 	body   string
 	params *vtl.Map
 	parsed any
@@ -219,7 +221,7 @@ func (in *inputObject) path(p string) (any, error) {
 		}
 	}
 
-	matches, indefinite, err := jsonpath.EvalAll(p, in.parsed)
+	matches, indefinite, err := jsonpath.EvalAll(in.ctx, p, in.parsed)
 	if err != nil {
 		return nil, err
 	}
