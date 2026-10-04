@@ -628,7 +628,9 @@ func wildcardMatch(pattern, value string) bool {
 
 	remaining := value[len(pParts[0]):]
 
-	for i := 1; i < len(pParts); i++ {
+	last := len(pParts) - 1
+
+	for i := 1; i < last; i++ {
 		idx := strings.Index(remaining, pParts[i])
 		if idx < 0 {
 			return false
@@ -637,7 +639,9 @@ func wildcardMatch(pattern, value string) bool {
 		remaining = remaining[idx+len(pParts[i]):]
 	}
 
-	return true
+	// The text after the last '*' must end the value, so "a/*/read" does not
+	// match "a/x/readwrite".
+	return strings.HasSuffix(remaining, pParts[last])
 }
 
 func toStringSlice(v any) []string {

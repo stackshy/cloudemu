@@ -104,5 +104,5 @@ func principalEntryMatches(entry, caller string) bool {
 	// A trust policy that names the account root trusts every principal in that
 	// account; the caller is the account root, so an exact match already covers
 	// it. Fall back to wildcard matching for patterns like "arn:...:role/*".
-	return wildcardMatch(entry, caller)
+	return globMatch(entry, caller)
 }

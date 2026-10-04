@@ -364,6 +364,9 @@ func TestWildcardMatch(t *testing.T) {
 		{name: "prefix wildcard", pattern: "s3:*", value: "s3:GetObject", want: true},
 		{name: "no match", pattern: "s3:Get*", value: "s3:PutObject", want: false},
 		{name: "middle wildcard", pattern: "arn:aws:s3:::*/*", value: "arn:aws:s3:::bucket/key", want: true},
+		{name: "suffix is anchored", pattern: "s3:*Bucket", value: "s3:DeleteBucketPolicy", want: false},
+		{name: "inner star anchored", pattern: "storage.*.get", value: "storage.objects.getIamPolicy", want: false},
+		{name: "inner star match", pattern: "storage.*.get", value: "storage.objects.get", want: true},
 	}
 
 	for _, tt := range tests {

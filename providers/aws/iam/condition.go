@@ -188,14 +188,14 @@ func stringOp(op string) (cmp func(ctxVal, policyVal string) bool, negate, ok bo
 	}
 }
 
-// arnOp handles ARN operators. ArnEquals and ArnLike both allow the * wildcard
-// (AWS treats them equivalently apart from documented case handling).
+// arnOp handles ARN operators. ArnEquals and ArnLike behave the same in IAM:
+// both match component by component and allow '*' and '?' in each component.
 func arnOp(op string) (cmp func(ctxVal, policyVal string) bool, negate, ok bool) {
 	switch op {
 	case "ArnEquals", "ArnLike":
-		return strLike, false, true
+		return arnMatch, false, true
 	case "ArnNotEquals", "ArnNotLike":
-		return strLike, true, true
+		return arnMatch, true, true
 	default:
 		return nil, false, false
 	}
@@ -214,8 +214,9 @@ func ipOp(op string) (cmp func(ctxVal, policyVal string) bool, negate, ok bool) 
 
 func strEqual(ctxVal, policyVal string) bool { return ctxVal == policyVal }
 
-// strLike matches ctxVal against a policy pattern that may contain * wildcards.
-func strLike(ctxVal, policyVal string) bool { return wildcardMatch(policyVal, ctxVal) }
+// strLike matches ctxVal against a policy pattern that may contain '*' and '?'
+// wildcards, case-sensitively and against the whole value.
+func strLike(ctxVal, policyVal string) bool { return globMatch(policyVal, ctxVal) }
 
 // boolMatch compares the request and policy values as booleans.
 func boolMatch(ctxVal, policyVal string) bool {
