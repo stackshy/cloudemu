@@ -102,6 +102,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp, "networkSecurityPerimeterConfigurations") {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, &rp, kind)
@@ -292,6 +296,40 @@ func (h *Handler) unregisterActionGroup(rp *azurearm.ResourcePath) {
 	}
 
 	reg.UnregisterActionGroup(actionGroupID(rp))
+}
+
+// PurgeResourceGroup deletes every metric alert, action group, activity-log
+// alert and autoscale setting in subscription/resourceGroup, so a
+// resource-group delete cascades into them. The action-group in-use guard does
+// not apply: the alerts that reference a group go with it. The store lives in
+// this handler and is not persisted.
+func (h *Handler) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	for _, k := range h.store.purgeGroup(subscription, resourceGroup) {
+		rp := &azurearm.ResourcePath{Subscription: k.subscription, ResourceGroup: k.resourceGroup, ResourceName: k.name}
+
+		switch k.kind {
+		case typeAlerts:
+			// The alarm engine keys on the bare name, so keep it while another
+			// group still holds a same-named alert.
+			if !h.alertNameInUse(k.name) {
+				_ = h.mon.DeleteAlarm(context.Background(), k.name)
+			}
+		case typeActionGroup:
+			h.unregisterActionGroup(rp)
+		}
+	}
+
+	return nil
+}
+
+func (h *Handler) alertNameInUse(name string) bool {
+	for k := range h.store.allOfKind(typeAlerts) {
+		if k.name == name {
+			return true
+		}
+	}
+
+	return false
 }
 
 // actionGroupID builds the ARM resource id a metric alert references an action

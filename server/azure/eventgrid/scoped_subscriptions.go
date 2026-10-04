@@ -26,6 +26,7 @@ type scopedSubPath struct {
 	subscription  string
 	resourceGroup string
 	topicName     string // set only when {scope} is a Microsoft.EventGrid topic
+	action        string // getFullUrl or getDeliveryAttributes; empty otherwise
 }
 
 // scopedSubRecord is a wire-handler-owned event subscription attached to a
@@ -70,13 +71,17 @@ func parseScopedEventSubscription(path string) (scopedSubPath, bool) {
 		return scopedSubPath{}, false
 	}
 
-	// Reject trailing action segments (getFullUrl, getDeliveryAttributes): the
-	// name, if present, is the single segment right after the marker.
-	if len(parts) > i+4 {
+	// The name, if present, is the single segment right after the marker. The
+	// only deeper shape is one known POST action on a named subscription.
+	sp := scopedSubPath{scope: "/" + strings.Join(scopeSegs, "/")}
+
+	switch {
+	case len(parts) == i+5 && isEventSubAction(parts[i+4]):
+		sp.action = parts[i+4]
+	case len(parts) > i+4:
 		return scopedSubPath{}, false
 	}
 
-	sp := scopedSubPath{scope: "/" + strings.Join(scopeSegs, "/")}
 	if len(parts) > i+3 {
 		sp.name = parts[i+3]
 	}
@@ -115,15 +120,31 @@ func (h *Handler) serveScopedEventSubscription(w http.ResponseWriter, r *http.Re
 	// eventbus driver to unify with direct-form subs and share delivery.
 	if sp.topicName != "" {
 		rp := &azurearm.ResourcePath{
-			Subscription:    sp.subscription,
-			ResourceGroup:   sp.resourceGroup,
-			Provider:        providerName,
-			ResourceType:    typeTopics,
-			ResourceName:    sp.topicName,
-			SubResource:     subEventSubscriptions,
-			SubResourceName: sp.name,
+			Subscription:      sp.subscription,
+			ResourceGroup:     sp.resourceGroup,
+			Provider:          providerName,
+			ResourceType:      typeTopics,
+			ResourceName:      sp.topicName,
+			SubResource:       subEventSubscriptions,
+			SubResourceName:   sp.name,
+			SubResourceAction: sp.action,
 		}
 		h.serveEventSubscription(w, r, rp)
+
+		return
+	}
+
+	if sp.action != "" {
+		h.mu.RLock()
+		rec, ok := h.scopedSubs[scopedSubKey(sp.scope, sp.name)]
+
+		var props json.RawMessage
+		if ok {
+			props = rec.properties
+		}
+		h.mu.RUnlock()
+
+		serveEventSubAction(w, r, sp.action, props, ok)
 
 		return
 	}

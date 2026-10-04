@@ -618,6 +618,24 @@ func stateOrReady(status string) string {
 	return status
 }
 
+// emptyResponse is google.protobuf.Empty wrapped as an Any, a delete
+// operation's response.
+//
+//nolint:gochecknoglobals // immutable wire constant
+var emptyResponse = json.RawMessage(`{"@type":"type.googleapis.com/google.protobuf.Empty"}`)
+
+// instanceResponseAny encodes inst as the google.protobuf.Any a create or
+// update operation's response carries. The gapic Wait unpacks the response by
+// its "@type", so without it the call fails with a mismatched message type.
+//
+//nolint:gocritic // instanceJSON is the response value, encoded once per operation.
+func instanceResponseAny(inst instanceJSON) (json.RawMessage, error) {
+	return json.Marshal(struct {
+		Type string `json:"@type"`
+		instanceJSON
+	}{Type: "type.googleapis.com/google.cloud.redis.v1.Instance", instanceJSON: inst})
+}
+
 // doneOperation builds a completed google.longrunning.Operation for the given
 // operation id and records it with the shared LRO poller so a client polling the
 // returned name resolves the same done operation (with its response) in the full

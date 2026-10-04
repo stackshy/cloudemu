@@ -126,7 +126,7 @@ func TestClusterMask(t *testing.T) {
 	}
 
 	if op.Type != opUpdate || got.VcpuCount != 4 || got.MemoryBytes != 32*gib || len(got.Subnets) != 2 ||
-		got.RebalanceMode != rebalanceNone || got.Labels["a"] != "b" || got.KmsKey != "k1" {
+		got.RebalanceMode != "" || got.Labels["a"] != "b" || got.KmsKey != "k1" {
 		t.Fatalf("masked update = %+v", got)
 	}
 

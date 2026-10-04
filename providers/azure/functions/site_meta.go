@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -146,6 +148,19 @@ type SiteMeta struct {
 	HostFunctionKeys map[string]string
 	SystemKeys       map[string]string
 	Functions        map[string]*SiteFunction
+	// SiteConfig is the raw properties.siteConfig of the last site PUT or
+	// config/web write. GET config/web overlays it on the service defaults.
+	SiteConfig json.RawMessage
+	// Configs holds the other config/{name} documents (connectionstrings,
+	// logs, authsettingsv2, ...) keyed by lowercase name, each the raw
+	// properties object last written.
+	Configs map[string]json.RawMessage
+	// PublishingPolicies maps "ftp"/"scm" to the basic-auth allow flag. A
+	// missing entry means allowed, the Azure default.
+	PublishingPolicies map[string]bool
+	// PublishingPassword is minted once at create and returned by
+	// config/publishingcredentials/list.
+	PublishingPassword string
 }
 
 // clone returns a deep copy safe to hand outside the store lock.
@@ -155,6 +170,15 @@ func (s *SiteMeta) clone() *SiteMeta {
 	out.AppSettings = maps.Clone(s.AppSettings)
 	out.HostFunctionKeys = maps.Clone(s.HostFunctionKeys)
 	out.SystemKeys = maps.Clone(s.SystemKeys)
+	out.SiteConfig = slices.Clone(s.SiteConfig)
+	out.PublishingPolicies = maps.Clone(s.PublishingPolicies)
+
+	if s.Configs != nil {
+		out.Configs = make(map[string]json.RawMessage, len(s.Configs))
+		for k, v := range s.Configs {
+			out.Configs[k] = slices.Clone(v)
+		}
+	}
 
 	if s.Identity != nil {
 		out.Identity = s.Identity.clone()
@@ -186,15 +210,25 @@ func (m *Mock) UpsertSiteMeta(_ context.Context, in SiteMeta) (*SiteMeta, error)
 	defer m.sitesMu.Unlock()
 
 	if existing, ok := m.sites.Get(in.Name); ok {
+		if !existing.inScope(in.Subscription, in.ResourceGroup) {
+			return nil, siteNameTakenErr(in.Name)
+		}
+
 		existing.Location = in.Location
 		existing.ServerFarmID = in.ServerFarmID
 		existing.HTTPSOnly = in.HTTPSOnly
 		existing.Reserved = in.Reserved
-		existing.LinuxFxVersion = in.LinuxFxVersion
-		existing.AlwaysOn = cloneBoolPtr(in.AlwaysOn)
-		existing.FtpsState = in.FtpsState
-		existing.MinTLSVersion = in.MinTLSVersion
 		existing.AppSettings = maps.Clone(in.AppSettings)
+
+		// A nil in.SiteConfig means the PUT omitted siteConfig, so the web
+		// config set earlier (by a site PUT or config/web) is kept, as ARM does.
+		if in.SiteConfig != nil {
+			existing.LinuxFxVersion = in.LinuxFxVersion
+			existing.AlwaysOn = cloneBoolPtr(in.AlwaysOn)
+			existing.FtpsState = in.FtpsState
+			existing.MinTLSVersion = in.MinTLSVersion
+			existing.SiteConfig = slices.Clone(in.SiteConfig)
+		}
 
 		// An empty in.Kind means the request omitted kind, so the existing kind
 		// is preserved rather than reverting to the create-time default.
@@ -220,6 +254,7 @@ func (m *Mock) UpsertSiteMeta(_ context.Context, in SiteMeta) (*SiteMeta, error)
 	meta.MasterKey = generateKey()
 	meta.HostFunctionKeys = map[string]string{defaultKeyName: generateKey()}
 	meta.SystemKeys = map[string]string{}
+	meta.PublishingPassword = generateKey()
 
 	if meta.Functions == nil {
 		meta.Functions = map[string]*SiteFunction{}
@@ -409,6 +444,27 @@ func (m *Mock) UpdateAppSettings(
 	m.sites.Set(name, meta)
 
 	return meta.clone(), nil
+}
+
+// SiteNameOwnedElsewhere reports whether a site of this name exists under a
+// different subscription or resource group. Site names are global DNS labels
+// (*.azurewebsites.net), so a PUT of that name anywhere else must be refused
+// before it touches the name-keyed function record.
+func (m *Mock) SiteNameOwnedElsewhere(_ context.Context, subscription, resourceGroup, name string) bool {
+	m.sitesMu.RLock()
+	defer m.sitesMu.RUnlock()
+
+	meta, ok := m.sites.Get(name)
+
+	return ok && !meta.inScope(subscription, resourceGroup)
+}
+
+func (s *SiteMeta) inScope(subscription, resourceGroup string) bool {
+	return s.Subscription == subscription && strings.EqualFold(s.ResourceGroup, resourceGroup)
+}
+
+func siteNameTakenErr(name string) error {
+	return cerrors.Newf(cerrors.AlreadyExists, "Website with given name %s already exists.", name)
 }
 
 // GetFunctionScoped returns the function only when it belongs to the given

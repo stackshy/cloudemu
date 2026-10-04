@@ -111,6 +111,9 @@ const (
 	subResRoutes        = "routes"
 	subResVNetPeerings  = "virtualNetworkPeerings"
 	subResCheckIPAvail  = "CheckIPAddressAvailability"
+
+	// childMaxDepth is the deepest child route: {type}/{name}/{child}/{childName}.
+	childMaxDepth = 3
 )
 
 // Handler serves Microsoft.Network ARM requests against a networking driver.
@@ -273,7 +276,7 @@ func (h *Handler) routeVNet(w http.ResponseWriter, r *http.Request, rp azurearm.
 	// not a nested resource: route it before the plain vnet GET/PUT/DELETE
 	// switch below, or it falls through and answers with the vnet body instead
 	// of an IPAddressAvailabilityResult.
-	if strings.EqualFold(rp.SubResource, subResCheckIPAvail) {
+	if strings.EqualFold(rp.SubResource, subResCheckIPAvail) && rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 			return
@@ -286,6 +289,10 @@ func (h *Handler) routeVNet(w http.ResponseWriter, r *http.Request, rp azurearm.
 
 	if rp.ResourceName == "" {
 		h.listVNets(w, r, rp)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp, "usages", "ddosProtectionStatus") {
 		return
 	}
 
@@ -305,6 +312,10 @@ func (h *Handler) routeVNet(w http.ResponseWriter, r *http.Request, rp azurearm.
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) routeSubnet(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	if azurearm.TooDeep(w, r, &rp, childMaxDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		h.listSubnets(w, r, rp)
 		return
@@ -336,6 +347,10 @@ func (h *Handler) routeNSG(w http.ResponseWriter, r *http.Request, rp azurearm.R
 	// (the NSG's own name, not a rule).
 	if rp.SubResource == subResSecurityRules {
 		h.routeSecurityRule(w, r, rp)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp, "defaultSecurityRules") {
 		return
 	}
 
@@ -1560,6 +1575,10 @@ func (h *Handler) routePublicIP(w http.ResponseWriter, r *http.Request, rp azure
 		return
 	}
 
+	if azurearm.GuardLeaf(w, r, &rp) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createPublicIP(w, r, rp)
@@ -1611,6 +1630,7 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		Tags:               tags,
 		Zones:              req.Zones,
 		IdleTimeoutMinutes: req.Properties.IdleTimeoutInMinutes,
+		Location:           req.Location,
 	}
 
 	if req.Properties.DNSSettings != nil {
@@ -1623,12 +1643,7 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
-	loc := req.Location
-	if loc == "" {
-		loc = defaultLoc
-	}
-
-	body := h.toPublicIPResponse(r.Context(), info, rp, loc)
+	body := h.toPublicIPResponse(r.Context(), info, rp)
 
 	writeAcceptedAsync(w, r, rp.Subscription, "publicip-create-"+rp.ResourceName, body)
 }
@@ -1672,7 +1687,7 @@ func (h *Handler) getPublicIP(w http.ResponseWriter, r *http.Request, rp azurear
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, h.toPublicIPResponse(r.Context(), info, rp, defaultLoc))
+	azurearm.WriteJSON(w, http.StatusOK, h.toPublicIPResponse(r.Context(), info, rp))
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -1738,7 +1753,7 @@ func (h *Handler) listPublicIPs(w http.ResponseWriter, r *http.Request, rp azure
 		scope := rp
 		scope.ResourceGroup = tagOr(infos[i].Tags, armPublicIPRGTag, rp.ResourceGroup)
 		scope.ResourceName = tagOr(infos[i].Tags, armPublicIPTag, infos[i].AllocationID)
-		out.Value = append(out.Value, h.toPublicIPResponse(r.Context(), &infos[i], scope, defaultLoc))
+		out.Value = append(out.Value, h.toPublicIPResponse(r.Context(), &infos[i], scope))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, out)
@@ -2123,11 +2138,9 @@ func nicResourceID(nsgARMID, nicResourceGroup, nicName string) string {
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) toPublicIPResponse(
-	ctx context.Context, info *netdriver.ElasticIP, rp azurearm.ResourcePath, location string,
+	ctx context.Context, info *netdriver.ElasticIP, rp azurearm.ResourcePath,
 ) publicIPResponse {
-	if location == "" {
-		location = defaultLoc
-	}
+	location := orDefault(info.Location, defaultLoc)
 
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typePublicIP, rp.ResourceName)
 
@@ -2160,6 +2173,14 @@ func (h *Handler) toPublicIPResponse(
 	}
 
 	out.Properties.IPConfiguration = h.publicIPConfigurationRef(ctx, rp.Subscription, id)
+
+	// A Dynamic public IP has no address until it is attached to a resource (a
+	// NIC ipConfiguration or a NAT gateway); real ARM omits ipAddress until then.
+	// Static addresses are assigned at create.
+	if strings.EqualFold(info.AllocationMethod, "Dynamic") &&
+		out.Properties.IPConfiguration == nil && info.AssociationID == "" {
+		out.Properties.IPAddress = ""
+	}
 
 	if prefixID := tagOr(info.Tags, armPublicIPPrefixTag, ""); prefixID != "" {
 		out.Properties.PublicIPPrefix = &armIDRef{ID: prefixID}

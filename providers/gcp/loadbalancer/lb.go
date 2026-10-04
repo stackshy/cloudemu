@@ -28,7 +28,7 @@ type Mock struct {
 	opts      *config.Options
 
 	// gcpResources holds opaque GCP-only Compute Load Balancing resources
-	// (healthChecks, targetPools, urlMaps) keyed by "collection\x00scope\x00name".
+	// (healthChecks, targetPools, urlMaps) keyed by "project\x00collection\x00scope\x00name".
 	gcpResources *memstore.Store[driver.GCPResource]
 
 	healthMu sync.RWMutex
@@ -55,13 +55,13 @@ func New(opts *config.Options) *Mock {
 // CreateLoadBalancer creates a new forwarding rule (load balancer).
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) CreateLoadBalancer(_ context.Context, cfg driver.LBConfig) (*driver.LBInfo, error) {
+func (m *Mock) CreateLoadBalancer(ctx context.Context, cfg driver.LBConfig) (*driver.LBInfo, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "load balancer name is required")
 	}
 
 	id := idgen.GenerateID("lb-")
-	arn := idgen.GCPID(m.opts.ProjectID, "forwardingRules", cfg.Name)
+	arn := idgen.GCPID(m.project(ctx), "forwardingRules", cfg.Name)
 	dnsName := fmt.Sprintf("%s.%s.lb.gcp.example.com", cfg.Name, m.opts.Region)
 
 	subnets := make([]string, len(cfg.Subnets))
@@ -110,20 +110,20 @@ func (m *Mock) DeleteLoadBalancer(_ context.Context, arn string) error {
 
 // DescribeLoadBalancers returns load balancers matching the given resource names (ARNs).
 // If arns is empty, all load balancers are returned.
-func (m *Mock) DescribeLoadBalancers(_ context.Context, arns []string) ([]driver.LBInfo, error) {
-	return describeResources(m.lbs, arns), nil
+func (m *Mock) DescribeLoadBalancers(ctx context.Context, arns []string) ([]driver.LBInfo, error) {
+	return describeScoped(ctx, m, m.lbs, arns), nil
 }
 
 // CreateTargetGroup creates a new backend service (target group).
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) CreateTargetGroup(_ context.Context, cfg driver.TargetGroupConfig) (*driver.TargetGroupInfo, error) {
+func (m *Mock) CreateTargetGroup(ctx context.Context, cfg driver.TargetGroupConfig) (*driver.TargetGroupInfo, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "backend service name is required")
 	}
 
 	id := idgen.GenerateID("bs-")
-	arn := idgen.GCPID(m.opts.ProjectID, "backendServices", cfg.Name)
+	arn := idgen.GCPID(m.project(ctx), "backendServices", cfg.Name)
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
@@ -169,8 +169,8 @@ func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
 
 // DescribeTargetGroups returns backend services (target groups) matching the given resource names.
 // If arns is empty, all backend services are returned.
-func (m *Mock) DescribeTargetGroups(_ context.Context, arns []string) ([]driver.TargetGroupInfo, error) {
-	return describeResources(m.tgs, arns), nil
+func (m *Mock) DescribeTargetGroups(ctx context.Context, arns []string) ([]driver.TargetGroupInfo, error) {
+	return describeScoped(ctx, m, m.tgs, arns), nil
 }
 
 // describeResources is a generic helper for Describe* methods that list or filter by keys.
@@ -213,12 +213,14 @@ func filterToSlice[T any](store *memstore.Store[T], pred func(string, T) bool) [
 }
 
 // CreateListener creates a new URL map / listener on a load balancer.
-func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*driver.ListenerInfo, error) {
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) CreateListener(ctx context.Context, cfg driver.ListenerConfig) (*driver.ListenerInfo, error) {
 	if _, ok := m.lbs.Get(cfg.LBARN); !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "load balancer %q not found", cfg.LBARN)
 	}
 
-	arn := idgen.GCPID(m.opts.ProjectID, "urlMaps",
+	arn := idgen.GCPID(m.project(ctx), "urlMaps",
 		fmt.Sprintf("%s-%d", cfg.LBARN, cfg.Port))
 
 	li := driver.ListenerInfo{
@@ -257,12 +259,14 @@ func (m *Mock) DescribeListeners(_ context.Context, lbARN string) ([]driver.List
 }
 
 // CreateRule creates a new URL map path rule for a listener.
-func (m *Mock) CreateRule(_ context.Context, cfg driver.RuleConfig) (*driver.RuleInfo, error) {
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) CreateRule(ctx context.Context, cfg driver.RuleConfig) (*driver.RuleInfo, error) {
 	if _, ok := m.listeners.Get(cfg.ListenerARN); !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "listener %q not found", cfg.ListenerARN)
 	}
 
-	arn := idgen.GCPID(m.opts.ProjectID, "pathRules", idgen.GenerateID("rule-"))
+	arn := idgen.GCPID(m.project(ctx), "pathRules", idgen.GenerateID("rule-"))
 
 	conditions := make([]driver.RuleCondition, len(cfg.Conditions))
 	copy(conditions, cfg.Conditions)

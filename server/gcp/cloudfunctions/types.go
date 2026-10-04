@@ -86,6 +86,16 @@ type operation struct {
 	Error    *opError       `json:"error,omitempty"`
 }
 
+// anyTypeKey is the google.protobuf.Any type discriminator in an operation
+// response.
+const anyTypeKey = "@type"
+
+// emptyResponse is a delete operation's response, a google.protobuf.Empty Any.
+// The gapic clients' DeleteFunction Wait rejects a done operation without one.
+func emptyResponse() map[string]any {
+	return map[string]any{anyTypeKey: "type.googleapis.com/google.protobuf.Empty"}
+}
+
 type opError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`

@@ -50,6 +50,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
@@ -84,11 +85,14 @@ type Handler struct {
 	// destination, as before.
 	functions FunctionResolver
 	cloudRun  CloudRunResolver
+
+	// clock stamps operation ids and metadata.
+	clock config.Clock
 }
 
 // New returns an Eventarc handler backed by b.
 func New(b ebdriver.EventBus) *Handler {
-	return &Handler{bus: b}
+	return &Handler{bus: b, clock: config.RealClock{}}
 }
 
 // SetOperationRegistry wires the shared LRO poller so created operations are

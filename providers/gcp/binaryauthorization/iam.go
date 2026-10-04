@@ -4,6 +4,7 @@ import (
 	"context"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
 	"github.com/stackshy/cloudemu/v2/services/binaryauthorization/driver"
 )
 
@@ -20,14 +21,15 @@ func (m *Mock) GetIamPolicy(_ context.Context, name string) (*driver.IAMPolicy, 
 	}
 
 	if a.IAMPolicy == nil {
-		return &driver.IAMPolicy{Version: 1, Etag: newEtag()}, nil
+		return &driver.IAMPolicy{Version: 1, Etag: resourceiam.InitialEtag()}, nil
 	}
 
 	return clonePolicyIAM(a.IAMPolicy), nil
 }
 
 // SetIamPolicy stores the attestor's IAM policy and returns it with a refreshed
-// etag.
+// etag. An empty etag is a blind overwrite; an etag that no longer matches the
+// stored policy is resourceiam.ErrAborted (real 409 ABORTED).
 func (m *Mock) SetIamPolicy(_ context.Context, name string, policy driver.IAMPolicy) (*driver.IAMPolicy, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -37,12 +39,21 @@ func (m *Mock) SetIamPolicy(_ context.Context, name string, policy driver.IAMPol
 		return nil, cerrors.Newf(cerrors.NotFound, "attestor %q not found", name)
 	}
 
+	cur := resourceiam.InitialEtag()
+	if a.IAMPolicy != nil {
+		cur = a.IAMPolicy.Etag
+	}
+
+	if policy.Etag != "" && policy.Etag != cur {
+		return nil, resourceiam.ErrAborted
+	}
+
 	stored := clonePolicyIAM(&policy)
 	if stored.Version == 0 {
 		stored.Version = 1
 	}
 
-	stored.Etag = newEtag()
+	stored.Etag = resourceiam.NextEtag(cur)
 	a.IAMPolicy = stored
 	m.attestors.Set(name, a)
 

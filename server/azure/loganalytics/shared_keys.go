@@ -24,7 +24,7 @@ func (h *Handler) getSharedKeys(w http.ResponseWriter, r *http.Request, rp *azur
 		return
 	}
 
-	info, err := h.logs.GetLogGroup(r.Context(), rp.ResourceName)
+	info, err := h.workspace(r.Context(), rp)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return

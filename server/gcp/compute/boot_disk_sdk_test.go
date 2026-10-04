@@ -49,8 +49,9 @@ func TestSDKInsertMaterializesBootDisk(t *testing.T) {
 		t.Errorf("type=%q want .../diskTypes/pd-ssd", got.GetType())
 	}
 
-	if !strings.HasSuffix(got.GetSourceImage(), "/family/debian-12") {
-		t.Errorf("sourceImage=%q want .../family/debian-12", got.GetSourceImage())
+	// GCE stores the concrete image a family resolved to, not the family link.
+	if !strings.HasSuffix(got.GetSourceImage(), "/projects/debian-cloud/global/images/debian-12-bookworm-v20250415") {
+		t.Errorf("sourceImage=%q want the newest debian-12 image", got.GetSourceImage())
 	}
 
 	users := got.GetUsers()

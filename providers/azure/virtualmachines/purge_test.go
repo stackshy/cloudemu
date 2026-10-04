@@ -75,7 +75,7 @@ func TestPurgeComputeResourceGroup(t *testing.T) {
 		}
 	}
 
-	if err := m.PurgeComputeResourceGroup(ctx, "cas1"); err != nil {
+	if err := m.PurgeComputeResourceGroup(ctx, "s1", "cas1"); err != nil {
 		t.Fatalf("PurgeComputeResourceGroup: %v", err)
 	}
 
@@ -97,6 +97,77 @@ func TestPurgeComputeResourceGroup(t *testing.T) {
 	for kind, n := range counts {
 		if n != 1 {
 			t.Errorf("%s left after purge = %d, want 1 (the cas10 one)", kind, n)
+		}
+	}
+}
+
+// TestPurgeComputeResourceGroupStaysInSubscription: a same-named group in
+// another subscription keeps its VMs, scale sets, disks, snapshots, images and
+// keys.
+func TestPurgeComputeResourceGroupStaysInSubscription(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	vms := map[string]string{}
+
+	for _, sub := range []string{"sub-a", "sub-b"} {
+		tags := map[string]string{rgTag: "shared", subTag: sub}
+
+		insts, err := m.RunInstances(ctx, driver.InstanceConfig{
+			ImageID: "img", InstanceType: "Standard_B1s", ResourceGroup: "shared", Tags: tags,
+		}, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		vms[sub] = insts[0].ID
+
+		if _, err := m.CreateScaleSet(ctx, ScaleSet{Name: "ss-" + sub, ResourceGroup: "shared", Subscription: sub}); err != nil {
+			t.Fatal(err)
+		}
+
+		vol, err := m.CreateVolume(ctx, driver.VolumeConfig{Size: 4, Tags: tags})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := m.CreateSnapshot(ctx, driver.SnapshotConfig{VolumeID: vol.ID, Tags: tags}); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := m.CreateImage(ctx, driver.ImageConfig{Name: "i-" + sub, OSDiskID: "d", Tags: tags}); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := m.CreateKeyPair(ctx, driver.KeyPairConfig{Name: "k-" + sub, Tags: tags}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := m.PurgeComputeResourceGroup(ctx, "SUB-A", "Shared"); err != nil {
+		t.Fatalf("PurgeComputeResourceGroup: %v", err)
+	}
+
+	if _, ok := m.instances.Get(vms["sub-a"]); ok {
+		t.Error("VM in sub-a survived its group's purge")
+	}
+
+	if _, ok := m.instances.Get(vms["sub-b"]); !ok {
+		t.Error("VM in sub-b was purged with sub-a's group")
+	}
+
+	if _, ok := m.scaleSets.Get(scaleSetKey("sub-b", "shared", "ss-sub-b")); !ok {
+		t.Error("scale set in sub-b was purged with sub-a's group")
+	}
+
+	counts := map[string]int{
+		"scale sets": len(m.scaleSets.All()), "disks": len(m.volumes.All()),
+		"snapshots": len(m.snapshots.All()), "images": len(m.images.All()), "keys": len(m.keyPairs.All()),
+	}
+
+	for kind, n := range counts {
+		if n != 1 {
+			t.Errorf("%s left after purge = %d, want 1 (the sub-b one)", kind, n)
 		}
 	}
 }

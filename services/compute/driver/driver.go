@@ -772,11 +772,11 @@ type AzureVMDeleter interface {
 }
 
 // AzureResourceGroupPurger is an optional Azure-only capability that tears down
-// every compute resource recorded under a resource group: VMs, scale sets,
-// managed disks, snapshots, images and SSH public keys. It backs the ARM
-// resource-group delete cascade.
+// every compute resource recorded under a resource group of a subscription:
+// VMs, scale sets, managed disks, snapshots, images and SSH public keys. It
+// backs the ARM resource-group delete cascade.
 type AzureResourceGroupPurger interface {
-	PurgeComputeResourceGroup(ctx context.Context, resourceGroup string) error
+	PurgeComputeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
 }
 
 // AzureVMController is an optional Azure-only capability supporting the ARM
@@ -877,6 +877,55 @@ type AzureSSHKeyUpdater interface {
 	// A nil publicKey / tags leaves that field unchanged; a non-nil tags map
 	// replaces the resource's tags.
 	UpdateKeyPair(ctx context.Context, name string, publicKey *string, tags map[string]string) (*KeyPairInfo, error)
+}
+
+// AzureVMExtension is a Microsoft.Compute/virtualMachines/extensions child.
+// Properties holds the ARM properties as sent (publisher, type,
+// typeHandlerVersion, settings, ...) minus protectedSettings, which Azure
+// accepts on write and never returns.
+type AzureVMExtension struct {
+	Name       string
+	Location   string
+	Tags       map[string]string
+	Properties map[string]any
+}
+
+// AzureVMExtensions is an optional Azure-only capability for VM extensions.
+// Extensions belong to a VM: they are deleted with it. Only the Azure VM mock
+// implements it; the wire handler type-asserts for it.
+type AzureVMExtensions interface {
+	// PutVMExtension creates or replaces the extension on the VM, reporting
+	// whether it was created. Returns NotFound when the VM does not exist.
+	PutVMExtension(ctx context.Context, instanceID string, ext AzureVMExtension) (*AzureVMExtension, bool, error)
+	GetVMExtension(ctx context.Context, instanceID, name string) (*AzureVMExtension, error)
+	ListVMExtensions(ctx context.Context, instanceID string) ([]AzureVMExtension, error)
+	DeleteVMExtension(ctx context.Context, instanceID, name string) error
+}
+
+// AzureAvailabilitySet is a Microsoft.Compute/availabilitySets resource.
+type AzureAvailabilitySet struct {
+	Name                      string
+	Subscription              string
+	ResourceGroup             string
+	Location                  string
+	Tags                      map[string]string
+	SKUName                   string // "Aligned" (managed disks) or "Classic"
+	PlatformFaultDomainCount  int
+	PlatformUpdateDomainCount int
+	ProximityPlacementGroupID string
+}
+
+// AzureAvailabilitySets is an optional Azure-only capability for availability
+// sets. Only the Azure VM mock implements it.
+type AzureAvailabilitySets interface {
+	// PutAvailabilitySet creates or replaces the set. Out-of-range domain
+	// counts are InvalidArgument.
+	PutAvailabilitySet(ctx context.Context, set AzureAvailabilitySet) (*AzureAvailabilitySet, error)
+	GetAvailabilitySet(ctx context.Context, subscription, resourceGroup, name string) (*AzureAvailabilitySet, error)
+	// ListAvailabilitySets lists the sets of a subscription, narrowed to one
+	// resource group when resourceGroup is set.
+	ListAvailabilitySets(ctx context.Context, subscription, resourceGroup string) ([]AzureAvailabilitySet, error)
+	DeleteAvailabilitySet(ctx context.Context, subscription, resourceGroup, name string) error
 }
 
 // KeyPairGenerator is an optional Azure-only capability for the ARM

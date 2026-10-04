@@ -18,6 +18,10 @@
 //	DELETE .../providers/Microsoft.Cache/redis/{name}   : Redis.BeginDelete (LRO, completes inline)
 //	GET    .../providers/Microsoft.Cache/redis          : Redis.ListByResourceGroup
 //	GET    .../subscriptions/{sub}/providers/Microsoft.Cache/redis : Redis.ListBySubscription
+//	PUT/GET/DELETE .../redis/{name}/patchSchedules/default : PatchSchedules
+//	GET    .../redis/{name}/patchSchedules                 : PatchSchedules.ListByRedisResource
+//	PUT/GET/DELETE .../redis/{name}/firewallRules/{rule}   : FirewallRules
+//	GET    .../redis/{name}/firewallRules                  : FirewallRules.List
 //
 // Only the cluster/instance control plane is mapped: the real Azure Cache SDK
 // manages Redis caches, not the Redis data plane. The driver's data-plane
@@ -25,6 +29,7 @@
 package cache
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -44,6 +49,12 @@ type Handler struct {
 // New returns an Azure Cache handler backed by c.
 func New(c cachedriver.Cache) *Handler {
 	return &Handler{cache: c}
+}
+
+// PurgeResourceGroup deletes every Redis cache in the resource group, backing
+// the resource-group cascade.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	return azurearm.PurgeVia(ctx, h.cache, subscription, resourceGroup)
 }
 
 // Matches claims ARM URLs targeting Microsoft.Cache/redis. The provider name is
@@ -78,9 +89,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sub-resource actions on a named cache (listKeys, regenerateKey) are POSTs.
+	// Children (patchSchedules, firewallRules) and POST actions (listKeys,
+	// regenerateKey) on a named cache.
 	if rp.SubResource != "" {
-		h.serveAction(w, r, &rp)
+		h.serveSubResource(w, r, &rp)
 		return
 	}
 

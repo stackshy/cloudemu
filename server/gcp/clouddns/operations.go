@@ -305,6 +305,8 @@ func (h *Handler) deleteZone(w http.ResponseWriter, r *http.Request, rt route) {
 		return
 	}
 
+	h.iam.Delete(zoneResource(rt))
+
 	// Cloud DNS Delete returns an empty 200 body.
 	gcprest.WriteJSON(w, http.StatusOK, struct{}{})
 }

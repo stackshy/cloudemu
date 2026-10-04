@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	gkeprov "github.com/stackshy/cloudemu/v2/providers/gcp/gke"
 	gcpmon "github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
 	"github.com/stackshy/cloudemu/v2/server"
 	acmsrv "github.com/stackshy/cloudemu/v2/server/gcp/accesscontextmanager"
 	alloydbsrv "github.com/stackshy/cloudemu/v2/server/gcp/alloydb"
@@ -65,11 +66,13 @@ import (
 	securesourcemanagersrv "github.com/stackshy/cloudemu/v2/server/gcp/securesourcemanager"
 	servicedirectorysrv "github.com/stackshy/cloudemu/v2/server/gcp/servicedirectory"
 	"github.com/stackshy/cloudemu/v2/server/gcp/servicenetworking"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 	spannersrv "github.com/stackshy/cloudemu/v2/server/gcp/spanner"
 	vertexaisrv "github.com/stackshy/cloudemu/v2/server/gcp/vertexai"
 	"github.com/stackshy/cloudemu/v2/server/gcp/vpc"
 	vpcaccesssrv "github.com/stackshy/cloudemu/v2/server/gcp/vpcaccess"
 	workflowssrv "github.com/stackshy/cloudemu/v2/server/gcp/workflows"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/accesscontextmanager/driver"
 	agdriver "github.com/stackshy/cloudemu/v2/services/apigatewaygcp/driver"
@@ -153,6 +156,10 @@ type Drivers struct {
 	// Matches disambiguates by content and instance ownership, and it registers
 	// ahead of Cloud SQL (see New).
 	Spanner spannerdriver.Spanner
+	// ResourceIAM keeps the resource policies the BigQuery, Spanner, Cloud DNS,
+	// Compute, VPC and load-balancing handlers serve. Nil gets a fresh
+	// in-memory store.
+	ResourceIAM gcpiam.Store
 	// Dataproc serves the dataproc.googleapis.com v1 cluster control plane against
 	// the dataproc driver. Its paths live under /v1/projects/{p}/regions/{r}/
 	// {clusters|operations}; the handler's Matches narrows on the regions keyword
@@ -388,16 +395,16 @@ type Drivers struct {
 //
 //nolint:gocritic,gocyclo,gocognit,funlen // Drivers is all interface fields; one if-per-driver, grows with the bundle.
 func New(d Drivers) *server.Server {
-	// AlloyDB and GKE claim the same /v1/projects/{p}/locations/{l}/clusters
-	// paths, so enabling both would silently shadow one. Fail fast rather than
-	// route ambiguously. Use DriversFromWithAlloyDB to enable AlloyDB in place
-	// of GKE.
-	if d.AlloyDB != nil && d.GKE != nil {
-		panic("gcp server: AlloyDB and GKE share REST paths and cannot both be enabled; " +
-			"use DriversFromWithAlloyDB to enable AlloyDB in place of GKE")
-	}
-
 	srv := server.New()
+
+	// An opt-in /<api>.googleapis.com/ path alias names the API for paths more
+	// than one service serves (see sharedpath). Any other path is untouched.
+	srv.SetPreDispatch(sharedpath.Rewrite)
+
+	iamStore := d.ResourceIAM
+	if iamStore == nil {
+		iamStore = resourceiam.New()
+	}
 
 	// Managed Kafka shares the exact /v1/projects/{p}/locations/{l}/clusters[/…]
 	// grammar with GKE and AlloyDB (all greedy on that collection), so it
@@ -414,6 +421,8 @@ func New(d Drivers) *server.Server {
 		kafkaH = managedkafkasrv.New(d.ManagedKafka)
 
 		switch {
+		case d.GKE != nil && d.AlloyDB != nil:
+			kafkaH.SetClusterSibling(kafkaSibling{gke: gkeClusterSibling{m: d.GKE}, alloy: alloyDBClusterSibling{db: d.AlloyDB}})
 		case d.GKE != nil:
 			kafkaH.SetClusterSibling(gkeClusterSibling{m: d.GKE})
 		case d.AlloyDB != nil:
@@ -436,6 +445,10 @@ func New(d Drivers) *server.Server {
 		// 0→N drift. Nil compute driver leaves node pools without MIG URLs.
 		if reg, ok := d.Compute.(gke.InstanceGroupManagerRegistrar); ok {
 			gkeH.SetInstanceGroupManagers(reg)
+		}
+
+		if d.AlloyDB != nil {
+			gkeH.SetAlloyDBOwner(alloyDBClusterSibling{db: d.AlloyDB})
 		}
 
 		srv.Register(gkeH)
@@ -468,6 +481,7 @@ func New(d Drivers) *server.Server {
 		// networkIP from the referenced subnetwork's CIDR.
 		computeH := compute.New(d.Compute, d.Networking)
 		computeH.SetOperationRegistry(computeOps)
+		computeH.SetIAMStore(iamStore)
 		srv.Register(computeH)
 	}
 
@@ -476,12 +490,15 @@ func New(d Drivers) *server.Server {
 		// subnet that still has instances.
 		netH := vpc.New(d.Networking, d.Compute)
 		netH.SetOperationRegistry(computeOps)
+		netH.SetIAMStore(iamStore)
 		srv.Register(netH)
 	}
 
 	// Service Networking has no driver: a private-services connection is a
 	// record, and nothing in the emulator routes the peering it stands for.
-	srv.Register(servicenetworking.New())
+	snH := servicenetworking.New()
+	snH.SetOperationRegistry(opsReg)
+	srv.Register(snH)
 
 	// Cloud Load Balancing shares the /compute/v1/projects/… URL space with the
 	// compute and networks handlers above but claims a disjoint set of resource
@@ -495,6 +512,7 @@ func New(d Drivers) *server.Server {
 	if d.LB != nil {
 		lbH := lbsrv.New(d.LB)
 		lbH.SetOperationRegistry(computeOps)
+		lbH.SetIAMStore(iamStore)
 
 		if d.Storage != nil {
 			// backendBuckets reject a bucketName naming no existing GCS bucket.
@@ -540,6 +558,8 @@ func New(d Drivers) *server.Server {
 		}
 
 		cfHandler = cloudfunctions.New(d.CloudFunctions, cfOpts...)
+		cfHandler.SetOperationRegistry(opsReg)
+		cfHandler.SetIAMStore(iamStore)
 		srv.Register(cfHandler)
 	}
 
@@ -548,7 +568,10 @@ func New(d Drivers) *server.Server {
 	// /v2/projects/{p}/logs paths, so registration order between the two is
 	// unconstrained; registered here alongside the other /v2 handlers.
 	if d.CloudRun != nil {
-		srv.Register(cloudrunsrv.New(d.CloudRun))
+		crH := cloudrunsrv.New(d.CloudRun)
+		crH.SetOperationRegistry(opsReg)
+		crH.SetIAMStore(iamStore)
+		srv.Register(crH)
 	}
 
 	// PubSub matches /v1/projects/{p}/{topics|subscriptions}/...; register
@@ -557,7 +580,7 @@ func New(d Drivers) *server.Server {
 	var pubsubHandler *pubsub.Handler
 
 	if d.PubSub != nil {
-		pubsubHandler = pubsub.New(d.PubSub)
+		pubsubHandler = pubsub.New(d.PubSub, d.ProjectID)
 		// PubSub -> Cloud Functions: a publish invokes every function whose
 		// eventTrigger targets the topic (gen1 resource / gen2 pubsubTopic),
 		// mirroring the AWS S3/DynamoDB -> Lambda event-delivery wiring. Push
@@ -590,7 +613,9 @@ func New(d Drivers) *server.Server {
 	// /compute/v1/, and /dns/v1/, so registration order relative to every other
 	// handler is unconstrained.
 	if d.BigQuery != nil {
-		srv.Register(bigqueryserver.New(d.BigQuery))
+		bqH := bigqueryserver.New(d.BigQuery)
+		bqH.SetIAMStore(iamStore)
+		srv.Register(bqH)
 	}
 
 	// Spanner shares the /v1/projects/{p}/instances URL space with Cloud SQL, so
@@ -599,7 +624,13 @@ func New(d Drivers) *server.Server {
 	// instance list), letting every other /v1/projects/{p}/instances request fall
 	// through to Cloud SQL below.
 	if d.Spanner != nil {
-		srv.Register(spannersrv.New(d.Spanner))
+		spannerH := spannersrv.New(d.Spanner)
+		spannerH.SetIAMStore(iamStore)
+		if d.CloudSQL != nil {
+			spannerH.SetSharedPath()
+		}
+
+		srv.Register(spannerH)
 	}
 
 	if d.CloudSQL != nil {
@@ -680,6 +711,7 @@ func New(d Drivers) *server.Server {
 	if d.PrivateCA != nil {
 		privatecaH := privatecasrv.New(d.PrivateCA)
 		privatecaH.SetOperationRegistry(opsReg)
+		privatecaH.SetIAMStore(iamStore)
 		srv.Register(privatecaH)
 	}
 
@@ -693,6 +725,10 @@ func New(d Drivers) *server.Server {
 	if d.GKEBackup != nil {
 		gkebackupH := gkebackupsrv.New(d.GKEBackup)
 		gkebackupH.SetOperationRegistry(opsReg)
+
+		if d.BackupDR != nil {
+			gkebackupH.SetSharedPath()
+		}
 		srv.Register(gkebackupH)
 	}
 
@@ -757,6 +793,10 @@ func New(d Drivers) *server.Server {
 	if d.CloudIDS != nil {
 		cloudidsH := cloudidssrv.New(d.CloudIDS)
 		cloudidsH.SetOperationRegistry(opsReg)
+
+		if d.VertexAI != nil {
+			cloudidsH.SetSharedPath()
+		}
 		srv.Register(cloudidsH)
 	}
 
@@ -854,7 +894,12 @@ func New(d Drivers) *server.Server {
 	// unconstrained; registered before Firestore's permissive prefix. CRUD is
 	// synchronous REST: no operation registry is wired.
 	if d.Dataform != nil {
-		srv.Register(dataformsrv.New(d.Dataform))
+		dataformH := dataformsrv.New(d.Dataform)
+		if d.ArtifactRegistry != nil {
+			dataformH.SetSharedPath()
+		}
+
+		srv.Register(dataformH)
 	}
 
 	// API Gateway matches /{v1beta,v1}/projects/{p}/locations/{l}/{apis|gateways}
@@ -872,12 +917,18 @@ func New(d Drivers) *server.Server {
 	}
 
 	// AlloyDB matches /v1/projects/{p}/locations/{l}/{clusters|backups|
-	// operations}/.... The cluster/operations paths are identical to GKE's, so
-	// the two are mutually exclusive on one server. Registered before GKE so an
-	// AlloyDB-configured server (GKE nil) works; DriversFrom leaves AlloyDB nil.
+	// operations}/.... The clusters paths are identical to GKE's. With both
+	// mounted, GKE (registered earlier) keeps lists and GKE-owned items, and
+	// AlloyDB claims its unique shapes, hinted requests and the items it alone
+	// owns (see alloydb/shared.go and gke/shared.go).
 	if d.AlloyDB != nil {
 		alloyH := alloydbsrv.New(d.AlloyDB)
 		alloyH.SetOperationRegistry(opsReg)
+
+		if d.GKE != nil {
+			alloyH.SetSharedPath(gkeNamer{m: d.GKE})
+		}
+
 		srv.Register(alloyH)
 	}
 
@@ -916,6 +967,7 @@ func New(d Drivers) *server.Server {
 	if d.ArtifactRegistry != nil {
 		arH := artifactregistry.New(d.ArtifactRegistry)
 		arH.SetOperationRegistry(opsReg)
+		arH.SetIAMStore(iamStore)
 		srv.Register(arH)
 	}
 
@@ -955,7 +1007,9 @@ func New(d Drivers) *server.Server {
 	// unconstrained relative to Firestore and the rest. Registered before the
 	// GCS fallback for consistency with the other handlers.
 	if d.CloudDNS != nil {
-		srv.Register(clouddns.New(d.CloudDNS))
+		dnsH := clouddns.New(d.CloudDNS)
+		dnsH.SetIAMStore(iamStore)
+		srv.Register(dnsH)
 	}
 
 	// Cloud Logging matches /v2/entries:{write,list} and /v2/projects/{p}/logs,
@@ -980,6 +1034,10 @@ func New(d Drivers) *server.Server {
 	// /v1/projects/ prefix.
 	filestoreH := filestoresrv.New(d.Clock)
 	filestoreH.SetOperationRegistry(opsReg)
+
+	if d.Memorystore != nil {
+		filestoreH.SetSharedPath()
+	}
 	srv.Register(filestoreH)
 
 	// Memorystore matches /v1/projects/{p}/locations/{l}/{instances|operations},
@@ -991,6 +1049,7 @@ func New(d Drivers) *server.Server {
 	// of it; its selective Matches lets Memorystore traffic fall through here.
 	if d.Memorystore != nil {
 		msH := memorystoresrv.New(d.Memorystore)
+		msH.SetSharedPath()
 		msH.SetOperationRegistry(opsReg)
 		srv.Register(msH)
 	}
@@ -1036,7 +1095,9 @@ func New(d Drivers) *server.Server {
 	// servicenetworking). Its /v1/projects/{p}/billingInfo route overlaps the
 	// /v1/projects/ family, so it registers before Firestore; the billingInfo-
 	// suffix guard keeps it disjoint from Firestore's /v1/projects/{p}/databases.
-	srv.Register(cloudbilling.New())
+	billingH := cloudbilling.New()
+	billingH.SetIAMStore(iamStore)
+	srv.Register(billingH)
 
 	// Project-level IAM policy (cloudresourcemanager.googleapis.com):
 	// POST /v1/projects/{p}:{get,set}IamPolicy / :testIamPermissions. This is
@@ -1045,7 +1106,9 @@ func New(d Drivers) *server.Server {
 	// wire-only store) so it is always registered, like cloudbilling above; the
 	// colon-verb single-segment guard keeps it disjoint from every other
 	// /v1/projects/ handler, but it must precede Firestore's permissive prefix.
-	srv.Register(resourcemanager.New())
+	crmH := resourcemanager.New()
+	crmH.SetIAMStore(iamStore)
+	srv.Register(crmH)
 
 	// Cloud KMS (cloudkms.googleapis.com) matches /v1/projects/{p}/locations/{l}/
 	// keyRings[/…]. Its keyRings resource-type guard is disjoint from every other
@@ -1072,7 +1135,7 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.Monitoring != nil {
-		srv.Register(monitoring.New(d.Monitoring))
+		srv.Register(monitoring.New(d.Monitoring, d.ProjectID))
 	}
 
 	// Kubernetes data-plane API. Matches /k8s/{uid}/..., disjoint from every

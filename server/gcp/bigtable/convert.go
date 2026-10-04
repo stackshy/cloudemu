@@ -1,13 +1,14 @@
 package bigtable
 
 import (
-	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
 
 	bt "google.golang.org/api/bigtableadmin/v2"
+	"google.golang.org/api/googleapi"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 )
 
@@ -264,23 +265,42 @@ func fromWirePolicy(p *bt.Policy) btdriver.Policy {
 	return out
 }
 
-// doneOp builds a completed LRO carrying the resulting resource as its response.
+// doneOp builds a completed LRO carrying the resulting resource as a typed Any
+// response, so a GAPIC op.Wait() can decode it.
 func doneOp(op *btdriver.Operation, response any) *bt.Operation {
 	out := &bt.Operation{Name: op.Name, Done: true}
-	if response != nil {
-		out.Response = mustRawJSON(response)
+
+	typeURL := responseTypeURL(response)
+	if typeURL == "" {
+		return out
+	}
+
+	if raw, err := gcprest.TypedAny(response, typeURL); err == nil {
+		out.Response = googleapi.RawMessage(raw)
 	}
 
 	return out
 }
 
-func mustRawJSON(v any) []byte {
-	raw, err := json.Marshal(v)
-	if err != nil {
-		return []byte("{}")
-	}
+// responseTypeURL is the google.bigtable.admin.v2 Any type URL of a wire
+// resource, or "" for anything else.
+func responseTypeURL(response any) string {
+	const prefix = "type.googleapis.com/google.bigtable.admin.v2."
 
-	return raw
+	switch response.(type) {
+	case *bt.Instance:
+		return prefix + "Instance"
+	case *bt.Cluster:
+		return prefix + "Cluster"
+	case *bt.Table:
+		return prefix + "Table"
+	case *bt.AppProfile:
+		return prefix + "AppProfile"
+	case *bt.Backup:
+		return prefix + "Backup"
+	default:
+		return ""
+	}
 }
 
 // lastSegment returns the final path segment of a resource name.

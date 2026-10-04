@@ -26,6 +26,7 @@ const (
 	resourceType    = "disks"
 	armNameTag      = "cloudemu:azureDiskName"
 	rgTag           = "cloudemu:azureRG"
+	subTag          = "cloudemu:azureSub" // the subscription a resource was created in
 	createOptionTag = "cloudemu:createOption"
 	sourceIDTag     = "cloudemu:sourceResourceId"
 	defaultLocation = "eastus"
@@ -261,7 +262,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		Tier:             diskTier(req.Properties.Tier, skuTier(req.SKU)),
 		Location:         req.Location,
 		AvailabilityZone: firstZone(req.Zones),
-		Tags:             mergeDiskTags(req.Tags, rp.ResourceName, rp.ResourceGroup, createOption, sourceID),
+		Tags:             mergeDiskTags(req.Tags, rp.ResourceName, rp.ResourceGroup, rp.Subscription, createOption, sourceID),
 	}
 
 	// ARM CreateOrUpdate is idempotent: an existing disk is updated in place,
@@ -618,7 +619,7 @@ func skuTier(s *diskSKU) string {
 // inserts (name, resource group, createOption, source id).
 const diskExtraSlots = 4
 
-func mergeDiskTags(in map[string]string, name, resourceGroup, createOption, sourceID string) map[string]string {
+func mergeDiskTags(in map[string]string, name, resourceGroup, subscription, createOption, sourceID string) map[string]string {
 	out := make(map[string]string, len(in)+diskExtraSlots)
 
 	for k, v := range in {
@@ -629,6 +630,10 @@ func mergeDiskTags(in map[string]string, name, resourceGroup, createOption, sour
 
 	if resourceGroup != "" {
 		out[rgTag] = resourceGroup
+	}
+
+	if subscription != "" {
+		out[subTag] = subscription
 	}
 
 	if createOption != "" {
@@ -658,7 +663,7 @@ func stripInternalDiskTags(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 
 	for k, v := range in {
-		if k == armNameTag || k == rgTag || k == createOptionTag || k == sourceIDTag {
+		if k == armNameTag || k == rgTag || k == subTag || k == createOptionTag || k == sourceIDTag {
 			continue
 		}
 

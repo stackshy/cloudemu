@@ -30,6 +30,7 @@ import (
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 )
 
@@ -111,6 +112,12 @@ func New(mq mqdriver.MessageQueue) *Handler {
 // Registered before the permissive Blob fallback so these shapes win.
 func (*Handler) Matches(r *http.Request) bool {
 	if strings.HasPrefix(r.URL.Path, "/subscriptions/") {
+		return false
+	}
+
+	// A storage host names its service, so a request to another service's
+	// host (such as {account}.blob.core.windows.net) is never a Queue call.
+	if _, svc, ok := azurearm.StorageHost(r.Host); ok && svc != "queue" {
 		return false
 	}
 

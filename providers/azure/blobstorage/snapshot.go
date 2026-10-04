@@ -24,6 +24,7 @@ type blobSnapshot struct {
 	AccountKeys       json.RawMessage               `json:"accountKeys,omitempty"`
 	BlobServiceProps  json.RawMessage               `json:"blobServiceProps,omitempty"`
 	AccountEncryption json.RawMessage               `json:"accountEncryption,omitempty"`
+	AccountSettings   json.RawMessage               `json:"accountSettings,omitempty"`
 	// Accounts is the storage-account store. A snapshot written before
 	// accounts were their own resource has no such key; Restore then migrates
 	// every attributed account (see migrateLegacyAccounts).
@@ -114,6 +115,7 @@ func (m *Mock) snapshotAccountStores(snap *blobSnapshot) error {
 		{&snap.AccountKeys, m.accountKeys.Snapshot},
 		{&snap.BlobServiceProps, m.blobServiceProps.Snapshot},
 		{&snap.AccountEncryption, m.accountEncryption.Snapshot},
+		{&snap.AccountSettings, m.acctSettings.Snapshot},
 		{&snap.Accounts, m.accounts.Snapshot},
 	}
 
@@ -252,6 +254,7 @@ func (m *Mock) restoreAccountStores(snap *blobSnapshot) error {
 		{snap.AccountKeys, m.accountKeys.LoadSnapshot},
 		{snap.BlobServiceProps, m.blobServiceProps.LoadSnapshot},
 		{snap.AccountEncryption, m.accountEncryption.LoadSnapshot},
+		{snap.AccountSettings, m.acctSettings.LoadSnapshot},
 		{snap.Accounts, m.accounts.LoadSnapshot},
 	}
 

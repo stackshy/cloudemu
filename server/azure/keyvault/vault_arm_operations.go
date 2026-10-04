@@ -3,6 +3,7 @@ package keyvault
 import (
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	"github.com/stackshy/cloudemu/v2/services/scope"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
@@ -101,35 +102,24 @@ func (h *VaultARMHandler) updateVault(w http.ResponseWriter, r *http.Request, rp
 		return
 	}
 
-	existing, err := h.vaults.GetVault(r.Context(), rp.ResourceName)
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
+	// The merge runs inside the provider's atomic update, so a concurrent
+	// accessPolicies change is never lost.
+	info, err := h.vaults.UpdateVault(r.Context(), rp.ResourceName, func(v *secretsdriver.KVVaultInfo) error {
+		if !v.Scope.Matches(scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}) {
+			return cerrors.Newf(cerrors.NotFound, "vault %s not found in resource group %s",
+				rp.ResourceName, rp.ResourceGroup)
+		}
 
-	if !existing.Scope.Matches(scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}) {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
-			"vault "+rp.ResourceName+" not found in resource group "+rp.ResourceGroup)
-		return
-	}
+		if body.Tags != nil {
+			v.Tags = body.Tags
+		}
 
-	cfg := secretsdriver.KVVaultConfig{
-		Name:       existing.Name,
-		Location:   existing.Location,
-		Scope:      existing.Scope,
-		Tags:       existing.Tags,
-		Properties: existing.Properties,
-	}
+		if body.Properties != nil {
+			v.Properties = mergeVaultProperties(&v.Properties, body.Properties)
+		}
 
-	if body.Tags != nil {
-		cfg.Tags = body.Tags
-	}
-
-	if body.Properties != nil {
-		cfg.Properties = mergeVaultProperties(&existing.Properties, body.Properties)
-	}
-
-	info, err := h.vaults.CreateOrUpdateVault(r.Context(), cfg)
+		return nil
+	})
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return

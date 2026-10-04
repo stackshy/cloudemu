@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -243,10 +244,13 @@ func (m *Mock) SetK8sAPI(api *kubernetes.APIServer) {
 
 // Endpoint returns the data-plane URL clients should target for a given
 // cluster. If a Kubernetes APIServer is wired and the cluster has a
-// registered UID, returns "<base>/k8s/<uid>", the in-memory data plane.
-// Otherwise returns the cluster's synthesized control-plane IP (a bare IPv4
-// address, matching real GKE's `endpoint` field) so a kubeconfig renders to a
-// well-formed, non-sentinel host.
+// registered UID, returns "<base>/k8s/<uid>", the in-memory data plane. An
+// https base drops its scheme ("host:port/k8s/<uid>"): real GKE's endpoint is a
+// bare host, and clients build the URL as "https://" + endpoint, which then
+// reaches the per-cluster path. An http base (in-process tests) keeps its
+// scheme, since prefixing https would not reach it. Otherwise returns the
+// cluster's synthesized control-plane IP (a bare IPv4 address, matching real
+// GKE's `endpoint` field) so a kubeconfig renders to a well-formed host.
 func (m *Mock) Endpoint(location, name string) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -256,7 +260,7 @@ func (m *Mock) Endpoint(location, name string) string {
 	if m.k8sAPI != nil {
 		if uid, ok := m.k8sUIDs[key]; ok {
 			if base := m.k8sAPI.BaseURL(); base != "" {
-				return base + "/k8s/" + uid
+				return strings.TrimPrefix(base, "https://") + "/k8s/" + uid
 			}
 		}
 	}

@@ -49,6 +49,20 @@ func do(t *testing.T, ts *httptest.Server, method, path, body string) (int, stri
 	return resp.StatusCode, string(b)
 }
 
+// opNameOf reads the operation name from a create response body.
+func opNameOf(t *testing.T, body string) string {
+	t.Helper()
+
+	var op struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(body), &op); err != nil || op.Name == "" {
+		t.Fatalf("no operation name in %.300s (err=%v)", body, err)
+	}
+
+	return op.Name
+}
+
 // TestFullServerLROOperationPolling guards the #321 E2E fix: in the full server
 // (alloydb/gke register before artifactregistry/eventarc/memorystore and used
 // to shadow location operations), a shared LRO handler must resolve every
@@ -56,14 +70,14 @@ func do(t *testing.T, ts *httptest.Server, method, path, body string) (int, stri
 func TestFullServerLROOperationPolling(t *testing.T) {
 	ts := fullServer(t)
 
-	// artifactregistry: create returns an op named .../operations/op-r1.
-	if code, _ := do(t, ts, http.MethodPost,
-		"/v1/projects/demo/locations/us/repositories?repositoryId=r1", `{"format":"MAVEN"}`); code != http.StatusOK {
+	// artifactregistry: poll the operation name the create returned.
+	code, arBody := do(t, ts, http.MethodPost,
+		"/v1/projects/demo/locations/us/repositories?repositoryId=r1", `{"format":"MAVEN"}`)
+	if code != http.StatusOK {
 		t.Fatalf("AR create: %d", code)
 	}
 
-	if code, body := do(t, ts, http.MethodGet,
-		"/v1/projects/demo/locations/us/operations/op-r1", ""); code != http.StatusOK ||
+	if code, body := do(t, ts, http.MethodGet, "/v1/"+opNameOf(t, arBody), ""); code != http.StatusOK ||
 		!strings.Contains(body, `"done":true`) || !strings.Contains(body, `"response"`) ||
 		!strings.Contains(body, "MAVEN") {
 		t.Fatalf("AR op poll: code=%d body=%s (want 200 done:true with the repository response)", code, body)
@@ -83,15 +97,15 @@ func TestFullServerLROOperationPolling(t *testing.T) {
 		t.Fatalf("Cloud Run service create: %d", code)
 	}
 
-	if code, body := do(t, ts, http.MethodPost,
+	code, eaBody := do(t, ts, http.MethodPost,
 		"/v1/projects/demo/locations/us-central1/triggers?triggerId=t1",
 		`{"eventFilters":[{"attribute":"type","value":"google.cloud.storage.object.v1.finalized"}],`+
-			`"destination":{"cloudRun":{"service":"s","region":"us-central1"}}}`); code != http.StatusOK {
-		t.Fatalf("eventarc create: code=%d body=%s", code, body)
+			`"destination":{"cloudRun":{"service":"s","region":"us-central1"}}}`)
+	if code != http.StatusOK {
+		t.Fatalf("eventarc create: code=%d body=%s", code, eaBody)
 	}
 
-	if code, body := do(t, ts, http.MethodGet,
-		"/v1/projects/demo/locations/us-central1/operations/op-t1", ""); code != http.StatusOK || !strings.Contains(body, `"done":true`) {
+	if code, body := do(t, ts, http.MethodGet, "/v1/"+opNameOf(t, eaBody), ""); code != http.StatusOK || !strings.Contains(body, `"done":true`) {
 		t.Fatalf("eventarc op poll: code=%d body=%s", code, body)
 	}
 

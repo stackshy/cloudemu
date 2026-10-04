@@ -48,6 +48,16 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, p *alloy
 		DatabaseVersion: body.DatabaseVersion,
 		Network:         body.Network,
 		Tags:            body.Labels,
+		Location:        p.location,
+	}
+
+	// networkConfig.network supersedes the deprecated top-level network.
+	if body.NetworkConfig != nil {
+		if body.NetworkConfig.Network != "" {
+			cfg.Network = body.NetworkConfig.Network
+		}
+
+		cfg.AllocatedIPRange = body.NetworkConfig.AllocatedIpRange
 	}
 
 	if body.InitialUser != nil {
@@ -70,7 +80,8 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, p *alloy
 	}
 
 	info, _ := adb.AlloyDBClusterInfo(r.Context(), c.ID)
-	writeJSON(w, http.StatusOK, h.doneOperation(p, "create-cluster", h.toWireCluster(c, info)))
+	p.clusterID = c.ID // the operation targets the created cluster
+	writeJSON(w, http.StatusOK, h.doneOperation(p, "create-cluster", clusterTypeURL, h.toWireCluster(c, info)))
 }
 
 func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request, _ *alloyPath) {
@@ -171,7 +182,7 @@ func (h *Handler) patchCluster(w http.ResponseWriter, r *http.Request, p *alloyP
 	}
 
 	info, _ := adb.AlloyDBClusterInfo(r.Context(), c.ID)
-	writeJSON(w, http.StatusOK, h.doneOperation(p, "update-cluster", h.toWireCluster(c, info)))
+	writeJSON(w, http.StatusOK, h.doneOperation(p, "update-cluster", clusterTypeURL, h.toWireCluster(c, info)))
 }
 
 func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request, p *alloyPath) {
@@ -180,7 +191,7 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request, p *alloy
 		return
 	}
 
-	writeJSON(w, http.StatusOK, h.doneOperation(p, "delete-cluster", nil))
+	writeJSON(w, http.StatusOK, h.doneOperation(p, "delete-cluster", "", nil))
 }
 
 func (h *Handler) promoteCluster(w http.ResponseWriter, r *http.Request, p *alloyPath) {
@@ -197,7 +208,7 @@ func (h *Handler) promoteCluster(w http.ResponseWriter, r *http.Request, p *allo
 	}
 
 	info, _ := adb.AlloyDBClusterInfo(r.Context(), c.ID)
-	writeJSON(w, http.StatusOK, h.doneOperation(p, "promote-cluster", h.toWireCluster(c, info)))
+	writeJSON(w, http.StatusOK, h.doneOperation(p, "promote-cluster", clusterTypeURL, h.toWireCluster(c, info)))
 }
 
 func (h *Handler) createSecondaryCluster(w http.ResponseWriter, r *http.Request, p *alloyPath) {
@@ -221,6 +232,7 @@ func (h *Handler) createSecondaryCluster(w http.ResponseWriter, r *http.Request,
 		ID:             r.URL.Query().Get("clusterId"),
 		PrimaryCluster: primary,
 		Tags:           body.Labels,
+		Location:       p.location,
 	})
 	if err != nil {
 		writeCErr(w, err)
@@ -228,7 +240,8 @@ func (h *Handler) createSecondaryCluster(w http.ResponseWriter, r *http.Request,
 	}
 
 	info, _ := adb.AlloyDBClusterInfo(r.Context(), c.ID)
-	writeJSON(w, http.StatusOK, h.doneOperation(p, "create-secondary", h.toWireCluster(c, info)))
+	p.clusterID = c.ID
+	writeJSON(w, http.StatusOK, h.doneOperation(p, "create-secondary", clusterTypeURL, h.toWireCluster(c, info)))
 }
 
 func (h *Handler) restoreCluster(w http.ResponseWriter, r *http.Request, p *alloyPath) {
@@ -258,5 +271,6 @@ func (h *Handler) restoreCluster(w http.ResponseWriter, r *http.Request, p *allo
 	}
 
 	info, _ := adb.AlloyDBClusterInfo(r.Context(), c.ID)
-	writeJSON(w, http.StatusOK, h.doneOperation(p, "restore-cluster", h.toWireCluster(c, info)))
+	p.clusterID = c.ID
+	writeJSON(w, http.StatusOK, h.doneOperation(p, "restore-cluster", clusterTypeURL, h.toWireCluster(c, info)))
 }

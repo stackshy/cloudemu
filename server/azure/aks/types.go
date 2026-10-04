@@ -19,6 +19,8 @@ const (
 	// for Microsoft.ContainerService/managedClusters/{name}/{start,stop}.
 	clusterActionStart = "start"
 	clusterActionStop  = "stop"
+	// childMaxDepth is the deepest child route: managedClusters/{c}/{child}/{name}.
+	childMaxDepth = 3
 )
 
 // armManagedCluster mirrors the JSON shape Azure ARM expects for
@@ -69,6 +71,14 @@ type armManagedClusterProperties struct {
 	PowerState               *armPowerState        `json:"powerState,omitempty"`
 	EnableRBAC               *bool                 `json:"enableRBAC,omitempty"`
 	NetworkProfile           *armNetworkProfile    `json:"networkProfile,omitempty"`
+	OIDCIssuerProfile        *armOIDCIssuerProfile `json:"oidcIssuerProfile,omitempty"`
+}
+
+// armOIDCIssuerProfile mirrors armcontainerservice.ManagedClusterOIDCIssuerProfile.
+// IssuerURL is read-only and assigned by the service.
+type armOIDCIssuerProfile struct {
+	Enabled   *bool  `json:"enabled,omitempty"`
+	IssuerURL string `json:"issuerURL,omitempty"`
 }
 
 type armPowerState struct {
@@ -260,6 +270,7 @@ func toARMCluster(c *aks.ManagedCluster, pools []aks.AgentPool, subscription str
 			PowerState:               &armPowerState{Code: c.PowerState},
 			EnableRBAC:               &enableRBAC,
 			NetworkProfile:           toNetworkProfile(&c.NetworkProfile),
+			OIDCIssuerProfile:        toOIDCIssuerProfile(c),
 		},
 	}
 
@@ -270,6 +281,19 @@ func toARMCluster(c *aks.ManagedCluster, pools []aks.AgentPool, subscription str
 			TenantID:               c.TenantID,
 			UserAssignedIdentities: toUserAssignedIdentities(c.UserAssignedIdentities),
 		}
+	}
+
+	return out
+}
+
+// toOIDCIssuerProfile renders the stored OIDC issuer state. Real AKS always
+// returns the profile, with issuerURL only once the issuer is enabled.
+func toOIDCIssuerProfile(c *aks.ManagedCluster) *armOIDCIssuerProfile {
+	enabled := c.OIDCIssuerEnabled
+	out := &armOIDCIssuerProfile{Enabled: &enabled}
+
+	if enabled {
+		out.IssuerURL = c.OIDCIssuerURL
 	}
 
 	return out

@@ -116,6 +116,7 @@ func (m *Mock) DeleteStorageAccount(ctx context.Context, name string) error {
 
 	m.accountKeys.Delete(name)
 	m.blobServiceProps.Delete(name)
+	m.deleteAccountSettings(name)
 	m.accountEncryption.Delete(name)
 	m.bucketAttrs.Delete(name)
 	m.accounts.Delete(name)

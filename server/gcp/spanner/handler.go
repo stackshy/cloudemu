@@ -42,9 +42,13 @@ import (
 	"net/http"
 	"strings"
 
+	"google.golang.org/api/googleapi"
 	sp "google.golang.org/api/spanner/v1"
 
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 	"github.com/stackshy/cloudemu/v2/server/wire"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	spdriver "github.com/stackshy/cloudemu/v2/services/spanner/driver"
 )
@@ -57,6 +61,7 @@ const (
 	segDatabases  = "databases"
 	segOperations = "operations"
 	segDdl        = "ddl"
+	segBackups    = "backups"
 
 	// Path-segment counts below the /v1/projects/ prefix.
 	partsCollection = 2 // {p}/instances
@@ -78,10 +83,20 @@ func mapWire[T any, W any](items []T, conv func(*T) W) []W {
 // Handler serves Spanner admin requests against a spanner driver.
 type Handler struct {
 	db spdriver.Spanner
+
+	// shared turns on the rules for a server that also mounts Cloud SQL; see
+	// shared.go.
+	shared bool
+
+	iam gcpiam.Store
 }
 
 // New returns a Spanner admin handler backed by db.
-func New(db spdriver.Spanner) *Handler { return &Handler{db: db} }
+func New(db spdriver.Spanner) *Handler { return &Handler{db: db, iam: resourceiam.New()} }
+
+// SetIAMStore makes the handler keep instance and database policies in s, the
+// store shared with the other GCP handlers.
+func (h *Handler) SetIAMStore(s gcpiam.Store) { h.iam = s }
 
 // trimParts splits the path below the /v1/projects/ prefix into its segments.
 func trimParts(urlPath string) []string {
@@ -98,16 +113,18 @@ func (h *Handler) Matches(r *http.Request) bool {
 	parts := trimParts(r.URL.Path)
 
 	const idxResource = 1
-	if len(parts) <= idxResource || parts[idxResource] != segInstances {
+	if len(parts) <= idxResource || parts[idxResource] != segInstances ||
+		sharedpath.Yield(r, sharedpath.Spanner, sharedpath.SQLAdmin) {
 		return false
 	}
 
-	// Collection: /v1/projects/{p}/instances: list is Spanner's; a create POST
-	// is Spanner's only when the body carries the CreateInstanceRequest shape.
+	// Collection: /v1/projects/{p}/instances: a list is Spanner's unless it
+	// is shared with Cloud SQL (see shared.go); a create POST is Spanner's only
+	// when the body carries the CreateInstanceRequest shape.
 	if len(parts) == idxResource+1 {
 		switch r.Method {
 		case http.MethodGet:
-			return true
+			return h.matchesSharedList(r, parts[0])
 		case http.MethodPost:
 			return bodyLooksLikeSpanner(r)
 		default:
@@ -119,12 +136,13 @@ func (h *Handler) Matches(r *http.Request) bool {
 	// instance, so Cloud SQL's own instance traffic falls through.
 	const idxInstanceID = 2
 
-	instanceID := parts[idxInstanceID]
+	instanceID, _, _ := strings.Cut(parts[idxInstanceID], ":")
 	if instanceID == "" {
 		return false
 	}
 
-	return h.ownsInstance(r, parts[0], instanceID)
+	return h.ownsInstance(r, parts[0], instanceID) ||
+		(h.shared && (sharedpath.Is(r, sharedpath.Spanner) || spannerOnlySub(r, parts)))
 }
 
 // ownsInstance reports whether this Spanner store holds the named instance.
@@ -182,6 +200,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveOperation(w, r)
 	case parts[idxDatabases] == segDatabases:
 		h.serveDatabases(w, r, instanceName(project, parts[2]), parts[partsItem+1:])
+	case len(parts) == partsItem+1 && parts[idxDatabases] == segBackups:
+		h.listBackups(w, r, instanceName(project, parts[2]))
 	default:
 		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unrecognized Spanner path")
 	}
@@ -244,15 +264,31 @@ func instanceName(project, instanceID string) string {
 	return "projects/" + project + "/instances/" + instanceID
 }
 
-// doneOperation builds a completed LRO envelope carrying response as its typed
-// result, so an SDK or Terraform caller observes a terminal operation at once.
+// Spanner Any type URLs a done operation's response carries.
+const (
+	instanceTypeURL = "type.googleapis.com/google.spanner.admin.instance.v1.Instance"
+	databaseTypeURL = "type.googleapis.com/google.spanner.admin.database.v1.Database"
+)
+
+// doneOperation builds a completed LRO envelope carrying response as a typed
+// Any, so an SDK or Terraform caller observes a terminal operation at once and
+// a GAPIC op.Wait() can decode it.
 func doneOperation(name string, response any) *sp.Operation {
 	op := &sp.Operation{Name: name, Done: true}
 
-	if response != nil {
-		if raw, err := json.Marshal(response); err == nil {
-			op.Response = raw
-		}
+	var typeURL string
+
+	switch response.(type) {
+	case *sp.Instance:
+		typeURL = instanceTypeURL
+	case *sp.Database:
+		typeURL = databaseTypeURL
+	default:
+		return op
+	}
+
+	if raw, err := gcprest.TypedAny(response, typeURL); err == nil {
+		op.Response = googleapi.RawMessage(raw)
 	}
 
 	return op

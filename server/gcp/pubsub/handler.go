@@ -30,6 +30,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 )
 
@@ -84,6 +85,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	project := parts[0]
+	r = r.WithContext(projectctx.WithProject(r.Context(), project))
 	bareType, typeAction := splitColon(parts[1])
 
 	if len(parts) == partsTypeOnly {
@@ -194,7 +196,7 @@ func (h *Handler) createTopic(w http.ResponseWriter, r *http.Request, project, n
 	}
 
 	h.mu.Lock()
-	ts := h.topicLog(name)
+	ts := h.topicLog(h.key(r, name))
 	ts.labels = copyLabels(info.Tags)
 	ts.labelsSet = true
 	ts.msgRetentionDuration = body.MessageRetentionDuration
@@ -238,7 +240,7 @@ func (h *Handler) patchTopic(w http.ResponseWriter, r *http.Request, project, na
 	}
 
 	h.mu.Lock()
-	ts := h.topicLog(name)
+	ts := h.topicLog(h.key(r, name))
 
 	if !ts.labelsSet {
 		ts.labels = copyLabels(q.Tags)
@@ -285,9 +287,11 @@ func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request, name strin
 	// Detach subscriptions from the deleted topic (real Pub/Sub reports their
 	// topic as "_deleted-topic_"). The message log is kept so already-published
 	// messages can still drain.
+	topicKey := h.key(r, name)
+
 	h.mu.Lock()
 	for _, sub := range h.subs {
-		if sub.topic == name {
+		if sub.topic == topicKey {
 			sub.cfg.Topic = deletedTopicName
 		}
 	}
@@ -340,8 +344,10 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, project, name 
 
 	// Store every message on the topic log first, capturing its index (for
 	// push auto-ack) and wire shape (for push / function delivery).
+	topicKey := h.key(r, name)
+
 	h.mu.Lock()
-	ts := h.topicLog(name)
+	ts := h.topicLog(topicKey)
 
 	for i := range req.Messages {
 		sm := storedMessage{
@@ -350,12 +356,12 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, project, name 
 			orderingKey: req.Messages[i].OrderingKey,
 			publishTime: publishTime,
 		}
-		id := h.appendMessageLocked(name, &sm)
+		id := h.appendMessageLocked(topicKey, &sm)
 		out.MessageIDs = append(out.MessageIDs, id)
 		delivery = append(delivery, publishedMessage{idx: len(ts.messages) - 1, msg: buildPubsubMessage(id, &sm)})
 	}
 
-	pushSubs := h.pushSubscribersLocked(name)
+	pushSubs := h.pushSubscribersLocked(topicKey)
 	h.mu.Unlock()
 
 	// Fan out to push endpoints and event-triggered functions outside the lock,
@@ -377,11 +383,13 @@ func (h *Handler) PublishMessage(
 	publishTime := time.Now().UTC()
 	sm := storedMessage{body: string(data), attributes: attributes, publishTime: publishTime}
 
+	topicKey := h.keyFor(project, topic)
+
 	h.mu.Lock()
-	ts := h.topicLog(topic)
-	id := h.appendMessageLocked(topic, &sm)
+	ts := h.topicLog(topicKey)
+	id := h.appendMessageLocked(topicKey, &sm)
 	delivery := []publishedMessage{{idx: len(ts.messages) - 1, msg: buildPubsubMessage(id, &sm)}}
-	pushSubs := h.pushSubscribersLocked(topic)
+	pushSubs := h.pushSubscribersLocked(topicKey)
 	h.mu.Unlock()
 
 	h.dispatchPublished(ctx, project, topic, delivery, pushSubs)
@@ -430,7 +438,7 @@ func (h *Handler) topicView(project, name string, fallbackTags map[string]string
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	ts, ok := h.topics[name]
+	ts, ok := h.topics[h.keyFor(project, name)]
 	if !ok {
 		return t
 	}

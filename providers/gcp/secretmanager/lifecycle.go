@@ -35,10 +35,10 @@ func findVersion(sd *secretData, versionID string) (*driver.SecretVersion, bool)
 // check-then-write pair would let two concurrent callers starting from the
 // same etag both pass the check before either wrote). It centralizes the
 // not-found/precondition checks shared by enable/disable/destroy.
-func (m *Mock) mutateVersion(name, versionID, etag string,
+func (m *Mock) mutateVersion(ctx context.Context, name, versionID, etag string,
 	fn func(v *driver.SecretVersion) error,
 ) (*driver.SecretVersion, error) {
-	sd, ok := m.secrets.Get(name)
+	sd, ok := m.secrets.Get(m.key(ctx, name))
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
@@ -75,8 +75,8 @@ func etagMismatch(want, got string) bool {
 }
 
 // EnableSecretVersion moves a version to ENABLED.
-func (m *Mock) EnableSecretVersion(_ context.Context, name, versionID, etag string) (*driver.SecretVersion, error) {
-	return m.mutateVersion(name, versionID, etag, func(v *driver.SecretVersion) error {
+func (m *Mock) EnableSecretVersion(ctx context.Context, name, versionID, etag string) (*driver.SecretVersion, error) {
+	return m.mutateVersion(ctx, name, versionID, etag, func(v *driver.SecretVersion) error {
 		if v.State == driver.VersionDestroyed {
 			return errors.Newf(errors.FailedPrecondition, "version %q is destroyed", versionID)
 		}
@@ -89,8 +89,8 @@ func (m *Mock) EnableSecretVersion(_ context.Context, name, versionID, etag stri
 }
 
 // DisableSecretVersion moves a version to DISABLED.
-func (m *Mock) DisableSecretVersion(_ context.Context, name, versionID, etag string) (*driver.SecretVersion, error) {
-	return m.mutateVersion(name, versionID, etag, func(v *driver.SecretVersion) error {
+func (m *Mock) DisableSecretVersion(ctx context.Context, name, versionID, etag string) (*driver.SecretVersion, error) {
+	return m.mutateVersion(ctx, name, versionID, etag, func(v *driver.SecretVersion) error {
 		if v.State == driver.VersionDestroyed {
 			return errors.Newf(errors.FailedPrecondition, "version %q is destroyed", versionID)
 		}
@@ -103,8 +103,8 @@ func (m *Mock) DisableSecretVersion(_ context.Context, name, versionID, etag str
 }
 
 // DestroySecretVersion moves a version to DESTROYED, wiping its payload.
-func (m *Mock) DestroySecretVersion(_ context.Context, name, versionID, etag string) (*driver.SecretVersion, error) {
-	return m.mutateVersion(name, versionID, etag, func(v *driver.SecretVersion) error {
+func (m *Mock) DestroySecretVersion(ctx context.Context, name, versionID, etag string) (*driver.SecretVersion, error) {
+	return m.mutateVersion(ctx, name, versionID, etag, func(v *driver.SecretVersion) error {
 		if v.State == driver.VersionDestroyed {
 			return errors.Newf(errors.FailedPrecondition, "version %q is already destroyed", versionID)
 		}
@@ -119,8 +119,10 @@ func (m *Mock) DestroySecretVersion(_ context.Context, name, versionID, etag str
 }
 
 // PatchSecret applies a partial update to a secret's metadata.
-func (m *Mock) PatchSecret(_ context.Context, name string, patch driver.GCPSecretPatch) (*driver.SecretInfo, error) {
-	sd, ok := m.secrets.Get(name)
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) PatchSecret(ctx context.Context, name string, patch driver.GCPSecretPatch) (*driver.SecretInfo, error) {
+	sd, ok := m.secrets.Get(m.key(ctx, name))
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}

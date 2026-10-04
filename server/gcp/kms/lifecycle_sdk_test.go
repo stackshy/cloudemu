@@ -496,6 +496,21 @@ func TestKMSIAMPolicyRoundTrip(t *testing.T) {
 	}).Do()
 	assertAPICode(t, err, 409)
 
+	// A set with no etag is a blind overwrite, even over a stored policy (T4-14).
+	blind, err := svc.Projects.Locations.KeyRings.SetIamPolicy(testKeyRingName, &cloudkms.SetIamPolicyRequest{
+		Policy: &cloudkms.Policy{Bindings: []*cloudkms.Binding{{
+			Role:    "roles/cloudkms.viewer",
+			Members: []string{"user:bob@example.com"},
+		}}},
+	}).Do()
+	if err != nil {
+		t.Fatalf("blind SetIamPolicy: %v", err)
+	}
+
+	if blind.Etag == set.Etag || len(blind.Bindings) != 1 || blind.Bindings[0].Role != "roles/cloudkms.viewer" {
+		t.Fatalf("blind set = %+v, want bob's binding under a new etag", blind)
+	}
+
 	test, err := svc.Projects.Locations.KeyRings.TestIamPermissions(testKeyRingName,
 		&cloudkms.TestIamPermissionsRequest{Permissions: []string{"cloudkms.cryptoKeyVersions.useToEncrypt"}}).Do()
 	if err != nil {

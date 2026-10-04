@@ -8,6 +8,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // Azure SQL Managed Instance is a distinct Microsoft.Sql resource type from the
@@ -71,6 +72,7 @@ func (m *Mock) CreateManagedInstance(
 		FQDN:               cfg.Name + ".managed.database.windows.net",
 		ARN:                m.miARN(cfg.Name),
 		Tags:               copyTags(cfg.Tags),
+		Scope:              cfg.Scope,
 	}
 
 	m.managedInstances.Set(cfg.Name, mi)
@@ -129,6 +131,10 @@ func (m *Mock) UpdateManagedInstance(
 	mi.StorageGB = orDefaultInt(cfg.StorageGB, mi.StorageGB)
 	mi.StorageAccountType = orDefault(cfg.StorageAccountType, mi.StorageAccountType)
 
+	if mi.Scope.IsZero() {
+		mi.Scope = cfg.Scope
+	}
+
 	if cfg.Tags != nil {
 		mi.Tags = copyTags(cfg.Tags)
 	}
@@ -186,14 +192,49 @@ func (m *Mock) DeleteManagedInstance(_ context.Context, name string) error {
 		return cerrors.Newf(cerrors.NotFound, "managed instance %q not found", name)
 	}
 
-	prefix := name + "/"
-	for key := range m.managedDatabases.All() {
-		if strings.HasPrefix(key, prefix) {
-			m.managedDatabases.Delete(key)
-		}
-	}
+	deleteByPrefix(m.managedDatabases, name+"/")
 
 	return nil
+}
+
+// purgeManagedInstancesLocked deletes every managed instance, with its
+// databases, recorded under subscription/resourceGroup. The caller holds the
+// write lock.
+func (m *Mock) purgeManagedInstancesLocked(subscription, resourceGroup string) {
+	for _, name := range m.managedInstances.Keys() {
+		if mi, ok := m.managedInstances.Get(name); ok && mi.Scope.InResourceGroup(subscription, resourceGroup) {
+			m.managedInstances.Delete(name)
+			deleteByPrefix(m.managedDatabases, name+"/")
+		}
+	}
+}
+
+// migrateManagedInstanceScopes fills the scope of managed instances restored
+// from a snapshot taken before the scope was recorded. The instance's subnet
+// is the only id it kept: it carries the subscription and, in the common
+// layout, the instance's own resource group.
+func (m *Mock) migrateManagedInstanceScopes() {
+	for _, name := range m.managedInstances.Keys() {
+		mi, ok := m.managedInstances.Get(name)
+		if !ok || !mi.Scope.IsZero() {
+			continue
+		}
+
+		if s, ok := scopeFromID(mi.SubnetID); ok {
+			mi.Scope = s
+			m.managedInstances.Set(name, mi)
+		}
+	}
+}
+
+// scopeFromID returns the subscription and resource group of an ARM id.
+func scopeFromID(id string) (scope.Scope, bool) {
+	parts := strings.Split(strings.Trim(id, "/"), "/")
+	if len(parts) < 4 || !strings.EqualFold(parts[0], "subscriptions") || !strings.EqualFold(parts[2], "resourceGroups") {
+		return scope.Scope{}, false
+	}
+
+	return scope.Scope{Subscription: parts[1], ResourceGroup: parts[3]}, true
 }
 
 // StartManagedInstance moves a stopped managed instance back to ready.

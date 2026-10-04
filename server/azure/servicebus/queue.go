@@ -24,17 +24,22 @@ func (h *Handler) serveQueue(w http.ResponseWriter, r *http.Request, sp sbPath) 
 		return
 	}
 
-	// Anything beyond "queues/{name}" (e.g. a queue-scoped authorizationRules
-	// sub-resource, which real Service Bus exposes but this handler does not
-	// model) must be rejected explicitly. Falling through to the queue's own
-	// CRUD handlers below would otherwise treat the nested path as an
-	// operation on the queue itself: a PUT would silently reset the queue's
-	// properties to the sub-resource's request body, a GET would echo the
-	// queue's ARM resource instead of 404ing, and a DELETE would remove the
-	// whole queue. Topics/subscriptions/rules already dispatch on exact
-	// segment length for the same reason; queues must match.
+	// A queue-scoped authorizationRules subtree has its own handlers. Any
+	// other path beyond "queues/{name}" is rejected explicitly: falling through
+	// to the queue's CRUD below would treat it as an operation on the queue
+	// itself (a PUT would reset the queue's properties, a DELETE would remove
+	// the queue).
 	if len(sp.segs) > namePairLen {
+		if eq(sp.segs[2], segAuthRules) {
+			h.authRuleDispatch(w, r, sp.segs[3:], func() (authTarget, bool) {
+				return h.queueAuthTargetLocked(sp, name)
+			})
+
+			return
+		}
+
 		notImplemented(w)
+
 		return
 	}
 
@@ -106,7 +111,7 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request, sp sbPath,
 			url = info.URL
 		}
 
-		rec = &queueRecord{Name: name, DriverURL: url, DLQURL: dlqURL, CreatedAt: now}
+		rec = &queueRecord{Name: name, DriverURL: url, DLQURL: dlqURL, AuthRules: map[string]*authRuleRecord{}, CreatedAt: now}
 		ns.Queues[name] = rec
 	} else if rec.DriverURL != "" {
 		// PUT is create-or-update: propagate a LockDuration, MaxDeliveryCount or

@@ -53,7 +53,7 @@ func TestSnapshotRestoreRoundTripAllStores(t *testing.T) {
 
 	// Stores.
 	assert.True(t, dst.users.Has("alice"), "user restored")
-	assert.True(t, dst.roles.Has("r1"), "role restored")
+	assert.True(t, dst.roles.Has(dst.roleKey(ctx, "r1")), "role restored")
 
 	p, ok := dst.policies.Get(pol.ARN)
 	require.True(t, ok, "policy restored under its ARN")
@@ -72,7 +72,7 @@ func TestSnapshotRestoreRoundTripAllStores(t *testing.T) {
 
 	// Maps.
 	assert.True(t, dst.userPolicies["alice"][pol.ARN], "user attachment restored")
-	assert.True(t, dst.rolePolicies["r1"][pol.ARN], "role attachment restored")
+	assert.True(t, dst.rolePolicies[dst.roleKey(ctx, "r1")][pol.ARN], "role attachment restored")
 	assert.True(t, dst.groupUsers["g1"]["alice"], "group membership restored")
 }
 

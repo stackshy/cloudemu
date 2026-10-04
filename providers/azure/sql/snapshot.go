@@ -28,6 +28,9 @@ type sqlSnapshot struct {
 	ManagedDatabases json.RawMessage `json:"managedDatabases,omitempty"`
 	Databases        json.RawMessage `json:"databases,omitempty"`
 	TDE              json.RawMessage `json:"tde,omitempty"`
+	ShortTermRet     json.RawMessage `json:"shortTermRetention,omitempty"`
+	LongTermRet      json.RawMessage `json:"longTermRetention,omitempty"`
+	ConnPolicies     json.RawMessage `json:"connectionPolicies,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused:
@@ -58,6 +61,9 @@ func (m *Mock) snapshotStores(snap *sqlSnapshot) error {
 		{&snap.ManagedDatabases, m.managedDatabases.Snapshot},
 		{&snap.Databases, m.databases.Snapshot},
 		{&snap.TDE, m.tde.Snapshot},
+		{&snap.ShortTermRet, m.str.Snapshot},
+		{&snap.LongTermRet, m.ltr.Snapshot},
+		{&snap.ConnPolicies, m.connPolicies.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -96,6 +102,9 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		{snap.ManagedDatabases, m.managedDatabases.LoadSnapshot},
 		{snap.Databases, m.databases.LoadSnapshot},
 		{snap.TDE, m.tde.LoadSnapshot},
+		{snap.ShortTermRet, m.str.LoadSnapshot},
+		{snap.LongTermRet, m.ltr.LoadSnapshot},
+		{snap.ConnPolicies, m.connPolicies.LoadSnapshot},
 	}
 
 	for _, l := range loads {
@@ -107,6 +116,8 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 			return fmt.Errorf("sql: restore store: %w", err)
 		}
 	}
+
+	m.migrateManagedInstanceScopes()
 
 	return nil
 }

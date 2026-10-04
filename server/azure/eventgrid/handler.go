@@ -219,6 +219,15 @@ func (h *Handler) serveTopic(w http.ResponseWriter, r *http.Request, rp *azurear
 
 // serveEventSubscription routes .../topics/{t}/eventSubscriptions[/{name}].
 func (h *Handler) serveEventSubscription(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if action := eventSubActionOf(rp); action != "" {
+		h.serveTopicSubAction(w, r, rp, action)
+		return
+	}
+
+	if azurearm.TooDeep(w, r, rp, childMaxDepth) {
+		return
+	}
+
 	if rp.SubResourceName == "" {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)

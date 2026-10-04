@@ -21,6 +21,7 @@ const (
 	resourceType    = "snapshots"
 	armNameTag      = "cloudemu:azureSnapshotName"
 	rgTag           = "cloudemu:azureRG"
+	subTag          = "cloudemu:azureSub" // the subscription a resource was created in
 	createOptionTag = "cloudemu:createOption"
 	sourceIDTag     = "cloudemu:sourceResourceId"
 	defaultLocation = "eastus"
@@ -57,6 +58,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if rp.ResourceName == "" {
 		h.serveCollection(w, r, rp)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp) {
 		return
 	}
 
@@ -129,7 +134,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		VolumeID:    driverVolID,
 		Description: rp.ResourceName,
 		Tags: mergeSnapshotTags(
-			req.Tags, rp.ResourceName, rp.ResourceGroup,
+			req.Tags, rp.ResourceName, rp.ResourceGroup, rp.Subscription,
 			createOptionOr(req.Properties.CreationData), submittedSource,
 		),
 	}
@@ -319,7 +324,9 @@ func (h *Handler) resolveSourceVolumeID(ctx context.Context, src string) (string
 // mergeSnapshotTags inserts (name, resource group, createOption, source id).
 const snapExtraSlots = 4
 
-func mergeSnapshotTags(in map[string]string, name, resourceGroup, createOption, sourceID string) map[string]string {
+func mergeSnapshotTags(
+	in map[string]string, name, resourceGroup, subscription, createOption, sourceID string,
+) map[string]string {
 	out := make(map[string]string, len(in)+snapExtraSlots)
 
 	for k, v := range in {
@@ -330,6 +337,10 @@ func mergeSnapshotTags(in map[string]string, name, resourceGroup, createOption, 
 
 	if resourceGroup != "" {
 		out[rgTag] = resourceGroup
+	}
+
+	if subscription != "" {
+		out[subTag] = subscription
 	}
 
 	if createOption != "" {
@@ -359,7 +370,7 @@ func stripInternalTags(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 
 	for k, v := range in {
-		if k == armNameTag || k == rgTag || k == createOptionTag || k == sourceIDTag {
+		if k == armNameTag || k == rgTag || k == subTag || k == createOptionTag || k == sourceIDTag {
 			continue
 		}
 

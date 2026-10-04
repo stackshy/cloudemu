@@ -676,3 +676,12 @@ func TestNestedGCRuleSurvivesCloneOnRead(t *testing.T) {
 		t.Fatal("nested GC rule aliases the store (deep clone broken)")
 	}
 }
+
+func TestGetOperationUnknownIsNotFound(t *testing.T) {
+	m := newTestMock()
+
+	got, err := m.GetOperation(context.Background(), "operations/bigtable-create-instance-999")
+	if !cerrors.IsNotFound(err) {
+		t.Fatalf("GetOperation unknown: want NotFound, got op=%+v err=%v", got, err)
+	}
+}

@@ -60,7 +60,7 @@ func (h *ControlHandler) serveServiceAction(w http.ResponseWriter, r *http.Reque
 
 		azurearm.WriteJSON(w, http.StatusOK, map[string]any{})
 	default:
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unknown action: "+rp.SubResource)
+		azurearm.WriteUnknownType(w, r, rp)
 	}
 }
 

@@ -65,6 +65,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	ssmdriver "github.com/stackshy/cloudemu/v2/services/securesourcemanager/driver"
@@ -211,9 +212,17 @@ func (h *Handler) Matches(r *http.Request) bool {
 	case operationsSeg:
 		return h.ops == nil
 	case repositoriesColl:
-		return h.matchesRepository(r, rt)
+		if sharedpath.Yield(r, sharedpath.SecureSourceManager, sharedpath.ArtifactRegistry, sharedpath.Dataform) {
+			return false
+		}
+
+		return sharedpath.Is(r, sharedpath.SecureSourceManager) || h.matchesRepository(r, rt)
 	default: // instancesColl
-		return h.matchesInstance(r, rt)
+		if sharedpath.Yield(r, sharedpath.SecureSourceManager, sharedpath.File, sharedpath.Redis, sharedpath.DataFusion) {
+			return false
+		}
+
+		return sharedpath.Is(r, sharedpath.SecureSourceManager) || h.matchesInstance(r, rt)
 	}
 }
 

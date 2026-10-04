@@ -57,6 +57,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	mkdriver "github.com/stackshy/cloudemu/v2/services/managedkafka/driver"
@@ -221,8 +222,10 @@ func (h *Handler) Matches(r *http.Request) bool {
 	switch {
 	case rt.resource == operationsSeg:
 		return false
-	case standalone || rt.topics:
+	case standalone || rt.topics || sharedpath.Is(r, sharedpath.ManagedKafka):
 		return true
+	case sharedpath.Yield(r, sharedpath.ManagedKafka, sharedpath.Container, sharedpath.AlloyDB):
+		return false
 	case rt.cluster != "":
 		return h.claimsItem(r, &rt)
 	case r.Method == http.MethodPost:

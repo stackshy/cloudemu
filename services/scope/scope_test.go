@@ -51,3 +51,31 @@ func TestInResourceGroup(t *testing.T) {
 		})
 	}
 }
+
+func TestIDInResourceGroup(t *testing.T) {
+	tests := []struct {
+		name, id string
+		want     bool
+	}{
+		{"the group itself", "/subscriptions/s1/resourceGroups/rg1", true},
+		{"no leading slash", "subscriptions/s1/resourceGroups/rg1", true},
+		{"trailing slash", "/subscriptions/s1/resourceGroups/rg1/", true},
+		{"resource under it", "/subscriptions/s1/resourceGroups/rg1/providers/X/y/z", true},
+		{"case-insensitive", "/SUBSCRIPTIONS/S1/RESOURCEGROUPS/RG1/providers/x", true},
+		{"rg10 is not rg1", "/subscriptions/s1/resourceGroups/rg10/providers/X/y/z", false},
+		{"other subscription", "/subscriptions/s2/resourceGroups/rg1", false},
+		{"subscription scope", "/subscriptions/s1", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IDInResourceGroup(tc.id, "s1", "rg1"); got != tc.want {
+				t.Errorf("IDInResourceGroup(%q) = %v, want %v", tc.id, got, tc.want)
+			}
+		})
+	}
+
+	if IDInResourceGroup("/subscriptions/s1/resourceGroups/rg1", "", "rg1") {
+		t.Error("an empty subscription must not match")
+	}
+}

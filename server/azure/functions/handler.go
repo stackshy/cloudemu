@@ -74,6 +74,7 @@ type appServicePlanStore interface {
 // portable behavior (or 501 for Azure-only sub-routes).
 type azureFunctionApps interface {
 	UpsertSiteMeta(ctx context.Context, in azfunctions.SiteMeta) (*azfunctions.SiteMeta, error)
+	SiteNameOwnedElsewhere(ctx context.Context, subscription, resourceGroup, name string) bool
 	PatchSiteMeta(
 		ctx context.Context, subscription, resourceGroup, name string, patch azfunctions.SiteMetaPatch,
 	) (*azfunctions.SiteMeta, error)
@@ -89,6 +90,13 @@ type azureFunctionApps interface {
 	UpdateAppSettings(
 		ctx context.Context, subscription, resourceGroup, name string, settings map[string]string,
 	) (*azfunctions.SiteMeta, error)
+	SetSiteConfigBlob(
+		ctx context.Context, subscription, resourceGroup, name, kind string, raw json.RawMessage,
+	) (*azfunctions.SiteMeta, error)
+	SetPublishingPolicy(
+		ctx context.Context, subscription, resourceGroup, name, kind string, allow bool,
+	) (*azfunctions.SiteMeta, error)
+	IsSiteNameTaken(ctx context.Context, name string) bool
 }
 
 // azureScopedSites optionally scopes a site's get/delete to the (subscription,
@@ -115,6 +123,12 @@ func New(fn sdrv.Serverless) *Handler {
 	return &Handler{fn: fn}
 }
 
+// PurgeResourceGroup deletes every site and App Service plan in the resource
+// group, backing the resource-group cascade.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	return azurearm.PurgeVia(ctx, h.fn, subscription, resourceGroup)
+}
+
 // siteStore returns the Azure site surface when the backend provides it.
 func (h *Handler) siteStore() (azureFunctionApps, bool) {
 	s, ok := h.fn.(azureFunctionApps)
@@ -138,7 +152,8 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	return rp.ResourceType == resourceType || strings.EqualFold(rp.ResourceType, serverFarmsType)
+	return rp.ResourceType == resourceType || strings.EqualFold(rp.ResourceType, serverFarmsType) ||
+		isCheckNameRequest(rp)
 }
 
 // isInvokeRequest reports whether r addresses the Functions HTTP-invoke surface
@@ -199,6 +214,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "malformed ARM path")
+		return
+	}
+
+	if isCheckNameRequest(rp) {
+		h.serveCheckName(w, r)
 		return
 	}
 
@@ -273,10 +293,18 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxControlBytes)
 
-	var req createSiteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidRequestContent", err.Error())
 		return
+	}
+
+	var req createSiteRequest
+	if len(body) > 0 {
+		if uerr := json.Unmarshal(body, &req); uerr != nil {
+			azurearm.WriteError(w, http.StatusBadRequest, "InvalidRequestContent", uerr.Error())
+			return
+		}
 	}
 
 	// Pull the handler entrypoint out of the reserved app setting and drop it
@@ -292,13 +320,23 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		Environment: appSettingsToMap(settings),
 	}
 
+	// Site names are global (*.azurewebsites.net): a name another resource
+	// group or subscription owns is a 409, never a rewrite of that site.
+	if store, ok := h.siteStore(); ok &&
+		store.SiteNameOwnedElsewhere(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName) {
+		azurearm.WriteError(w, http.StatusConflict, "Conflict",
+			"Website with given name "+rp.ResourceName+" already exists.")
+
+		return
+	}
+
 	info, err := upsertFunction(r, h.fn, cfg)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	meta := h.upsertSiteMeta(r, rp, req, settings)
+	meta := h.upsertSiteMeta(r, rp, req, settings, rawSiteConfig(body))
 
 	azurearm.WriteJSON(w, http.StatusOK, toSiteResource(rp, info, meta))
 }
@@ -310,6 +348,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 //nolint:gocritic // rp/req travel the dispatch chain once per request.
 func (h *Handler) upsertSiteMeta(
 	r *http.Request, rp azurearm.ResourcePath, req createSiteRequest, settings []nameValue,
+	siteConfig json.RawMessage,
 ) *azfunctions.SiteMeta {
 	store, ok := h.siteStore()
 	if !ok {
@@ -336,6 +375,7 @@ func (h *Handler) upsertSiteMeta(
 		MinTLSVersion:  req.Properties.SiteConfig.MinTLSVersion,
 		Identity:       toSiteMetaIdentity(req.Identity),
 		AppSettings:    appSettingsToMap(settings),
+		SiteConfig:     siteConfig,
 	})
 	if err != nil {
 		return nil
@@ -656,13 +696,17 @@ func (h *Handler) servePlan(w http.ResponseWriter, r *http.Request, rp azurearm.
 		return
 	}
 
-	if strings.EqualFold(rp.SubResource, servePlanSitesSubResource) {
+	if strings.EqualFold(rp.SubResource, servePlanSitesSubResource) && rp.SubResourceName == "" {
 		if r.Method == http.MethodGet {
 			h.listPlanWebApps(w, r, rp, store)
 		} else {
 			azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 		}
 
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp) {
 		return
 	}
 

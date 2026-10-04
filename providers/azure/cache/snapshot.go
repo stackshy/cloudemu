@@ -23,8 +23,10 @@ type cacheSnapshot struct {
 
 // cacheDataSnapshot is the exported form of cacheData.
 type cacheDataSnapshot struct {
-	Info  driver.CacheInfo `json:"info"`
-	Items json.RawMessage  `json:"items,omitempty"`
+	Info          driver.CacheInfo               `json:"info"`
+	Items         json.RawMessage                `json:"items,omitempty"`
+	PatchSchedule []driver.PatchScheduleEntry    `json:"patchSchedule,omitempty"`
+	FirewallRules map[string]driver.FirewallRule `json:"firewallRules,omitempty"`
 }
 
 // Snapshot captures every cache instance's state as JSON. includeAssets is unused:
@@ -38,7 +40,9 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 			return nil, fmt.Errorf("cache: snapshot items: %w", err)
 		}
 
-		snap.Caches[name] = &cacheDataSnapshot{Info: cd.info, Items: items}
+		snap.Caches[name] = &cacheDataSnapshot{
+			Info: cd.info, Items: items, PatchSchedule: cd.patch, FirewallRules: cd.fw,
+		}
 	}
 
 	return json.Marshal(snap)
@@ -53,7 +57,9 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	}
 
 	for name, cs := range snap.Caches {
-		cd := &cacheData{info: cs.Info, items: memstore.New[cacheItem]()}
+		cd := &cacheData{
+			info: cs.Info, items: memstore.New[cacheItem](), patch: cs.PatchSchedule, fw: cs.FirewallRules,
+		}
 		if len(cs.Items) > 0 {
 			if err := cd.items.LoadSnapshot(cs.Items); err != nil {
 				return fmt.Errorf("cache: restore items: %w", err)

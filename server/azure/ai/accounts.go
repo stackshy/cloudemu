@@ -186,7 +186,7 @@ func (h *CognitiveServicesHandler) serveAccountAction(w http.ResponseWriter, r *
 	case "usages":
 		h.listUsages(w, r, rp)
 	default:
-		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unknown account action: "+rp.SubResource)
+		azurearm.WriteUnknownType(w, r, rp)
 	}
 }
 

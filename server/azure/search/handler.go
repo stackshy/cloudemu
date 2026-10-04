@@ -10,6 +10,7 @@
 package search
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -27,6 +28,9 @@ const (
 	subDeleteQuery = "deleteQueryKey"
 	collSharedLink = "sharedPrivateLinkResources"
 	collPEC        = "privateEndpointConnections"
+
+	// childMaxDepth is the deepest child route: searchServices/{s}/{child}/{name}.
+	childMaxDepth = 3
 )
 
 // ControlHandler serves Microsoft.Search/searchServices ARM requests.
@@ -37,6 +41,12 @@ type ControlHandler struct {
 // NewControl returns a control-plane handler backed by svc.
 func NewControl(svc srchdriver.SearchControl) *ControlHandler {
 	return &ControlHandler{svc: svc}
+}
+
+// PurgeResourceGroup deletes every search service in the resource group, with
+// its keys, links and data-plane objects, backing the resource-group cascade.
+func (h *ControlHandler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	return azurearm.PurgeVia(ctx, h.svc, subscription, resourceGroup)
 }
 
 // Matches claims Microsoft.Search/searchServices ARM paths.
@@ -55,6 +65,10 @@ func (h *ControlHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "malformed ARM path")
 
+		return
+	}
+
+	if rp.SubResource != "" && azurearm.TooDeep(w, r, &rp, childMaxDepth) {
 		return
 	}
 

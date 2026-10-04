@@ -515,6 +515,36 @@ func TestSDKSecretIAM(t *testing.T) {
 	}
 }
 
+// TestSDKSecretIAMStaleEtag: a setIamPolicy carrying an etag the policy has
+// moved past is 409 ABORTED, the read-modify-write guard (T4-13).
+func TestSDKSecretIAMStaleEtag(t *testing.T) {
+	svc := newSMService(t)
+	ctx := context.Background()
+	name := mustCreateSecret(t, svc, "iam-etag")
+
+	read, err := svc.Projects.Secrets.GetIamPolicy(name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("GetIamPolicy: %v", err)
+	}
+
+	bind := []*sm.Binding{{Role: "roles/secretmanager.secretAccessor", Members: []string{"user:a@example.com"}}}
+
+	if _, err = svc.Projects.Secrets.SetIamPolicy(name, &sm.SetIamPolicyRequest{
+		Policy: &sm.Policy{Bindings: bind, Etag: read.Etag},
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("SetIamPolicy: %v", err)
+	}
+
+	_, err = svc.Projects.Secrets.SetIamPolicy(name, &sm.SetIamPolicyRequest{
+		Policy: &sm.Policy{Etag: read.Etag},
+	}).Context(ctx).Do()
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) || gerr.Code != http.StatusConflict || !strings.Contains(string(gerr.Body), "ABORTED") {
+		t.Fatalf("stale etag: want 409 ABORTED, got %v", err)
+	}
+}
+
 // TestSDKSecretListPagination proves pageSize/pageToken page the secrets list
 // (audit: Secrets.list pagination).
 func TestSDKSecretListPagination(t *testing.T) {

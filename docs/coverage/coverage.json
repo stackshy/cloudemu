@@ -1795,12 +1795,19 @@
         "doc": "CreateOrUpdateFirewallPolicy stores pol as a full replace and reports"
       },
       {
+        "name": "CreateOrUpdateRuleCollectionGroup",
+        "doc": "Rule collection groups are children of a policy and are deleted with"
+      },
+      {
         "name": "DeleteAzureFirewall",
         "doc": "DeleteAzureFirewall removes the firewall, returning NotFound if it does not"
       },
       {
         "name": "DeleteFirewallPolicy",
         "doc": "DeleteFirewallPolicy removes the policy, returning NotFound if it does not"
+      },
+      {
+        "name": "DeleteRuleCollectionGroup"
       },
       {
         "name": "GetAzureFirewall",
@@ -1811,12 +1818,18 @@
         "doc": "GetFirewallPolicy returns the policy identified by (resourceGroup, name),"
       },
       {
+        "name": "GetRuleCollectionGroup"
+      },
+      {
         "name": "ListAzureFirewalls",
         "doc": "ListAzureFirewalls returns the firewalls in rg, or all when rg is empty"
       },
       {
         "name": "ListFirewallPolicies",
         "doc": "ListFirewallPolicies returns the policies in rg, or all when rg is empty"
+      },
+      {
+        "name": "ListRuleCollectionGroups"
       }
     ],
     "providers": {
@@ -3075,6 +3088,40 @@
         ]
       },
       {
+        "name": "RedisChildren",
+        "doc": "RedisChildren is an OPTIONAL capability, discovered by type assertion. Azure",
+        "operations": [
+          {
+            "name": "DeleteFirewallRule",
+            "doc": "DeleteFirewallRule removes a rule and reports whether it existed."
+          },
+          {
+            "name": "DeletePatchSchedule",
+            "doc": "DeletePatchSchedule removes the patch schedule and reports whether one"
+          },
+          {
+            "name": "GetFirewallRule",
+            "doc": "GetFirewallRule returns a rule, NotFound when it does not exist."
+          },
+          {
+            "name": "GetPatchSchedule",
+            "doc": "GetPatchSchedule returns the patch schedule, NotFound when none is set."
+          },
+          {
+            "name": "ListFirewallRules",
+            "doc": "ListFirewallRules returns the cache's rules sorted by name."
+          },
+          {
+            "name": "PutFirewallRule",
+            "doc": "PutFirewallRule creates or replaces a rule. created is true for a new"
+          },
+          {
+            "name": "SetPatchSchedule",
+            "doc": "SetPatchSchedule replaces the cache's patch schedule. created is true"
+          }
+        ]
+      },
+      {
         "name": "ReplicationGroups",
         "doc": "ReplicationGroups is an OPTIONAL capability, discovered by type assertion.",
         "operations": [
@@ -4297,6 +4344,26 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AzureAvailabilitySets",
+        "doc": "AzureAvailabilitySets is an optional Azure-only capability for availability",
+        "operations": [
+          {
+            "name": "DeleteAvailabilitySet"
+          },
+          {
+            "name": "GetAvailabilitySet"
+          },
+          {
+            "name": "ListAvailabilitySets",
+            "doc": "ListAvailabilitySets lists the sets of a subscription, narrowed to one"
+          },
+          {
+            "name": "PutAvailabilitySet",
+            "doc": "PutAvailabilitySet creates or replaces the set. Out-of-range domain"
+          }
+        ]
+      },
+      {
         "name": "AzureDiskAccessor",
         "doc": "AzureDiskAccessor is an optional Azure-only capability for the managed-disk",
         "operations": [
@@ -4381,6 +4448,25 @@
         "operations": [
           {
             "name": "DeleteInstances"
+          }
+        ]
+      },
+      {
+        "name": "AzureVMExtensions",
+        "doc": "AzureVMExtensions is an optional Azure-only capability for VM extensions.",
+        "operations": [
+          {
+            "name": "DeleteVMExtension"
+          },
+          {
+            "name": "GetVMExtension"
+          },
+          {
+            "name": "ListVMExtensions"
+          },
+          {
+            "name": "PutVMExtension",
+            "doc": "PutVMExtension creates or replaces the extension on the VM, reporting"
           }
         ]
       },
@@ -4910,6 +4996,12 @@
         "name": "DeleteApp"
       },
       {
+        "name": "DeleteDaprComponent"
+      },
+      {
+        "name": "DeleteEnvStorage"
+      },
+      {
         "name": "DeleteEnvironment"
       },
       {
@@ -4922,16 +5014,31 @@
         "name": "GetApp"
       },
       {
+        "name": "GetDaprComponent"
+      },
+      {
+        "name": "GetEnvStorage"
+      },
+      {
         "name": "GetEnvironment"
       },
       {
         "name": "GetRevision"
       },
       {
+        "name": "ListAppSecrets"
+      },
+      {
         "name": "ListAppsByResourceGroup"
       },
       {
         "name": "ListAppsBySubscription"
+      },
+      {
+        "name": "ListDaprComponents"
+      },
+      {
+        "name": "ListEnvStorages"
       },
       {
         "name": "ListEnvironmentsByResourceGroup"
@@ -4944,6 +5051,12 @@
       },
       {
         "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "PutDaprComponent"
+      },
+      {
+        "name": "PutEnvStorage"
       },
       {
         "name": "RestartRevision"
@@ -9981,6 +10094,15 @@
         ]
       },
       {
+        "name": "GCPForwardingRulePatcher",
+        "doc": "GCPForwardingRulePatcher is an OPTIONAL, type-asserted capability implemented",
+        "operations": [
+          {
+            "name": "PatchGCPForwardingRule"
+          }
+        ]
+      },
+      {
         "name": "GCPServiceAttachmentStore",
         "doc": "GCPServiceAttachmentStore is an OPTIONAL, type-asserted capability",
         "operations": [
@@ -10533,7 +10655,13 @@
         "name": "CreateOrUpdate"
       },
       {
+        "name": "CreateOrUpdateFIC"
+      },
+      {
         "name": "Delete"
+      },
+      {
+        "name": "DeleteFIC"
       },
       {
         "name": "DiscoverIdentities"
@@ -10542,10 +10670,16 @@
         "name": "Get"
       },
       {
+        "name": "GetFIC"
+      },
+      {
         "name": "ListByResourceGroup"
       },
       {
         "name": "ListBySubscription"
+      },
+      {
+        "name": "ListFICs"
       },
       {
         "name": "PurgeResourceGroup"
@@ -13760,6 +13894,24 @@
         ]
       },
       {
+        "name": "DatabaseRetentionPolicies",
+        "doc": "DatabaseRetentionPolicies is an OPTIONAL Azure SQL capability, discovered by",
+        "operations": [
+          {
+            "name": "GetLongTermRetention"
+          },
+          {
+            "name": "GetShortTermRetention"
+          },
+          {
+            "name": "SetLongTermRetention"
+          },
+          {
+            "name": "SetShortTermRetention"
+          }
+        ]
+      },
+      {
         "name": "DatabaseUpdater",
         "doc": "DatabaseUpdater is an OPTIONAL capability for updating a logical database's",
         "operations": [
@@ -14056,6 +14208,18 @@
         "operations": [
           {
             "name": "DeleteInstanceInScope"
+          }
+        ]
+      },
+      {
+        "name": "ServerConnectionPolicies",
+        "doc": "ServerConnectionPolicies is an OPTIONAL Azure SQL capability: a server's",
+        "operations": [
+          {
+            "name": "GetConnectionPolicy"
+          },
+          {
+            "name": "SetConnectionPolicy"
           }
         ]
       },
@@ -15851,6 +16015,14 @@
           {
             "name": "ListVaults",
             "doc": "ListVaults returns the vaults visible under the given scope filter (a zero"
+          },
+          {
+            "name": "UpdateVault",
+            "doc": "UpdateVault atomically applies mutate to a copy of the stored vault"
+          },
+          {
+            "name": "UpdateVaultAccessPolicies",
+            "doc": "UpdateVaultAccessPolicies atomically adds, replaces or removes access"
           }
         ]
       }
@@ -16996,6 +17168,24 @@
           },
           {
             "name": "SetAccountEncryption"
+          }
+        ]
+      },
+      {
+        "name": "AccountServiceSettings",
+        "doc": "AccountServiceSettings is an OPTIONAL Azure-specific capability, discovered",
+        "operations": [
+          {
+            "name": "AccountSetting",
+            "doc": "AccountSetting returns the stored document, and false when none is set."
+          },
+          {
+            "name": "DeleteAccountSetting",
+            "doc": "DeleteAccountSetting removes the document and reports whether it existed."
+          },
+          {
+            "name": "SetAccountSetting",
+            "doc": "SetAccountSetting replaces the account's kind document and stamps its"
           }
         ]
       },

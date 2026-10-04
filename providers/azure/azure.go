@@ -15,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/apimanagement"
 	"github.com/stackshy/cloudemu/v2/providers/azure/appconfiguration"
 	"github.com/stackshy/cloudemu/v2/providers/azure/applicationgateway"
+	"github.com/stackshy/cloudemu/v2/providers/azure/armoverlay"
 	"github.com/stackshy/cloudemu/v2/providers/azure/bastion"
 	"github.com/stackshy/cloudemu/v2/providers/azure/batch"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
@@ -37,6 +38,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/functions"
 	"github.com/stackshy/cloudemu/v2/providers/azure/healthcareapis"
 	"github.com/stackshy/cloudemu/v2/providers/azure/iam"
+	"github.com/stackshy/cloudemu/v2/providers/azure/insightscomponents"
 	"github.com/stackshy/cloudemu/v2/providers/azure/iothub"
 	"github.com/stackshy/cloudemu/v2/providers/azure/keyvault"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loadbalancer"
@@ -47,6 +49,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedgrafana"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedidentity"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedlustre"
+	"github.com/stackshy/cloudemu/v2/providers/azure/managementlocks"
 	"github.com/stackshy/cloudemu/v2/providers/azure/mongocluster"
 	"github.com/stackshy/cloudemu/v2/providers/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/providers/azure/mysqlflex"
@@ -56,6 +59,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/purview"
 	"github.com/stackshy/cloudemu/v2/providers/azure/recoveryservices"
 	"github.com/stackshy/cloudemu/v2/providers/azure/redisenterprise"
+	"github.com/stackshy/cloudemu/v2/providers/azure/rgstore"
 	"github.com/stackshy/cloudemu/v2/providers/azure/search"
 	"github.com/stackshy/cloudemu/v2/providers/azure/servicebus"
 	"github.com/stackshy/cloudemu/v2/providers/azure/signalr"
@@ -63,6 +67,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/sqlvirtualmachine"
 	"github.com/stackshy/cloudemu/v2/providers/azure/streamanalytics"
 	"github.com/stackshy/cloudemu/v2/providers/azure/tablestorage"
+	"github.com/stackshy/cloudemu/v2/providers/azure/tagsatscope"
 	"github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/providers/azure/vnet"
 	"github.com/stackshy/cloudemu/v2/providers/azure/webpubsub"
@@ -196,6 +201,9 @@ type Provider struct {
 	Communication      *communication.Mock
 	DigitalTwins       *digitaltwins.Mock
 	ManagedGrafana     *managedgrafana.Mock
+	AppInsights        *insightscomponents.Mock
+	ManagementLocks    *managementlocks.Mock
+	ScopeTags          *tagsatscope.Mock
 	DevCenter          *devcenter.Mock
 	Purview            *purview.Mock
 	ChaosStudio        *chaosstudio.Mock
@@ -211,6 +219,8 @@ type Provider struct {
 	Logic              *logic.Mock
 	HealthcareApis     *healthcareapis.Mock
 	APIManagement      *apimanagement.Mock
+	ResourceGroups     *rgstore.Mock
+	PropertyOverlay    *armoverlay.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -280,6 +290,9 @@ func New(opts ...config.Option) *Provider {
 		Communication:      communication.New(o),
 		DigitalTwins:       digitaltwins.New(o),
 		ManagedGrafana:     managedgrafana.New(o),
+		AppInsights:        insightscomponents.New(),
+		ManagementLocks:    managementlocks.New(),
+		ScopeTags:          tagsatscope.New(),
 		DevCenter:          devcenter.New(o),
 		Purview:            purview.New(o),
 		ChaosStudio:        chaosstudio.New(o),
@@ -295,6 +308,8 @@ func New(opts ...config.Option) *Provider {
 		Logic:              logic.New(o),
 		HealthcareApis:     healthcareapis.New(o),
 		APIManagement:      apimanagement.New(o),
+		ResourceGroups:     rgstore.New(o),
+		PropertyOverlay:    armoverlay.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -354,9 +369,46 @@ func New(opts ...config.Option) *Provider {
 			},
 		},
 	)
+	p.ResourceGroups.SetRebuildSource(p.inventoryGroups)
 	p.engineClosers = o.EngineClosers()
 
 	return p
+}
+
+// inventoryGroups lists the resource group of every resource in the
+// cross-service inventory, read off its ARM id, with the resource's location.
+// It lets a snapshot written before resource groups were persisted rebuild
+// them on restore.
+func (p *Provider) inventoryGroups(ctx context.Context) ([]rgstore.GroupRef, error) {
+	all, err := p.ResourceDiscovery.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	refs := make([]rgstore.GroupRef, 0, len(all))
+
+	for i := range all {
+		if sub, rg, ok := armGroupOf(all[i].ARN); ok {
+			refs = append(refs, rgstore.GroupRef{Subscription: sub, Name: rg, Location: all[i].Region})
+		}
+	}
+
+	return refs, nil
+}
+
+// armGroupOf splits /subscriptions/{sub}/resourceGroups/{rg}/... into its
+// subscription and resource group, matching the segment names
+// case-insensitively.
+func armGroupOf(id string) (sub, rg string, ok bool) {
+	const minParts = 4
+
+	parts := strings.Split(strings.Trim(id, "/"), "/")
+	if len(parts) < minParts || !strings.EqualFold(parts[0], "subscriptions") ||
+		!strings.EqualFold(parts[2], "resourceGroups") || parts[1] == "" || parts[3] == "" {
+		return "", "", false
+	}
+
+	return parts[1], parts[3], true
 }
 
 // wireCrossService connects the inter-service dependencies (auto-metrics, log

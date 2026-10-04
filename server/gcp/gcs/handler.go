@@ -35,6 +35,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
@@ -98,6 +99,12 @@ const (
 	defaultProjectNumber = "123456789012"
 )
 
+// bucketOwner is the optional backend capability that names the project owning
+// a bucket.
+type bucketOwner interface {
+	BucketProject(ctx context.Context, name string) (string, error)
+}
+
 // Handler serves GCS JSON REST requests against a storage.Bucket driver.
 type Handler struct {
 	bucket storagedriver.Bucket
@@ -123,6 +130,10 @@ type Handler struct {
 	// retention is the optional capability persisting a bucket's retention policy
 	// (WORM); nil makes retentionPolicy absent and unsettable.
 	retention retentionStore
+
+	// owner is the optional capability naming the project that owns a bucket,
+	// used to scope buckets.list. nil lists every bucket under any project.
+	owner bucketOwner
 
 	// publisher emits object-change events to Pub/Sub for matching bucket
 	// notification configs. Nil (the default) makes object events a no-op, so
@@ -167,6 +178,7 @@ func New(b storagedriver.Bucket) *Handler {
 	iamCfg, _ := b.(iamConfigStore)
 	hmac, _ := b.(hmacKeyStore)
 	retention, _ := b.(retentionStore)
+	owner, _ := b.(bucketOwner)
 
 	return &Handler{
 		bucket:    b,
@@ -175,6 +187,7 @@ func New(b storagedriver.Bucket) *Handler {
 		iamCfg:    iamCfg,
 		hmac:      hmac,
 		retention: retention,
+		owner:     owner,
 		resumable: make(map[string]*resumableSession),
 	}
 }
@@ -356,6 +369,10 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The bucket belongs to the ?project= the caller named. The name itself
+	// stays globally unique, so a create in another project still conflicts.
+	r = r.WithContext(projectctx.WithProject(r.Context(), r.URL.Query().Get("project")))
+
 	if err := h.bucket.CreateBucket(r.Context(), body.Name); err != nil {
 		writeErr(w, err)
 		return
@@ -388,19 +405,61 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.bucketView(r, body.Name, time.Now().UTC().Format(time.RFC3339)))
 }
 
+// defaultMaxBuckets is the buckets.list page size when maxResults is unset.
+const defaultMaxBuckets = 1000
+
+// listBuckets serves buckets.list. As in real GCS, project is required and only
+// that project's buckets are listed, sorted by name, filtered by prefix and
+// paged by maxResults and pageToken (the token is the next bucket name).
 func (h *Handler) listBuckets(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	project := q.Get("project")
+	if project == "" {
+		writeError(w, http.StatusBadRequest, "required", "Required parameter: project")
+		return
+	}
+
 	buckets, err := h.bucket.ListBuckets(r.Context())
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
+	limit := defaultMaxBuckets
+	if n, perr := strconv.Atoi(q.Get("maxResults")); perr == nil && n > 0 && n < limit {
+		limit = n
+	}
+
+	prefix, token := q.Get("prefix"), q.Get("pageToken")
 	out := bucketsListResponse{Kind: "storage#buckets"}
+
 	for _, b := range buckets {
+		if !strings.HasPrefix(b.Name, prefix) || b.Name < token || !h.ownedBy(r.Context(), b.Name, project) {
+			continue
+		}
+
+		if len(out.Items) == limit {
+			out.NextPageToken = b.Name
+			break
+		}
+
 		out.Items = append(out.Items, h.bucketView(r, b.Name, b.CreatedAt))
 	}
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+// ownedBy reports whether bucket name belongs to project. A backend without
+// bucket ownership treats every bucket as the caller's.
+func (h *Handler) ownedBy(ctx context.Context, name, project string) bool {
+	if h.owner == nil {
+		return true
+	}
+
+	owner, err := h.owner.BucketProject(ctx, name)
+
+	return err == nil && owner == project
 }
 
 func (h *Handler) getBucket(w http.ResponseWriter, r *http.Request, name string) {

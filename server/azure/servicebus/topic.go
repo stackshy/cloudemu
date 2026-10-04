@@ -27,6 +27,14 @@ func (h *Handler) serveTopicTree(w http.ResponseWriter, r *http.Request, sp sbPa
 // is entered only when there are at least depthSubColl segments.
 func (h *Handler) serveSubtree(w http.ResponseWriter, r *http.Request, sp sbPath) {
 	segs := sp.segs
+	if eq(segs[2], segAuthRules) {
+		h.authRuleDispatch(w, r, segs[3:], func() (authTarget, bool) {
+			return h.topicAuthTargetLocked(sp, segs[1])
+		})
+
+		return
+	}
+
 	if !eq(segs[2], segSubs) {
 		notImplemented(w)
 		return
@@ -110,7 +118,9 @@ func (h *Handler) createTopic(w http.ResponseWriter, r *http.Request, sp sbPath,
 
 	rec, existed := ns.Topics[name]
 	if !existed {
-		rec = &topicRecord{Name: name, Subs: map[string]*subscriptionRecord{}, CreatedAt: now}
+		rec = &topicRecord{
+			Name: name, Subs: map[string]*subscriptionRecord{}, AuthRules: map[string]*authRuleRecord{}, CreatedAt: now,
+		}
 		ns.Topics[name] = rec
 	}
 

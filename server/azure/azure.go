@@ -11,6 +11,9 @@ import (
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	aiprov "github.com/stackshy/cloudemu/v2/providers/azure/insightscomponents"
+	lockprov "github.com/stackshy/cloudemu/v2/providers/azure/managementlocks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/tagsatscope"
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/azure/aad"
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
@@ -186,6 +189,12 @@ type Drivers struct {
 	DigitalTwins digitaltwinssrv.Store
 	// ManagedGrafana serves Microsoft.Dashboard/grafana.
 	ManagedGrafana managedgrafanasrv.Store
+	// AppInsights, ManagementLocks and ScopeTags are the persisted stores behind
+	// the always-on components, locks and tags-at-scope handlers. A nil store
+	// gives that handler a private, unpersisted one.
+	AppInsights     *aiprov.Mock
+	ManagementLocks *lockprov.Mock
+	ScopeTags       *tagsatscope.Mock
 	// DevCenter serves Microsoft.DevCenter/devcenters.
 	DevCenter devcentersrv.Store
 	// Purview serves Microsoft.Purview/accounts.
@@ -296,6 +305,13 @@ type Drivers struct {
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
 	// the same backend. Leave nil to disable Kubernetes data-plane support.
 	K8sAPI *kubernetes.APIServer
+	// ResourceGroups stores ARM resource groups. Leave nil for a private
+	// in-memory store that is not part of any snapshot.
+	ResourceGroups resourcegroups.Store
+	// PropertyOverlay stores the request properties echoed back although no
+	// handler models them. Leave nil for a private in-memory store that is not
+	// part of any snapshot.
+	PropertyOverlay PropertyStore
 	// ResourceDiscovery is the cross-service inventory engine. Required to
 	// serve Azure Resource Graph (armresourcegraph) requests. Leave nil to
 	// omit the handler. SubscriptionID is needed for the subscription-scoping
@@ -345,7 +361,7 @@ func New(d Drivers) http.Handler {
 	// Management locks are constructed once and shared: the same instance is
 	// registered as the CRUD handler and handed to the enforcement gate below,
 	// so the gate reads the exact store callers write to.
-	locksHandler := locks.New()
+	locksHandler := locks.New(d.ManagementLocks)
 
 	tenantID := d.TenantID
 	if tenantID == "" {
@@ -392,6 +408,33 @@ func New(d Drivers) http.Handler {
 	// is always registered (like subscriptions/tenants). This same instance
 	// backs the always-on enforcement gate wired via SetPreDispatch below.
 	srv.Register(locksHandler)
+
+	// IAM matches /providers/Microsoft.Authorization/role{Definitions,Assignments}
+	// and denyAssignments at any scope, including the extension form under an
+	// individual resource (.../virtualNetworks/vn/providers/Microsoft.
+	// Authorization/roleAssignments/{id}). Like locks it must register before
+	// every per-resource-type handler, whose ParsePath match would otherwise
+	// claim the leading /providers/{ns}/{type} pair and apply the write to the
+	// parent resource. Its Matches is a substring test no resource handler
+	// produces, so registering it early shadows nothing.
+	//
+	// The Drivers.IAM field stays typed as the shared iamdriver.IAM (rather
+	// than iam.Driver) so the docs/coverage generator's registration check
+	// (which recognizes only services/<name>/driver package types) still
+	// links this field to the "iam" service. The handler additionally needs
+	// the Azure-only RoleAssignment surface (see iam.Driver): every real
+	// driver behind this field is *azureiam.Mock (providers/azure/iam),
+	// which implements it, so the assertion below always succeeds in
+	// practice; it fails fast at server construction, not at request time,
+	// if a future caller ever wires in some other iamdriver.IAM.
+	if d.IAM != nil {
+		drv, ok := d.IAM.(iam.Driver)
+		if !ok {
+			panic(fmt.Sprintf("azure: Drivers.IAM (%T) does not implement iam.Driver (role assignments)", d.IAM))
+		}
+
+		srv.Register(iam.New(drv))
+	}
 
 	// Build the per-service handlers that own resource-group-scoped resources up
 	// front; they are registered at their normal positions further below. A
@@ -657,7 +700,7 @@ func New(d Drivers) http.Handler {
 	// Application Insights components (Microsoft.Insights/components) are
 	// resource-group-scoped, so the (always-on, driverless) handler joins the
 	// purge cascade. Registered further below.
-	appInsightsHandler := appinsightssrv.New()
+	appInsightsHandler := appinsightssrv.New(d.AppInsights)
 
 	// Data Factory (Microsoft.DataFactory/factories) is a resource-group-scoped
 	// resource, so its handler joins the purge cascade. Registered further below.
@@ -671,16 +714,22 @@ func New(d Drivers) http.Handler {
 	// discovery engine (nil-safe) lets exportTemplate enumerate that membership;
 	// the purgers (collected once every handler is registered) cascade a group
 	// delete into its resources.
-	rgHandler := resourcegroups.New(d.ResourceDiscovery)
+	rgHandler := resourcegroups.NewWithStore(d.ResourceGroups, d.ResourceDiscovery)
 	srv.Register(rgHandler)
 
-	// Tags resource provider (Microsoft.Resources/tags/default). Self-contained
-	// (no driver): it owns the per-scope tag sets an armresources TagsClient
-	// manages at subscription or resource scope. Its path suffix
+	// Tags resource provider (Microsoft.Resources/tags/default). Resource-group
+	// and resource scopes read and write the resource's own tags through the
+	// router (wired at the end); the store keeps subscription tag sets. Its path suffix
 	// /providers/Microsoft.Resources/tags/default is disjoint from the
 	// resource-group paths above and the Microsoft.ResourceGraph/generic-resources
 	// listings, so registration order is unconstrained.
-	srv.Register(tagssrv.New())
+	scopeTags := d.ScopeTags
+	if scopeTags == nil {
+		scopeTags = tagsatscope.New()
+	}
+
+	tagsHandler := tagssrv.New(scopeTags)
+	srv.Register(tagsHandler)
 
 	// microsoft.insights extension resources (metrics, metricDefinitions,
 	// diagnosticSettings) hang off an arbitrary resource URI, so they must claim
@@ -1134,28 +1183,6 @@ func New(d Drivers) http.Handler {
 		srv.Register(containerAppsHandler)
 	}
 
-	// IAM matches /providers/Microsoft.Authorization/role{Definitions,Assignments}
-	// at any scope, distinct from every other ARM provider name, so
-	// registration order is unconstrained.
-	//
-	// The Drivers.IAM field stays typed as the shared iamdriver.IAM (rather
-	// than iam.Driver) so the docs/coverage generator's registration check
-	// (which recognizes only services/<name>/driver package types) still
-	// links this field to the "iam" service. The handler additionally needs
-	// the Azure-only RoleAssignment surface (see iam.Driver): every real
-	// driver behind this field is *azureiam.Mock (providers/azure/iam),
-	// which implements it, so the assertion below always succeeds in
-	// practice; it fails fast at server construction, not at request time,
-	// if a future caller ever wires in some other iamdriver.IAM.
-	if d.IAM != nil {
-		drv, ok := d.IAM.(iam.Driver)
-		if !ok {
-			panic(fmt.Sprintf("azure: Drivers.IAM (%T) does not implement iam.Driver (role assignments)", d.IAM))
-		}
-
-		srv.Register(iam.New(drv))
-	}
-
 	// ACR data-plane catalog API matches /acr/v1/…, disjoint from ARM, and
 	// must register before the permissive BlobStorage fallback below.
 	if d.ACR != nil {
@@ -1265,7 +1292,13 @@ func New(d Drivers) http.Handler {
 	// Every handler is registered now, so collect the resource-group purgers.
 	rgHandler.SetPurgers(resourcegroups.CollectPurgers(srv.Handlers()))
 
-	return echoUnmodeledProperties(srv, newPropertyOverlay())
+	router := echoUnmodeledProperties(srv, newPropertyOverlay(d.PropertyOverlay), scopeTags)
+
+	// The Tags API reads and writes resource and resource-group tags on the
+	// resource itself, through the full router so locks and overlays apply.
+	tagsHandler.SetRouter(router)
+
+	return router
 }
 
 // registerDatabricksDataPlane registers the Databricks workspace data-plane

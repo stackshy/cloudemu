@@ -29,6 +29,8 @@ type vmSnapshot struct {
 	KeyPairs     json.RawMessage              `json:"keyPairs,omitempty"`
 	ScaleSets    json.RawMessage              `json:"scaleSets,omitempty"`
 	DiskAccess   json.RawMessage              `json:"diskAccess,omitempty"`
+	VMExtensions json.RawMessage              `json:"vmExtensions,omitempty"`
+	AvailSets    json.RawMessage              `json:"availabilitySets,omitempty"`
 	ASGs         map[string]*asgSnapshot      `json:"asgs,omitempty"`
 	Counters     countersSnapshot             `json:"counters"`
 }
@@ -127,6 +129,8 @@ func (m *Mock) snapshotStores(snap *vmSnapshot) error {
 		{&snap.KeyPairs, m.keyPairs.Snapshot},
 		{&snap.ScaleSets, m.scaleSets.Snapshot},
 		{&snap.DiskAccess, m.diskAccess.Snapshot},
+		{&snap.VMExtensions, m.vmExtensions.Snapshot},
+		{&snap.AvailSets, m.availabilitySets.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -175,6 +179,9 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	if err := m.restoreStores(&snap); err != nil {
 		return err
 	}
+
+	m.rekeyKeyPairs()
+	m.rekeyScaleSets()
 
 	if err := m.restoreASGs(snap.ASGs); err != nil {
 		return err
@@ -226,6 +233,8 @@ func (m *Mock) restoreStores(snap *vmSnapshot) error {
 		{snap.KeyPairs, m.keyPairs.LoadSnapshot},
 		{snap.ScaleSets, m.scaleSets.LoadSnapshot},
 		{snap.DiskAccess, m.diskAccess.LoadSnapshot},
+		{snap.VMExtensions, m.vmExtensions.LoadSnapshot},
+		{snap.AvailSets, m.availabilitySets.LoadSnapshot},
 	}
 
 	for _, l := range loads {

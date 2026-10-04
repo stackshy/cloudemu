@@ -98,7 +98,9 @@ func generateCertificate(keyAlg, domain string, sans []string, notBefore time.Ti
 func generateKeyMaterial(keyAlg string) (signer crypto.Signer, keyPEM, sigAlg string, err error) {
 	switch keyAlg {
 	case driver.KeyAlgRSA1024:
-		return rsaKeyMaterial(rsaBits1024)
+		// The emulator never generates a sub-2048 RSA key; the legacy
+		// RSA_1024 algorithm gets a 2048-bit key (see rsaKeyMaterial).
+		return rsaKeyMaterial(rsaBits2048)
 	case driver.KeyAlgRSA2048:
 		return rsaKeyMaterial(rsaBits2048)
 	case driver.KeyAlgRSA3072:

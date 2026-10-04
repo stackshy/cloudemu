@@ -84,10 +84,81 @@ each service you use at the GCP port:
 
 ```hcl
 provider "google" {
-  project = "cloudemu"
+  project = "cloudemu" # run serve with --project-id cloudemu
   # e.g. storage_custom_endpoint = "http://localhost:4569/storage/v1/"
 }
 ```
+
+GCP resources are scoped to the project in the request path, so two provider
+aliases with different `project` values keep same-named resources apart.
+Pub/Sub, Secret Manager and IAM custom roles are scoped this way today.
+Resources created through the Go API, `--init-dir` seeds, and project-less
+state restored from an older snapshot belong to `--project-id` (default
+`cloudemu-local`). Set `--project-id` to the project your provider or SDK uses.
+
+### Shared REST paths and the API alias
+
+Some GCP services serve identical REST paths on different hosts. GKE and Managed
+Kafka both serve `/v1/projects/{p}/locations/{l}/clusters`, and Filestore,
+Memorystore for Redis, Data Fusion and Secure Source Manager all serve
+`.../locations/{l}/instances`. On a single port CloudEmu tells them apart by
+the body, the path shape and which service owns the id. A collection list in a
+location where two of them own resources cannot be told apart that way.
+
+To name the API explicitly, put its googleapis host as the first path segment of
+the endpoint. CloudEmu strips that segment before routing. Always end the
+endpoint with the version segment the provider expects (`/v1/`), as with any
+custom endpoint:
+
+```hcl
+provider "google" {
+  container_custom_endpoint     = "http://localhost:4569/container.googleapis.com/v1/"
+  managed_kafka_custom_endpoint = "http://localhost:4569/managedkafka.googleapis.com/v1/"
+  filestore_custom_endpoint     = "http://localhost:4569/file.googleapis.com/v1/"
+  redis_custom_endpoint         = "http://localhost:4569/redis.googleapis.com/v1/"
+}
+```
+
+Go clients take the same form without the version, which they append:
+`option.WithEndpoint("http://localhost:4569/managedkafka.googleapis.com")`.
+A `Host: <api>.googleapis.com` header (from a proxy, `/etc/hosts` or
+`curl -H`) works the same way.
+
+| Alias host | Shared path it disambiguates |
+|---|---|
+| `container.googleapis.com`, `alloydb.googleapis.com`, `managedkafka.googleapis.com` | `locations/{l}/clusters` |
+| `file.googleapis.com`, `redis.googleapis.com`, `datafusion.googleapis.com`, `securesourcemanager.googleapis.com` | `locations/{l}/instances` |
+| `securesourcemanager.googleapis.com`, `artifactregistry.googleapis.com`, `dataform.googleapis.com` | `locations/{l}/repositories` |
+| `ids.googleapis.com`, `us-central1-aiplatform.googleapis.com` (region named literally) | `locations/{l}/endpoints` |
+| `gkebackup.googleapis.com`, `backupdr.googleapis.com` | `locations/{l}/backupPlans` |
+| `spanner.googleapis.com`, `sqladmin.googleapis.com` | `/v1/projects/{p}/instances` |
+
+Without a hint, these pairs are told apart by body, path shape and ownership:
+a Cloud IDS create carries `severity`/`network` and no `displayName`; a
+Filestore create carries a Filestore tier, and zonal locations are Filestore's;
+a Backup and DR plan carries `backupVault`/`backupRules`/`resourceType`; a
+Dataform repository carries Dataform fields and no `format`; and a v1 instance
+list is Spanner's only when it pages with `pageSize` or Spanner owns an
+instance in the project. In a project that has both Spanner and Cloud SQL
+instances, list Cloud SQL through `/sqladmin.googleapis.com/v1/`.
+
+Any other `*.googleapis.com` first segment is stripped and otherwise ignored, so
+`http://localhost:4569/storage.googleapis.com/storage/v1/` is the same as
+`http://localhost:4569/storage/v1/`.
+
+AlloyDB creates, reads, updates and deletes work without the alias, so a plain
+`alloydb_custom_endpoint = "http://localhost:4569/v1/"` serves Terraform. An
+AlloyDB *list* (a data source, `gcloud`, or an SDK `ListClusters`) needs the
+alias, since unhinted cluster lists are GKE's. GKE and AlloyDB clusters cannot
+share a name, in any location; the second create gets 409 `ALREADY_EXISTS`.
+Managed Kafka and AlloyDB may reuse a cluster id; unhinted item calls then reach
+Managed Kafka. Use the alias to address the AlloyDB cluster.
+
+Without the alias, a list in a location
+where two services own resources goes to the first registered owner (GKE for
+clusters). URLs CloudEmu returns in responses, such as an operation `selfLink`,
+do not carry the alias; clients poll operations by name, so this does not affect
+them.
 
 Azure: the `azurerm` provider has no per-service endpoint override. It reads
 every endpoint from an Azure metadata document and gets a bearer token from an

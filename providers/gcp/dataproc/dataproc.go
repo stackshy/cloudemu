@@ -218,16 +218,15 @@ func (m *Mock) DeleteCluster(_ context.Context, project, region, name string) (*
 	return m.newOp(project, region, "delete", key), nil
 }
 
-// GetOperation returns a (done) long-running operation by name. An unknown name
-// is reported as a done operation: the mock completes synchronously, so any op id
-// an SDK or Terraform poll asks for has already finished.
+// GetOperation returns a recorded (done) long-running operation by name. An
+// operation that was never created is NOT_FOUND, matching real GCP.
 func (m *Mock) GetOperation(_ context.Context, name string) (*dpdriver.Operation, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	op, ok := m.operations.Get(name)
 	if !ok {
-		return &dpdriver.Operation{Name: name, Done: true}, nil
+		return nil, cerrors.Newf(cerrors.NotFound, "operation %q not found", name)
 	}
 
 	out := op
@@ -320,15 +319,15 @@ func instanceNames(cluster, role string, count int64) []string {
 	}
 
 	// Bound the per-group instance count (originating from the request's
-	// NumInstances) with an explicit comparison immediately before the allocation
-	// it sizes. A real Dataproc cluster stays far under this; the ceiling only
-	// stops a pathological value from driving an unbounded slice.
+	// NumInstances) so a pathological value cannot drive an unbounded loop. A
+	// real Dataproc cluster stays far under this. The slice gets no capacity
+	// hint, so the request value never sizes an allocation directly.
 	const maxInstanceGroupSize = 10000
 	if count > maxInstanceGroupSize {
 		count = maxInstanceGroupSize
 	}
 
-	names := make([]string, 0, count)
+	names := make([]string, 0)
 	for i := int64(0); i < count; i++ {
 		names = append(names, cluster+"-"+role+"-"+strconv.FormatInt(i, 10))
 	}

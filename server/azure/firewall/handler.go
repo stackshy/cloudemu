@@ -145,8 +145,13 @@ func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, rp *azurea
 		return
 	}
 
-	// ruleCollectionGroups and other policy sub-resources are deferred; reject
-	// cleanly rather than misparsing them as a policy request.
+	if isRuleCollectionGroups(rp.SubResource) {
+		h.serveRuleCollectionGroups(w, r, rp)
+		return
+	}
+
+	// Other policy sub-resources are deferred; reject cleanly rather than
+	// misparsing them as a policy request.
 	if rp.SubResource != "" {
 		writeSubResourceDeferred(w)
 		return

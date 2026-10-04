@@ -154,8 +154,7 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp *azurea
 		return
 	}
 
-	if _, err := h.db.DescribeTable(r.Context(), rp.ResourceName); err != nil {
-		azurearm.WriteCErr(w, err)
+	if !h.accountInScope(w, r, rp) {
 		return
 	}
 
@@ -203,6 +202,16 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 
 	name := rp.ResourceName
 
+	// Account names are global DNS labels (*.documents.azure.com): a name another
+	// resource group owns is rejected rather than moved or rewritten.
+	if h.ownedElsewhere(r.Context(), rp) {
+		azurearm.WriteError(w, http.StatusBadRequest, "BadRequest",
+			"Dns record for "+name+" under zone Document is already taken. "+
+				"Please use a different name for the account.")
+
+		return
+	}
+
 	// Upsert: an existing account (table) re-applies its cost attributes rather
 	// than erroring, matching real Azure's create-or-update semantics.
 	if err := h.db.CreateTable(r.Context(), dbdriver.TableConfig{Name: name}); err != nil &&
@@ -248,8 +257,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if _, err := h.db.DescribeTable(r.Context(), rp.ResourceName); err != nil {
-		azurearm.WriteCErr(w, err)
+	if !h.accountInScope(w, r, rp) {
 		return
 	}
 
@@ -271,8 +279,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp *azurearm.Resou
 // synchronously by returning 200 with the resource body inline so the SDK's
 // LRO poller terminates on the first response.
 func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if _, err := h.db.DescribeTable(r.Context(), rp.ResourceName); err != nil {
-		azurearm.WriteCErr(w, err)
+	if !h.accountInScope(w, r, rp) {
 		return
 	}
 
@@ -378,6 +385,25 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp *azurearm.Reso
 	azurearm.WriteJSON(w, http.StatusOK, out)
 }
 
+// PurgeResourceGroup deletes every account recorded under the resource group,
+// with its SQL and Mongo databases, containers and collections, backing the
+// resource-group cascade. Accounts record only their resource group, so the
+// match is on that alone (the emulator serves a single estate).
+func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup string) error {
+	if h.attrs == nil || h.purger == nil {
+		return cerrors.Newf(cerrors.Unimplemented, "cosmos driver %T cannot purge a resource group", h.db)
+	}
+
+	for _, name := range h.attrs.AccountTables() {
+		attrs, err := h.attrs.TableAttributes(ctx, name)
+		if err == nil && attrs.ResourceGroup != "" && strings.EqualFold(attrs.ResourceGroup, resourceGroup) {
+			h.purger.PurgeAccount(ctx, name)
+		}
+	}
+
+	return nil
+}
+
 func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	// A shallow DeleteTable(account) would leave the account visible in List (its
 	// discovery attributes linger) and its databases/containers live for a
@@ -387,7 +413,14 @@ func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, rp *azur
 	//
 	// Delete is a long-running op in real Azure; complete it synchronously with
 	// an empty 204 so the SDK's poller terminates (armcosmos BeginDelete accepts
-	// only 202/204; a 200 fails its client-side response validation).
+	// only 202/204; a 200 fails its client-side response validation). An
+	// account another resource group owns is absent here, so the delete is a
+	// no-op 204 that leaves it alone.
+	if h.ownedElsewhere(r.Context(), rp) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	if h.purger != nil {
 		h.purger.PurgeAccount(r.Context(), rp.ResourceName)
 		w.WriteHeader(http.StatusNoContent)
@@ -401,6 +434,37 @@ func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, rp *azur
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ownedElsewhere reports whether an account of this name exists under a
+// different resource group than the request path names.
+func (h *Handler) ownedElsewhere(ctx context.Context, rp *azurearm.ResourcePath) bool {
+	if h.attrs == nil {
+		return false
+	}
+
+	attrs, err := h.attrs.TableAttributes(ctx, rp.ResourceName)
+
+	return err == nil && attrs.ResourceGroup != "" && !strings.EqualFold(attrs.ResourceGroup, rp.ResourceGroup)
+}
+
+// accountInScope writes 404 and reports false unless the account exists under
+// the request's resource group.
+func (h *Handler) accountInScope(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) bool {
+	if _, err := h.db.DescribeTable(r.Context(), rp.ResourceName); err != nil {
+		azurearm.WriteCErr(w, err)
+		return false
+	}
+
+	if h.ownedElsewhere(r.Context(), rp) {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
+			"The Resource 'Microsoft.DocumentDB/databaseAccounts/"+rp.ResourceName+
+				"' under resource group '"+rp.ResourceGroup+"' was not found.")
+
+		return false
+	}
+
+	return true
 }
 
 // toARMAccount renders the ARM databaseAccounts wire shape, reading the stored

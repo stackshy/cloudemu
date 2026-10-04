@@ -1,6 +1,7 @@
 package servicebus
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"maps"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 func (h *Handler) serveNamespace(w http.ResponseWriter, r *http.Request, sp sbPath) {
@@ -46,6 +48,13 @@ func (h *Handler) createNamespace(w http.ResponseWriter, r *http.Request, sp sbP
 	h.mu.Lock()
 
 	ns, existed := h.namespaces.Get(nsKey(sp.namespace))
+	if existed && (!strings.EqualFold(ns.Subscription, sp.sub) || !strings.EqualFold(ns.ResourceGroup, sp.rg)) {
+		h.mu.Unlock()
+		writeNamespaceNameTaken(w, sp.namespace)
+
+		return
+	}
+
 	if !existed {
 		ns = &namespaceState{
 			Name:          sp.namespace,
@@ -145,8 +154,49 @@ func (h *Handler) deleteNamespace(w http.ResponseWriter, sp sbPath) {
 		return
 	}
 
-	// Cascade: drop the message store (and paired dead-letter store) for every
-	// child queue and subscription.
+	urls := h.dropNamespaceLocked(nsKey(sp.namespace), ns)
+	h.mu.Unlock()
+
+	for _, u := range urls {
+		h.deleteBackingQueue(u)
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// PurgeResourceGroup deletes every namespace recorded under the resource
+// group, with its queues, topics, subscriptions, rules and authorization rules
+// and their message stores, backing the resource-group cascade.
+func (h *Handler) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	h.mu.Lock()
+
+	var urls []string
+
+	for _, key := range h.namespaces.Keys() {
+		ns, ok := h.namespaces.Get(key)
+		if !ok {
+			continue
+		}
+
+		sc := scope.Scope{Subscription: ns.Subscription, ResourceGroup: ns.ResourceGroup}
+		if sc.InResourceGroup(subscription, resourceGroup) {
+			urls = append(urls, h.dropNamespaceLocked(key, ns)...)
+		}
+	}
+
+	h.mu.Unlock()
+
+	for _, u := range urls {
+		h.deleteBackingQueue(u)
+	}
+
+	return nil
+}
+
+// dropNamespaceLocked removes a namespace and returns the message stores (and
+// paired dead-letter stores) of every child queue and subscription, for the
+// caller to drop once the lock is released. The caller holds h.mu.
+func (h *Handler) dropNamespaceLocked(key string, ns *namespaceState) []string {
 	urls := make([]string, 0, len(ns.Queues))
 	for _, q := range ns.Queues {
 		urls = append(urls, q.DriverURL, q.DLQURL)
@@ -158,14 +208,9 @@ func (h *Handler) deleteNamespace(w http.ResponseWriter, sp sbPath) {
 		}
 	}
 
-	h.namespaces.Delete(nsKey(sp.namespace))
-	h.mu.Unlock()
+	h.namespaces.Delete(key)
 
-	for _, u := range urls {
-		h.deleteBackingQueue(u)
-	}
-
-	w.WriteHeader(http.StatusOK)
+	return urls
 }
 
 func (h *Handler) listNamespaces(w http.ResponseWriter, r *http.Request, sp sbPath) {
@@ -272,6 +317,15 @@ func toNamespaceResource(ns *namespaceState) namespaceResource {
 func writeNSNotFound(w http.ResponseWriter, name string) {
 	azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
 		"namespace not found: "+name)
+}
+
+// writeNamespaceNameTaken answers a PUT for a namespace name another resource
+// group or subscription already owns. Namespace names are global DNS labels,
+// so real Azure rejects the PUT with 409 Conflict instead of touching the
+// existing namespace.
+func writeNamespaceNameTaken(w http.ResponseWriter, name string) {
+	azurearm.WriteError(w, http.StatusConflict, "Conflict",
+		"Namespace name '"+name+"' is not available. The specified name is already in use.")
 }
 
 // paginate returns the listPageSize-sized window of resources that starts at the

@@ -35,9 +35,9 @@ func TestMatchesLeaveBodyIntact(t *testing.T) {
 		"oci": ociserver.New(ociserver.DriversFrom(cloudemu.NewOCI())),
 	}
 
-	// Bigger than every peek limit (the largest is 1 MiB), and valid JSON so a
+	// Bigger than every peek limit (the largest is 8 MiB), and valid JSON so a
 	// peek that parses it keeps going.
-	body := []byte(`{"pad":"` + strings.Repeat("a", 3<<20) + `"}`)
+	body := []byte(`{"pad":"` + strings.Repeat("a", 9<<20) + `"}`)
 
 	// Request shapes that reach each body-peeking Matches.
 	shapes := []struct{ method, path, ctype string }{
@@ -49,6 +49,10 @@ func TestMatchesLeaveBodyIntact(t *testing.T) {
 		{http.MethodPost, "/v1/projects/p/instances", "application/json"},
 		{http.MethodPost, "/v1/projects/p/locations/l/clusters", "application/json"},
 		{http.MethodPost, "/v1/projects/p/locations/l/repositories", "application/json"},
+		{http.MethodPost, "/v1/projects/p/locations/us-central1-a/instances", "application/json"},
+		{http.MethodPost, "/v1/projects/p/locations/l/backupPlans", "application/json"},
+		{http.MethodPost, "/v1/projects/p/instances/i/databases", "application/json"},
+		{http.MethodPost, "/v1/projects/p/locations/l/endpoints", "application/json"},
 		{http.MethodPut, "/bucket/key", "application/octet-stream"},
 	}
 

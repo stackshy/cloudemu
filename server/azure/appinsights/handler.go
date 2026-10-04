@@ -11,9 +11,8 @@
 // derived from the stored key, region and app id. kind is a top-level field the
 // generic property-echo overlay cannot reach, so it is modeled explicitly here.
 //
-// The handler is self-contained with no backing driver (its state is
-// resource-group-scoped ARM containers, like Event Hubs and Synapse), so it is
-// always registered. It shares the microsoft.insights provider with the Azure
+// Component state lives in the provider store (providers/azure/appinsights) so
+// it is persisted; the handler has no driver interface and is always registered. It shares the microsoft.insights provider with the Azure
 // Monitor handler but claims the disjoint "components" resource type, so their
 // registration order is unconstrained.
 package appinsights
@@ -23,16 +22,25 @@ import (
 	"net/http"
 	"strings"
 
+	aiprov "github.com/stackshy/cloudemu/v2/providers/azure/insightscomponents"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
 
-// Handler serves Microsoft.Insights/components requests over an in-memory store.
+// Handler serves Microsoft.Insights/components requests over the provider's
+// persisted component store.
 type Handler struct {
-	store *store
+	store *aiprov.Mock
 }
 
-// New returns an Application Insights control-plane handler.
-func New() *Handler { return &Handler{store: newStore()} }
+// New returns an Application Insights control-plane handler over store. A nil
+// store gives the handler a private one.
+func New(store *aiprov.Mock) *Handler {
+	if store == nil {
+		store = aiprov.New()
+	}
+
+	return &Handler{store: store}
+}
 
 // Matches reports whether r targets a Microsoft.Insights/components URL. The
 // provider is matched case-insensitively because armapplicationinsights emits
@@ -52,6 +60,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if rp.ResourceName == "" {
 		h.list(w, &rp)
+		return
+	}
+
+	if strings.EqualFold(rp.SubResource, subBillingFeatures) && rp.SubResourceName == "" {
+		h.serveBillingFeatures(w, r, &rp)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp, "ProactiveDetectionConfigs", "ApiKeys", "exportconfiguration", "analyticsItems") {
 		return
 	}
 
@@ -85,9 +102,9 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		return
 	}
 
-	existing, existed := h.store.get(rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	existing, existed := h.store.Get(rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 
-	cs := &componentState{
+	cs := &aiprov.Component{
 		Subscription:  rp.Subscription,
 		ResourceGroup: rp.ResourceGroup,
 		Name:          rp.ResourceName,
@@ -102,6 +119,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		cs.AppID = existing.AppID
 		cs.TenantID = existing.TenantID
 		cs.CreationDate = existing.CreationDate
+		cs.Billing = existing.Billing
 	} else {
 		id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeComponent, rp.ResourceName)
 		cs.InstrumentationKey = newInstrumentationKey(id)
@@ -110,14 +128,11 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		cs.CreationDate = nowISO8601()
 	}
 
-	h.store.set(cs)
+	h.store.Set(cs)
 
-	status := http.StatusOK
-	if !existed {
-		status = http.StatusCreated
-	}
-
-	azurearm.WriteJSON(w, status, toResponse(cs))
+	// Real ARM answers 200 for both create and replace of a component, and
+	// azurerm treats any other status on this PUT as a failure.
+	azurearm.WriteJSON(w, http.StatusOK, toResponse(cs))
 }
 
 // patch handles the ARM Update (HTTP PATCH): tags are replaced wholesale when a
@@ -125,7 +140,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 // writable properties merge over the stored set. Update on a missing component is
 // a 404, matching the real ARM Update contract.
 func (h *Handler) patch(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	existing, ok := h.store.get(rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	existing, ok := h.store.Get(rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	if !ok {
 		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "component "+rp.ResourceName+" not found")
 		return
@@ -151,13 +166,13 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request, rp *azurearm.Res
 		merged.Tags = cloneTags(req.Tags)
 	}
 
-	h.store.set(&merged)
+	h.store.Set(&merged)
 
 	azurearm.WriteJSON(w, http.StatusOK, toResponse(&merged))
 }
 
 func (h *Handler) get(w http.ResponseWriter, rp *azurearm.ResourcePath) {
-	cs, ok := h.store.get(rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	cs, ok := h.store.Get(rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	if !ok {
 		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "component "+rp.ResourceName+" not found")
 		return
@@ -167,7 +182,7 @@ func (h *Handler) get(w http.ResponseWriter, rp *azurearm.ResourcePath) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, rp *azurearm.ResourcePath) {
-	components := h.store.listBy(rp.Subscription, rp.ResourceGroup)
+	components := h.store.ListBy(rp.Subscription, rp.ResourceGroup)
 
 	out := componentListResponse{Value: make([]componentResponse, 0, len(components))}
 	for _, cs := range components {
@@ -180,7 +195,7 @@ func (h *Handler) list(w http.ResponseWriter, rp *azurearm.ResourcePath) {
 // delete removes a component. ARM DELETE is idempotent: a missing component
 // returns 204 No Content, an existing one 200 OK.
 func (h *Handler) delete(w http.ResponseWriter, rp *azurearm.ResourcePath) {
-	if h.store.delete(rp.Subscription, rp.ResourceGroup, rp.ResourceName) {
+	if h.store.Delete(rp.Subscription, rp.ResourceGroup, rp.ResourceName) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -191,6 +206,6 @@ func (h *Handler) delete(w http.ResponseWriter, rp *azurearm.ResourcePath) {
 // PurgeResourceGroup deletes every component under sub/rg, so a resource-group
 // delete cascades into them (resourcegroups.ResourceGroupPurger).
 func (h *Handler) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
-	h.store.purge(subscription, resourceGroup)
+	h.store.Purge(subscription, resourceGroup)
 	return nil
 }

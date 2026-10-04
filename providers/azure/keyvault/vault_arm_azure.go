@@ -115,13 +115,43 @@ func (m *Mock) ListVaults(_ context.Context, filter scope.Scope) ([]driver.KVVau
 	return out, nil
 }
 
-// DeleteVault removes a vault by name.
+// DeleteVault removes a vault by name, together with its secrets, keys and
+// certificates. Real Azure soft-deletes a vault with its contents, so a
+// same-name recreate never inherits them. Until deletedVaults is modeled the
+// vault and its contents are dropped outright.
 func (m *Mock) DeleteVault(_ context.Context, name string) error {
-	if !m.armVaults.Delete(name) {
+	if !m.dropVault(name) {
 		return errors.Newf(errors.NotFound, "vault %q not found", name)
 	}
 
 	return nil
+}
+
+// PurgeResourceGroup drops every vault recorded under the resource group, with
+// its access policies and data-plane contents. It backs the ARM resource-group
+// delete cascade. An unscoped vault is never selected.
+func (m *Mock) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	for name, info := range m.armVaults.All() {
+		if info.Scope.InResourceGroup(subscription, resourceGroup) {
+			m.dropVault(name)
+		}
+	}
+
+	return nil
+}
+
+// dropVault removes a vault's ARM record and its data-plane store. The default
+// vault's store backs the portable Secrets API and is never dropped.
+func (m *Mock) dropVault(name string) bool {
+	if !m.armVaults.Delete(name) {
+		return false
+	}
+
+	if name != defaultVault {
+		m.vaults.Delete(name)
+	}
+
+	return true
 }
 
 // cloneVaultInfo deep-copies a stored vault record so callers never alias the
@@ -167,8 +197,9 @@ func copyAccessPolicies(in []driver.KVAccessPolicy) []driver.KVAccessPolicy {
 	out := make([]driver.KVAccessPolicy, len(in))
 	for i := range in {
 		out[i] = driver.KVAccessPolicy{
-			TenantID: in[i].TenantID,
-			ObjectID: in[i].ObjectID,
+			TenantID:      in[i].TenantID,
+			ObjectID:      in[i].ObjectID,
+			ApplicationID: in[i].ApplicationID,
 			Permissions: driver.KVAccessPermissions{
 				Keys:         copyStrings(in[i].Permissions.Keys),
 				Secrets:      copyStrings(in[i].Permissions.Secrets),

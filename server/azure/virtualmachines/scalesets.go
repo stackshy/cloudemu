@@ -16,13 +16,15 @@ import (
 type scaleSetStore interface {
 	CreateScaleSet(ctx context.Context, s providervm.ScaleSet) (*providervm.ScaleSet, error)
 	ListScaleSets(ctx context.Context) ([]providervm.ScaleSet, error)
-	DeleteScaleSet(ctx context.Context, name string) error
-	ListScaleSetVMs(ctx context.Context, vmssName string) ([]providervm.ScaleSetVM, error)
-	GetScaleSetVM(ctx context.Context, vmssName, instanceID string) (*providervm.ScaleSetVM, error)
-	DeleteScaleSetVM(ctx context.Context, vmssName, instanceID string) error
-	PowerScaleSetVM(ctx context.Context, vmssName, instanceID, action string) error
-	PowerScaleSet(ctx context.Context, vmssName, action string, instanceIDs []string) error
-	UpdateScaleSet(ctx context.Context, name string, patch providervm.ScaleSetPatch) (*providervm.ScaleSet, error)
+	DeleteScaleSet(ctx context.Context, subscription, resourceGroup, name string) error
+	ListScaleSetVMs(ctx context.Context, subscription, resourceGroup, vmssName string) ([]providervm.ScaleSetVM, error)
+	GetScaleSetVM(ctx context.Context, subscription, resourceGroup, vmssName, instanceID string) (*providervm.ScaleSetVM, error)
+	DeleteScaleSetVM(ctx context.Context, subscription, resourceGroup, vmssName, instanceID string) error
+	PowerScaleSetVM(ctx context.Context, subscription, resourceGroup, vmssName, instanceID, action string) error
+	PowerScaleSet(ctx context.Context, subscription, resourceGroup, vmssName, action string, instanceIDs []string) error
+	UpdateScaleSet(
+		ctx context.Context, subscription, resourceGroup, name string, patch providervm.ScaleSetPatch,
+	) (*providervm.ScaleSet, error)
 }
 
 // serveScaleSet dispatches PUT/GET on Microsoft.Compute/virtualMachineScaleSets.
@@ -92,7 +94,7 @@ func updateScaleSet(w http.ResponseWriter, r *http.Request, rp azurearm.Resource
 		patch.LicenseType = p.LicenseType
 	}
 
-	stored, err := store.UpdateScaleSet(r.Context(), rp.ResourceName, patch)
+	stored, err := store.UpdateScaleSet(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName, patch)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -108,7 +110,7 @@ func updateScaleSet(w http.ResponseWriter, r *http.Request, rp azurearm.Resource
 //
 //nolint:gocritic // rp is a request-scoped value
 func deleteScaleSet(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath, store scaleSetStore) {
-	if err := store.DeleteScaleSet(r.Context(), rp.ResourceName); err != nil {
+	if err := store.DeleteScaleSet(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -137,6 +139,7 @@ func createScaleSet(w http.ResponseWriter, r *http.Request, rp azurearm.Resource
 		Location:      req.Location,
 		Tags:          req.Tags,
 		ResourceGroup: rp.ResourceGroup,
+		Subscription:  rp.Subscription,
 	}
 
 	if req.SKU != nil {
@@ -177,7 +180,7 @@ func getScaleSet(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePat
 	for i := range sets {
 		// ARM resource names are case-insensitive, so a GET with a
 		// differently-cased scale-set name must still resolve it.
-		if strings.EqualFold(sets[i].Name, rp.ResourceName) {
+		if strings.EqualFold(sets[i].Name, rp.ResourceName) && inScaleSetScope(&sets[i], rp) {
 			azurearm.WriteJSON(w, http.StatusOK, toVMSSResponse(&sets[i], rp))
 			return
 		}
@@ -199,12 +202,32 @@ func listScaleSets(w http.ResponseWriter, r *http.Request, rp azurearm.ResourceP
 	out := make([]vmssResponse, 0, len(sets))
 
 	for i := range sets {
+		if !inScaleSetScope(&sets[i], rp) {
+			continue
+		}
+
 		scope := rp
 		scope.ResourceName = sets[i].Name
+		// A subscription-wide list has no resourceGroups segment, so each id
+		// takes the group the scale set was created in.
+		scope.ResourceGroup = defaultIfEmpty(sets[i].ResourceGroup, rp.ResourceGroup)
 		out = append(out, toVMSSResponse(&sets[i], scope))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, vmssListResponse{Value: out})
+}
+
+// inScaleSetScope reports whether a scale set lies in the request's
+// subscription and (when the path names one) resource group. A scale set with
+// no recorded scope, such as one created through the Go API, matches any.
+//
+//nolint:gocritic // rp is a request-scoped value
+func inScaleSetScope(s *providervm.ScaleSet, rp azurearm.ResourcePath) bool {
+	if s.Subscription != "" && !strings.EqualFold(s.Subscription, rp.Subscription) {
+		return false
+	}
+
+	return rp.ResourceGroup == "" || s.ResourceGroup == "" || strings.EqualFold(s.ResourceGroup, rp.ResourceGroup)
 }
 
 // toVMSSResponse maps a stored ScaleSet onto the ARM wire shape.

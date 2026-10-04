@@ -106,10 +106,10 @@ func assertTrio(
 	}
 }
 
-// TestSDKSiteConfigUnsetOmitsTrio confirms a site created without the trio does
-// not synthesize phantom values: the fields stay absent (nil) so a caller that
-// never set them reads them as unset, matching "explicit-only" round-trip.
-func TestSDKSiteConfigUnsetOmitsTrio(t *testing.T) {
+// TestSDKSiteConfigUnsetReturnsDefaults confirms a site created without the
+// trio reads back the service defaults from GetConfiguration, as real Azure
+// does (alwaysOn false, ftpsState FtpsOnly, minTlsVersion 1.2), not nil.
+func TestSDKSiteConfigUnsetReturnsDefaults(t *testing.T) {
 	cloudP := cloudemu.NewAzure()
 	ts := httptest.NewTLSServer(azureserver.New(azureserver.Drivers{Functions: cloudP.Functions}))
 	t.Cleanup(ts.Close)
@@ -144,15 +144,5 @@ func TestSDKSiteConfigUnsetOmitsTrio(t *testing.T) {
 		t.Fatal("siteConfig properties nil")
 	}
 
-	if cfg.Properties.AlwaysOn != nil {
-		t.Fatalf("alwaysOn = %v, want nil (unset)", *cfg.Properties.AlwaysOn)
-	}
-
-	if cfg.Properties.FtpsState != nil {
-		t.Fatalf("ftpsState = %v, want nil (unset)", *cfg.Properties.FtpsState)
-	}
-
-	if cfg.Properties.MinTLSVersion != nil {
-		t.Fatalf("minTlsVersion = %v, want nil (unset)", *cfg.Properties.MinTLSVersion)
-	}
+	assertTrio(t, "GetConfiguration", cfg.Properties, false, armappservice.FtpsStateFtpsOnly, armappservice.SupportedTLSVersionsOne2)
 }

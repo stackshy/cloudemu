@@ -28,12 +28,15 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
 
 const (
 	pathPrefix       = "/v1/projects/"
 	publishersPrefix = "/v1/publishers/"
+	v1beta1Prefix    = "/v1beta1/projects/"
+	publishersColl   = "publishers"
 	locationsSeg     = "locations"
 	maxBodyBytes     = 6 << 20
 
@@ -100,15 +103,27 @@ func New(svc driver.VertexAI) *Handler {
 // Matches claims the Vertex collection URLs and the publishers generateContent
 // surface.
 func (*Handler) Matches(r *http.Request) bool {
+	if sharedpath.Yield(r, sharedpath.AIPlatform, sharedpath.IntrusionDetection) {
+		return false
+	}
+
 	if strings.HasPrefix(r.URL.Path, publishersPrefix) {
 		return true
 	}
 
-	if !strings.HasPrefix(r.URL.Path, pathPrefix) {
-		return false
+	if _, _, ok := projectPublisherModel(r.URL.Path); ok {
+		return true
 	}
 
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, pathPrefix), "/")
+	tail, beta := strings.CutPrefix(r.URL.Path, v1beta1Prefix)
+	if !beta {
+		var ok bool
+		if tail, ok = strings.CutPrefix(r.URL.Path, pathPrefix); !ok {
+			return false
+		}
+	}
+
+	parts := strings.Split(tail, "/")
 
 	const idxScope, idxResource = 1, 3
 
@@ -116,8 +131,22 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	return vertexCollections[stripAction(parts[idxResource])]
+	collection := stripAction(parts[idxResource])
+
+	// v1beta1 serves only the collections routed for it, so the other
+	// v1beta1 APIs on the shared prefix are left alone.
+	if beta {
+		return v1beta1Collections[collection]
+	}
+
+	return vertexCollections[collection]
 }
+
+// v1beta1Collections are the Vertex collections also served under /v1beta1/,
+// on the same handlers as v1 (the google-beta Terraform provider calls them).
+//
+//nolint:gochecknoglobals // immutable routing set
+var v1beta1Collections = map[string]bool{"endpoints": true}
 
 // vPath is a parsed Vertex REST path.
 type vPath struct {
@@ -132,7 +161,12 @@ type vPath struct {
 
 // parsePath splits a Vertex projects/locations URL.
 func parsePath(urlPath string) (vPath, bool) {
-	parts := strings.Split(strings.TrimPrefix(urlPath, pathPrefix), "/")
+	tail, ok := strings.CutPrefix(urlPath, v1beta1Prefix)
+	if !ok {
+		tail = strings.TrimPrefix(urlPath, pathPrefix)
+	}
+
+	parts := strings.Split(tail, "/")
 
 	const (
 		minParts    = 4
@@ -198,6 +232,12 @@ func splitActionPair(seg string) (name, action string) {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, publishersPrefix) {
 		h.servePublishers(w, r)
+
+		return
+	}
+
+	if model, action, ok := projectPublisherModel(r.URL.Path); ok {
+		h.servePublisherModel(w, r, model, action)
 
 		return
 	}

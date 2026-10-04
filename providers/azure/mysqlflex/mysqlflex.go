@@ -12,6 +12,7 @@ package mysqlflex
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 
@@ -34,6 +35,8 @@ const (
 	defaultSKUTier        = "Burstable" // pairs with defaultSKU (a B-series compute)
 	defaultBackupDays     = 7           // Azure Flexible Server default backup retention
 	defaultEngine         = "MySQL"
+	statusEnabled         = "Enabled"
+	statusDisabled        = "Disabled"
 	resourceGroupTag      = "cloud-mock"
 	providerNamespace     = "Microsoft.DBforMySQL"
 	resourceTypeFlexible  = "flexibleServers"
@@ -264,6 +267,7 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		AvailabilityZone:        cfg.AvailabilityZone,
 		HighAvailabilityMode:    cfg.HighAvailabilityMode,
 		StandbyAvailabilityZone: cfg.StandbyAvailabilityZone,
+		AzureFlex:               resolveFlexOptions(cfg.AzureFlex),
 		CreatedAt:               m.opts.Clock.Now().UTC(),
 		Tags:                    copyTags(cfg.Tags),
 		Scope:                   cfg.Scope,
@@ -394,10 +398,41 @@ func applyModify(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput)
 	}
 
 	applyModifyHA(inst, input)
+	applyModifyFlex(&inst.AzureFlex, &input.AzureFlex)
 
 	if input.Tags != nil {
 		inst.Tags = copyTags(input.Tags)
 	}
+}
+
+// resolveFlexOptions fills the storage and backup toggles a create omitted with
+// the MySQL Flexible Server defaults: storage auto-grow on, auto IO scaling,
+// log on disk and geo-redundant backup off. Real Azure always returns all four.
+func resolveFlexOptions(in rdsdriver.AzureFlexOptions) rdsdriver.AzureFlexOptions {
+	return rdsdriver.AzureFlexOptions{
+		StorageAutoGrow:      orDefault(in.StorageAutoGrow, statusEnabled),
+		StorageAutoIOScaling: orDefault(in.StorageAutoIOScaling, statusDisabled),
+		StorageLogOnDisk:     orDefault(in.StorageLogOnDisk, statusDisabled),
+		GeoRedundantBackup:   orDefault(in.GeoRedundantBackup, statusDisabled),
+	}
+}
+
+// applyModifyFlex overlays the submitted toggles; an empty one is left as is.
+func applyModifyFlex(cur, in *rdsdriver.AzureFlexOptions) {
+	*cur = rdsdriver.AzureFlexOptions{
+		StorageAutoGrow:      orDefault(in.StorageAutoGrow, cur.StorageAutoGrow),
+		StorageAutoIOScaling: orDefault(in.StorageAutoIOScaling, cur.StorageAutoIOScaling),
+		StorageLogOnDisk:     orDefault(in.StorageLogOnDisk, cur.StorageLogOnDisk),
+		GeoRedundantBackup:   orDefault(in.GeoRedundantBackup, cur.GeoRedundantBackup),
+	}
+}
+
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+
+	return v
 }
 
 // applyModifyHA applies a high-availability mode change: an empty mode is left
@@ -429,6 +464,26 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 // through the ARM handler can never remove another scope's server.
 func (m *Mock) DeleteInstanceInScope(ctx context.Context, id string, filter scope.Scope) error {
 	return m.deleteInstanceScoped(ctx, id, filter)
+}
+
+// PurgeResourceGroup deletes every server recorded under the resource group,
+// with its databases, firewall rules and configurations. It backs the ARM
+// resource-group delete cascade. An unscoped server is never selected.
+func (m *Mock) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	var errs []error
+
+	for _, id := range m.instances.Keys() {
+		inst, ok := m.instances.Get(id)
+		if !ok || !inst.Scope.InResourceGroup(subscription, resourceGroup) {
+			continue
+		}
+
+		if err := m.deleteInstanceScoped(ctx, id, inst.Scope); err != nil && !cerrors.IsNotFound(err) {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 // deleteInstanceScoped performs the get-check-delete under a single lock
@@ -714,6 +769,7 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		BackupRetentionPeriod: defaultBackupDays,
 		AllocatedStorage:      snap.AllocatedStorage,
 		StorageType:           defaultStorageType,
+		AzureFlex:             resolveFlexOptions(rdsdriver.AzureFlexOptions{}),
 		Endpoint:              input.NewInstanceID + endpointSuffix,
 		Port:                  defaultPort,
 		State:                 rdsdriver.StateAvailable,

@@ -1,4 +1,4 @@
-package pubsub
+package resourceiam
 
 import "encoding/base64"
 
@@ -17,29 +17,22 @@ const (
 	varintPayloadMask = 0x7f
 	// varintPayloadBits is how many bits of payload one varint byte carries.
 	varintPayloadBits = 7
-	// iamEtagInitialVersion is the version reported for a topic or
-	// subscription whose IAM policy was never explicitly set (etag "CAE=").
+	// iamEtagInitialVersion is the version reported for a resource whose
+	// IAM policy was never explicitly set (etag "CAE=").
 	iamEtagInitialVersion = 1
 )
 
-// policyEtag returns pol's etag, or the deterministic initial-version etag
-// when pol is nil (no policy has ever been set) or carries no etag of its
-// own. A stable default lets getIamPolicy on an unset resource be called
-// repeatedly without minting a new etag each time (which would make it
-// impossible for a client to safely read-modify-write against it).
-func policyEtag(pol *iamPolicy) string {
-	if pol != nil && pol.Etag != "" {
-		return pol.Etag
-	}
-
+// InitialEtag is the etag of a resource whose policy was never set ("CAE=").
+// It is stable, so repeated reads of an unset policy agree on one etag.
+func InitialEtag() string {
 	return encodeIAMEtag(iamEtagInitialVersion)
 }
 
-// nextIAMEtag mints the etag that follows prevEtag, incrementing its encoded
+// NextEtag mints the etag that follows prevEtag, incrementing its encoded
 // version. A prevEtag that isn't in the expected format (e.g. one this
 // emulator never minted) is treated as the initial version, so the result is
 // still a well-formed, freshly incremented etag.
-func nextIAMEtag(prevEtag string) string {
+func NextEtag(prevEtag string) string {
 	version, ok := decodeIAMEtagVersion(prevEtag)
 	if !ok {
 		version = iamEtagInitialVersion

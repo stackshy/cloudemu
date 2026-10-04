@@ -23,7 +23,7 @@ const (
 func (h *Handler) levels() map[levelKind]*level {
 	return map[levelKind]*level{
 		levelLake: {
-			seg: lakesSeg, idParam: "lakeId", typeURL: lakeTypeURL,
+			seg: lakesSeg, idParam: "lakeId", typeURL: lakeTypeURL, enums: lakeEnums,
 			injectComputed: injectLakeComputed,
 			create:         h.db.CreateLake,
 			get: func(ctx context.Context, rt *route) (*dpdriver.Resource, error) {
@@ -38,7 +38,7 @@ func (h *Handler) levels() map[levelKind]*level {
 			},
 		},
 		levelZone: {
-			seg: zonesSeg, idParam: "zoneId", typeURL: zoneTypeURL,
+			seg: zonesSeg, idParam: "zoneId", typeURL: zoneTypeURL, enums: zoneEnums,
 			validate:       validateZone,
 			injectComputed: injectZoneComputed,
 			create:         h.db.CreateZone,
@@ -54,7 +54,7 @@ func (h *Handler) levels() map[levelKind]*level {
 			},
 		},
 		levelAsset: {
-			seg: assetsSeg, idParam: "assetId", typeURL: assetTypeURL,
+			seg: assetsSeg, idParam: "assetId", typeURL: assetTypeURL, enums: assetEnums,
 			validate:       validateAsset,
 			injectComputed: injectAssetComputed,
 			create:         h.db.CreateAsset,
@@ -85,7 +85,7 @@ func (rt *route) config(id string, fields map[string]json.RawMessage) *dpdriver.
 // validate hook rejects a malformed body (a zone type/location_type enum, an
 // asset resource_spec.type enum). The operation completes inline.
 func (h *Handler) createResource(w http.ResponseWriter, r *http.Request, rt *route, lvl *level) {
-	fields, bodyName, ok := decodeBody(w, r)
+	fields, bodyName, ok := decodeBody(w, r, lvl.enums)
 	if !ok {
 		return
 	}
@@ -166,7 +166,7 @@ func (*Handler) listResources(w http.ResponseWriter, r *http.Request, rt *route,
 // top-level fields mutate. A level's validate hook still guards enum fields the
 // mask touches. The operation completes inline.
 func (h *Handler) patchResource(w http.ResponseWriter, r *http.Request, rt *route, lvl *level) {
-	fields, _, ok := decodeBody(w, r)
+	fields, _, ok := decodeBody(w, r, lvl.enums)
 	if !ok {
 		return
 	}
@@ -188,7 +188,7 @@ func (h *Handler) patchResource(w http.ResponseWriter, r *http.Request, rt *rout
 }
 
 // deleteResource handles DELETE .../{collection}/{id}. The operation completes
-// inline with no response.
+// inline with a google.protobuf.Empty response.
 func (h *Handler) deleteResource(w http.ResponseWriter, r *http.Request, rt *route, lvl *level) {
 	op, err := lvl.del(r.Context(), rt)
 	if err != nil {
@@ -196,7 +196,7 @@ func (h *Handler) deleteResource(w http.ResponseWriter, r *http.Request, rt *rou
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(op.Name, nil))
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(op.Name, emptyResponse))
 }
 
 // serveOperation resolves a (done) long-running operation poll for a standalone

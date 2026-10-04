@@ -32,6 +32,11 @@ type Store interface {
 	ListByResourceGroup(ctx context.Context, sub, rg string) ([]managedidentity.Identity, error)
 	ListBySubscription(ctx context.Context, sub string) ([]managedidentity.Identity, error)
 	PurgeResourceGroup(ctx context.Context, sub, rg string) error
+	CreateOrUpdateFIC(ctx context.Context, sub, rg, identity, name string,
+		in managedidentity.FICInput) (managedidentity.FederatedCredential, bool, error)
+	GetFIC(ctx context.Context, sub, rg, identity, name string) (managedidentity.FederatedCredential, error)
+	DeleteFIC(ctx context.Context, sub, rg, identity, name string) bool
+	ListFICs(ctx context.Context, sub, rg, identity string) ([]managedidentity.FederatedCredential, error)
 }
 
 // Handler serves Microsoft.ManagedIdentity/userAssignedIdentities ARM requests.
@@ -68,6 +73,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// path carried one, otherwise by subscription.
 	if rp.ResourceName == "" {
 		h.list(w, r, &rp)
+		return
+	}
+
+	if isFICPath(&rp) {
+		h.serveFIC(w, r, &rp)
+		return
+	}
+
+	if azurearm.GuardLeaf(w, r, &rp) {
 		return
 	}
 

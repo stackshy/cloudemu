@@ -61,7 +61,7 @@ func TestSDKGCPBackendServiceRoundTrip(t *testing.T) {
 			Port:         func() *int32 { p := int32(80); return &p }(),
 			Description:  ptrStr("web tier"),
 			PortName:     ptrStr("http"),
-			HealthChecks: []string{"projects/p1/global/healthChecks/hc1"},
+			HealthChecks: []string{"projects/" + testProject + "/global/healthChecks/hc1"},
 		},
 	})
 	if err != nil {
@@ -97,7 +97,7 @@ func TestSDKGCPBackendServiceRoundTrip(t *testing.T) {
 		t.Errorf("portName = %q, want http", got.GetPortName())
 	}
 
-	if len(got.GetHealthChecks()) != 1 || got.GetHealthChecks()[0] != "projects/p1/global/healthChecks/hc1" {
+	if len(got.GetHealthChecks()) != 1 || got.GetHealthChecks()[0] != "projects/"+testProject+"/global/healthChecks/hc1" {
 		t.Errorf("healthChecks = %v, want [.../hc1]", got.GetHealthChecks())
 	}
 

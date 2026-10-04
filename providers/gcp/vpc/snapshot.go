@@ -89,7 +89,13 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		return fmt.Errorf("gcp vpc: parse snapshot: %w", err)
 	}
 
-	return m.restoreStores(&snap)
+	if err := m.restoreStores(&snap); err != nil {
+		return err
+	}
+
+	m.adoptLegacyRecords()
+
+	return nil
 }
 
 func (m *Mock) restoreStores(snap *vpcSnapshot) error {

@@ -59,6 +59,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
@@ -84,6 +85,10 @@ type Handler struct {
 	// standalone package server, where this handler serves its own /operations/
 	// poll.
 	ops *lro.Registry
+
+	// shared turns on the rules for a server that also mounts Memorystore;
+	// see shared.go.
+	shared bool
 }
 
 // New returns a Filestore handler. clock stamps createTime; pass a
@@ -152,6 +157,14 @@ func (h *Handler) Matches(r *http.Request) bool {
 	// claim them only when standalone (no shared registry).
 	if rt.resource == operationsSeg {
 		return h.ops == nil
+	}
+
+	if sharedpath.Yield(r, sharedpath.File, sharedpath.Redis, sharedpath.SecureSourceManager, sharedpath.DataFusion) {
+		return false
+	}
+
+	if sharedpath.Is(r, sharedpath.File) || h.claimsShared(r, rt) {
+		return true
 	}
 
 	// Item request: claim only when this store owns the instance.

@@ -210,10 +210,11 @@ type AzureNetworkMetadata interface {
 	DeleteAzureRoute(ctx context.Context, id, routeName string) error
 
 	// UpdateAzureNATGateway re-applies the mutable fields of an existing NAT
-	// gateway (its bound public-IP allocation and tags), keyed by its id, so a
+	// gateway (its bound public-IP allocation, tags, sku, idle timeout and
+	// zones, taken from cfg), keyed by its id, so a
 	// repeat ARM CreateOrUpdate PUT re-associates the public IP and reflects tag
 	// changes rather than discarding them. A changed allocation id rebinds the
 	// public IP (freeing the previous one); an empty one detaches it. Returns
 	// NotFound when the NAT gateway doesn't exist.
-	UpdateAzureNATGateway(ctx context.Context, id, allocationID string, tags map[string]string) error
+	UpdateAzureNATGateway(ctx context.Context, id string, cfg NATGatewayConfig) error
 }

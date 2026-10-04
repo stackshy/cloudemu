@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -446,13 +447,7 @@ func (h *Handler) setIamPolicy(w http.ResponseWriter, r *http.Request, rt *route
 
 	pol, err := h.store.setIAMPolicy(rt, req.Policy)
 	if err != nil {
-		if cerrors.IsFailedPrecondition(err) {
-			gcprest.WriteError(w, http.StatusConflict, "aborted", cerrors.Message(err))
-			return
-		}
-
-		gcprest.WriteCErr(w, err)
-
+		gcpiam.WriteErr(w, err)
 		return
 	}
 

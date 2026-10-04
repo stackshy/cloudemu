@@ -18,6 +18,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 type fwSnapshot struct {
 	Firewalls json.RawMessage `json:"firewalls,omitempty"`
 	Policies  json.RawMessage `json:"policies,omitempty"`
+	Groups    json.RawMessage `json:"ruleCollectionGroups,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused:
@@ -33,7 +34,12 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 		return nil, fmt.Errorf("azure firewall: snapshot policies: %w", err)
 	}
 
-	return json.Marshal(fwSnapshot{Firewalls: fw, Policies: pol})
+	groups, err := m.groups.Snapshot()
+	if err != nil {
+		return nil, fmt.Errorf("azure firewall: snapshot rule collection groups: %w", err)
+	}
+
+	return json.Marshal(fwSnapshot{Firewalls: fw, Policies: pol, Groups: groups})
 }
 
 // Restore rebuilds the mock's state under the original identities: every
@@ -53,6 +59,12 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	if len(snap.Policies) > 0 {
 		if err := m.policies.LoadSnapshot(snap.Policies); err != nil {
 			return fmt.Errorf("azure firewall: restore policies: %w", err)
+		}
+	}
+
+	if len(snap.Groups) > 0 {
+		if err := m.groups.LoadSnapshot(snap.Groups); err != nil {
+			return fmt.Errorf("azure firewall: restore rule collection groups: %w", err)
 		}
 	}
 
