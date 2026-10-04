@@ -109,7 +109,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `kinesis` | [Kinesis](./aws/kinesis.md) | - | - | - | 39 |
 | `kinesisvideo` | [KinesisVideo](./aws/kinesisvideo.md) | - | - | - | 17 |
 | `kms` | [KMS](./aws/kms.md) | - | - | - | 46 |
-| `kms-gcp` | - | - | [KMS](./gcp/kms.md) | - | 17 |
+| `kms-gcp` | - | - | [KMS](./gcp/kms.md) | - | 22 |
 | `kusto` | - | [Kusto](./azure/kusto.md) | - | - | 14 |
 | `loadbalancer` | [ELB](./aws/elb.md) | [LB](./azure/lb.md) | [LB](./gcp/lb.md) | - | 19 |
 | `loadtesting` | - | [LoadTesting](./azure/loadtesting.md) | - | - | 8 |

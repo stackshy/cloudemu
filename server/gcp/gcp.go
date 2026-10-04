@@ -11,6 +11,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	gkeprov "github.com/stackshy/cloudemu/v2/providers/gcp/gke"
+	kmsprov "github.com/stackshy/cloudemu/v2/providers/gcp/kms"
 	gcpmon "github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
 	"github.com/stackshy/cloudemu/v2/server"
@@ -199,6 +200,10 @@ type Drivers struct {
 	// and never collide with certificatemanager's location-level certificates), and
 	// its location-scoped operation polls are owned by the shared LRO poller.
 	PrivateCA privatecadriver.PrivateCA
+	// KMS holds Cloud KMS key rings, crypto keys and versions with their key
+	// material. Nil gets a fresh in-memory mock, so the KMS handler is always
+	// registered; the provider-backed one is what serve --persist snapshots.
+	KMS *kmsprov.Mock
 	// GKEBackup serves the gkebackup.googleapis.com v1 backup-plan and
 	// restore-plan control plane against the gkebackup driver. Its paths live
 	// under /v1/projects/{p}/locations/{l}/{backupPlans|restorePlans}[/…]; the
@@ -1120,7 +1125,12 @@ func New(d Drivers) *server.Server {
 	// handler is always registered; it must precede Firestore's permissive
 	// /v1/projects/ prefix. d.Clock (may be nil) makes create/destroy timestamps
 	// deterministic under a FakeClock.
-	srv.Register(kmssrv.New(d.Clock))
+	kmsMock := d.KMS
+	if kmsMock == nil {
+		kmsMock = kmsprov.New(&config.Options{Clock: d.Clock})
+	}
+
+	srv.Register(kmssrv.New(kmsMock, iamStore))
 
 	if d.Firestore != nil {
 		// The Firestore Admin API (projects.databases[.collectionGroups.indexes])

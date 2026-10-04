@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
+	kmsprov "github.com/stackshy/cloudemu/v2/providers/gcp/kms"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -16,6 +16,12 @@ const (
 	// algorithmSymmetric is the default versionTemplate.algorithm real Cloud KMS
 	// assigns a symmetric ENCRYPT_DECRYPT key when the caller omits it.
 	algorithmSymmetric = "GOOGLE_SYMMETRIC_ENCRYPTION"
+	purposeUnspecified = "CRYPTO_KEY_PURPOSE_UNSPECIFIED"
+	// defaultDestroyScheduledDuration is the DESTROY_SCHEDULED dwell time a
+	// CryptoKey carries when create omits destroyScheduledDuration (24h).
+	defaultDestroyScheduledDuration = "86400s"
+	// defaultProtectionLevel is applied when a versionTemplate omits it.
+	defaultProtectionLevel = "SOFTWARE"
 )
 
 // writeKMSErr maps a canonical error to Cloud KMS's HTTP response. An illegal
@@ -65,27 +71,34 @@ func (h *Handler) createKeyRing(w http.ResponseWriter, r *http.Request, rt *rout
 
 	rt.keyRing = id
 
-	kr, err := h.store.createKeyRing(rt)
+	kr, err := h.kms.CreateKeyRing(rt.ref())
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, kr)
+	gcprest.WriteJSON(w, http.StatusOK, toKeyRingJSON(&kr))
 }
 
 func (h *Handler) getKeyRing(w http.ResponseWriter, rt *route) {
-	kr, err := h.store.getKeyRing(rt)
+	kr, err := h.kms.GetKeyRing(rt.ref())
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, kr)
+	gcprest.WriteJSON(w, http.StatusOK, toKeyRingJSON(&kr))
 }
 
 func (h *Handler) listKeyRings(w http.ResponseWriter, rt *route) {
-	gcprest.WriteJSON(w, http.StatusOK, h.store.listKeyRings(rt))
+	rings := h.kms.ListKeyRings(rt.ref())
+
+	out := make([]keyRingJSON, 0, len(rings))
+	for i := range rings {
+		out = append(out, toKeyRingJSON(&rings[i]))
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, listKeyRingsResponse{KeyRings: out, TotalSize: len(out)})
 }
 
 // --- crypto keys ---
@@ -109,55 +122,55 @@ func (h *Handler) createCryptoKey(w http.ResponseWriter, r *http.Request, rt *ro
 
 	skip := r.URL.Query().Get("skipInitialVersionCreation") == trueValue
 
-	ck, err := h.store.createCryptoKey(rt, &cfg, skip)
+	ck, err := h.kms.CreateCryptoKey(rt.ref(), &cfg, skip)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, ck)
+	gcprest.WriteJSON(w, http.StatusOK, toCryptoKeyJSON(&ck))
 }
 
 // buildCryptoKeyConfig validates and normalizes a create body. On any
 // validation failure it writes the error and returns ok=false.
-func buildCryptoKeyConfig(w http.ResponseWriter, id string, req *createCryptoKeyRequest) (cryptoKeyConfig, bool) {
+func buildCryptoKeyConfig(w http.ResponseWriter, id string, req *createCryptoKeyRequest) (kmsprov.KeyConfig, bool) {
 	purpose, ok, present := req.Purpose.normalize(purposeNames)
 	if !present || !ok || purpose == purposeUnspecified {
 		invalidArg(w, "purpose is required and must be a valid CryptoKeyPurpose")
-		return cryptoKeyConfig{}, false
+		return kmsprov.KeyConfig{}, false
 	}
 
 	algo, prot, ok := normalizeVersionTemplate(w, req.VersionTemplate, purpose)
 	if !ok {
-		return cryptoKeyConfig{}, false
+		return kmsprov.KeyConfig{}, false
 	}
 
 	dsd := req.DestroyScheduledDuration
 	if dsd == "" {
 		dsd = defaultDestroyScheduledDuration
-	} else if _, ok := parseDurationSeconds(dsd); !ok {
+	} else if _, ok := kmsprov.ParseDurationSeconds(dsd); !ok {
 		invalidArg(w, "invalid destroyScheduledDuration")
-		return cryptoKeyConfig{}, false
+		return kmsprov.KeyConfig{}, false
 	}
 
 	if req.RotationPeriod != "" {
-		if _, ok := parseDurationSeconds(req.RotationPeriod); !ok {
+		if _, ok := kmsprov.ParseDurationSeconds(req.RotationPeriod); !ok {
 			invalidArg(w, "invalid rotationPeriod")
-			return cryptoKeyConfig{}, false
+			return kmsprov.KeyConfig{}, false
 		}
 	}
 
-	return cryptoKeyConfig{
-		id:                       id,
-		purpose:                  purpose,
-		rotationPeriod:           req.RotationPeriod,
-		nextRotationTime:         req.NextRotationTime,
-		protectionLevel:          prot,
-		algorithm:                algo,
-		labels:                   req.Labels,
-		importOnly:               req.ImportOnly,
-		destroyScheduledDuration: dsd,
-		cryptoKeyBackend:         req.CryptoKeyBackend,
+	return kmsprov.KeyConfig{
+		ID:                       id,
+		Purpose:                  purpose,
+		RotationPeriod:           req.RotationPeriod,
+		NextRotationTime:         req.NextRotationTime,
+		ProtectionLevel:          prot,
+		Algorithm:                algo,
+		Labels:                   req.Labels,
+		ImportOnly:               req.ImportOnly,
+		DestroyScheduledDuration: dsd,
+		CryptoKeyBackend:         req.CryptoKeyBackend,
 	}, true
 }
 
@@ -184,7 +197,7 @@ func normalizeVersionTemplate(w http.ResponseWriter, vt *versionTemplateJSON, pu
 	if !present || algo == algorithmUnspecified {
 		// Symmetric ENCRYPT_DECRYPT keys default the algorithm; every other purpose
 		// still requires the caller to name one.
-		if purpose == purposeEncryptDecrypt {
+		if purpose == kmsprov.PurposeEncryptDecrypt {
 			return algorithmSymmetric, prot, true
 		}
 
@@ -224,23 +237,28 @@ func resolveProtectionLevel(w http.ResponseWriter, vt *versionTemplateJSON) (str
 }
 
 func (h *Handler) getCryptoKey(w http.ResponseWriter, rt *route) {
-	ck, err := h.store.getCryptoKey(rt)
+	ck, err := h.kms.GetCryptoKey(rt.ref())
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, ck)
+	gcprest.WriteJSON(w, http.StatusOK, toCryptoKeyJSON(&ck))
 }
 
 func (h *Handler) listCryptoKeys(w http.ResponseWriter, rt *route) {
-	resp, err := h.store.listCryptoKeys(rt)
+	keys, err := h.kms.ListCryptoKeys(rt.ref())
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, resp)
+	out := make([]cryptoKeyJSON, 0, len(keys))
+	for i := range keys {
+		out = append(out, toCryptoKeyJSON(&keys[i]))
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, listCryptoKeysResponse{CryptoKeys: out, TotalSize: len(out)})
 }
 
 func (h *Handler) patchCryptoKey(w http.ResponseWriter, r *http.Request, rt *route) {
@@ -254,41 +272,41 @@ func (h *Handler) patchCryptoKey(w http.ResponseWriter, r *http.Request, rt *rou
 		return
 	}
 
-	ck, err := h.store.patchCryptoKey(rt, &patch)
+	ck, err := h.kms.UpdateCryptoKey(rt.ref(), &patch)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, ck)
+	gcprest.WriteJSON(w, http.StatusOK, toCryptoKeyJSON(&ck))
 }
 
-// buildCryptoKeyPatch turns a masked patch body into a normalized cryptoKeyPatch.
-func buildCryptoKeyPatch(w http.ResponseWriter, mask string, req *createCryptoKeyRequest) (cryptoKeyPatch, bool) {
-	patch := cryptoKeyPatch{}
+// buildCryptoKeyPatch turns a masked patch body into a KeyPatch.
+func buildCryptoKeyPatch(w http.ResponseWriter, mask string, req *createCryptoKeyRequest) (kmsprov.KeyPatch, bool) {
+	patch := kmsprov.KeyPatch{}
 
 	if maskHas(mask, "labels") {
-		patch.labels, patch.setLabels = req.Labels, true
+		patch.Labels = &req.Labels
 	}
 
 	if maskHas(mask, "rotationPeriod", "rotation_period") {
-		patch.rotationPeriod, patch.setRotationPeriod = req.RotationPeriod, true
+		patch.RotationPeriod = &req.RotationPeriod
 	}
 
 	if maskHas(mask, "nextRotationTime", "next_rotation_time") {
-		patch.nextRotationTime, patch.setNextRotationTime = req.NextRotationTime, true
+		patch.NextRotationTime = &req.NextRotationTime
 	}
 
 	if req.VersionTemplate != nil {
 		if !applyVersionTemplatePatch(w, mask, req.VersionTemplate, &patch) {
-			return cryptoKeyPatch{}, false
+			return kmsprov.KeyPatch{}, false
 		}
 	}
 
 	return patch, true
 }
 
-func applyVersionTemplatePatch(w http.ResponseWriter, mask string, vt *versionTemplateJSON, patch *cryptoKeyPatch) bool {
+func applyVersionTemplatePatch(w http.ResponseWriter, mask string, vt *versionTemplateJSON, patch *kmsprov.KeyPatch) bool {
 	if maskHas(mask, "versionTemplate", "versionTemplate.algorithm", "version_template.algorithm") {
 		algo, ok, present := vt.Algorithm.normalize(algorithmNames)
 		if present && (!ok || algo == algorithmUnspecified) {
@@ -297,7 +315,7 @@ func applyVersionTemplatePatch(w http.ResponseWriter, mask string, vt *versionTe
 		}
 
 		if present {
-			patch.algorithm, patch.setAlgorithm = algo, true
+			patch.Algorithm = &algo
 		}
 	}
 
@@ -309,7 +327,7 @@ func applyVersionTemplatePatch(w http.ResponseWriter, mask string, vt *versionTe
 		}
 
 		if present {
-			patch.protectionLevel, patch.setProtectionLevel = prot, true
+			patch.ProtectionLevel = &prot
 		}
 	}
 
@@ -322,13 +340,13 @@ func (h *Handler) updatePrimaryVersion(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	ck, err := h.store.updatePrimaryVersion(rt, req.CryptoKeyVersionID)
+	ck, err := h.kms.UpdateCryptoKeyPrimaryVersion(rt.ref(), req.CryptoKeyVersionID)
 	if err != nil {
 		writeKMSErr(w, err)
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, ck)
+	gcprest.WriteJSON(w, http.StatusOK, toCryptoKeyJSON(&ck))
 }
 
 // --- versions ---
@@ -342,7 +360,7 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, rt *rout
 	state := ""
 
 	if s, ok, present := req.State.normalize(stateNames); present {
-		if !ok || (s != stateEnabled && s != stateDisabled) {
+		if !ok || (s != kmsprov.StateEnabled && s != kmsprov.StateDisabled) {
 			invalidArg(w, "state must be ENABLED or DISABLED on create")
 			return
 		}
@@ -350,33 +368,38 @@ func (h *Handler) createVersion(w http.ResponseWriter, r *http.Request, rt *rout
 		state = s
 	}
 
-	v, err := h.store.createVersion(rt, state)
+	keyName, v, err := h.kms.CreateCryptoKeyVersion(rt.ref(), state)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, v)
+	gcprest.WriteJSON(w, http.StatusOK, toVersionJSON(keyName, &v))
 }
 
 func (h *Handler) getVersion(w http.ResponseWriter, rt *route) {
-	v, err := h.store.getVersion(rt)
+	keyName, v, err := h.kms.GetCryptoKeyVersion(rt.ref())
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, v)
+	gcprest.WriteJSON(w, http.StatusOK, toVersionJSON(keyName, &v))
 }
 
 func (h *Handler) listVersions(w http.ResponseWriter, rt *route) {
-	resp, err := h.store.listVersions(rt)
+	keyName, versions, err := h.kms.ListCryptoKeyVersions(rt.ref())
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, resp)
+	out := make([]versionJSON, 0, len(versions))
+	for i := range versions {
+		out = append(out, toVersionJSON(keyName, &versions[i]))
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, listVersionsResponse{CryptoKeyVersions: out, TotalSize: len(out)})
 }
 
 func (h *Handler) patchVersion(w http.ResponseWriter, r *http.Request, rt *route) {
@@ -398,69 +421,31 @@ func (h *Handler) patchVersion(w http.ResponseWriter, r *http.Request, rt *route
 		}
 	}
 
-	v, err := h.store.patchVersion(rt, state)
+	keyName, v, err := h.kms.UpdateCryptoKeyVersion(rt.ref(), state)
 	if err != nil {
 		writeKMSErr(w, err)
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, v)
+	gcprest.WriteJSON(w, http.StatusOK, toVersionJSON(keyName, &v))
 }
 
 func (h *Handler) destroyVersion(w http.ResponseWriter, rt *route) {
-	v, err := h.store.destroyVersion(rt)
+	keyName, v, err := h.kms.DestroyCryptoKeyVersion(rt.ref())
 	if err != nil {
 		writeKMSErr(w, err)
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, v)
+	gcprest.WriteJSON(w, http.StatusOK, toVersionJSON(keyName, &v))
 }
 
 func (h *Handler) restoreVersion(w http.ResponseWriter, rt *route) {
-	v, err := h.store.restoreVersion(rt)
+	keyName, v, err := h.kms.RestoreCryptoKeyVersion(rt.ref())
 	if err != nil {
 		writeKMSErr(w, err)
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, v)
-}
-
-// --- IAM ---
-
-func (h *Handler) getIamPolicy(w http.ResponseWriter, rt *route) {
-	pol, err := h.store.getIAMPolicy(rt)
-	if err != nil {
-		gcprest.WriteCErr(w, err)
-		return
-	}
-
-	gcprest.WriteJSON(w, http.StatusOK, pol)
-}
-
-func (h *Handler) setIamPolicy(w http.ResponseWriter, r *http.Request, rt *route) {
-	var req setIamPolicyRequest
-	if !gcprest.DecodeJSON(w, r, &req) {
-		return
-	}
-
-	pol, err := h.store.setIAMPolicy(rt, req.Policy)
-	if err != nil {
-		gcpiam.WriteErr(w, err)
-		return
-	}
-
-	gcprest.WriteJSON(w, http.StatusOK, pol)
-}
-
-func (*Handler) testIamPermissions(w http.ResponseWriter, r *http.Request) {
-	var req testIamPermissionsRequest
-	if !gcprest.DecodeJSON(w, r, &req) {
-		return
-	}
-
-	// The emulator has no request principal, so every requested permission is
-	// reported as held (the stance the iam / resourcemanager handlers take too).
-	gcprest.WriteJSON(w, http.StatusOK, testIamPermissionsResponse(req))
+	gcprest.WriteJSON(w, http.StatusOK, toVersionJSON(keyName, &v))
 }
