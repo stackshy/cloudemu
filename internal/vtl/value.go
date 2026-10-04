@@ -43,6 +43,9 @@ func (l *List) Index(i int) (any, bool) {
 	return l.Items[i], true
 }
 
+// Len implements jsonpath.Array.
+func (l *List) Len() int { return len(l.Items) }
+
 // Map is an insertion-ordered, mutable map value (Java's LinkedHashMap).
 type Map struct {
 	keys []string
@@ -51,17 +54,6 @@ type Map struct {
 
 // NewMap returns an empty map.
 func NewMap() *Map { return &Map{vals: map[string]any{}} }
-
-// MapOf builds a map from alternating key/value arguments.
-func MapOf(kv ...any) *Map {
-	m := NewMap()
-
-	for i := 0; i+1 < len(kv); i += 2 {
-		m.Put(fmt.Sprint(kv[i]), kv[i+1])
-	}
-
-	return m
-}
 
 // StringMap converts a Go string map to a Map with keys in sorted order.
 func StringMap(in map[string]string) *Map {
@@ -116,19 +108,20 @@ func (m *Map) Remove(key string) any {
 	return prev
 }
 
-// Keys returns the keys in insertion order.
+// Keys returns the keys in insertion order. It implements jsonpath.Object.
 func (m *Map) Keys() []string { return append([]string(nil), m.keys...) }
 
 // Len returns the number of entries.
 func (m *Map) Len() int { return len(m.keys) }
 
 // ParseJSON decodes a JSON document into template values, keeping object key
-// order and decoding integral numbers as int64.
+// order and decoding integral numbers as int64. Nesting deeper than
+// MaxValueDepth is rejected.
 func ParseJSON(s string) (any, error) {
 	dec := json.NewDecoder(strings.NewReader(s))
 	dec.UseNumber()
 
-	v, err := decodeValue(dec)
+	v, err := decodeValue(dec, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +133,7 @@ func ParseJSON(s string) (any, error) {
 	return v, nil
 }
 
-func decodeValue(dec *json.Decoder) (any, error) {
+func decodeValue(dec *json.Decoder, depth int) (any, error) {
 	tok, err := dec.Token()
 	if err != nil {
 		return nil, err
@@ -148,12 +141,16 @@ func decodeValue(dec *json.Decoder) (any, error) {
 
 	switch t := tok.(type) {
 	case json.Delim:
+		if depth >= MaxValueDepth {
+			return nil, ErrDepthLimit
+		}
+
 		if t == '{' {
-			return decodeObject(dec)
+			return decodeObject(dec, depth+1)
 		}
 
 		if t == '[' {
-			return decodeArray(dec)
+			return decodeArray(dec, depth+1)
 		}
 
 		return nil, errorf("unexpected %q in JSON", t)
@@ -164,7 +161,7 @@ func decodeValue(dec *json.Decoder) (any, error) {
 	}
 }
 
-func decodeObject(dec *json.Decoder) (any, error) {
+func decodeObject(dec *json.Decoder, depth int) (any, error) {
 	m := NewMap()
 
 	for dec.More() {
@@ -175,7 +172,7 @@ func decodeObject(dec *json.Decoder) (any, error) {
 
 		key, _ := tok.(string)
 
-		v, err := decodeValue(dec)
+		v, err := decodeValue(dec, depth)
 		if err != nil {
 			return nil, err
 		}
@@ -190,11 +187,11 @@ func decodeObject(dec *json.Decoder) (any, error) {
 	return m, nil
 }
 
-func decodeArray(dec *json.Decoder) (any, error) {
+func decodeArray(dec *json.Decoder, depth int) (any, error) {
 	l := NewList()
 
 	for dec.More() {
-		v, err := decodeValue(dec)
+		v, err := decodeValue(dec, depth)
 		if err != nil {
 			return nil, err
 		}
@@ -219,65 +216,246 @@ func jsonNumber(n json.Number) any {
 	return f
 }
 
-// ToJSON encodes a template value as JSON. Host objects encode as null.
-func ToJSON(v any) string {
-	var b bytes.Buffer
-
-	writeJSON(&b, v)
-
-	return b.String()
-}
-
-func writeJSON(b *bytes.Buffer, v any) {
-	switch t := v.(type) {
-	case nil:
-		b.WriteString("null")
-	case string:
-		writeJSONString(b, t)
-	case bool, int64, float64:
-		b.WriteString(Stringify(t))
-	case *List:
-		b.WriteByte('[')
-
-		for i, it := range t.Items {
-			if i > 0 {
-				b.WriteByte(',')
-			}
-
-			writeJSON(b, it)
-		}
-
-		b.WriteByte(']')
-	case *Map:
-		b.WriteByte('{')
-
-		for i, k := range t.keys {
-			if i > 0 {
-				b.WriteByte(',')
-			}
-
-			writeJSONString(b, k)
-			b.WriteByte(':')
-			writeJSON(b, t.vals[k])
-		}
-
-		b.WriteByte('}')
-	default:
-		b.WriteString("null")
+// ToJSON encodes a template value as JSON. Host objects encode as null. A
+// value that contains itself, nests deeper than MaxValueDepth or encodes to
+// more than MaxOutputBytes is an error.
+func ToJSON(v any) (string, error) {
+	f := &formatter{w: boundedWriter{limit: MaxOutputBytes}}
+	if err := f.json(v, 0); err != nil {
+		return "", err
 	}
-}
 
-func writeJSONString(b *bytes.Buffer, s string) {
-	enc := json.NewEncoder(b)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(s)
-
-	b.Truncate(b.Len() - 1) // drop the encoder's trailing newline
+	return f.w.String(), nil
 }
 
 // Stringify renders a value the way Velocity prints it: nil as empty, lists
-// as [a, b] and maps as {k=v, k2=v2}, as Java's toString does.
+// as [a, b] and maps as {k=v, k2=v2}, as Java's toString does. A list or map
+// that contains itself prints as "(this Collection)" or "(this Map)". Output
+// past MaxOutputBytes or nesting past MaxValueDepth is cut off; use format
+// where that must be an error.
 func Stringify(v any) string {
+	s, _ := format(v, MaxOutputBytes)
+
+	return s
+}
+
+// format renders v like Stringify, failing once the result would pass limit
+// bytes or nest past MaxValueDepth.
+func format(v any, limit int) (string, error) {
+	if s, ok := v.(string); ok {
+		if len(s) > limit {
+			return "", ErrOutputLimit
+		}
+
+		return s, nil
+	}
+
+	f := &formatter{w: boundedWriter{limit: limit}}
+	err := f.str(v, 0)
+
+	return f.w.String(), err
+}
+
+// formatter writes values into a bounded buffer, tracking the lists and maps
+// it is inside so a self-reference is detected.
+type formatter struct {
+	w      boundedWriter
+	inside map[any]bool
+}
+
+func (f *formatter) enter(v any, depth int) (cyclic bool, err error) {
+	if depth >= MaxValueDepth {
+		return false, ErrDepthLimit
+	}
+
+	if f.inside[v] {
+		return true, nil
+	}
+
+	if f.inside == nil {
+		f.inside = map[any]bool{}
+	}
+
+	f.inside[v] = true
+
+	return false, nil
+}
+
+func (f *formatter) leave(v any) { delete(f.inside, v) }
+
+func (f *formatter) str(v any, depth int) error {
+	switch t := v.(type) {
+	case *List:
+		return f.strList(t, depth)
+	case *Map:
+		return f.strMap(t, depth)
+	default:
+		return f.w.WriteString(scalarString(v))
+	}
+}
+
+func (f *formatter) strList(l *List, depth int) error {
+	cyclic, err := f.enter(l, depth)
+	if err != nil {
+		return err
+	}
+
+	if cyclic {
+		return f.w.WriteString("(this Collection)")
+	}
+
+	defer f.leave(l)
+
+	if err := f.w.WriteByte('['); err != nil {
+		return err
+	}
+
+	for i, it := range l.Items {
+		if i > 0 {
+			if err := f.w.WriteString(", "); err != nil {
+				return err
+			}
+		}
+
+		if err := f.str(it, depth+1); err != nil {
+			return err
+		}
+	}
+
+	return f.w.WriteByte(']')
+}
+
+func (f *formatter) strMap(m *Map, depth int) error {
+	cyclic, err := f.enter(m, depth)
+	if err != nil {
+		return err
+	}
+
+	if cyclic {
+		return f.w.WriteString("(this Map)")
+	}
+
+	defer f.leave(m)
+
+	if err := f.w.WriteByte('{'); err != nil {
+		return err
+	}
+
+	for i, k := range m.keys {
+		sep := k + "="
+		if i > 0 {
+			sep = ", " + sep
+		}
+
+		if err := f.w.WriteString(sep); err != nil {
+			return err
+		}
+
+		if err := f.str(m.vals[k], depth+1); err != nil {
+			return err
+		}
+	}
+
+	return f.w.WriteByte('}')
+}
+
+func (f *formatter) json(v any, depth int) error {
+	switch t := v.(type) {
+	case nil:
+		return f.w.WriteString("null")
+	case string:
+		return f.w.WriteString(jsonString(t))
+	case bool, int64, float64:
+		return f.w.WriteString(scalarString(t))
+	case *List:
+		return f.jsonList(t, depth)
+	case *Map:
+		return f.jsonMap(t, depth)
+	default:
+		return f.w.WriteString("null")
+	}
+}
+
+func (f *formatter) jsonList(l *List, depth int) error {
+	if err := f.enterJSON(l, depth); err != nil {
+		return err
+	}
+
+	defer f.leave(l)
+
+	if err := f.w.WriteByte('['); err != nil {
+		return err
+	}
+
+	for i, it := range l.Items {
+		if i > 0 {
+			if err := f.w.WriteByte(','); err != nil {
+				return err
+			}
+		}
+
+		if err := f.json(it, depth+1); err != nil {
+			return err
+		}
+	}
+
+	return f.w.WriteByte(']')
+}
+
+func (f *formatter) jsonMap(m *Map, depth int) error {
+	if err := f.enterJSON(m, depth); err != nil {
+		return err
+	}
+
+	defer f.leave(m)
+
+	if err := f.w.WriteByte('{'); err != nil {
+		return err
+	}
+
+	for i, k := range m.keys {
+		key := jsonString(k) + ":"
+		if i > 0 {
+			key = "," + key
+		}
+
+		if err := f.w.WriteString(key); err != nil {
+			return err
+		}
+
+		if err := f.json(m.vals[k], depth+1); err != nil {
+			return err
+		}
+	}
+
+	return f.w.WriteByte('}')
+}
+
+func (f *formatter) enterJSON(v any, depth int) error {
+	cyclic, err := f.enter(v, depth)
+	if err != nil {
+		return err
+	}
+
+	if cyclic {
+		return ErrCyclicValue
+	}
+
+	return nil
+}
+
+func jsonString(s string) string {
+	var b bytes.Buffer
+
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s)
+
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+// scalarString prints a non-collection value.
+func scalarString(v any) string {
 	switch t := v.(type) {
 	case nil:
 		return ""
@@ -289,28 +467,6 @@ func Stringify(v any) string {
 		return strconv.FormatInt(t, 10)
 	case float64:
 		return formatFloat(t)
-	default:
-		return stringifyComposite(v)
-	}
-}
-
-// stringifyComposite renders lists, maps and Stringers.
-func stringifyComposite(v any) string {
-	switch t := v.(type) {
-	case *List:
-		parts := make([]string, len(t.Items))
-		for i, it := range t.Items {
-			parts[i] = Stringify(it)
-		}
-
-		return "[" + strings.Join(parts, ", ") + "]"
-	case *Map:
-		parts := make([]string, len(t.keys))
-		for i, k := range t.keys {
-			parts[i] = k + "=" + Stringify(t.vals[k])
-		}
-
-		return "{" + strings.Join(parts, ", ") + "}"
 	case fmt.Stringer:
 		return t.String()
 	default:

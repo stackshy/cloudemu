@@ -91,7 +91,7 @@ func TestReturnDirective(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !res.Returned || res.Output != "before" || ToJSON(res.ReturnValue) != `{"a":1}` {
+	if !res.Returned || res.Output != "before" || mustJSON(t, res.ReturnValue) != `{"a":1}` {
 		t.Fatalf("got %+v", res)
 	}
 }
@@ -168,7 +168,7 @@ func TestJSONRoundTripKeepsOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := ToJSON(v); got != src {
+	if got := mustJSON(t, v); got != src {
 		t.Fatalf("ToJSON = %s, want %s", got, src)
 	}
 
@@ -176,11 +176,11 @@ func TestJSONRoundTripKeepsOrder(t *testing.T) {
 		t.Fatal("trailing data accepted")
 	}
 
-	if got := ToJSON("<&>"); got != `"<&>"` {
+	if got := mustJSON(t, "<&>"); got != `"<&>"` {
 		t.Fatalf("html escaped: %s", got)
 	}
 
-	if !strings.Contains(ToJSON(StringMap(map[string]string{"b": "2", "a": "1"})), `{"a":"1","b":"2"}`) {
+	if !strings.Contains(mustJSON(t, StringMap(map[string]string{"b": "2", "a": "1"})), `{"a":"1","b":"2"}`) {
 		t.Fatal("StringMap order")
 	}
 }

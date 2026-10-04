@@ -104,7 +104,7 @@ func TestStringifyAndJSON(t *testing.T) {
 		t.Fatalf("Stringify: %s", Stringify(1e21))
 	}
 
-	if got := ToJSON(NewList(int64(1), 2.5, true, nil, hostObj{})); got != `[1,2.5,true,null,null]` {
+	if got := mustJSON(t, NewList(int64(1), 2.5, true, nil, hostObj{})); got != `[1,2.5,true,null,null]` {
 		t.Fatalf("ToJSON list = %s", got)
 	}
 
@@ -118,7 +118,8 @@ func TestStringifyAndJSON(t *testing.T) {
 		t.Fatal("float parse")
 	}
 
-	m := MapOf("a", 1)
+	m := NewMap()
+	m.Put("a", 1)
 	if m.Remove("zz") != nil || m.Len() != 1 || len(m.Keys()) != 1 {
 		t.Fatal("map ops")
 	}

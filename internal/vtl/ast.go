@@ -3,8 +3,9 @@ package vtl
 // Template nodes. A template body is a []node rendered in order.
 type node any
 
-// textNode is literal output.
-type textNode struct{ text string }
+// textNode is literal output, kept as the source pieces it was parsed from so
+// building it stays linear.
+type textNode struct{ parts []string }
 
 // refNode prints a reference. quiet is the $!x form.
 type refNode struct {

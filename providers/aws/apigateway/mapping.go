@@ -40,6 +40,8 @@ type mappingContext struct {
 	// context is the $context map. It is shared by the request and response
 	// templates, so $context.responseOverride set in either survives.
 	context *vtl.Map
+	// templates caches parsed templates; nil parses on every render.
+	templates *vtl.Cache
 }
 
 func newMappingContext(req *driver.ProxyRequest, route *resolvedRoute, account, reqID string, now time.Time) *mappingContext {
@@ -83,15 +85,21 @@ func (mc *mappingContext) buildContext() *vtl.Map {
 	return ctx
 }
 
-// render evaluates a mapping template with body as $input's payload.
+// render evaluates a mapping template with body as $input's payload. Parsing
+// (cached per template source) and rendering share one deadline.
 func (mc *mappingContext) render(ctx context.Context, src, body string) (string, error) {
-	tmpl, err := vtl.Parse(src)
+	ctx, cancel := context.WithTimeout(ctx, templateTimeout)
+	defer cancel()
+
+	parse := vtl.Parse
+	if mc.templates != nil {
+		parse = mc.templates.Parse
+	}
+
+	tmpl, err := parse(src)
 	if err != nil {
 		return "", err
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, templateTimeout)
-	defer cancel()
 
 	vars := map[string]any{
 		"input":          &inputObject{body: body, params: mc.params()},
@@ -179,7 +187,9 @@ func (in *inputObject) Call(name string, args []any) (res any, found bool, callE
 			return nil, true, err
 		}
 
-		return vtl.ToJSON(v), true, nil
+		s, err := vtl.ToJSON(v)
+
+		return s, true, err
 	case "params":
 		if len(args) == 0 {
 			return in.params, true, nil
@@ -194,7 +204,8 @@ func (in *inputObject) Call(name string, args []any) (res any, found bool, callE
 }
 
 // path evaluates a JSONPath against the JSON body. An empty body is treated as
-// an empty object, as API Gateway does.
+// an empty object, as API Gateway does. A path with a wildcard or recursive
+// descent returns the list of matches.
 func (in *inputObject) path(p string) (any, error) {
 	if !in.done {
 		in.done = true
@@ -208,9 +219,20 @@ func (in *inputObject) path(p string) (any, error) {
 		}
 	}
 
-	v, _, err := jsonpath.Eval(p, in.parsed)
+	matches, indefinite, err := jsonpath.EvalAll(p, in.parsed)
+	if err != nil {
+		return nil, err
+	}
 
-	return v, err
+	if indefinite {
+		return vtl.NewList(matches...), nil
+	}
+
+	if len(matches) == 0 {
+		return nil, nil
+	}
+
+	return matches[0], nil
 }
 
 // param looks a name up in the path, querystring and header maps, in that
@@ -263,7 +285,7 @@ func (utilObject) Call(name string, args []any) (res any, found bool, callErr er
 
 		return v, true, nil
 	case "urlEncode":
-		return url.QueryEscape(s), true, nil
+		return javaURLEncode(s), true, nil
 	case "urlDecode":
 		v, err := url.QueryUnescape(s)
 		if err != nil {
@@ -291,6 +313,13 @@ func stringArg(args []any) string {
 	}
 
 	return vtl.Stringify(args[0])
+}
+
+// javaURLEncode matches Java's URLEncoder.encode with UTF-8, which
+// $util.urlEncode uses: unlike Go's QueryEscape it leaves '*' alone and
+// encodes '~'.
+func javaURLEncode(s string) string {
+	return strings.NewReplacer("%2A", "*", "~", "%7E").Replace(url.QueryEscape(s))
 }
 
 // escapeJavaScript matches Apache Commons StringEscapeUtils.escapeJavaScript,
@@ -329,7 +358,7 @@ func writeEscapedRune(b *strings.Builder, r rune) {
 		lastASCII      = 0x7f
 	)
 
-	if r >= firstPrintable && r < lastASCII {
+	if r >= firstPrintable && r <= lastASCII {
 		b.WriteRune(r)
 
 		return

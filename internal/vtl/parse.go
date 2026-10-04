@@ -21,8 +21,13 @@ func (e *ParseError) Error() string {
 	return fmt.Sprintf("vtl: parse error at offset %d: %s", e.Pos, e.Msg)
 }
 
-// Parse parses src into a Template.
+// Parse parses src into a Template. A template larger than MaxTemplateBytes
+// or nested deeper than MaxTemplateDepth is rejected.
 func Parse(src string) (*Template, error) {
+	if len(src) > MaxTemplateBytes {
+		return nil, &ParseError{Msg: fmt.Sprintf("template is %d bytes, more than the %d byte limit", len(src), MaxTemplateBytes)}
+	}
+
 	p := &parser{src: src}
 
 	body, term, err := p.parseBlock()
@@ -40,7 +45,24 @@ func Parse(src string) (*Template, error) {
 type parser struct {
 	src string
 	pos int
+	// depth is the current nesting of blocks, expressions and interpolated
+	// strings.
+	depth int
+	// dirStart is where the most recent directive began.
+	dirStart int
 }
+
+// enter descends one nesting level, failing past MaxTemplateDepth.
+func (p *parser) enter() error {
+	p.depth++
+	if p.depth > MaxTemplateDepth {
+		return p.errf("template nests deeper than %d levels", MaxTemplateDepth)
+	}
+
+	return nil
+}
+
+func (p *parser) leave() { p.depth-- }
 
 func (p *parser) errf(format string, args ...any) error {
 	return &ParseError{Pos: p.pos, Msg: fmt.Sprintf(format, args...)}
@@ -73,6 +95,12 @@ var unsupportedDirectives = map[string]bool{ //nolint:gochecknoglobals // read-o
 // parseBlock parses nodes until EOF or a block terminator (#else, #elseif,
 // #end), which it returns. For #elseif the parser is left at its condition.
 func (p *parser) parseBlock() ([]node, string, error) {
+	if err := p.enter(); err != nil {
+		return nil, "", err
+	}
+
+	defer p.leave()
+
 	var nodes []node
 
 	for p.pos < len(p.src) {
@@ -120,13 +148,13 @@ func appendText(nodes []node, s string) []node {
 
 	if n := len(nodes); n > 0 {
 		if t, ok := nodes[n-1].(*textNode); ok {
-			t.text += s
+			t.parts = append(t.parts, s)
 
 			return nodes
 		}
 	}
 
-	return append(nodes, &textNode{text: s})
+	return append(nodes, &textNode{parts: []string{s}})
 }
 
 // parseEscape handles a backslash: \$ and \# print the next character
@@ -198,6 +226,8 @@ func (p *parser) parseHash(nodes []node) ([]node, string, error) {
 
 		return appendText(nodes, rest[3:end]), "", nil
 	}
+
+	p.dirStart = start
 
 	name, braced := p.directiveName()
 	if unsupportedDirectives[name] {
@@ -304,30 +334,62 @@ func (p *parser) gobble(nodes []node, start int) []node {
 
 	if n := len(nodes); n > 0 {
 		if t, ok := nodes[n-1].(*textNode); ok {
-			t.text = strings.TrimRight(t.text, " \t")
+			trimIndent(t)
+
+			if len(t.parts) == 0 {
+				nodes = nodes[:n-1]
+			}
 		}
 	}
 
 	return nodes
 }
 
+// trimIndent drops trailing spaces and tabs from a text node.
+func trimIndent(t *textNode) {
+	for len(t.parts) > 0 {
+		last := len(t.parts) - 1
+		trimmed := strings.TrimRight(t.parts[last], " \t")
+
+		if trimmed != "" {
+			t.parts[last] = trimmed
+
+			return
+		}
+
+		t.parts = t.parts[:last]
+	}
+}
+
 // blankLineEnd reports whether the directive spanning start..p.pos is alone on
-// its line, and returns the offset just past that line's newline.
+// its line, and returns the offset just past that line's newline. It only
+// scans the whitespace around the directive, so parsing stays linear.
 func (p *parser) blankLineEnd(start int) (int, bool) {
-	lineStart := strings.LastIndexByte(p.src[:start], '\n') + 1
-	if strings.TrimLeft(p.src[lineStart:start], " \t") != "" {
+	i := start
+	for i > 0 && isBlank(p.src[i-1]) {
+		i--
+	}
+
+	if i > 0 && p.src[i-1] != '\n' {
 		return 0, false
 	}
 
-	rest := p.src[p.pos:]
-	nl := strings.IndexByte(rest, '\n')
-
-	if nl < 0 {
-		return len(p.src), strings.TrimLeft(rest, " \t\r") == ""
+	j := p.pos
+	for j < len(p.src) && (isBlank(p.src[j]) || p.src[j] == '\r') {
+		j++
 	}
 
-	return p.pos + nl + 1, strings.TrimLeft(rest[:nl], " \t\r") == ""
+	switch {
+	case j == len(p.src):
+		return j, true
+	case p.src[j] == '\n':
+		return j + 1, true
+	default:
+		return 0, false
+	}
 }
+
+func isBlank(c byte) bool { return c == ' ' || c == '\t' }
 
 func (p *parser) parseSet() (node, error) {
 	if err := p.expectOpenParen(); err != nil {
@@ -399,7 +461,7 @@ func (p *parser) parseIf(nodes []node, start int) ([]node, string, error) {
 
 		switch term {
 		case dirElseIf:
-			elseStart := strings.LastIndex(p.src[:p.pos], "#")
+			elseStart := p.dirStart
 
 			if cond, err = p.parseCondition(); err != nil {
 				return nil, "", err
@@ -644,7 +706,15 @@ func (p *parser) parseArgs(closer byte) ([]expr, error) {
 
 // Expression parsing, lowest precedence first.
 
-func (p *parser) parseExpr() (expr, error) { return p.parseOr() }
+func (p *parser) parseExpr() (expr, error) {
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+
+	defer p.leave()
+
+	return p.parseOr()
+}
 
 func (p *parser) parseOr() (expr, error) {
 	return p.parseBinary(p.parseAnd, map[string]string{opOr: opOr, "or": opOr})
@@ -679,10 +749,14 @@ func (p *parser) parseBinary(next func() (expr, error), ops map[string]string) (
 		return nil, err
 	}
 
-	for {
+	for chain := 0; ; chain++ {
 		op, ok := p.matchOperator(ops)
 		if !ok {
 			return l, nil
+		}
+
+		if chain >= maxOperatorChain {
+			return nil, p.errf("more than %d operators in one expression", maxOperatorChain)
 		}
 
 		r, err := next()
@@ -724,37 +798,44 @@ func (p *parser) matchOperator(ops map[string]string) (string, bool) {
 }
 
 func (p *parser) parseUnary() (expr, error) {
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+
+	defer p.leave()
+
 	p.skipSpace()
 
+	op := p.unaryOperator()
+	if op == "" {
+		return p.parsePrimary()
+	}
+
+	x, err := p.parseUnary()
+	if err != nil {
+		return nil, err
+	}
+
+	return &unaryExpr{op: op, x: x}, nil
+}
+
+// unaryOperator consumes a prefix ! / not (as opNot) or a minus before a
+// non-number (as opSub), returning "" when there is none.
+func (p *parser) unaryOperator() string {
 	switch {
 	case p.peek() == '!' && !strings.HasPrefix(p.src[p.pos:], opNe):
 		p.pos++
 
-		x, err := p.parseUnary()
-		if err != nil {
-			return nil, err
-		}
-
-		return &unaryExpr{op: opNot, x: x}, nil
+		return opNot
 	case p.consumeWord("not"):
-		x, err := p.parseUnary()
-		if err != nil {
-			return nil, err
-		}
-
-		return &unaryExpr{op: opNot, x: x}, nil
+		return opNot
 	case p.peek() == '-' && p.pos+1 < len(p.src) && !isDigit(p.src[p.pos+1]):
 		p.pos++
 
-		x, err := p.parseUnary()
-		if err != nil {
-			return nil, err
-		}
-
-		return &unaryExpr{op: opSub, x: x}, nil
+		return opSub
+	default:
+		return ""
 	}
-
-	return p.parsePrimary()
 }
 
 func (p *parser) parsePrimary() (expr, error) {
@@ -846,7 +927,7 @@ func (p *parser) parseDoubleQuoted() (expr, error) {
 		return &literal{value: s}, nil
 	}
 
-	sub := &parser{src: s}
+	sub := &parser{src: s, depth: p.depth}
 
 	body, term, err := sub.parseBlock()
 	if err != nil {

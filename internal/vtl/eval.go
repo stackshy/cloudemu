@@ -15,7 +15,7 @@ const (
 	// silently stops after this many iterations.
 	MaxForeachIterations = 1000
 	// ctxCheckEvery is how often (in steps) the context deadline is checked.
-	ctxCheckEvery = 1024
+	ctxCheckEvery = 64
 )
 
 // ErrStepBudget is returned when a render exceeds its step budget.
@@ -37,13 +37,14 @@ type RenderOptions struct {
 }
 
 // Render evaluates the template with vars as its top-level references. vars is
-// modified by #set. Rendering stops with ctx's error when ctx is done.
+// modified by #set. Rendering stops with ctx's error when ctx is done, and
+// with a limit error when the output, memory or step budget is exhausted.
 func (t *Template) Render(ctx context.Context, vars map[string]any, opts RenderOptions) (*Result, error) {
 	if vars == nil {
 		vars = map[string]any{}
 	}
 
-	st := &state{ctx: ctx, vars: vars, maxSteps: opts.MaxSteps}
+	st := newState(ctx, vars, opts.MaxSteps, &budget{})
 	if st.maxSteps <= 0 {
 		st.maxSteps = DefaultMaxSteps
 	}
@@ -75,9 +76,14 @@ func (*returnSignal) Error() string { return "vtl: #return" }
 type state struct {
 	ctx      context.Context
 	vars     map[string]any
-	out      strings.Builder
+	out      boundedWriter
 	steps    int
 	maxSteps int
+	mem      *budget
+}
+
+func newState(ctx context.Context, vars map[string]any, maxSteps int, mem *budget) *state {
+	return &state{ctx: ctx, vars: vars, maxSteps: maxSteps, mem: mem, out: boundedWriter{limit: MaxOutputBytes}}
 }
 
 func (s *state) step() error {
@@ -112,14 +118,9 @@ func (s *state) run(body []node) error {
 func (s *state) exec(n node) error {
 	switch t := n.(type) {
 	case *textNode:
-		s.out.WriteString(t.text)
+		return s.execText(t)
 	case *refNode:
-		v, err := s.evalRef(t.ref)
-		if err != nil {
-			return err
-		}
-
-		s.out.WriteString(Stringify(v))
+		return s.execRef(t)
 	case *setNode:
 		return s.execSet(t)
 	case *ifNode:
@@ -135,6 +136,30 @@ func (s *state) exec(n node) error {
 	}
 
 	return nil
+}
+
+func (s *state) execText(n *textNode) error {
+	for _, part := range n.parts {
+		if err := s.out.WriteString(part); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *state) execRef(n *refNode) error {
+	v, err := s.evalRef(n.ref)
+	if err != nil {
+		return err
+	}
+
+	text, err := format(v, s.out.limit-s.out.Len())
+	if err != nil {
+		return err
+	}
+
+	return s.out.WriteString(text)
 }
 
 func (s *state) execSet(n *setNode) error {
@@ -159,7 +184,7 @@ func (s *state) execSet(n *setNode) error {
 	switch last.kind {
 	case accProperty:
 		if m, ok := parent.(*Map); ok {
-			m.Put(last.name, v)
+			return s.put(m, last.name, v)
 		}
 	case accIndex:
 		idx, err := s.eval(last.index)
@@ -167,7 +192,7 @@ func (s *state) execSet(n *setNode) error {
 			return err
 		}
 
-		setIndex(parent, idx, v)
+		return s.setIndex(parent, idx, v)
 	case accMethod:
 		return errorf("cannot #set a method call")
 	}
@@ -175,15 +200,49 @@ func (s *state) execSet(n *setNode) error {
 	return nil
 }
 
-func setIndex(target, idx, v any) {
+// put stores v in m, charging a new entry against the memory budget.
+func (s *state) put(m *Map, key string, v any) error {
+	if _, exists := m.Get(key); !exists {
+		if err := s.mem.charge(slotBytes + len(key)); err != nil {
+			return err
+		}
+	}
+
+	m.Put(key, v)
+
+	return nil
+}
+
+func (s *state) setIndex(target, idx, v any) error {
 	switch t := target.(type) {
 	case *Map:
-		t.Put(Stringify(idx), v)
+		key, err := s.key(idx)
+		if err != nil {
+			return err
+		}
+
+		return s.put(t, key, v)
 	case *List:
 		if i, ok := toInt(idx); ok && i >= 0 && i < len(t.Items) {
 			t.Items[i] = v
 		}
 	}
+
+	return nil
+}
+
+// key renders a value used as a map key.
+func (s *state) key(v any) (string, error) {
+	if k, ok := v.(string); ok {
+		return k, nil
+	}
+
+	k, err := format(v, MaxOutputBytes)
+	if err != nil {
+		return "", err
+	}
+
+	return k, s.mem.charge(len(k))
 }
 
 func (s *state) execIf(n *ifNode) error {
@@ -207,10 +266,7 @@ func (s *state) execForeach(n *foreachNode) error {
 		return err
 	}
 
-	items := iterItems(src)
-	if len(items) > MaxForeachIterations {
-		items = items[:MaxForeachIterations]
-	}
+	items := iterItems(src, MaxForeachIterations)
 
 	prevVar, hadVar := s.vars[n.varName]
 	prevLoop, hadLoop := s.vars["foreach"]
@@ -224,10 +280,7 @@ func (s *state) execForeach(n *foreachNode) error {
 
 	for i, it := range items {
 		s.vars[n.varName] = it
-		s.vars["foreach"] = MapOf(
-			"index", int64(i), "count", int64(i+1), "hasNext", i < len(items)-1,
-			"first", i == 0, "last", i == len(items)-1,
-		)
+		s.vars["foreach"] = loopInfo(i, len(items))
 		s.vars["velocityCount"] = int64(i + 1)
 
 		err := s.run(n.body)
@@ -243,6 +296,18 @@ func (s *state) execForeach(n *foreachNode) error {
 	return nil
 }
 
+// loopInfo is the $foreach object for iteration i of n.
+func loopInfo(i, n int) *Map {
+	m := NewMap()
+	m.Put("index", int64(i))
+	m.Put("count", int64(i+1))
+	m.Put("hasNext", i < n-1)
+	m.Put("first", i == 0)
+	m.Put("last", i == n-1)
+
+	return m
+}
+
 func restoreVar(vars map[string]any, name string, prev any, had bool) {
 	if had {
 		vars[name] = prev
@@ -251,15 +316,17 @@ func restoreVar(vars map[string]any, name string, prev any, had bool) {
 	}
 }
 
-// iterItems returns what #foreach walks: a list's items, a map's values, or
-// nothing.
-func iterItems(v any) []any {
+// iterItems returns up to limit of the items #foreach walks: a list's items,
+// a map's values, or nothing.
+func iterItems(v any, limit int) []any {
 	switch t := v.(type) {
 	case *List:
-		return append([]any(nil), t.Items...)
+		return append([]any(nil), t.Items[:min(limit, len(t.Items))]...)
 	case *Map:
-		out := make([]any, 0, t.Len())
-		for _, k := range t.keys {
+		keys := t.keys[:min(limit, len(t.keys))]
+		out := make([]any, 0, len(keys))
+
+		for _, k := range keys {
 			out = append(out, t.vals[k])
 		}
 
@@ -317,9 +384,11 @@ func (s *state) evalCollection(e expr) (any, error) {
 }
 
 // evalInterpolated renders a double-quoted string as a template sharing the
-// caller's variables and step budget.
+// caller's variables, step budget and memory budget.
 func (s *state) evalInterpolated(t *interpolated) (any, error) {
-	sub := &state{ctx: s.ctx, vars: s.vars, steps: s.steps, maxSteps: s.maxSteps}
+	sub := newState(s.ctx, s.vars, s.maxSteps, s.mem)
+	sub.steps = s.steps
+
 	err := sub.run(t.body)
 	s.steps = sub.steps
 
@@ -327,10 +396,16 @@ func (s *state) evalInterpolated(t *interpolated) (any, error) {
 		return nil, err
 	}
 
-	return sub.out.String(), nil
+	out := sub.out.String()
+
+	return out, s.mem.charge(len(out))
 }
 
 func (s *state) evalList(t *listExpr) (any, error) {
+	if err := s.mem.charge(len(t.items) * slotBytes); err != nil {
+		return nil, err
+	}
+
 	l := NewList()
 
 	for _, it := range t.items {
@@ -378,7 +453,7 @@ func (s *state) evalRange(t *rangeExpr) (any, error) {
 		}
 	}
 
-	return l, nil
+	return l, s.mem.charge(len(l.Items) * slotBytes)
 }
 
 func (s *state) evalMap(t *mapExpr) (any, error) {
@@ -395,7 +470,14 @@ func (s *state) evalMap(t *mapExpr) (any, error) {
 			return nil, err
 		}
 
-		m.Put(Stringify(k), v)
+		key, err := s.key(k)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := s.put(m, key, v); err != nil {
+			return nil, err
+		}
 	}
 
 	return m, nil
@@ -451,7 +533,7 @@ func (s *state) evalBinary(t *binaryExpr) (any, error) {
 	case opLt, opGt, opLe, opGe:
 		return compare(t.op, l, r), nil
 	default:
-		return arith(t.op, l, r), nil
+		return s.arith(t.op, l, r)
 	}
 }
 
@@ -504,7 +586,14 @@ func (s *state) access(cur any, a accessor) (any, error) {
 			args[i] = v
 		}
 
-		return callMethod(cur, a.name, args)
+		r, err := callMethod(s.mem, cur, a.name, args)
+		if err != nil {
+			return nil, err
+		}
+
+		// A single method call can be slow on a large string, so the deadline
+		// is checked after every one.
+		return r, s.ctx.Err()
 	}
 
 	return nil, nil
@@ -524,7 +613,7 @@ func property(v any, name string) any {
 
 	// Bean-style getters: $list.empty, $str.empty.
 	if name == "empty" {
-		if r, err := callMethod(v, mIsEmpty, nil); err == nil {
+		if r, err := callMethod(&budget{}, v, mIsEmpty, nil); err == nil {
 			return r
 		}
 	}
@@ -605,8 +694,36 @@ func equal(l, r any) bool {
 		return ok && a == b
 	}
 
-	// Different types compare by their string form, as Velocity does.
-	return Stringify(l) == Stringify(r)
+	return equalForms(l, r)
+}
+
+// equalForms compares values of different types, and collections, by their
+// string form. Forms too large or deep to render are unequal.
+func equalForms(l, r any) bool {
+	if sameCollection(l, r) {
+		return true
+	}
+
+	ls, lerr := format(l, MaxOutputBytes)
+	rs, rerr := format(r, MaxOutputBytes)
+
+	return lerr == nil && rerr == nil && ls == rs
+}
+
+// sameCollection reports whether l and r are the same list or map.
+func sameCollection(l, r any) bool {
+	switch lt := l.(type) {
+	case *List:
+		rt, ok := r.(*List)
+
+		return ok && lt == rt
+	case *Map:
+		rt, ok := r.(*Map)
+
+		return ok && lt == rt
+	default:
+		return false
+	}
 }
 
 func compare(op string, l, r any) bool {
@@ -654,13 +771,13 @@ func cmpFloat(a, b float64) int {
 
 // arith applies + - * / %. A string operand of + concatenates; integer
 // operands keep integer arithmetic; a division by zero is null.
-func arith(op string, l, r any) any {
+func (s *state) arith(op string, l, r any) (any, error) {
 	if op == opAdd {
 		_, ls := l.(string)
 		_, rs := r.(string)
 
 		if ls || rs {
-			return Stringify(l) + Stringify(r)
+			return s.concat(l, r)
 		}
 	}
 
@@ -668,17 +785,36 @@ func arith(op string, l, r any) any {
 	ri, rInt := r.(int64)
 
 	if lInt && rInt {
-		return intArith(op, li, ri)
+		return intArith(op, li, ri), nil
 	}
 
 	a, okA := toFloat(l)
 	b, okB := toFloat(r)
 
 	if !okA || !okB {
-		return nil
+		return nil, nil
 	}
 
-	return floatArith(op, a, b)
+	return floatArith(op, a, b), nil
+}
+
+// concat joins two values as strings within the output and memory limits.
+func (s *state) concat(l, r any) (any, error) {
+	ls, err := format(l, MaxOutputBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	rs, err := format(r, MaxOutputBytes-len(ls))
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.mem.charge(len(ls) + len(rs)); err != nil {
+		return nil, err
+	}
+
+	return ls + rs, nil
 }
 
 func floatArith(op string, a, b float64) any {

@@ -15,6 +15,9 @@ const (
 	mRemove   = "remove"
 	mSet      = "set"
 	mPut      = "put"
+	mKeySet   = "keySet"
+	mValues   = "values"
+	mEntrySet = "entrySet"
 )
 
 // pairArgs is the argument count of a two-argument method such as put or set.
@@ -69,61 +72,137 @@ var (
 		"putAll":      mapPutAll,
 		"containsKey": mapContainsKey,
 		mRemove:       func(m *Map, args []any) any { return m.Remove(Stringify(firstArg(args))) },
-		"keySet":      func(m *Map, _ []any) any { return stringList(m.keys) },
-		"values":      func(m *Map, _ []any) any { return NewList(iterItems(m)...) },
-		"entrySet":    mapEntrySet,
+		mKeySet:       func(m *Map, _ []any) any { return stringList(m.keys) },
+		mValues:       func(m *Map, _ []any) any { return NewList(iterItems(m, m.Len())...) },
+		mEntrySet:     mapEntrySet,
 		mSize:         func(m *Map, _ []any) any { return int64(m.Len()) },
 		mIsEmpty:      func(m *Map, _ []any) any { return m.Len() == 0 },
 	}
 )
 
+// creatingMethods are the list and map methods that return a new collection.
+var creatingMethods = map[string]bool{mKeySet: true, mValues: true, mEntrySet: true} //nolint:gochecknoglobals // read-only
+
 // callMethod dispatches a method call to the bridge for strings, lists and
-// maps, or to a host Object. An unknown method yields null, as Velocity does
-// when no method matches.
-func callMethod(v any, name string, args []any) (any, error) {
+// maps, or to a host Object, charging what the call creates against mem. An
+// unknown method yields null, as Velocity does when no method matches.
+func callMethod(mem *budget, v any, name string, args []any) (any, error) {
 	switch {
 	case name == "toString" && len(args) == 0:
-		return Stringify(v), nil
+		return chargeString(mem, v)
 	case name == "equals" && len(args) == 1:
 		return equal(v, args[0]), nil
 	}
 
 	switch t := v.(type) {
 	case string:
-		if fn, ok := stringMethods[name]; ok {
-			return fn(t, args)
-		}
+		return callString(mem, t, name, args)
 	case Object:
-		return callObject(t, name, args)
+		return callObject(mem, t, name, args)
 	default:
-		return callCollection(v, name, args), nil
+		return callCollection(mem, v, name, args)
 	}
-
-	return nil, nil
 }
 
-func callCollection(v any, name string, args []any) any {
+func chargeString(mem *budget, v any) (any, error) {
+	s, err := format(v, MaxOutputBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	return s, mem.charge(len(s))
+}
+
+func callString(mem *budget, s, name string, args []any) (any, error) {
+	fn, ok := stringMethods[name]
+	if !ok {
+		return nil, nil
+	}
+
+	r, err := fn(s, args)
+	if err != nil {
+		return nil, err
+	}
+
+	switch t := r.(type) {
+	case string:
+		if len(t) > MaxOutputBytes {
+			return nil, ErrOutputLimit
+		}
+
+		return t, mem.charge(len(t))
+	case *List:
+		return t, mem.charge(len(t.Items) * slotBytes)
+	default:
+		return r, nil
+	}
+}
+
+// callCollection runs a list or map method, charging any growth of the
+// receiver and any new collection it returns.
+func callCollection(mem *budget, v any, name string, args []any) (any, error) {
+	var (
+		r      any
+		before = collectionLen(v)
+	)
+
 	switch t := v.(type) {
 	case *List:
-		if fn, ok := listMethods[name]; ok {
-			return fn(t, args)
+		fn, ok := listMethods[name]
+		if !ok {
+			return nil, nil
 		}
+
+		r = fn(t, args)
 	case *Map:
-		if fn, ok := mapMethods[name]; ok {
-			return fn(t, args)
+		fn, ok := mapMethods[name]
+		if !ok {
+			return nil, nil
+		}
+
+		r = fn(t, args)
+	default:
+		return nil, nil
+	}
+
+	grown := collectionLen(v) - before
+	if creatingMethods[name] {
+		grown += collectionLen(r)
+	}
+
+	if grown > 0 {
+		if err := mem.charge(grown * slotBytes); err != nil {
+			return nil, err
 		}
 	}
 
-	return nil
+	return r, nil
 }
 
-func callObject(o Object, name string, args []any) (any, error) {
+func collectionLen(v any) int {
+	switch t := v.(type) {
+	case *List:
+		return len(t.Items)
+	case *Map:
+		return t.Len()
+	default:
+		return 0
+	}
+}
+
+// callObject calls a host method. Its result is charged by size, since the
+// host may build a new value from template-controlled input.
+func callObject(mem *budget, o Object, name string, args []any) (any, error) {
 	r, ok, err := o.Call(name, args)
 	if err != nil || !ok {
 		return nil, err
 	}
 
-	return r, nil
+	if s, isStr := r.(string); isStr && len(s) > MaxOutputBytes {
+		return nil, ErrOutputLimit
+	}
+
+	return r, mem.charge(sizeOf(r, MaxAllocBytes))
 }
 
 // strArg returns argument i as a string; a non-string is stringified.
@@ -179,6 +258,25 @@ func strReplace(s string, args []any) (any, error) {
 
 	if !ok1 || !ok2 {
 		return nil, nil
+	}
+
+	return literalReplace(s, from, to, true)
+}
+
+// literalReplace replaces from with to (every occurrence, or the first),
+// checking the result size before building it.
+func literalReplace(s, from, to string, all bool) (any, error) {
+	n := 1
+	if all {
+		n = strings.Count(s, from)
+	}
+
+	if strings.Contains(s, from) && len(s)+n*(len(to)-len(from)) > MaxOutputBytes {
+		return nil, ErrOutputLimit
+	}
+
+	if !all {
+		return strings.Replace(s, from, to, 1), nil
 	}
 
 	return strings.ReplaceAll(s, from, to), nil
@@ -240,21 +338,43 @@ func regexReplace(s string, all bool, args []any) (any, error) {
 	pattern, _ := strArg(args, 0)
 	repl, _ := strArg(args, 1)
 
+	// A literal pattern and replacement need no regex engine.
+	if regexp.QuoteMeta(pattern) == pattern && !strings.ContainsAny(repl, `$\`) && pattern != "" {
+		return literalReplace(s, pattern, repl, all)
+	}
+
 	re, err := compile(pattern)
 	if err != nil {
 		return nil, err
 	}
 
+	limit := 1
 	if all {
-		return re.ReplaceAllString(s, repl), nil
+		limit = -1
 	}
 
-	loc := re.FindStringSubmatchIndex(s)
-	if loc == nil {
-		return s, nil
+	// Build the result match by match so it can stop at the size limit.
+	var (
+		out  []byte
+		last int
+	)
+
+	for _, loc := range re.FindAllStringSubmatchIndex(s, limit) {
+		out = append(out, s[last:loc[0]]...)
+		out = re.ExpandString(out, repl, s, loc)
+		last = loc[1]
+
+		if len(out) > MaxOutputBytes {
+			return nil, ErrOutputLimit
+		}
 	}
 
-	return s[:loc[0]] + string(re.ExpandString(nil, repl, s, loc)) + s[loc[1]:], nil
+	out = append(out, s[last:]...)
+	if len(out) > MaxOutputBytes {
+		return nil, ErrOutputLimit
+	}
+
+	return string(out), nil
 }
 
 // strSplit follows Java's String.split: the argument is a regex and trailing

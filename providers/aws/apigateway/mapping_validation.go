@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/vtl"
 	"github.com/stackshy/cloudemu/v2/services/apigateway/driver"
 )
 
@@ -27,6 +28,7 @@ const (
 	mappingErrPrefix       = "Invalid mapping expression specified: Validation Result: warnings : [], errors : ["
 	msgBadThroughBehavior  = "Invalid passthrough behavior specified"
 	msgInvalidSelection    = "Invalid selection pattern specified"
+	msgTemplateTooLarge    = "Mapping template for content type %s exceeds the maximum size of 300 KB"
 	msgContentHandlingEnum = "1 validation error detected: Value '%s' at 'contentHandling' failed to satisfy " +
 		"constraint: Member must satisfy enum value set: [CONVERT_TO_BINARY, CONVERT_TO_TEXT]"
 )
@@ -84,6 +86,10 @@ func validateIntegrationSettings(ig *driver.Integration, methodParams map[string
 		return err
 	}
 
+	if err := validateTemplateSizes(ig.RequestTemplates); err != nil {
+		return err
+	}
+
 	for _, k := range sortedKeys(ig.RequestParameters) {
 		if !integrationRequestKey.MatchString(k) {
 			return invalidParameter(k)
@@ -112,6 +118,10 @@ func validateIntegrationResponse(ir *driver.IntegrationResponse, mr *driver.Meth
 		return cerrors.New(cerrors.InvalidArgument, msgInvalidSelection)
 	}
 
+	if err := validateTemplateSizes(ir.ResponseTemplates); err != nil {
+		return err
+	}
+
 	for _, k := range sortedKeys(ir.ResponseParameters) {
 		declared := mr != nil && mr.ResponseParameters != nil
 		if declared {
@@ -125,6 +135,17 @@ func validateIntegrationResponse(ir *driver.IntegrationResponse, mr *driver.Meth
 		src := ir.ResponseParameters[k]
 		if !commonSource.MatchString(src) && !integrationRespSource.MatchString(src) {
 			return invalidExpression(src)
+		}
+	}
+
+	return nil
+}
+
+// validateTemplateSizes enforces API Gateway's 300 KB mapping-template quota.
+func validateTemplateSizes(templates map[string]string) error {
+	for _, ct := range sortedKeys(templates) {
+		if len(templates[ct]) > vtl.MaxTemplateBytes {
+			return cerrors.Newf(cerrors.InvalidArgument, msgTemplateTooLarge, ct)
 		}
 	}
 

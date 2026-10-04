@@ -31,6 +31,7 @@ const (
 // body.
 func (m *Mock) serveMock(ctx context.Context, req *driver.ProxyRequest, route *resolvedRoute) *driver.ProxyResponse {
 	mc := newMappingContext(req, route, m.opts.AccountID, idgen.UUID(), m.opts.Clock.Now())
+	mc.templates = m.templates
 
 	payload, templated, rejected := mapRequest(ctx, mc, &route.integration, req)
 	if rejected != nil {
@@ -309,7 +310,9 @@ func bodyPath(body, path string) (string, bool) {
 
 	switch v.(type) {
 	case *vtl.Map, *vtl.List:
-		return vtl.ToJSON(v), true
+		s, err := vtl.ToJSON(v)
+
+		return s, err == nil
 	default:
 		return vtl.Stringify(v), true
 	}

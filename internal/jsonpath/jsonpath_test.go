@@ -1,6 +1,10 @@
 package jsonpath
 
-import "testing"
+import (
+	"fmt"
+	"sort"
+	"testing"
+)
 
 type obj map[string]any
 
@@ -8,6 +12,17 @@ func (o obj) Lookup(k string) (any, bool) {
 	v, ok := o[k]
 
 	return v, ok
+}
+
+func (o obj) Keys() []string {
+	keys := make([]string, 0, len(o))
+	for k := range o {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	return keys
 }
 
 type arr []any
@@ -19,6 +34,8 @@ func (a arr) Index(i int) (any, bool) {
 
 	return a[i], true
 }
+
+func (a arr) Len() int { return len(a) }
 
 func TestEval(t *testing.T) {
 	root := map[string]any{"a": map[string]any{"b": []any{1, 2}}, "o": obj{"x": arr{"y"}}}
@@ -57,5 +74,62 @@ func TestEval(t *testing.T) {
 		if _, _, err := Eval(bad, root); err == nil {
 			t.Errorf("Eval(%q) accepted", bad)
 		}
+	}
+}
+
+func TestEvalAll(t *testing.T) {
+	root := map[string]any{
+		"items": []any{map[string]any{"id": 1}, map[string]any{"id": 2, "sub": map[string]any{"id": 3}}},
+		"o":     obj{"b": arr{"x"}, "a": "y"},
+	}
+
+	cases := []struct {
+		path       string
+		want       string
+		indefinite bool
+	}{
+		{"$.items[*].id", "[1 2]", true},
+		{"$.items.*.id", "[1 2]", true},
+		{"$..id", "[1 2 3]", true},
+		{"$.o.*", "[y [x]]", true},
+		{"$..[0]", "[map[id:1] x]", true},
+		{"$.items[1].sub.id", "[3]", false},
+		{"$.missing", "[]", false},
+		{"$..nothing", "[]", true},
+	}
+
+	for _, c := range cases {
+		got, indefinite, err := EvalAll(c.path, root)
+		if err != nil || fmt.Sprint(got) != c.want && !(len(got) == 0 && c.want == "[]") || indefinite != c.indefinite {
+			t.Errorf("EvalAll(%q) = %v %v %v, want %s %v", c.path, got, indefinite, err, c.want, c.indefinite)
+		}
+	}
+
+	for _, bad := range []string{"x", "$[?(@.a)]", "$..", "$.a[", "$[x]"} {
+		if _, _, err := EvalAll(bad, root); err == nil {
+			t.Errorf("EvalAll(%q) accepted", bad)
+		}
+	}
+
+	// Descent stops at maxDepth instead of exhausting the stack.
+	var deep any = "leaf"
+	for range maxDepth + 50 {
+		deep = []any{deep}
+	}
+
+	if _, _, err := EvalAll("$..*", deep); err != nil {
+		t.Fatalf("deep descent: %v", err)
+	}
+}
+
+func TestEvalAllCapsMatches(t *testing.T) {
+	// A 900-deep chain: each descent step multiplies the matches.
+	var items any = 1
+	for range 900 {
+		items = []any{items, 2}
+	}
+
+	if _, _, err := EvalAll("$..*..*..*", items); err == nil {
+		t.Fatal("multiplying path not capped")
 	}
 }
