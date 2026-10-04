@@ -24,6 +24,10 @@ func (m *Mock) PutMethod(
 		return nil, cerrors.New(cerrors.NotFound, msgResourceNotFound)
 	}
 
+	if err := validateMethodRequestParams(in.RequestParameters); err != nil {
+		return nil, err
+	}
+
 	method := normalizeMethod(httpMethod)
 	if !validHTTPMethod(method) {
 		return nil, cerrors.New(cerrors.InvalidArgument, msgInvalidHTTPMethod)
@@ -37,10 +41,13 @@ func (m *Mock) PutMethod(
 		HTTPMethod:        method,
 		AuthorizationType: orDefault(in.AuthorizationType, "NONE"),
 		APIKeyRequired:    in.APIKeyRequired,
+		OperationName:     in.OperationName,
+		RequestParameters: copyBoolMap(in.RequestParameters),
+		RequestModels:     copyStrMap(in.RequestModels),
 	}
 	res.Methods[method] = mth
 
-	out := *mth
+	out := copyMethod(mth)
 
 	return &out, nil
 }
@@ -114,12 +121,23 @@ func (m *Mock) PutIntegration(
 		Type:                  in.Type,
 		IntegrationHTTPMethod: in.IntegrationHTTPMethod,
 		URI:                   in.URI,
-		PassthroughBehavior:   orDefault(in.PassthroughBehavior, "WHEN_NO_MATCH"),
+		PassthroughBehavior:   orDefault(in.PassthroughBehavior, driver.PassthroughWhenNoMatch),
 		TimeoutInMillis:       orDefaultInt(in.TimeoutInMillis, defaultIntegrationTimeoutMillis),
+		Credentials:           in.Credentials,
+		RequestParameters:     copyStrMap(in.RequestParameters),
+		RequestTemplates:      copyStrMap(in.RequestTemplates),
+		ContentHandling:       in.ContentHandling,
+		CacheNamespace:        orDefault(in.CacheNamespace, resourceID),
+		CacheKeyParameters:    append([]string(nil), in.CacheKeyParameters...),
 	}
+
+	if err := validateIntegrationSettings(ig, mth.RequestParameters); err != nil {
+		return nil, err
+	}
+
 	mth.Integration = ig
 
-	out := *ig
+	out := copyIntegration(ig)
 
 	return &out, nil
 }
@@ -190,12 +208,7 @@ func (m *Mock) lookupMethod(restAPIID, resourceID, httpMethod string) (*driver.M
 		return nil, cerrors.New(cerrors.NotFound, msgMethodNotFound)
 	}
 
-	out := *mth
-
-	if mth.Integration != nil {
-		ig := *mth.Integration
-		out.Integration = &ig
-	}
+	out := copyMethod(mth)
 
 	return &out, nil
 }

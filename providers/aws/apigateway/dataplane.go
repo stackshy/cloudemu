@@ -23,6 +23,7 @@ const (
 type resolvedRoute struct {
 	resourceID     string
 	resourcePath   string
+	method         driver.Method
 	integration    driver.Integration
 	pathParameters map[string]string
 	stageVariables map[string]string
@@ -55,6 +56,10 @@ func (m *Mock) serveRoute(ctx context.Context, req *driver.ProxyRequest) (*drive
 	route, ok := m.resolve(req)
 	if !ok {
 		return forbiddenMissingToken(), noIntegration
+	}
+
+	if route.integration.Type == driver.IntegrationMock {
+		return m.serveMock(ctx, req, &route), 0
 	}
 
 	if !isLambdaProxy(route.integration.Type) {
@@ -107,10 +112,13 @@ func (m *Mock) resolve(req *driver.ProxyRequest) (resolvedRoute, bool) {
 		return resolvedRoute{}, false
 	}
 
+	method := copyMethod(match.method)
+
 	return resolvedRoute{
 		resourceID:     match.resource.ID,
 		resourcePath:   match.resource.Path,
-		integration:    *match.method.Integration,
+		method:         method,
+		integration:    *method.Integration,
 		pathParameters: match.pathParameters,
 		stageVariables: copyStrMap(st.Variables),
 		apiID:          req.RestAPIID,

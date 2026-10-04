@@ -52,19 +52,28 @@ type createResourceRequest struct {
 
 // putMethodRequest is the PutMethod request body.
 type putMethodRequest struct {
-	AuthorizationType string `json:"authorizationType"`
-	APIKeyRequired    bool   `json:"apiKeyRequired"`
+	AuthorizationType string            `json:"authorizationType"`
+	APIKeyRequired    bool              `json:"apiKeyRequired"`
+	OperationName     string            `json:"operationName"`
+	RequestParameters map[string]bool   `json:"requestParameters"`
+	RequestModels     map[string]string `json:"requestModels"`
 }
 
 // putIntegrationRequest is the PutIntegration request body. The integration's
 // backend method travels as "httpMethod" on the wire (the model's locationName
 // for integrationHttpMethod).
 type putIntegrationRequest struct {
-	Type                  string `json:"type"`
-	IntegrationHTTPMethod string `json:"httpMethod"`
-	URI                   string `json:"uri"`
-	PassthroughBehavior   string `json:"passthroughBehavior"`
-	TimeoutInMillis       int    `json:"timeoutInMillis"`
+	Type                  string            `json:"type"`
+	IntegrationHTTPMethod string            `json:"httpMethod"`
+	URI                   string            `json:"uri"`
+	PassthroughBehavior   string            `json:"passthroughBehavior"`
+	TimeoutInMillis       int               `json:"timeoutInMillis"`
+	Credentials           string            `json:"credentials"`
+	RequestParameters     map[string]string `json:"requestParameters"`
+	RequestTemplates      map[string]string `json:"requestTemplates"`
+	ContentHandling       string            `json:"contentHandling"`
+	CacheNamespace        string            `json:"cacheNamespace"`
+	CacheKeyParameters    []string          `json:"cacheKeyParameters"`
 }
 
 // createDeploymentRequest is the CreateDeployment request body.
@@ -128,19 +137,60 @@ type listResourcesResponse struct {
 
 // methodResponse is the Method wire object.
 type methodResponse struct {
-	HTTPMethod        string               `json:"httpMethod,omitempty"`
-	AuthorizationType string               `json:"authorizationType,omitempty"`
-	APIKeyRequired    bool                 `json:"apiKeyRequired"`
-	MethodIntegration *integrationResponse `json:"methodIntegration,omitempty"`
+	HTTPMethod        string                          `json:"httpMethod,omitempty"`
+	AuthorizationType string                          `json:"authorizationType,omitempty"`
+	APIKeyRequired    bool                            `json:"apiKeyRequired"`
+	OperationName     string                          `json:"operationName,omitempty"`
+	RequestParameters map[string]bool                 `json:"requestParameters,omitempty"`
+	RequestModels     map[string]string               `json:"requestModels,omitempty"`
+	MethodResponses   map[string]methodResponseObject `json:"methodResponses,omitempty"`
+	MethodIntegration *integrationResponse            `json:"methodIntegration,omitempty"`
 }
 
 // integrationResponse is the Integration wire object.
 type integrationResponse struct {
-	Type                string `json:"type"`
-	HTTPMethod          string `json:"httpMethod,omitempty"`
-	URI                 string `json:"uri,omitempty"`
-	PassthroughBehavior string `json:"passthroughBehavior,omitempty"`
-	TimeoutInMillis     int    `json:"timeoutInMillis,omitempty"`
+	Type                 string                               `json:"type"`
+	HTTPMethod           string                               `json:"httpMethod,omitempty"`
+	URI                  string                               `json:"uri,omitempty"`
+	PassthroughBehavior  string                               `json:"passthroughBehavior,omitempty"`
+	TimeoutInMillis      int                                  `json:"timeoutInMillis,omitempty"`
+	Credentials          string                               `json:"credentials,omitempty"`
+	RequestParameters    map[string]string                    `json:"requestParameters,omitempty"`
+	RequestTemplates     map[string]string                    `json:"requestTemplates,omitempty"`
+	ContentHandling      string                               `json:"contentHandling,omitempty"`
+	CacheNamespace       string                               `json:"cacheNamespace,omitempty"`
+	CacheKeyParameters   []string                             `json:"cacheKeyParameters"`
+	IntegrationResponses map[string]integrationResponseObject `json:"integrationResponses,omitempty"`
+}
+
+// methodResponseObject is the MethodResponse wire object.
+type methodResponseObject struct {
+	StatusCode         string            `json:"statusCode"`
+	ResponseParameters map[string]bool   `json:"responseParameters,omitempty"`
+	ResponseModels     map[string]string `json:"responseModels,omitempty"`
+}
+
+// integrationResponseObject is the IntegrationResponse wire object.
+type integrationResponseObject struct {
+	StatusCode         string            `json:"statusCode"`
+	SelectionPattern   string            `json:"selectionPattern,omitempty"`
+	ResponseParameters map[string]string `json:"responseParameters,omitempty"`
+	ResponseTemplates  map[string]string `json:"responseTemplates,omitempty"`
+	ContentHandling    string            `json:"contentHandling,omitempty"`
+}
+
+// putMethodResponseRequest is the PutMethodResponse request body.
+type putMethodResponseRequest struct {
+	ResponseParameters map[string]bool   `json:"responseParameters"`
+	ResponseModels     map[string]string `json:"responseModels"`
+}
+
+// putIntegrationResponseRequest is the PutIntegrationResponse request body.
+type putIntegrationResponseRequest struct {
+	SelectionPattern   string            `json:"selectionPattern"`
+	ResponseParameters map[string]string `json:"responseParameters"`
+	ResponseTemplates  map[string]string `json:"responseTemplates"`
+	ContentHandling    string            `json:"contentHandling"`
 }
 
 // deploymentResponse is the Deployment wire object. APISummary is only sent
@@ -229,7 +279,15 @@ func renderResource(r *driver.Resource, embedMethods bool) resourceResponse {
 func toMethodResponse(mth *driver.Method) methodResponse {
 	resp := methodResponse{
 		HTTPMethod: mth.HTTPMethod, AuthorizationType: mth.AuthorizationType,
-		APIKeyRequired: mth.APIKeyRequired,
+		APIKeyRequired: mth.APIKeyRequired, OperationName: mth.OperationName,
+		RequestParameters: mth.RequestParameters, RequestModels: mth.RequestModels,
+	}
+
+	if len(mth.MethodResponses) > 0 {
+		resp.MethodResponses = make(map[string]methodResponseObject, len(mth.MethodResponses))
+		for code, mr := range mth.MethodResponses {
+			resp.MethodResponses[code] = toMethodResponseObject(mr)
+		}
 	}
 
 	if mth.Integration != nil {
@@ -241,10 +299,40 @@ func toMethodResponse(mth *driver.Method) methodResponse {
 }
 
 func toIntegrationResponse(ig *driver.Integration) integrationResponse {
-	return integrationResponse{
+	resp := integrationResponse{
 		Type: ig.Type, HTTPMethod: ig.IntegrationHTTPMethod,
 		URI: ig.URI, PassthroughBehavior: ig.PassthroughBehavior,
-		TimeoutInMillis: ig.TimeoutInMillis,
+		TimeoutInMillis: ig.TimeoutInMillis, Credentials: ig.Credentials,
+		RequestParameters: ig.RequestParameters, RequestTemplates: ig.RequestTemplates,
+		ContentHandling: ig.ContentHandling, CacheNamespace: ig.CacheNamespace,
+		CacheKeyParameters: ig.CacheKeyParameters,
+	}
+
+	if resp.CacheKeyParameters == nil {
+		resp.CacheKeyParameters = []string{}
+	}
+
+	if len(ig.IntegrationResponses) > 0 {
+		resp.IntegrationResponses = make(map[string]integrationResponseObject, len(ig.IntegrationResponses))
+		for code, ir := range ig.IntegrationResponses {
+			resp.IntegrationResponses[code] = toIntegrationResponseObject(ir)
+		}
+	}
+
+	return resp
+}
+
+func toMethodResponseObject(mr *driver.MethodResponse) methodResponseObject {
+	return methodResponseObject{
+		StatusCode: mr.StatusCode, ResponseParameters: mr.ResponseParameters, ResponseModels: mr.ResponseModels,
+	}
+}
+
+func toIntegrationResponseObject(ir *driver.IntegrationResponse) integrationResponseObject {
+	return integrationResponseObject{
+		StatusCode: ir.StatusCode, SelectionPattern: ir.SelectionPattern,
+		ResponseParameters: ir.ResponseParameters, ResponseTemplates: ir.ResponseTemplates,
+		ContentHandling: ir.ContentHandling,
 	}
 }
 

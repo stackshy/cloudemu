@@ -307,7 +307,13 @@
         "name": "DeleteIntegration"
       },
       {
+        "name": "DeleteIntegrationResponse"
+      },
+      {
         "name": "DeleteMethod"
+      },
+      {
+        "name": "DeleteMethodResponse"
       },
       {
         "name": "DeleteResource",
@@ -354,7 +360,13 @@
         "name": "GetIntegration"
       },
       {
+        "name": "GetIntegrationResponse"
+      },
+      {
         "name": "GetMethod"
+      },
+      {
+        "name": "GetMethodResponse"
       },
       {
         "name": "GetResource"
@@ -388,7 +400,15 @@
         "name": "PutIntegration"
       },
       {
+        "name": "PutIntegrationResponse",
+        "doc": "PutIntegrationResponse creates or replaces an integration response. The"
+      },
+      {
         "name": "PutMethod"
+      },
+      {
+        "name": "PutMethodResponse",
+        "doc": "PutMethodResponse declares a status code on a method. It fails when the"
       },
       {
         "name": "TagResource",
@@ -422,8 +442,16 @@
         "doc": "UpdateIntegration applies a patchOperations document to an integration."
       },
       {
+        "name": "UpdateIntegrationResponse",
+        "doc": "UpdateIntegrationResponse applies a patchOperations document"
+      },
+      {
         "name": "UpdateMethod",
         "doc": "UpdateMethod applies a patchOperations document to a method."
+      },
+      {
+        "name": "UpdateMethodResponse",
+        "doc": "UpdateMethodResponse applies a patchOperations document"
       },
       {
         "name": "UpdateResource",
