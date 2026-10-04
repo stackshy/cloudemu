@@ -217,9 +217,19 @@ func (m *Mock) dispatchStorageQueue(ctx context.Context, dest subscriptionDestin
 		return
 	}
 
-	if dest.QueueName != "" {
-		_ = m.storageQueue.DeliverExternal(ctx, dest.QueueName, string(body))
+	if dest.QueueName == "" {
+		return
 	}
+
+	// A queue in a storage account is keyed "{account}/{queue}" (the default
+	// account's queues by bare name), so try the account named by resourceId
+	// first and fall back to the default account.
+	if acct := resourceLeafName(dest.ResourceID); acct != "" &&
+		m.storageQueue.DeliverExternal(ctx, acct+"/"+dest.QueueName, string(body)) == nil {
+		return
+	}
+
+	_ = m.storageQueue.DeliverExternal(ctx, dest.QueueName, string(body))
 }
 
 // resourceLeafName returns the trailing path segment of an ARM resource id, the

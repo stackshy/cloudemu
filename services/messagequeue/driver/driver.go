@@ -153,6 +153,10 @@ type SendMessageInput struct {
 	// ReplyToSessionId, ContentType) so they survive a send/receive round-trip.
 	// Ignored by non-Azure providers.
 	SystemProperties map[string]string
+	// ScheduledEnqueueTime is Azure Service Bus's ScheduledEnqueueTimeUtc: the
+	// message stays invisible until this instant, measured on the provider's
+	// clock. The zero value means no schedule. Ignored by non-Azure providers.
+	ScheduledEnqueueTime time.Time
 }
 
 // SendMessageOutput is the result of sending a message.

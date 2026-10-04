@@ -1237,8 +1237,12 @@ func New(d Drivers) http.Handler {
 	// that contain parentheses or a bare JSON POST, disjoint from Blob's
 	// container/blob paths and Queue's /messages surface. Registered before the
 	// permissive Blob fallback.
+	// Storage accounts scope the queue and table namespaces the same way they
+	// scope blob containers.
+	storageAccounts, _ := d.BlobStorage.(storagedriver.AzureStorageAccounts)
+
 	if d.TableStorage != nil {
-		srv.Register(tablesrv.New(d.TableStorage))
+		srv.Register(tablesrv.New(d.TableStorage).WithAccounts(storageAccounts))
 	}
 
 	// Queue Storage matches the queue data-plane surface (/{queue}/messages,
@@ -1247,7 +1251,7 @@ func New(d Drivers) http.Handler {
 	// carries OData parentheses). Registered before the permissive Blob
 	// fallback.
 	if d.QueueStorage != nil {
-		srv.Register(queue.New(d.QueueStorage))
+		srv.Register(queue.New(d.QueueStorage).WithAccounts(storageAccounts))
 	}
 
 	// Storage-account ARM control plane (Microsoft.Storage/storageAccounts).
