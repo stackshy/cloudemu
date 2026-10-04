@@ -14,6 +14,7 @@ require (
 	cloud.google.com/go/firestore v1.22.0
 	cloud.google.com/go/functions v1.19.7
 	cloud.google.com/go/iam v1.11.0
+	cloud.google.com/go/kms v1.31.0
 	cloud.google.com/go/longrunning v1.2.0
 	cloud.google.com/go/managedkafka v1.0.0
 	cloud.google.com/go/orchestration v1.11.10

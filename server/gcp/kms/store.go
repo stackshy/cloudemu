@@ -1,6 +1,7 @@
 package kms
 
 import (
+	"crypto"
 	"sort"
 	"strconv"
 	"sync"
@@ -63,6 +64,11 @@ type versionModel struct {
 	createTime       time.Time
 	destroyTime      string
 	destroyEventTime string
+	// secret is the AES-256 (symmetric) or HMAC key; priv is the RSA/EC/Ed25519
+	// private key. Both are generated on first data-plane use and then kept for
+	// the version's lifetime so old ciphertexts and signatures stay valid.
+	secret []byte
+	priv   crypto.Signer
 }
 
 // store is the in-memory Cloud KMS control-plane backing state. Cloud KMS has
