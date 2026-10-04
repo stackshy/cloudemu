@@ -77,12 +77,59 @@ func TestIAMChecksQueueARNs(t *testing.T) {
 		r := sqsRequest(tc.op, tc.body)
 
 		checks, ok := h.IAMChecks(r, testScope)
-		if !ok || len(checks) != 1 || checks[0].Action != tc.action || checks[0].Resource != tc.resource {
+		if !ok || len(checks) == 0 || checks[0].Action != tc.action || checks[0].Resource != tc.resource {
 			t.Errorf("%s %s: got %+v ok=%v, want %s on %q", tc.op, tc.body, checks, ok, tc.action, tc.resource)
 		}
 
 		if rest, _ := io.ReadAll(r.Body); string(rest) != tc.body {
 			t.Errorf("%s: body not restored: %q", tc.op, rest)
+		}
+	}
+}
+
+// TestIAMChecksMoveTasks: a redrive needs the redrive actions on the source
+// queue and sqs:SendMessage on the destination, which is unknown when
+// DestinationArn is empty (messages go back to their original queues).
+func TestIAMChecksMoveTasks(t *testing.T) {
+	const q2ARN = "arn:aws:sqs:us-east-1:123456789012:q2"
+
+	handle := base64.StdEncoding.EncodeToString([]byte(`{"taskId":"mmt-1","sourceArn":"` + q1ARN + `"}`))
+	src := func(actions ...string) []string {
+		out := make([]string, 0, len(actions))
+		for _, a := range actions {
+			out = append(out, "sqs:"+a+" "+q1ARN)
+		}
+
+		return out
+	}
+
+	cases := []struct {
+		op, body string
+		want     []string
+	}{
+		{"StartMessageMoveTask", `{"SourceArn":"` + q1ARN + `","DestinationArn":"` + q2ARN + `"}`,
+			append(src("StartMessageMoveTask", "ReceiveMessage", "DeleteMessage", "GetQueueAttributes"), "sqs:SendMessage "+q2ARN)},
+		{"StartMessageMoveTask", `{"SourceArn":"` + q1ARN + `"}`,
+			append(src("StartMessageMoveTask", "ReceiveMessage", "DeleteMessage", "GetQueueAttributes"), "sqs:SendMessage ")},
+		{"StartMessageMoveTask", `{"SourceArn":"` + q1ARN + `","DestinationArn":"q2"}`,
+			append(src("StartMessageMoveTask", "ReceiveMessage", "DeleteMessage", "GetQueueAttributes"), "sqs:SendMessage ")},
+		{"CancelMessageMoveTask", `{"TaskHandle":"` + handle + `"}`,
+			src("CancelMessageMoveTask", "ReceiveMessage", "DeleteMessage", "GetQueueAttributes")},
+		{"ListMessageMoveTasks", `{"SourceArn":"` + q1ARN + `"}`, src("ListMessageMoveTasks", "GetQueueAttributes")},
+	}
+
+	h := sqs.New(nil)
+
+	for _, tc := range cases {
+		checks, ok := h.IAMChecks(sqsRequest(tc.op, tc.body), testScope)
+
+		got := make([]string, 0, len(checks))
+		for _, c := range checks {
+			got = append(got, c.Action+" "+c.Resource)
+		}
+
+		if !ok || strings.Join(got, "|") != strings.Join(tc.want, "|") {
+			t.Errorf("%s %s:\n got %v\nwant %v", tc.op, tc.body, got, tc.want)
 		}
 	}
 }

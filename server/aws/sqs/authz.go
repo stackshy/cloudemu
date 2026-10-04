@@ -60,12 +60,36 @@ const arnFields = 6
 // queueName is the shape of an SQS queue name.
 var queueName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}(\.fifo)?$`)
 
-// IAMChecks names the IAM action and queue of a request from the
-// X-Amz-Target ServeHTTP dispatches on. The queue ARN is built in the
-// server's account and region from the queue name the request carries; a
-// request that names no well-formed queue is evaluated on an unknown
-// resource. An operation the handler does not serve returns ok=false, and
-// ServeHTTP answers it with UnknownOperationException.
+// moveTaskActions are the further actions a message move task operation
+// needs on its source (dead-letter) queue, from "Configuring queue
+// permissions for dead-letter queue redrive" in the SQS Developer Guide.
+//
+//nolint:gochecknoglobals,goconst // static lookup table of operation names
+var moveTaskActions = map[string][]string{
+	"StartMessageMoveTask":  {"ReceiveMessage", "DeleteMessage", "GetQueueAttributes"},
+	"CancelMessageMoveTask": {"ReceiveMessage", "DeleteMessage", "GetQueueAttributes"},
+	"ListMessageMoveTasks":  {"GetQueueAttributes"},
+}
+
+// queueRequest is the part of a request body IAMChecks reads.
+type queueRequest struct {
+	QueueURL       string `json:"QueueUrl"`
+	QueueName      string `json:"QueueName"`
+	SourceArn      string `json:"SourceArn"`
+	DestinationArn string `json:"DestinationArn"`
+	TaskHandle     string `json:"TaskHandle"`
+}
+
+// IAMChecks names the IAM checks of a request from the X-Amz-Target
+// ServeHTTP dispatches on. The queue ARN is built in the server's account and
+// region from the queue name the request carries; a request that names no
+// well-formed queue is evaluated on an unknown resource. A message move task
+// operation also needs the redrive actions on its source queue, and
+// StartMessageMoveTask needs sqs:SendMessage on the destination: on
+// DestinationArn, or on an unknown resource when it is empty and the
+// messages go back to their original source queues. An operation the
+// handler does not serve returns ok=false, and ServeHTTP answers it with
+// UnknownOperationException.
 func (*Handler) IAMChecks(r *http.Request, s awsauthz.Scope) ([]awsauthz.Check, bool) {
 	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 
@@ -79,36 +103,53 @@ func (*Handler) IAMChecks(r *http.Request, s awsauthz.Scope) ([]awsauthz.Check, 
 		return awsauthz.Single(action, "*"), true
 	}
 
-	var req struct {
-		QueueURL   string `json:"QueueUrl"`
-		QueueName  string `json:"QueueName"`
-		SourceArn  string `json:"SourceArn"`
-		TaskHandle string `json:"TaskHandle"`
+	var req queueRequest
+
+	decoded := awsauthz.JSONBody(r, &req)
+
+	queue, dest := "", ""
+	if decoded {
+		queue = queueARN(s, requestQueue(ref, &req))
+		dest = queueARN(s, queueFromARN(req.DestinationArn))
 	}
 
-	if !awsauthz.JSONBody(r, &req) {
-		return awsauthz.Single(action, ""), true
+	checks := awsauthz.Single(action, queue)
+	for _, extra := range moveTaskActions[op] {
+		checks = append(checks, awsauthz.Check{Action: iamService + ":" + extra, Resource: queue})
 	}
 
-	var name string
+	if op == "StartMessageMoveTask" {
+		checks = append(checks, awsauthz.Check{Action: iamService + ":SendMessage", Resource: dest})
+	}
 
+	return checks, true
+}
+
+// requestQueue is the queue name a request names in the field ref points at.
+func requestQueue(ref queueRef, req *queueRequest) string {
 	switch ref {
 	case refQueueURL:
-		name = lastField(req.QueueURL, "/")
+		return lastField(req.QueueURL, "/")
 	case refQueueName:
-		name = req.QueueName
+		return req.QueueName
 	case refSourceArn:
-		name = queueFromARN(req.SourceArn)
+		return queueFromARN(req.SourceArn)
 	case refTaskHandle:
-		name = queueFromARN(taskSource(req.TaskHandle))
+		return queueFromARN(taskSource(req.TaskHandle))
 	case refNoResource:
 	}
 
+	return ""
+}
+
+// queueARN is the ARN of queue name in the server's account and region, or
+// "" (unknown) when name is not a queue name.
+func queueARN(s awsauthz.Scope, name string) string {
 	if !queueName.MatchString(name) {
-		return awsauthz.Single(action, ""), true
+		return ""
 	}
 
-	return awsauthz.Single(action, s.ARN(iamService, name)), true
+	return s.ARN(iamService, name)
 }
 
 // lastField is the part of s after the last sep.

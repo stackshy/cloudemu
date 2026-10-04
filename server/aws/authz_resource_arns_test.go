@@ -307,3 +307,72 @@ func TestAuthzResourceScopedIAM(t *testing.T) {
 		t.Error("IAM state does not match the authorized requests")
 	}
 }
+
+// TestAuthzMessageMoveTaskDestination: a redrive needs sqs:SendMessage on its
+// destination, so a caller denied the destination cannot move messages into
+// it, and an empty DestinationArn (back to the original queues) is evaluated
+// on an unknown resource.
+func TestAuthzMessageMoveTaskDestination(t *testing.T) {
+	ts, cloud := matrixServer(t, nil)
+	ctx := context.Background()
+
+	dlq, err := cloud.SQS.CreateQueue(ctx, mqdriver.QueueConfig{Name: "dlq"})
+	if err != nil {
+		t.Fatalf("CreateQueue dlq: %v", err)
+	}
+
+	dest, err := cloud.SQS.CreateQueue(ctx, mqdriver.QueueConfig{Name: "dest"})
+	if err != nil {
+		t.Fatalf("CreateQueue dest: %v", err)
+	}
+
+	if _, err := cloud.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: dlq.URL, Body: "m"}); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+
+	sourceOnly := userWithPolicy(t, cloud, "redriver", policyDoc(scoped("Allow", "sqs:*", dlq.ARN)))
+	start := func(destination string) sreq {
+		body := `{"SourceArn":"` + dlq.ARN + `"`
+		if destination != "" {
+			body += `,"DestinationArn":"` + destination + `"`
+		}
+
+		return rpcReq("sqs", "AmazonSQS.StartMessageMoveTask", body+`}`)
+	}
+
+	status, body := doSigned(t, ts, sourceOnly, start(dest.ARN))
+	wantDenied(t, status, body, "sqs:SendMessage on resource: "+dest.ARN)
+
+	status, body = doSigned(t, ts, sourceOnly, start(""))
+	wantDenied(t, status, body, "sqs:SendMessage on resource: *")
+
+	if n := queueMessages(t, cloud, dest.URL); n != 0 {
+		t.Fatalf("dest holds %d messages after denied redrives", n)
+	}
+
+	if n := queueMessages(t, cloud, dlq.URL); n != 1 {
+		t.Fatalf("dlq holds %d messages after denied redrives, want 1", n)
+	}
+
+	both := userWithPolicy(t, cloud, "redriver2", policyDoc(
+		scoped("Allow", "sqs:*", dlq.ARN), scoped("Allow", "sqs:SendMessage", dest.ARN)))
+
+	status, body = doSigned(t, ts, both, start(dest.ARN))
+	if status != http.StatusOK {
+		t.Fatalf("redrive with SendMessage on the destination: %d %s", status, body)
+	}
+
+	if n := queueMessages(t, cloud, dest.URL); n != 1 {
+		t.Fatalf("dest holds %d messages, want 1", n)
+	}
+}
+
+// TestAuthzUnservedJSONRPCOperationIsNamed: an operation a JSON-RPC handler
+// does not serve is denied to a restricted caller under its real name.
+func TestAuthzUnservedJSONRPCOperationIsNamed(t *testing.T) {
+	ts, cloud := matrixServer(t, nil)
+	reader := userWithPolicy(t, cloud, "ddbreader", policyDoc(scoped("Allow", "dynamodb:GetItem", "*")))
+
+	status, body := doSigned(t, ts, reader, rpcReq("dynamodb", "DynamoDB_20120810.ExecuteStatement", `{}`))
+	wantDenied(t, status, body, "dynamodb:ExecuteStatement")
+}

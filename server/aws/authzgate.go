@@ -170,13 +170,19 @@ func iamService(h server.Handler) string {
 	return ""
 }
 
-// rawOperation is the form Action of a request, for the deny message of an
-// operation the handler cannot name.
+// rawOperation names, for the deny message only, an operation the handler
+// cannot name: the form Action of a query request, else the operation in
+// X-Amz-Target of a JSON-RPC one. It never decides the authorization.
 func rawOperation(probe *http.Request) string {
 	if probe.Form != nil {
 		if a := probe.Form.Get("Action"); a != "" {
 			return a
 		}
+	}
+
+	target := probe.Header.Get("X-Amz-Target")
+	if op := target[strings.LastIndexByte(target, '.')+1:]; op != "" {
+		return op
 	}
 
 	return "UnknownOperation"
