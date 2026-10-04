@@ -181,3 +181,7 @@ func atoiDefault(s string, def int32) int32 {
 
 	return int32(n) //nolint:gosec // bounded by request query length; overflow not reachable.
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "kafka" }

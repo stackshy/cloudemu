@@ -16,6 +16,7 @@ import (
 
 	cloudemu "github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/server/authctx"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsauthz"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
@@ -25,6 +26,12 @@ import (
 type principalProbe struct{}
 
 func (principalProbe) Matches(r *http.Request) bool { return r.URL.Path == "/_whoami" }
+
+// IAMChecks makes the probe a whoami call: like sts:GetCallerIdentity it
+// needs no permission, so the tests exercise authentication alone.
+func (principalProbe) IAMChecks(*http.Request, awsauthz.Scope) ([]awsauthz.Check, bool) {
+	return []awsauthz.Check{}, true
+}
 
 func (principalProbe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p, ok := authctx.PrincipalFrom(r.Context())

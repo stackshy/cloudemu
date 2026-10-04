@@ -66,3 +66,7 @@ func epoch(iso string) float64 {
 
 	return float64(t.Unix())
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "ecs" }

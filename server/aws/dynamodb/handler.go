@@ -1220,3 +1220,11 @@ func errMessage(err error) string {
 
 	return err.Error()
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return iamServicePrefix }
+
+// iamServicePrefix is the IAM namespace of the DynamoDB and DynamoDB Streams
+// actions.
+const iamServicePrefix = "dynamodb"

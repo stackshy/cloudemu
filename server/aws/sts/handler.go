@@ -65,6 +65,9 @@ type Handler struct {
 	accountID string
 	region    string
 	trust     roleTrustEvaluator
+	// roles resolves the role an AssumeRole-family call will assume, so its
+	// stored ARN is the resource the gate authorizes. Nil without IAM.
+	roles roleGetter
 	// sessions, when set, records the temporary credentials this handler mints
 	// so the SigV4 authentication gate can verify signatures made with them. It
 	// is wired only when EnforceAuth is on; left nil the handler returns the
@@ -102,6 +105,10 @@ func New(accountID, region string, iam iamdriver.IAM) *Handler {
 	h := &Handler{accountID: accountID, region: region, identities: awsidentity.New(accountID, iam)}
 	if te, ok := iam.(roleTrustEvaluator); ok {
 		h.trust = te
+	}
+
+	if iam != nil {
+		h.roles = iam
 	}
 
 	return h
@@ -167,3 +174,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"InvalidAction", "unknown STS action: "+r.Form.Get("Action"))
 	}
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "sts" }

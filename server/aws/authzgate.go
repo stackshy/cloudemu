@@ -2,42 +2,25 @@ package aws
 
 import (
 	"encoding/json"
-	"net"
 	"net/http"
-	"strconv"
+	"regexp"
 	"strings"
-	"time"
 
+	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/authctx"
 	"github.com/stackshy/cloudemu/v2/server/wire"
-	"github.com/stackshy/cloudemu/v2/server/wire/sigv4"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsauthz"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
-)
-
-// authzDecision is the outcome of deriving an IAM action for a request.
-type authzDecision int
-
-const (
-	// authzSkip: the request is authenticated only (REST and other protocols
-	// whose executed operation is not bound to a signal the gate can read before
-	// dispatch). No authorization decision is made.
-	authzSkip authzDecision = iota
-	// authzEnforce: the IAM action was derived from the dispatch key; gate it
-	// through CheckPermission.
-	authzEnforce
-	// authzDeny: the request is a JSON-RPC call whose target does not map to a
-	// known served service, so the executed operation cannot be bound to an IAM
-	// action. Fail closed rather than authorize on an unverifiable service.
-	authzDeny
 )
 
 // jsonRPCServiceByTarget maps a JSON-RPC X-Amz-Target prefix (the part before
 // the operation, e.g. "DynamoDB_20120810." or "TrentService.") to the IAM
-// service the operation belongs to. The X-Amz-Target header is the value the
-// dispatcher itself routes on, so a service derived from it is bound to the
-// handler that actually runs, unlike the SigV4 credential scope, which the
-// client controls independently of the operation. Every JSON-RPC service the
-// wire server serves must appear here; an unmapped target fails closed.
+// service the operation belongs to. It is read only for handlers registered
+// as JSON-RPC handlers (gateConfig.jsonRPC), which route on that header, and
+// the service it gives must equal the handler's own IAMService. Every
+// JSON-RPC service the wire server serves must appear here; an unmapped
+// target fails closed.
 //
 //nolint:gochecknoglobals // static protocol lookup table
 var jsonRPCServiceByTarget = map[string]string{
@@ -74,75 +57,263 @@ var jsonRPCServiceByTarget = map[string]string{
 	"HealthLake.":                           "healthlake",
 	"AppRunner.":                            "apprunner",
 	"GlobalAccelerator_V20180706.":          "globalaccelerator",
+	"AWSInsightsIndexService.":              "ce",
+	"ServiceQuotasV20190624.":               "servicequotas",
+	"ElasticMapReduce.":                     "elasticmapreduce",
 }
 
-// authorize is the authorization step layered on top of the SigV4 authentication
-// gate. It runs only when EnforceAuth is on and after a request has been
-// authenticated, so p is a verified IAM principal. It derives the IAM action for
-// the request from the dispatch key and, for a real IAM principal that has
-// policies defined, gates the action through CheckPermission. It returns
-// proceed=false only when the action is denied, having already written the 403.
+// servicePrefix is the shape of an IAM service prefix ("s3",
+// "resource-explorer-2"). A service-wide plan is only built for a name of
+// this shape, so an empty or malformed IAMService can never be evaluated as
+// a wildcard.
+var servicePrefix = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+
+// planKind is how the gate authorizes one request, chosen from the handler
+// dispatch will run.
+type planKind int
+
+const (
+	// planNoHandler: no handler serves the request; dispatch answers 501.
+	planNoHandler planKind = iota
+	// planChecks: the handler (or the JSON-RPC table) named the IAM checks.
+	planChecks
+	// planUnknownOp: the handler cannot name the operation and will answer
+	// with an error, so only unrestricted callers are let through to it.
+	planUnknownOp
+	// planJSONDeny: a JSON-RPC target the table does not bind to the handler.
+	planJSONDeny
+	// planServiceWide: a handler that only names its IAM service. Only a
+	// grant covering every action of the service allows it.
+	planServiceWide
+	// planAuthnOnly: a handler IAM does not govern.
+	planAuthnOnly
+	// planUnmapped: anything else, including a request whose query string or
+	// form body does not parse. Fails closed for restricted callers.
+	planUnmapped
+)
+
+// authzPlan is the resolved authorization for one request.
+type authzPlan struct {
+	kind planKind
+	// req is the probe the plan was resolved on, or nil when the request did
+	// not parse. A deny is rendered from it, since its form is already parsed.
+	req    *http.Request
+	checks []awsauthz.Check
+	// action names the operation in a deny message for the plans without
+	// checks (the service-wide action for planServiceWide).
+	action string
+}
+
+// resolvePlan picks the plan from the handler dispatch will run (h, found on
+// probe by probeRoute). probed=false means the request did not parse.
+func (g *gateConfig) resolvePlan(probe *http.Request, h server.Handler, probed bool, body []byte) authzPlan {
+	if !probed {
+		return authzPlan{kind: planUnmapped}
+	}
+
+	if h == nil {
+		return authzPlan{kind: planNoHandler}
+	}
+
+	if res, ok := h.(awsauthz.Resolver); ok {
+		checks, known := res.IAMChecks(probe, g.scope)
+		if !known {
+			return authzPlan{kind: planUnknownOp, req: probe, action: iamService(h) + ":" + rawOperation(probe)}
+		}
+
+		return authzPlan{kind: planChecks, req: probe, checks: checks}
+	}
+
+	if g.jsonRPC[h] {
+		return g.jsonRPCPlan(probe, h, body)
+	}
+
+	if svc := iamService(h); servicePrefix.MatchString(svc) {
+		return authzPlan{kind: planServiceWide, req: probe, action: svc + ":*"}
+	}
+
+	if g.authnOnly[h] {
+		return authzPlan{kind: planAuthnOnly}
+	}
+
+	return authzPlan{kind: planUnmapped, req: probe}
+}
+
+// jsonRPCPlan binds a JSON-RPC request to its action through the target
+// table. The service the header names must be the handler's own, or the
+// request fails closed.
+func (g *gateConfig) jsonRPCPlan(probe *http.Request, h server.Handler, body []byte) authzPlan {
+	service, op, ok := jsonRPCTarget(probe)
+	if !ok || service != iamService(h) {
+		return authzPlan{kind: planJSONDeny, req: probe, action: service + ":" + op}
+	}
+
+	return authzPlan{kind: planChecks, req: probe, checks: awsauthz.Single(service+":"+op, deriveResource(service, body, g.scope))}
+}
+
+// denyTarget is the request a deny is rendered from: the probe when there is
+// one, else the original request.
+func (p authzPlan) denyTarget(r *http.Request) *http.Request {
+	if p.req != nil {
+		return p.req
+	}
+
+	return r
+}
+
+// iamService returns the IAM service prefix a handler declares, or "".
+func iamService(h server.Handler) string {
+	if n, ok := h.(awsauthz.ServiceNamer); ok {
+		return n.IAMService()
+	}
+
+	return ""
+}
+
+// rawOperation is the form Action of a request, for the deny message of an
+// operation the handler cannot name.
+func rawOperation(probe *http.Request) string {
+	if probe.Form != nil {
+		if a := probe.Form.Get("Action"); a != "" {
+			return a
+		}
+	}
+
+	return "UnknownOperation"
+}
+
+// authorize applies plan to the authenticated caller p. On allow it returns
+// the request carrying the principal and the gate's evaluation; on deny it
+// has written the 403.
 //
 // strict is set for an STS role session. Its principal is the role, which is
-// evaluated on its policies alone: the root/admin and no-policies bootstrap
-// shortcuts that apply to IAM users do not apply, so a role with no allowing
-// policy, or a role that does not exist, is denied.
-//
-// Authorization is enforced for the JSON-RPC protocol, where the X-Amz-Target
-// header both routes the request and names the service, so the service the gate
-// authorizes is the one the handler runs. The query and REST protocols are
-// authenticated only: there the executed operation's IAM service is not bound to
-// any pre-dispatch signal the gate can trust. Query dispatch routes on the
-// action name (a single handler, e.g. EC2, serves several IAM services such as
-// ec2/vpc/autoscaling), and the SigV4 credential scope is client-controlled and
-// decoupled from the operation. Authorizing query/REST on that scope would let a
-// caller scoped to service A run an operation that executes under service B, so
-// action+resource authorization bound to the routed operation is a follow-up.
-func authorize(
-	w http.ResponseWriter, r *http.Request, p authctx.Principal, iamDriver iamdriver.IAM, body []byte, accountID string,
-	strict bool,
-) bool {
-	service, action, decision := deriveAction(r)
-
-	if decision == authzSkip {
-		return true
+// evaluated on its policies alone: the root and no-policies bootstrap
+// shortcuts that apply to IAM users do not apply.
+func (g *gateConfig) authorize(
+	w http.ResponseWriter, r *http.Request, h server.Handler, plan authzPlan, p *authctx.Principal, strict bool,
+) (*http.Request, bool) {
+	if plan.kind == planNoHandler || plan.kind == planAuthnOnly {
+		return withPrincipal(r, *p), true
 	}
 
-	if decision == authzDeny {
-		// JSON-RPC target that maps to no known service: fail closed.
-		writeAuthzDenied(w, p, service+":"+jsonRPCTargetOperation(r))
-		return false
+	if plan.kind == planJSONDeny {
+		writeAccessDenied(w, plan.denyTarget(r), h, denyMessage(p, plan.action, "", false))
+		return r, false
 	}
 
-	if !strict && isAdminPrincipal(p) {
-		return true // account root / bootstrap admin identity: full access.
+	ev := awsauthz.Evaluation{Principal: *p, CondCtx: awsauthz.ConditionContext(r, p, g.scope)}
+	shortcut := !strict && (isAdminPrincipal(*p) || !principalHasPolicies(r, *p, g.iam))
+
+	if msg := g.decide(r, p, plan, &ev, shortcut); msg != "" {
+		writeAccessDenied(w, plan.denyTarget(r), h, msg)
+		return r, false
 	}
 
-	if !strict && !principalHasPolicies(r, p, iamDriver) {
-		return true // no policies defined: unrestricted (dev-friendly bootstrap).
-	}
+	r = withPrincipal(r, *p)
 
-	resource := deriveResource(service, body, sigv4.Region(r), accountID)
-
-	if checkPermission(r, p, iamDriver, action, resource) {
-		return true
-	}
-
-	writeAuthzDenied(w, p, action)
-
-	return false
+	return r.WithContext(awsauthz.WithEvaluation(r.Context(), &ev)), true
 }
 
-// checkPermission evaluates the action against the derived resource for the
-// caller. When the IAM driver supports the ContextualAuthorizer capability, the
-// request condition context (source IP, region, principal, secure transport,
-// current time) is threaded so Condition-guarded statements are honored;
-// otherwise it falls back to the resource-only CheckPermission.
+// decide evaluates the plans that depend on the caller's policies. It
+// returns a deny message, or "" to allow, and records the ResourcePolicy
+// decisions in ev.
+func (g *gateConfig) decide(r *http.Request, p *authctx.Principal, plan authzPlan, ev *awsauthz.Evaluation, shortcut bool) string {
+	var msg string
+
+	switch plan.kind {
+	case planChecks:
+		ev.Decisions, msg = g.evaluateChecks(r, p, plan.checks, ev.CondCtx, shortcut)
+	case planServiceWide:
+		msg = g.evaluateServiceWide(r, p, plan.action, ev.CondCtx, shortcut)
+	case planUnknownOp, planUnmapped:
+		if !shortcut {
+			msg = denyMessage(p, plan.action, "", false)
+		}
+	case planNoHandler, planAuthnOnly, planJSONDeny: // decided before the policies are read
+	}
+
+	return msg
+}
+
+// evaluateChecks evaluates each check against the caller's identity policies.
+// It returns the decisions recorded for ResourcePolicy checks, and a deny
+// message when a check denies the request.
+func (g *gateConfig) evaluateChecks(
+	r *http.Request, p *authctx.Principal, checks []awsauthz.Check, cctx map[string]string, shortcut bool,
+) (decisions map[awsauthz.Check]awsauthz.Decision, denied string) {
+	decisions = map[awsauthz.Check]awsauthz.Decision{}
+
+	for _, c := range checks {
+		d := awsauthz.Allowed
+		if !shortcut {
+			d = g.evaluate(r, p, c, cctx)
+		}
+
+		switch {
+		case d == awsauthz.ExplicitDeny:
+			return nil, denyMessage(p, c.Action, c.Resource, true)
+		case d == awsauthz.ImplicitDeny && c.Mode == awsauthz.Required:
+			return nil, denyMessage(p, c.Action, c.Resource, false)
+		}
+
+		if c.Mode == awsauthz.ResourcePolicy {
+			decisions[c] = d
+		}
+	}
+
+	return decisions, ""
+}
+
+// evaluateServiceWide allows the caller only when its policies grant every
+// action of the service on every resource. action is "<svc>:*".
+func (g *gateConfig) evaluateServiceWide(
+	r *http.Request, p *authctx.Principal, action string, cctx map[string]string, shortcut bool,
+) string {
+	if shortcut {
+		return ""
+	}
+
+	pe, ok := g.iam.(iamdriver.PermissionEvaluator)
+	if !ok {
+		return denyMessage(p, action, "*", false)
+	}
+
+	d := pe.EvaluateServiceWide(r.Context(), p.UserName, strings.TrimSuffix(action, ":*"), cctx)
+	if d == iamdriver.DecisionAllowed {
+		return ""
+	}
+
+	return denyMessage(p, action, "*", d == iamdriver.DecisionExplicitDeny)
+}
+
+// evaluate returns the identity decision for one check. An empty Resource is
+// evaluated as an unknown resource.
+func (g *gateConfig) evaluate(r *http.Request, p *authctx.Principal, c awsauthz.Check, cctx map[string]string) awsauthz.Decision {
+	if pe, ok := g.iam.(iamdriver.PermissionEvaluator); ok {
+		return awsauthz.Decision(pe.EvaluatePermission(r.Context(), iamdriver.EvalRequest{
+			Principal: p.UserName, Action: c.Action, Resource: c.Resource, ResourceKnown: c.Resource != "", Context: cctx,
+		}))
+	}
+
+	resource := c.Resource
+	if resource == "" {
+		resource = "*"
+	}
+
+	if checkPermission(r, p, g.iam, c.Action, resource, cctx) {
+		return awsauthz.Allowed
+	}
+
+	return awsauthz.ImplicitDeny
+}
+
+// checkPermission is the fallback for an IAM driver without the tri-state
+// PermissionEvaluator: a plain allow/deny for one action and resource.
 func checkPermission(
-	r *http.Request, p authctx.Principal, iamDriver iamdriver.IAM, action, resource string,
+	r *http.Request, p *authctx.Principal, iamDriver iamdriver.IAM, action, resource string, cctx map[string]string,
 ) bool {
 	if ca, ok := iamDriver.(iamdriver.ContextualAuthorizer); ok {
-		allowed, err := ca.CheckPermissionWithContext(r.Context(), p.UserName, action, resource, requestConditionContext(r, p))
+		allowed, err := ca.CheckPermissionWithContext(r.Context(), p.UserName, action, resource, cctx)
 		return err == nil && allowed
 	}
 
@@ -151,62 +322,18 @@ func checkPermission(
 	return err == nil && allowed
 }
 
-// requestConditionContext gathers the AWS global condition keys the gate can
-// derive from the request and the verified principal. Keys that cannot be
-// determined are omitted, so a policy that references an absent key evaluates
-// per IAM's absent-key rules (plain → no match, ...IfExists → match).
-func requestConditionContext(r *http.Request, p authctx.Principal) map[string]string {
-	ctx := map[string]string{
-		"aws:CurrentTime":     time.Now().UTC().Format(time.RFC3339),
-		"aws:SecureTransport": strconv.FormatBool(r.TLS != nil),
-	}
-
-	if ip := clientIP(r); ip != "" {
-		ctx["aws:SourceIp"] = ip
-	}
-
-	if p.ARN != "" {
-		ctx["aws:PrincipalArn"] = p.ARN
-	}
-
-	if p.UserName != "" {
-		ctx["aws:username"] = p.UserName
-	}
-
-	if region := sigv4.Region(r); region != "" {
-		ctx["aws:RequestedRegion"] = region
-	}
-
-	return ctx
-}
-
-// clientIP extracts the caller's source IP for the aws:SourceIp condition key.
-// It uses ONLY the connection's RemoteAddr (port stripped), never the
-// caller-controlled X-Forwarded-For header. The wire server has no trusted
-// reverse proxy in front of it, so honoring X-Forwarded-For would let any
-// client spoof its source IP and defeat the IpAddress/NotIpAddress conditions.
-func clientIP(r *http.Request) string {
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		return host
-	}
-
-	return r.RemoteAddr
-}
-
-// deriveResource derives the target resource ARN for an authorized action from
-// the request, so resource-scoped Allow/Deny policies apply. It covers the
-// services whose JSON-RPC body names a single primary resource; where the
-// resource cannot be derived it falls back to "*", which matches any
-// resource-scoped statement's "*" and leaves resource-scoped statements for
-// other resources non-binding (the pre-existing behavior).
-func deriveResource(service string, body []byte, region, accountID string) string {
+// deriveResource names the target resource of a JSON-RPC request for the
+// services whose body carries one primary resource. Elsewhere it returns ""
+// (unknown), which is evaluated conservatively so a resource-scoped Deny
+// still applies.
+func deriveResource(service string, body []byte, s awsauthz.Scope) string {
 	if service == "dynamodb" {
 		if name := jsonField(body, "TableName"); name != "" {
-			return "arn:aws:dynamodb:" + region + ":" + accountID + ":table/" + name
+			return "arn:" + s.Partition + ":dynamodb:" + s.Region + ":" + s.AccountID + ":table/" + name
 		}
 	}
 
-	return "*"
+	return ""
 }
 
 // jsonField extracts a single top-level string field from a JSON-RPC request
@@ -225,46 +352,27 @@ func jsonField(body []byte, field string) string {
 	return ""
 }
 
-// deriveAction maps an incoming request to its IAM action (e.g. dynamodb:PutItem)
-// using only signals bound to how the request is dispatched. For JSON-RPC it uses
-// the X-Amz-Target header: the prefix selects the service via jsonRPCServiceByTarget
-// (the same header the dispatcher routes on) and the suffix is the operation. A
-// JSON-RPC request whose target prefix is not mapped returns authzDeny (fail
-// closed). All other protocols (query, REST) return authzSkip: authenticate only.
-func deriveAction(r *http.Request) (service, action string, decision authzDecision) {
+// jsonRPCTarget splits X-Amz-Target into the IAM service (through
+// jsonRPCServiceByTarget) and the operation. ok=false when the header is
+// missing, names no operation, or its prefix is not in the table.
+func jsonRPCTarget(r *http.Request) (service, op string, ok bool) {
 	target := r.Header.Get("X-Amz-Target")
 	if target == "" {
-		return "", "", authzSkip
+		return "", "", false
 	}
 
-	prefix := target[:strings.LastIndexByte(target, '.')+1]
-	op := jsonRPCTargetOperation(r)
+	dot := strings.LastIndexByte(target, '.')
+	op = target[dot+1:]
+	service, ok = jsonRPCServiceByTarget[target[:dot+1]]
 
-	svc, ok := jsonRPCServiceByTarget[prefix]
-	if !ok || op == "" {
-		return svc, "", authzDeny
-	}
-
-	return svc, svc + ":" + op, authzEnforce
-}
-
-// jsonRPCTargetOperation returns the operation suffix of the X-Amz-Target header
-// (the part after the last "."), or "" when absent.
-func jsonRPCTargetOperation(r *http.Request) string {
-	target := r.Header.Get("X-Amz-Target")
-	if target == "" {
-		return ""
-	}
-
-	return target[strings.LastIndexByte(target, '.')+1:]
+	return service, op, ok && op != ""
 }
 
 // isAdminPrincipal reports whether p is the account-root / bootstrap admin
 // identity, which is always allowed (mirroring real IAM, where root has full
 // access). A verified long-term key always resolves to a named IAM user, so in
-// practice this guards only an explicit root identity and the defensive
-// empty-name case; STS temporary (ASIA) credentials are allowed earlier, in the
-// authentication gate, without reaching here.
+// practice this guards an explicit root identity and the defensive empty-name
+// case.
 func isAdminPrincipal(p authctx.Principal) bool {
 	return p.UserName == "" || p.UserName == "root" || strings.HasSuffix(p.ARN, ":root")
 }
@@ -282,17 +390,58 @@ func principalHasPolicies(r *http.Request, p authctx.Principal, iamDriver iamdri
 	return inspector.PrincipalHasPolicies(r.Context(), p.UserName)
 }
 
-// writeAuthzDenied renders a 403 authorization failure. Enforced authorization is
-// JSON-RPC only, so the response is always AccessDeniedException in the JSON-RPC
-// error shape.
-func writeAuthzDenied(w http.ResponseWriter, p authctx.Principal, action string) {
-	msg := "User: " + principalARN(p) + " is not authorized to perform: " + action
+// denyMessage is the AWS AccessDenied message for action on resource. An
+// unknown resource is shown as "*"; with no action (a request the gate could
+// not bind to any IAM service) the message names none.
+func denyMessage(p *authctx.Principal, action, resource string, explicit bool) string {
+	if action == "" {
+		return "User: " + principalARN(p) + " is not authorized to perform this request"
+	}
+
+	if resource == "" {
+		resource = "*"
+	}
+
+	msg := "User: " + principalARN(p) + " is not authorized to perform: " + action + " on resource: " + resource
+
+	if explicit {
+		return msg + " with an explicit deny in an identity-based policy"
+	}
+
+	return msg + " because no identity-based policy allows the " + action + " action"
+}
+
+// writeAccessDenied renders an authorization 403. A handler with its own 403
+// shape writes it; otherwise the shape follows the request: the query
+// protocol gets the XML AccessDenied error, everything else the JSON
+// AccessDeniedException (with X-Amzn-Errortype).
+func writeAccessDenied(w http.ResponseWriter, r *http.Request, h server.Handler, msg string) {
+	if dw, ok := h.(awsauthz.DenyWriter); ok {
+		dw.WriteAccessDenied(w, r, msg)
+		return
+	}
+
+	if isQueryShaped(r) {
+		awsquery.WriteXMLError(w, http.StatusForbidden, "AccessDenied", msg)
+		return
+	}
+
 	wire.WriteJSONError(w, http.StatusForbidden, "AccessDeniedException", msg)
+}
+
+// isQueryShaped reports whether r is an AWS query-protocol request: no
+// X-Amz-Target, and a form body or an Action in the query string.
+func isQueryShaped(r *http.Request) bool {
+	if r.Header.Get("X-Amz-Target") != "" {
+		return false
+	}
+
+	return strings.HasPrefix(r.Header.Get("Content-Type"), urlEncodedForm) || r.URL.Query().Get("Action") != ""
 }
 
 // principalARN returns a stable identifier for the caller in an error message,
 // preferring the resolved ARN and falling back to the user name.
-func principalARN(p authctx.Principal) string {
+func principalARN(p *authctx.Principal) string {
 	if p.ARN != "" {
 		return p.ARN
 	}

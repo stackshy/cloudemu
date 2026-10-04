@@ -168,3 +168,7 @@ func peekResourceARN(r *http.Request) string {
 
 	return probe.ResourceARN
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "kinesisvideo" }
