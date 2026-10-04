@@ -192,6 +192,62 @@ func TestServiceWideActionMatch(t *testing.T) {
 	}
 }
 
+// TestConservativeModesNeverWiden checks, over a grid of wildcard patterns, that
+// the unknown-resource and service-wide answers never allow something a
+// concrete evaluation denies, and never miss a Deny a concrete evaluation hits.
+func TestConservativeModesNeverWiden(t *testing.T) {
+	patterns := []string{
+		"*", "s3:*", "s3:*Bucket", "s3:Get?bject", "s?:*", "s3:?", "S3:get*", "s*", "*Bucket", "s3:*Object*",
+	}
+	actions := []string{"s3:GetObject", "s3:CreateBucket", "s3:DeleteBucketPolicy", "s3:PutObjectAcl", "s3:X"}
+	resources := []string{"*", "arn:aws:s3:::b", "arn:aws:s3:::b/k"}
+
+	for _, p := range patterns {
+		for _, field := range []string{"Action", "NotAction"} {
+			allowDoc := makePolicyDoc([]map[string]any{{"Effect": "Allow", field: p, "Resource": "*"}})
+			denyDoc := makePolicyDoc([]map[string]any{
+				{"Effect": "Allow", "Action": "*", "Resource": "*"},
+				{"Effect": "Deny", field: p, "Resource": "arn:aws:s3:::b"},
+			})
+
+			for _, doc := range []string{allowDoc, denyDoc} {
+				checkConservative(t, doc, actions, resources)
+			}
+		}
+	}
+}
+
+func checkConservative(t *testing.T, doc string, actions, resources []string) {
+	t.Helper()
+
+	docs := []string{doc}
+	wide := decideWith(docs, evalRequest{service: "s3"}, evalServiceWide)
+
+	for _, a := range actions {
+		unknown := decideWith(docs, evalRequest{action: a}, evalUnknownResource)
+
+		for _, r := range resources {
+			known := decide(docs, a, r, nil)
+
+			if unknown == decisionAllowed && known != decisionAllowed {
+				t.Errorf("unknown-resource allows %s but %s on %s is %s: %s", a, a, r, known, doc)
+			}
+
+			if known == decisionExplicitDeny && unknown != decisionExplicitDeny {
+				t.Errorf("unknown-resource misses deny of %s on %s: %s", a, r, doc)
+			}
+
+			if wide == decisionAllowed && known != decisionAllowed {
+				t.Errorf("service-wide allows s3 but %s on %s is %s: %s", a, r, known, doc)
+			}
+
+			if known == decisionExplicitDeny && wide != decisionExplicitDeny {
+				t.Errorf("service-wide misses deny of %s on %s: %s", a, r, doc)
+			}
+		}
+	}
+}
+
 // TestGlobMatchEdges pins the matcher's corner cases directly.
 func TestGlobMatchEdges(t *testing.T) {
 	assertEqual(t, true, globMatch("*", ""))
