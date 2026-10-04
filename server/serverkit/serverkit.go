@@ -964,6 +964,8 @@ func (a *App) extraHandler() http.Handler {
 			a.rebuildMu.Unlock()
 
 			serveCost(w, r, ds)
+		case cognitoCodesPath:
+			a.serveCognitoCodes(w, r)
 		default:
 			if strings.HasPrefix(strings.TrimPrefix(r.URL.Path, admin.Prefix), timeTravelPrefix) {
 				a.serveTimeTravel(w, r)

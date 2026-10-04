@@ -1,8 +1,8 @@
 // Package cognito provides an in-memory mock of AWS Cognito user pools
 // (cognito-idp): user pools, their app clients, hosted-UI domains, resource
-// tagging, and pool users with the admin user-management operations.
-//
-// Sign-up, sign-in and token issuance are not modeled yet.
+// tagging, pool users with the admin user-management operations, groups, self
+// sign-up with confirmation codes, and password sign-in that issues RS256
+// tokens a real JWT library verifies against the pool's JWKS.
 package cognito
 
 import (
@@ -15,8 +15,13 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/cognito/driver"
 )
 
-// Compile-time check that Mock implements driver.Cognito.
-var _ driver.Cognito = (*Mock)(nil)
+// Compile-time checks that Mock implements driver.Cognito and the non-API
+// interfaces the wire layer uses.
+var (
+	_ driver.Cognito        = (*Mock)(nil)
+	_ driver.KeySetProvider = (*Mock)(nil)
+	_ driver.CodeInspector  = (*Mock)(nil)
+)
 
 // clientKeySep separates the user-pool id and client id in the clients store.
 const clientKeySep = "/"
@@ -26,11 +31,14 @@ const clientKeySep = "/"
 type Mock struct {
 	// userPools is keyed by pool id; clients is keyed by "<poolID>/<clientID>";
 	// domains is keyed by the domain string; users is keyed by
-	// "<poolID>/<username>".
+	// "<poolID>/<username>"; groups is keyed by "<poolID>/<groupName>"; logins
+	// holds one record per sign-in, keyed by its origin_jti.
 	userPools *memstore.Store[driver.UserPool]
 	clients   *memstore.Store[driver.UserPoolClient]
 	domains   *memstore.Store[driver.UserPoolDomain]
 	users     *memstore.Store[userRecord]
+	groups    *memstore.Store[driver.Group]
+	logins    *memstore.Store[loginRecord]
 
 	// mu serializes compound read-modify-write mutations (pool update, cascading
 	// pool delete, user changes) that span more than one store operation.
@@ -39,6 +47,15 @@ type Mock struct {
 	// tagsMu guards the resource-tag side map, keyed by resource ARN.
 	tagsMu sync.RWMutex
 	tags   map[string]map[string]string
+
+	// keysMu guards the per-pool signing keys, created on first use.
+	keysMu sync.Mutex
+	keys   map[string]*poolKeys
+
+	// sessionsMu guards the challenge sessions. They last minutes, so they
+	// are not persisted.
+	sessionsMu sync.Mutex
+	sessions   map[string]challengeSession
 
 	opts *config.Options
 }
@@ -50,7 +67,11 @@ func New(opts *config.Options) *Mock {
 		clients:   memstore.New[driver.UserPoolClient](),
 		domains:   memstore.New[driver.UserPoolDomain](),
 		users:     memstore.New[userRecord](),
+		groups:    memstore.New[driver.Group](),
+		logins:    memstore.New[loginRecord](),
 		tags:      map[string]map[string]string{},
+		keys:      map[string]*poolKeys{},
+		sessions:  map[string]challengeSession{},
 		opts:      opts,
 	}
 }

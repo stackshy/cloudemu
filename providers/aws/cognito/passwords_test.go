@@ -2,41 +2,10 @@ package cognito
 
 import (
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
-	"strconv"
 	"strings"
 	"testing"
 )
-
-const maxTestIterations = 1_000_000
-
-// verifyPassword reports whether pw matches a stored salt and hash, in either
-// the PBKDF2 format or the legacy bare SHA-256 format older snapshots carry.
-func verifyPassword(salt, stored, pw string) bool {
-	if stored == "" {
-		return false
-	}
-
-	rest, ok := strings.CutPrefix(stored, pbkdf2Prefix)
-	if !ok {
-		sum := sha256.Sum256([]byte(salt + pw))
-
-		return subtle.ConstantTimeCompare([]byte(hex.EncodeToString(sum[:])), []byte(stored)) == 1
-	}
-
-	iterText, _, ok := strings.Cut(rest, "$")
-	if !ok {
-		return false
-	}
-
-	iter, err := strconv.Atoi(iterText)
-	if err != nil || iter <= 0 || iter > maxTestIterations {
-		return false
-	}
-
-	return subtle.ConstantTimeCompare([]byte(pbkdf2Hash(salt, pw, iter)), []byte(stored)) == 1
-}
 
 func TestVerifyPassword(t *testing.T) {
 	const pw = "Corr3ct!horse"

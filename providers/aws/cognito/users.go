@@ -25,13 +25,16 @@ const (
 // maxUsernameLen is the UsernameType length ceiling.
 const maxUsernameLen = 128
 
-// userRecord is a stored user: the public view plus the password digest. It
-// lives in the users store keyed by userKey(poolID, username).
+// userRecord is a stored user: the public view plus the password digest, its
+// group memberships, and any outstanding confirmation code. It lives in the
+// users store keyed by userKey(poolID, username).
 type userRecord struct {
-	PoolID       string      `json:"poolId"`
-	User         driver.User `json:"user"`
-	PasswordSalt string      `json:"passwordSalt,omitempty"`
-	PasswordHash string      `json:"passwordHash,omitempty"`
+	PoolID       string       `json:"poolId"`
+	User         driver.User  `json:"user"`
+	PasswordSalt string       `json:"passwordSalt,omitempty"`
+	PasswordHash string       `json:"passwordHash,omitempty"`
+	Groups       []string     `json:"groups,omitempty"`
+	Code         *pendingCode `json:"code,omitempty"`
 }
 
 func userKey(poolID, username string) string { return poolID + clientKeySep + username }
@@ -40,6 +43,8 @@ func userKey(poolID, username string) string { return poolID + clientKeySep + us
 func copyUserRecord(in userRecord) userRecord {
 	out := in
 	out.User.Attributes = slices.Clone(in.User.Attributes)
+	out.Groups = slices.Clone(in.Groups)
+	out.Code = in.Code.clone()
 
 	return out
 }
@@ -271,12 +276,15 @@ func (m *Mock) AdminDeleteUser(_ context.Context, userPoolID, username string) e
 		return poolNotFound(userPoolID)
 	}
 
-	key, _, ok := m.resolveUser(&pool, username)
+	key, rec, ok := m.resolveUser(&pool, username)
 	if !ok {
 		return userNotFound()
 	}
 
 	m.users.Delete(key)
+	m.deleteLogins(func(l *loginRecord) bool {
+		return l.PoolID == pool.ID && l.Sub == attrValue(rec.User.Attributes, attrSub)
+	})
 
 	return nil
 }

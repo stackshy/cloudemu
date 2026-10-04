@@ -31,6 +31,7 @@ type Handler struct {
 // New returns a Cognito handler backed by d.
 func New(d cognitodriver.Cognito) *Handler {
 	h := &Handler{cognito: d}
+	//nolint:goconst // operation names, which publicOps also lists
 	h.routes = map[string]http.HandlerFunc{
 		"CreateUserPool":         h.createUserPool,
 		"DescribeUserPool":       h.describeUserPool,
@@ -62,6 +63,29 @@ func New(d cognitodriver.Cognito) *Handler {
 		"AdminEnableUser":           h.adminEnableUser,
 		"AdminDisableUser":          h.adminDisableUser,
 		"AdminResetUserPassword":    h.adminResetUserPassword,
+
+		"CreateGroup":              h.createGroup,
+		"GetGroup":                 h.getGroup,
+		"UpdateGroup":              h.updateGroup,
+		"DeleteGroup":              h.deleteGroup,
+		"ListGroups":               h.listGroups,
+		"AdminAddUserToGroup":      h.adminAddUserToGroup,
+		"AdminRemoveUserFromGroup": h.adminRemoveUserFromGroup,
+		"AdminListGroupsForUser":   h.adminListGroupsForUser,
+		"ListUsersInGroup":         h.listUsersInGroup,
+
+		"SignUp":                      h.signUp,
+		"ConfirmSignUp":               h.confirmSignUp,
+		"ResendConfirmationCode":      h.resendConfirmationCode,
+		"AdminConfirmSignUp":          h.adminConfirmSignUp,
+		"InitiateAuth":                h.initiateAuth,
+		"AdminInitiateAuth":           h.adminInitiateAuth,
+		"RespondToAuthChallenge":      h.respondToAuthChallenge,
+		"AdminRespondToAuthChallenge": h.adminRespondToAuthChallenge,
+		"GetUser":                     h.getUser,
+		"GlobalSignOut":               h.globalSignOut,
+		"AdminUserGlobalSignOut":      h.adminUserGlobalSignOut,
+		"RevokeToken":                 h.revokeToken,
 	}
 
 	return h

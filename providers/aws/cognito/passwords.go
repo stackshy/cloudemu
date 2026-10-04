@@ -4,6 +4,7 @@ import (
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"strconv"
 	"strings"
@@ -28,6 +29,9 @@ const (
 	pbkdf2Prefix     = "pbkdf2-sha256$"
 	pbkdf2Iterations = 10000
 	pbkdf2KeyLen     = 32
+	// maxPBKDF2Iterations caps the iteration count a stored hash may claim, so
+	// a corrupt snapshot cannot make one sign-in burn CPU.
+	maxPBKDF2Iterations = 1_000_000
 )
 
 // policySymbols is the set of special characters Cognito counts toward the
@@ -109,4 +113,31 @@ func pbkdf2Hash(salt, pw string, iter int) string {
 	}
 
 	return pbkdf2Prefix + strconv.Itoa(iter) + "$" + hex.EncodeToString(key)
+}
+
+// verifyPassword reports whether pw matches a stored salt and hash, in either
+// the PBKDF2 format or the legacy bare SHA-256 format older snapshots carry.
+func verifyPassword(salt, stored, pw string) bool {
+	if stored == "" {
+		return false
+	}
+
+	rest, ok := strings.CutPrefix(stored, pbkdf2Prefix)
+	if !ok {
+		sum := sha256.Sum256([]byte(salt + pw))
+
+		return subtle.ConstantTimeCompare([]byte(hex.EncodeToString(sum[:])), []byte(stored)) == 1
+	}
+
+	iterText, _, ok := strings.Cut(rest, "$")
+	if !ok {
+		return false
+	}
+
+	iter, err := strconv.Atoi(iterText)
+	if err != nil || iter <= 0 || iter > maxPBKDF2Iterations {
+		return false
+	}
+
+	return subtle.ConstantTimeCompare([]byte(pbkdf2Hash(salt, pw, iter)), []byte(stored)) == 1
 }
