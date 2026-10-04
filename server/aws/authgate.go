@@ -110,7 +110,7 @@ func newAuthGate(g *gateConfig) func(http.ResponseWriter, *http.Request) (*http.
 			return r, false
 		}
 
-		plan := g.resolvePlan(probe, h, probed, body)
+		plan := g.resolvePlan(probe, h, probed)
 
 		return g.authorize(w, r, h, plan, &principal, roleSession)
 	}

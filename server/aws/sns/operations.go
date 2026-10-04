@@ -645,10 +645,7 @@ func (h *Handler) listSubscriptionsByTopic(w http.ResponseWriter, r *http.Reques
 
 func (h *Handler) publish(w http.ResponseWriter, r *http.Request) {
 	// SNS accepts either TopicArn or TargetArn to address the destination.
-	arn := r.Form.Get("TopicArn")
-	if arn == "" {
-		arn = r.Form.Get("TargetArn")
-	}
+	arn := publishTarget(r)
 
 	attrs := parseMessageAttributes(r.Form)
 
