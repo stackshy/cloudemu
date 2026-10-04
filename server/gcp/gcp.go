@@ -559,6 +559,7 @@ func New(d Drivers) *server.Server {
 
 		cfHandler = cloudfunctions.New(d.CloudFunctions, cfOpts...)
 		cfHandler.SetOperationRegistry(opsReg)
+		cfHandler.SetIAMStore(iamStore)
 		srv.Register(cfHandler)
 	}
 
@@ -569,6 +570,7 @@ func New(d Drivers) *server.Server {
 	if d.CloudRun != nil {
 		crH := cloudrunsrv.New(d.CloudRun)
 		crH.SetOperationRegistry(opsReg)
+		crH.SetIAMStore(iamStore)
 		srv.Register(crH)
 	}
 
@@ -709,6 +711,7 @@ func New(d Drivers) *server.Server {
 	if d.PrivateCA != nil {
 		privatecaH := privatecasrv.New(d.PrivateCA)
 		privatecaH.SetOperationRegistry(opsReg)
+		privatecaH.SetIAMStore(iamStore)
 		srv.Register(privatecaH)
 	}
 
@@ -964,6 +967,7 @@ func New(d Drivers) *server.Server {
 	if d.ArtifactRegistry != nil {
 		arH := artifactregistry.New(d.ArtifactRegistry)
 		arH.SetOperationRegistry(opsReg)
+		arH.SetIAMStore(iamStore)
 		srv.Register(arH)
 	}
 
@@ -1091,7 +1095,9 @@ func New(d Drivers) *server.Server {
 	// servicenetworking). Its /v1/projects/{p}/billingInfo route overlaps the
 	// /v1/projects/ family, so it registers before Firestore; the billingInfo-
 	// suffix guard keeps it disjoint from Firestore's /v1/projects/{p}/databases.
-	srv.Register(cloudbilling.New())
+	billingH := cloudbilling.New()
+	billingH.SetIAMStore(iamStore)
+	srv.Register(billingH)
 
 	// Project-level IAM policy (cloudresourcemanager.googleapis.com):
 	// POST /v1/projects/{p}:{get,set}IamPolicy / :testIamPermissions. This is
@@ -1100,7 +1106,9 @@ func New(d Drivers) *server.Server {
 	// wire-only store) so it is always registered, like cloudbilling above; the
 	// colon-verb single-segment guard keeps it disjoint from every other
 	// /v1/projects/ handler, but it must precede Firestore's permissive prefix.
-	srv.Register(resourcemanager.New())
+	crmH := resourcemanager.New()
+	crmH.SetIAMStore(iamStore)
+	srv.Register(crmH)
 
 	// Cloud KMS (cloudkms.googleapis.com) matches /v1/projects/{p}/locations/{l}/
 	// keyRings[/…]. Its keyRings resource-type guard is disjoint from every other

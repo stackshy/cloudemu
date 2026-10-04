@@ -32,9 +32,11 @@ import (
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	"github.com/stackshy/cloudemu/v2/server/gcp/opmeta"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
@@ -109,13 +111,11 @@ type Handler struct {
 	// in-process GCS backend. Nil when no GCS backend is wired; an archive deploy
 	// then fails loudly rather than silently falling back to the echo stub.
 	objects ObjectStore
-	// mu guards policies, gen1Meta and gen2.
+	// mu guards gen1Meta and gen2.
 	mu sync.RWMutex
-	// policies stores the IAM policy set via setIamPolicy, keyed by the function's
-	// canonical resource name. CloudEmu does not enforce IAM; the policy is stored
-	// verbatim so Terraform's setIamPolicy → getIamPolicy round-trips (the standard
-	// way to grant roles/cloudfunctions.invoker to allUsers for a public function).
-	policies map[string]*iamPolicy
+	// iam stores function IAM policies keyed by canonical resource name (the
+	// standard way to grant roles/cloudfunctions.invoker to allUsers).
+	iam gcpiam.Store
 	// gen1Meta holds the GCP-specific gen1 (v1) output-only metadata that has no
 	// portable Serverless-driver equivalent: serviceAccountEmail, ingressSettings,
 	// dockerRegistry, buildId and the monotonically increasing versionId. Keyed by
@@ -132,6 +132,9 @@ type Handler struct {
 	ops *lro.Registry
 }
 
+// SetIAMStore wires the shared resource IAM store.
+func (h *Handler) SetIAMStore(s gcpiam.Store) { h.iam = s }
+
 // Option configures a Handler.
 type Option func(*Handler)
 
@@ -146,7 +149,7 @@ func New(fn sdrv.Serverless, opts ...Option) *Handler {
 	h := &Handler{
 		fn:       fn,
 		uploads:  newUploadStaging(),
-		policies: make(map[string]*iamPolicy),
+		iam:      resourceiam.New(),
 		gen1Meta: make(map[string]*gen1Meta),
 		gen2:     make(map[string]*gen2Function),
 		ops:      lro.NewRegistry(),
@@ -672,8 +675,8 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, p functionPath)
 
 	h.mu.Lock()
 	delete(h.gen1Meta, key)
-	delete(h.policies, key)
 	h.mu.Unlock()
+	h.iam.Delete(key)
 
 	h.writeGen1Op(w, emptyResponse())
 }

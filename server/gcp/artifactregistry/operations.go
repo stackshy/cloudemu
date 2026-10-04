@@ -419,9 +419,7 @@ func (h *Handler) deleteRepository(w http.ResponseWriter, r *http.Request, rt *r
 		return
 	}
 
-	h.mu.Lock()
-	delete(h.policies, repositoryResourceName(rt.project, rt.location, rt.repository))
-	h.mu.Unlock()
+	h.iam.Delete(repositoryResourceName(rt.project, rt.location, rt.repository))
 
 	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, nil))
 }

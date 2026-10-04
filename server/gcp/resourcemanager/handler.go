@@ -1,38 +1,35 @@
 // Package resourcemanager implements the cloudresourcemanager.googleapis.com v1
-// project-level IAM policy surface as a server.Handler:
+// project and organization IAM policy surface as a server.Handler:
 //
-//	POST /v1/projects/{project}:getIamPolicy
-//	POST /v1/projects/{project}:setIamPolicy
-//	POST /v1/projects/{project}:testIamPermissions
 //	GET  /v1/projects/{project}
+//	POST /v1/projects/{project}:{getIamPolicy|setIamPolicy|testIamPermissions}
+//	POST /v1/organizations/{org}:{getIamPolicy|setIamPolicy|testIamPermissions}
 //
-// These are the endpoints Terraform's google_project_iam_member,
-// google_project_iam_binding, google_project_iam_policy and
-// google_project_iam_audit_config drive via read-modify-write with an etag,
-// and the ones google.golang.org/api/cloudresourcemanager/v1 clients call.
+// These are the endpoints Terraform's google_project_iam_* and
+// google_organization_iam_* resources drive via read-modify-write with an
+// etag, and the ones google.golang.org/api/cloudresourcemanager/v1 clients call.
 //
-// The project policy has no portable driver. Like the SA-level policy in the
-// iam handler, it is a wire-only concern tracked here in memory, keyed by
-// project id. Bindings (with conditions) and audit configs are stored verbatim
-// so a get→modify→set round-trips unchanged.
+// Projects and organizations have no portable driver: the emulator accepts
+// every project and organization id, the same stance the iam handler takes for
+// organization custom roles. Policies live in the shared resource IAM store
+// under "projects/{p}" and "organizations/{o}", so etag, updateMask and
+// conditional-binding rules match every other GCP resource policy.
 package resourcemanager
 
 import (
-	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
-	"sync"
+
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
 const (
-	pathPrefix      = "/v1/projects/"
-	contentTypeJSON = "application/json"
-	maxBodyBytes    = 1 << 20
-
-	getIamPolicyVerb       = "getIamPolicy"
-	setIamPolicyVerb       = "setIamPolicy"
-	testIamPermissionsVerb = "testIamPermissions"
+	projectsColl   = "projects"
+	orgsColl       = "organizations"
+	projectsPrefix = "/v1/" + projectsColl + "/"
+	orgsPrefix     = "/v1/" + orgsColl + "/"
 
 	// projectNumber is the number every project reports. GCS reports the same
 	// one on its buckets, so a client that resolves the number (as Terraform's
@@ -40,215 +37,71 @@ const (
 	projectNumber = "123456789012"
 )
 
-// Handler serves the project-level IAM policy verbs. It owns only the
-// per-project policy store; there is no driver behind it.
+// Handler serves the project and organization IAM policy verbs.
 type Handler struct {
-	mu       sync.RWMutex
-	policies map[string]*policy // project id -> policy
-	versions map[string]uint64  // project id -> monotonic write counter (etag source)
+	iam gcpiam.Store
 }
 
-// New returns a project-IAM handler.
+// New returns a handler with its own policy store. The assembled server swaps
+// in the shared store with SetIAMStore.
 func New() *Handler {
-	return &Handler{
-		policies: make(map[string]*policy),
-		versions: make(map[string]uint64),
-	}
+	return &Handler{iam: resourceiam.New()}
 }
 
-// Matches claims only POSTs to /v1/projects/{project}:{getIamPolicy|
-// setIamPolicy|testIamPermissions}. The single-segment guard (no '/' in the
-// tail) keeps it disjoint from the iam handler (serviceAccounts|roles paths),
-// Firestore (/v1/projects/{p}/databases/…) and every other /v1/projects/
-// handler, so registration order among them is unconstrained, but it must be
-// registered ahead of Firestore, whose permissive prefix would otherwise
-// swallow the colon-suffixed verb.
+// SetIAMStore wires the shared resource IAM store.
+func (h *Handler) SetIAMStore(s gcpiam.Store) { h.iam = s }
+
+// split returns the collection and the single trailing segment of p, or
+// ok=false for any other path.
+func split(p string) (coll, tail string, ok bool) {
+	switch {
+	case strings.HasPrefix(p, projectsPrefix):
+		coll, tail = projectsColl, strings.TrimPrefix(p, projectsPrefix)
+	case strings.HasPrefix(p, orgsPrefix):
+		coll, tail = orgsColl, strings.TrimPrefix(p, orgsPrefix)
+	default:
+		return "", "", false
+	}
+
+	return coll, tail, tail != "" && !strings.Contains(tail, "/")
+}
+
+// Matches claims GET /v1/projects/{p} and POSTs of an IAM verb on a single
+// project or organization segment. The no-'/' guard keeps it disjoint from the
+// iam handler (serviceAccounts, roles, organization roles), Firestore and
+// every other /v1/projects/ handler, but it must register ahead of Firestore,
+// whose permissive prefix would otherwise swallow the colon verb.
 func (*Handler) Matches(r *http.Request) bool {
-	if !strings.HasPrefix(r.URL.Path, pathPrefix) {
+	coll, tail, ok := split(r.URL.Path)
+	if !ok {
 		return false
 	}
 
-	tail := strings.TrimPrefix(r.URL.Path, pathPrefix)
-	if tail == "" || strings.Contains(tail, "/") {
-		return false
-	}
-
-	if r.Method == http.MethodGet {
+	if r.Method == http.MethodGet && coll == projectsColl {
 		return !strings.Contains(tail, ":")
 	}
 
-	if r.Method != http.MethodPost {
-		return false
-	}
+	_, verb := gcpiam.SplitVerb(tail)
 
-	i := strings.LastIndex(tail, ":")
-	if i < 0 {
-		return false
-	}
-
-	switch tail[i+1:] {
-	case getIamPolicyVerb, setIamPolicyVerb, testIamPermissionsVerb:
-		return true
-	default:
-		return false
-	}
+	return r.Method == http.MethodPost && verb != ""
 }
 
-// ServeHTTP parses "{project}:{verb}" and dispatches.
+// ServeHTTP answers projects.get or hands the IAM verb to the shared helper.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	tail := strings.TrimPrefix(r.URL.Path, pathPrefix)
+	coll, tail, _ := split(r.URL.Path)
 
-	if r.Method == http.MethodGet {
-		// projects.get: the emulator accepts every project id, so every one
-		// exists and is ACTIVE.
-		writeJSON(w, map[string]any{
-			"projectId":      tail,
+	id, verb := gcpiam.SplitVerb(tail)
+	if verb == "" {
+		// projects.get: every project id exists and is ACTIVE.
+		gcprest.WriteJSON(w, http.StatusOK, map[string]any{
+			"projectId":      id,
 			"projectNumber":  projectNumber,
-			"name":           tail,
+			"name":           id,
 			"lifecycleState": "ACTIVE",
 		})
 
 		return
 	}
 
-	i := strings.LastIndex(tail, ":")
-	if i < 0 {
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "malformed project IAM path")
-		return
-	}
-
-	project, verb := tail[:i], tail[i+1:]
-
-	switch verb {
-	case getIamPolicyVerb:
-		h.getIamPolicy(w, r, project)
-	case setIamPolicyVerb:
-		h.setIamPolicy(w, r, project)
-	case testIamPermissionsVerb:
-		h.testIamPermissions(w, r)
-	default:
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "unknown method: "+verb)
-	}
-}
-
-// getIamPolicy returns the stored policy, or an empty versioned policy with a
-// stable etag when none has been set (real GCP never 404s getIamPolicy on an
-// existing project).
-func (h *Handler) getIamPolicy(w http.ResponseWriter, r *http.Request, project string) {
-	var req getIamPolicyRequest
-	_ = decodeOptional(r, &req) // options are optional
-
-	h.mu.RLock()
-	pol := h.policies[project]
-	h.mu.RUnlock()
-
-	if pol == nil {
-		writeJSON(w, &policy{Version: 1, Etag: encodeEtag(iamEtagInitialVersion)})
-		return
-	}
-
-	writeJSON(w, pol)
-}
-
-// setIamPolicy enforces optimistic concurrency: when a policy already exists,
-// the request policy.etag must match the stored etag or the write is rejected
-// with 409 ABORTED, the read-modify-write contract Terraform relies on. Each
-// accepted write bumps a per-project version so successive states get distinct
-// etags.
-func (h *Handler) setIamPolicy(w http.ResponseWriter, r *http.Request, project string) {
-	var req setIamPolicyRequest
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-
-	h.mu.Lock()
-
-	if cur := h.policies[project]; cur != nil && req.Policy.Etag != cur.Etag {
-		h.mu.Unlock()
-		writeError(w, http.StatusConflict, "ABORTED",
-			"there were concurrent policy changes; please retry the whole "+
-				"read-modify-write with the new etag")
-
-		return
-	}
-
-	pol := req.Policy
-	if pol.Version == 0 {
-		pol.Version = 1
-	}
-
-	// The unset-policy get reports the initial version (encodeEtag below), so a
-	// write must advance past it, otherwise the first write would echo the same
-	// etag the caller just read, defeating stale-etag detection on the next
-	// write. Seed the counter to the initial version on first write, then bump.
-	if h.versions[project] == 0 {
-		h.versions[project] = iamEtagInitialVersion
-	}
-
-	h.versions[project]++
-	pol.Etag = encodeEtag(h.versions[project])
-	h.policies[project] = &pol
-
-	h.mu.Unlock()
-
-	writeJSON(w, &pol)
-}
-
-// testIamPermissions echoes the requested permissions. The emulator has no
-// request-principal identity, so the project owner is treated as holding every
-// permission asked about (the same stance the iam handler takes for SAs).
-func (*Handler) testIamPermissions(w http.ResponseWriter, r *http.Request) {
-	var req testIamPermissionsRequest
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-
-	out := testIamPermissionsResponse{}
-	if len(req.Permissions) > 0 {
-		out.Permissions = req.Permissions
-	}
-
-	writeJSON(w, &out)
-}
-
-// --- wire helpers ---
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	defer func() { _ = r.Body.Close() }()
-
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid JSON: "+err.Error())
-		return false
-	}
-
-	return true
-}
-
-// decodeOptional decodes a body that may be empty (getIamPolicy sends {} or no
-// body). A decode error is swallowed. The only field is an ignored option.
-func decodeOptional(r *http.Request, v any) error {
-	r.Body = http.MaxBytesReader(nil, r.Body, maxBodyBytes)
-	defer func() { _ = r.Body.Close() }()
-
-	raw, err := io.ReadAll(r.Body)
-	if err != nil || len(raw) == 0 {
-		return err
-	}
-
-	return json.Unmarshal(raw, v)
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", contentTypeJSON)
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, statusStr, msg string) {
-	w.Header().Set("Content-Type", contentTypeJSON)
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"error": map[string]any{"code": status, "message": msg, "status": statusStr},
-	})
+	gcpiam.Serve(w, r, verb, coll+"/"+id, h.iam)
 }

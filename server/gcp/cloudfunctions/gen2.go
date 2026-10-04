@@ -415,7 +415,6 @@ func (h *Handler) deleteV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 	_, ok := h.gen2[key]
 	if ok {
 		delete(h.gen2, key)
-		delete(h.policies, key)
 	}
 
 	h.mu.Unlock()
@@ -424,6 +423,8 @@ func (h *Handler) deleteV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "function "+p.name+" not found")
 		return
 	}
+
+	h.iam.Delete(key)
 
 	// Drop the driver-backed function too so the invoke path no longer resolves
 	// it. Best-effort: a missing driver entry is not an error.

@@ -230,6 +230,11 @@ func (h *Handler) deleteResource(w http.ResponseWriter, r *http.Request, rt *rou
 		return
 	}
 
+	// A recreated pool or template starts with an empty policy.
+	if rt.coll != authoritiesColl {
+		h.iam.Delete(iamName(rt))
+	}
+
 	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(op.Name, nil))
 }
 

@@ -37,6 +37,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -67,7 +69,12 @@ type Handler struct {
 	skus     map[string][]*sku
 	// accountSeq numbers generated billing-account ids from billingAccounts.create.
 	accountSeq uint64
+	// iam holds billing-account policies keyed "billingAccounts/{id}".
+	iam gcpiam.Store
 }
+
+// SetIAMStore wires the shared resource IAM store.
+func (h *Handler) SetIAMStore(s gcpiam.Store) { h.iam = s }
 
 // New returns a Cloud Billing handler seeded with one open billing account and
 // a small service/SKU catalog.
@@ -77,6 +84,7 @@ func New() *Handler {
 		projectInfo: map[string]*projectBillingInfo{},
 		budgets:     map[string]*budget{},
 		skus:        map[string][]*sku{},
+		iam:         resourceiam.New(),
 	}
 	h.seed()
 
