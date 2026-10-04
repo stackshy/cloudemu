@@ -96,6 +96,50 @@ func TestRunResetSeed(t *testing.T) {
 	}
 }
 
+// TestEnforceAuthAdminToken runs the container with --enforce-auth: Reset and
+// Seed carry the admin token, an unauthenticated reset is refused, and health
+// (the readiness probe) stays open.
+func TestEnforceAuthAdminToken(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts a container; skipped in -short")
+	}
+	ctx := context.Background()
+
+	ctr, err := cloudemu.Run(ctx, cloudemu.WithImage(image()), cloudemu.WithEnforceAuth("tc-admin-token"))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = ctr.Terminate(ctx)
+	})
+
+	ep, err := ctr.AWSEndpoint(ctx)
+	if err != nil {
+		t.Fatalf("AWSEndpoint: %v", err)
+	}
+
+	if code := status(t, ep+"/_cloudemu/health"); code != http.StatusOK {
+		t.Fatalf("health = %d, want 200", code)
+	}
+	if code := status(t, ep+"/_cloudemu/snapshot"); code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated snapshot = %d, want 401", code)
+	}
+
+	if err := ctr.Reset(ctx); err != nil {
+		t.Fatalf("Reset with the token: %v", err)
+	}
+
+	fixture := map[string]any{"iamUsers": []map[string]any{{
+		"name":       "boot",
+		"accessKeys": []map[string]any{{"accessKeyId": "AKIATESTCONTAINERS01", "secretAccessKey": "tc-secret"}},
+	}}}
+	if err := ctr.Seed(ctx, fixture); err != nil {
+		t.Fatalf("Seed with the token: %v", err)
+	}
+}
+
 func put(t *testing.T, url, body string) {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPut, url, strings.NewReader(body))

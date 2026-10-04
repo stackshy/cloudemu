@@ -14,6 +14,8 @@
 package admin
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -31,6 +33,13 @@ const maxFixtureBytes = 32 << 20 // 32 MiB
 // maxSnapshotBytes caps a restore request body. Snapshots can carry object
 // bodies, so this is larger than a seed fixture.
 const maxSnapshotBytes = 512 << 20 // 512 MiB
+
+// healthEndpoint is the liveness probe, the one control endpoint that stays
+// open when RequireToken is set.
+const healthEndpoint = "health"
+
+// errorKey is the JSON field every control-plane error body uses.
+const errorKey = "error"
 
 // Backend is a hot-swappable http.Handler. Requests read the current handler
 // under a read lock; Swap replaces it under a write lock. A zero Backend is not
@@ -73,6 +82,10 @@ type Control struct {
 	snapshot func() ([]byte, error)
 	restore  func(snapshot []byte) error
 	extra    http.Handler
+
+	// tokenSum is the SHA-256 of the admin bearer token, or nil when the
+	// control plane is open. Set through RequireToken.
+	tokenSum []byte
 }
 
 // NewControl wraps backend with the control plane. reset must rebuild every
@@ -92,6 +105,41 @@ func NewControl(
 	return &Control{backend: backend, reset: reset, seed: seed, snapshot: snapshot, restore: restore, extra: extra}
 }
 
+// RequireToken makes every control endpoint except health demand
+// "Authorization: Bearer <token>". serve turns it on with --enforce-auth, so a
+// caller without the token can't dump state (IAM secrets included) or replace
+// it. health stays open as a liveness probe. An empty token leaves the control
+// plane open. Call it before serving.
+func (c *Control) RequireToken(token string) {
+	if token == "" {
+		c.tokenSum = nil
+
+		return
+	}
+
+	sum := sha256.Sum256([]byte(token))
+	c.tokenSum = sum[:]
+}
+
+// authorized reports whether r carries the admin token. Both sides are hashed
+// first so the constant-time compare also hides the token length.
+func (c *Control) authorized(r *http.Request) bool {
+	if c.tokenSum == nil {
+		return true
+	}
+
+	scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	token = strings.TrimSpace(token)
+
+	if !ok || !strings.EqualFold(scheme, "Bearer") || token == "" {
+		return false
+	}
+
+	sum := sha256.Sum256([]byte(token))
+
+	return subtle.ConstantTimeCompare(sum[:], c.tokenSum) == 1
+}
+
 // ServeHTTP routes control-plane paths to the control handler and everything
 // else to the wrapped backend.
 func (c *Control) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -103,39 +151,49 @@ func (c *Control) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Control) serveControl(w http.ResponseWriter, r *http.Request) {
-	switch strings.TrimPrefix(r.URL.Path, Prefix) {
+	endpoint := strings.TrimPrefix(r.URL.Path, Prefix)
+	if endpoint != healthEndpoint && !c.authorized(r) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="cloudemu-admin"`)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{
+			errorKey: "admin endpoints require the admin token: send Authorization: Bearer <token>",
+		})
+
+		return
+	}
+
+	switch endpoint {
 	case "reset":
 		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "reset requires POST"})
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{errorKey: "reset requires POST"})
 			return
 		}
 		c.reset()
 		writeJSON(w, http.StatusOK, map[string]string{"status": "reset"})
-	case "health":
+	case healthEndpoint:
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	case "seed":
 		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "seed requires POST"})
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{errorKey: "seed requires POST"})
 			return
 		}
 		if c.seed == nil {
-			writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "seeding is not available on this server"})
+			writeJSON(w, http.StatusNotImplemented, map[string]string{errorKey: "seeding is not available on this server"})
 			return
 		}
 		// Read one byte past the cap so an over-limit body is a clear 413
 		// rather than a silently-truncated body that fails JSON parsing.
 		fixture, err := io.ReadAll(io.LimitReader(r.Body, maxFixtureBytes+1))
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "read fixture: " + err.Error()})
+			writeJSON(w, http.StatusBadRequest, map[string]string{errorKey: "read fixture: " + err.Error()})
 			return
 		}
 		if len(fixture) > maxFixtureBytes {
-			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "fixture exceeds 32 MiB"})
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{errorKey: "fixture exceeds 32 MiB"})
 			return
 		}
 		applied, err := c.seed(fixture)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeJSON(w, http.StatusBadRequest, map[string]string{errorKey: err.Error()})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "seeded", "applied": applied})
@@ -147,7 +205,7 @@ func (c *Control) serveControl(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown control endpoint"})
+		writeJSON(w, http.StatusNotFound, map[string]string{errorKey: "unknown control endpoint"})
 	}
 }
 
@@ -157,7 +215,7 @@ func (c *Control) serveControl(w http.ResponseWriter, r *http.Request) {
 // whole emulator.
 func (c *Control) serveSnapshot(w http.ResponseWriter, r *http.Request) {
 	if c.snapshot == nil || c.restore == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "snapshots are not available on this server"})
+		writeJSON(w, http.StatusNotImplemented, map[string]string{errorKey: "snapshots are not available on this server"})
 		return
 	}
 
@@ -165,7 +223,7 @@ func (c *Control) serveSnapshot(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		data, err := c.snapshot()
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeJSON(w, http.StatusInternalServerError, map[string]string{errorKey: err.Error()})
 			return
 		}
 
@@ -175,23 +233,23 @@ func (c *Control) serveSnapshot(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxSnapshotBytes+1))
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "read snapshot: " + err.Error()})
+			writeJSON(w, http.StatusBadRequest, map[string]string{errorKey: "read snapshot: " + err.Error()})
 			return
 		}
 
 		if len(body) > maxSnapshotBytes {
-			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "snapshot exceeds 512 MiB"})
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{errorKey: "snapshot exceeds 512 MiB"})
 			return
 		}
 
 		if err := c.restore(body); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeJSON(w, http.StatusBadRequest, map[string]string{errorKey: err.Error()})
 			return
 		}
 
 		writeJSON(w, http.StatusOK, map[string]string{"status": "restored"})
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "snapshot requires GET or POST"})
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{errorKey: "snapshot requires GET or POST"})
 	}
 }
 

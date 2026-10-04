@@ -121,6 +121,13 @@ type Config struct {
 
 	Admin bool // mount the /_cloudemu control plane
 
+	// AdminToken is the bearer token the /_cloudemu endpoints (all but health)
+	// demand when EnforceAuth is on. Empty means serve generates a random one.
+	// AdminTokenFile, when set, receives the token (mode 0600) so local tooling
+	// can pick it up. Both are ignored when EnforceAuth is off.
+	AdminToken     string
+	AdminTokenFile string
+
 	Persist             bool          // save/restore state around the process lifetime
 	StateFile           string        // path to the JSON state snapshot
 	PersistMetadataOnly bool          // omit object bodies from the snapshot
@@ -166,6 +173,9 @@ type App struct {
 
 	backends   map[string]*admin.Backend
 	k8sBackend *admin.Backend
+
+	// adminToken gates the control plane under EnforceAuth ("" leaves it open).
+	adminToken string
 
 	// k8s is the current Kubernetes data-plane server (rebuilt on reset, guarded
 	// by rebuildMu). The progression ticker reads it each tick.
@@ -260,6 +270,10 @@ func New(cfg *Config) (*App, error) {
 
 	if cfg.Persist {
 		a.flusher = a.newFlusher()
+	}
+
+	if err := a.setupAdminToken(); err != nil {
+		return nil, err
 	}
 
 	// Build the VCR engine BEFORE Rebuild, since swapFresh wraps each fresh
@@ -610,9 +624,11 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 
 		return builtProvider{
 			handler: a.wrapLatency(a.wrapVCR(a.wrapDirty(wrap(mux, providerAWS, a.cfg.LogRequests)), providerAWS)),
-			target:  seed.Target{Storage: base.S3, Database: base.DynamoDB, Secrets: base.SecretsManager, Compute: base.EC2},
-			engine:  topology.New(base.EC2, base.VPC, base.Route53),
-			mux:     mux,
+			target: seed.Target{
+				Storage: base.S3, Database: base.DynamoDB, Secrets: base.SecretsManager, Compute: base.EC2, IAM: base.IAM,
+			},
+			engine: topology.New(base.EC2, base.VPC, base.Route53),
+			mux:    mux,
 		}
 	case providerGCP:
 		cloud := cloudemu.NewGCP(a.baseOpts...)
@@ -993,7 +1009,10 @@ func (a *App) handlerFor(b *admin.Backend, seedFn func([]byte) (int, error)) htt
 		}
 	}
 
-	return admin.NewControl(b, reset, seedFn, a.snapshot, a.restore, a.extraHandler())
+	c := admin.NewControl(b, reset, seedFn, a.snapshot, a.restore, a.extraHandler())
+	c.RequireToken(a.adminToken)
+
+	return c
 }
 
 // Serve binds every listener, starts serving, and blocks until ctx is canceled
@@ -1359,9 +1378,11 @@ func serveAll(servers []listenerServer, listeners []net.Listener) <-chan error {
 
 // dangerWarning returns the non-loopback admin warning, or "" when it doesn't
 // apply. reset wipes all state and snapshot dumps it (secrets included), so an
-// admin control plane reachable off the loopback is called out.
+// open admin control plane reachable off the loopback is called out. Under
+// --enforce-auth the plane needs the admin token, so there is nothing to warn
+// about.
 func dangerWarning(cfg *Config) string {
-	if !cfg.Admin || isLoopbackHost(cfg.Host) {
+	if !cfg.Admin || cfg.EnforceAuth || isLoopbackHost(cfg.Host) {
 		return ""
 	}
 
@@ -1369,6 +1390,6 @@ func dangerWarning(cfg *Config) string {
 		"warning: --admin control plane is reachable on non-loopback host %q: "+
 			"POST /_cloudemu/reset wipes all state, and GET /_cloudemu/snapshot dumps "+
 			"all emulated state (including secret values) to any caller; "+
-			"pass --admin=false to disable it",
+			"pass --enforce-auth to require an admin token, or --admin=false to disable it",
 		cfg.Host)
 }

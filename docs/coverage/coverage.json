@@ -8917,6 +8917,15 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AccessKeyImporter",
+        "doc": "AccessKeyImporter is an optional capability: an IAM implementation that can",
+        "operations": [
+          {
+            "name": "ImportAccessKey"
+          }
+        ]
+      },
+      {
         "name": "AccessKeyResolver",
         "doc": "AccessKeyResolver is an optional capability: an IAM implementation that can",
         "operations": [

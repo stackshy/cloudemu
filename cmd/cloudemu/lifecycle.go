@@ -389,11 +389,16 @@ func runStart(args []string) error {
 	// start also manages the persistence snapshot path under the run dir; drop a
 	// user --state-file so it can't point elsewhere.
 	rest = stripFlag(rest, "state-file", true)
+	// start also owns where the admin token goes, so the snapshot, net and cost
+	// commands can read it from the run dir under --enforce-auth.
+	rest = stripFlag(rest, "admin-token-file", true)
 
 	dir, err := runDir(home)
 	if err != nil {
 		return err
 	}
+
+	rest = append(rest, "--admin-token-file", adminTokenPath(dir))
 
 	// Opt-in persistence: if the user asked to persist, point serve at a snapshot
 	// file in the run dir (and imply --persist when only --persist-metadata-only
@@ -427,6 +432,9 @@ func runStart(args []string) error {
 
 	epPath := endpointsPath(dir)
 	_ = os.Remove(epPath) // drop a stale file so waitForEndpoints sees the fresh one
+	// A token left by an earlier --enforce-auth run must not outlive it; serve
+	// writes a fresh one only when auth is on.
+	_ = os.Remove(adminTokenPath(dir))
 
 	eps, err := spawnServe(dir, rest, epPath)
 	if err != nil {
@@ -618,7 +626,7 @@ func runDelete(args []string) error {
 		return err
 	}
 
-	for _, p := range []string{statePath(dir), logPath(dir), endpointsPath(dir), persistPath(dir)} {
+	for _, p := range []string{statePath(dir), logPath(dir), endpointsPath(dir), persistPath(dir), adminTokenPath(dir)} {
 		if rmErr := os.Remove(p); rmErr != nil && !os.IsNotExist(rmErr) {
 			return rmErr
 		}

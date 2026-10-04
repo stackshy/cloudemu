@@ -28,6 +28,10 @@ var _ driver.IAM = (*Mock)(nil)
 // by the AWS SigV4 authentication gate.
 var _ driver.AccessKeyResolver = (*Mock)(nil)
 
+// Compile-time check that Mock implements the optional access-key importer the
+// seed fixtures use to bootstrap the first IAM user.
+var _ driver.AccessKeyImporter = (*Mock)(nil)
+
 // Compile-time check that Mock implements the optional policy inspector used by
 // the AWS IAM authorization gate.
 var _ driver.PolicyInspector = (*Mock)(nil)
@@ -1261,6 +1265,38 @@ func (m *Mock) CreateAccessKey(
 	info := toAccessKeyInfo(ak)
 
 	return &info, nil
+}
+
+// ImportAccessKey registers an Active access key with a caller-chosen id and
+// secret for an existing user. It applies the same per-user quota as
+// CreateAccessKey and refuses an id that is already registered.
+func (m *Mock) ImportAccessKey(_ context.Context, userName, accessKeyID, secretAccessKey string) error {
+	if accessKeyID == "" || secretAccessKey == "" {
+		return errors.Newf(errors.InvalidArgument, "access key id and secret are required")
+	}
+
+	if !m.users.Has(userName) {
+		return errors.Newf(errors.NotFound, "user %q not found", userName)
+	}
+
+	if m.accessKeys.Has(accessKeyID) {
+		return errors.Newf(errors.AlreadyExists, "access key %q already exists", accessKeyID)
+	}
+
+	if m.countAccessKeys(userName) >= maxAccessKeysPerUser {
+		return errors.Newf(errors.ResourceExhausted,
+			"Cannot exceed quota for AccessKeysPerUser: %d", maxAccessKeysPerUser)
+	}
+
+	m.accessKeys.Set(accessKeyID, &accessKeyData{
+		AccessKeyID:     accessKeyID,
+		SecretAccessKey: secretAccessKey,
+		UserName:        userName,
+		Status:          "Active",
+		CreatedAt:       m.opts.Clock.Now().UTC().Format(timeFormat),
+	})
+
+	return nil
 }
 
 // DeleteAccessKey deletes an access key.

@@ -52,6 +52,14 @@ AWS's `iam` service · portable interface `driver.IAM` · [AWS index](./README.m
 
 Discovered by type assertion; only some providers implement these.
 
+### AccessKeyImporter
+
+AccessKeyImporter is an optional capability: an IAM implementation that can
+
+| Operation | Description |
+| --- | --- |
+| `ImportAccessKey` |  |
+
 ### AccessKeyResolver
 
 AccessKeyResolver is an optional capability: an IAM implementation that can

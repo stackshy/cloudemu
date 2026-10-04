@@ -153,7 +153,9 @@ Flag names and defaults mirror `cloudemu serve`.
 | `--tls-host`          | —                                        | extra SAN host/IP for the self-signed cert (repeatable) |
 | `--log-requests`      | `false`                                  | log every HTTP request (method, path, status, duration) |
 | `--quiet`             | `false`                                  | suppress the startup banner                |
-| `--enforce-auth`      | `false`                                  | require authentication on each request (AWS SigV4 → 403 on an unregistered key; Azure Bearer-claims), then IAM authorization for AWS (see below) |
+| `--enforce-auth`      | `false`                                  | require authentication on each request (AWS SigV4 → 403 on an unregistered key; Azure Bearer-claims), then IAM authorization for AWS (see below). The `/_cloudemu` admin endpoints then need `--admin-token` |
+| `--admin-token`       | *(random)*                               | with `--enforce-auth`, the bearer token for `/_cloudemu/*` (all but `health`). Unset: a random token is generated and printed once (env `CLOUDEMU_ADMIN_TOKEN`) |
+| `--admin-token-file`  | *(none)*                                 | with `--enforce-auth`, write the admin token to this file (mode 0600) instead of printing it (env `CLOUDEMU_ADMIN_TOKEN_FILE`) |
 | `--endpoints-file`    | *(none)*                                 | write the resolved endpoints as JSON to this path |
 | `--shutdown-timeout`  | `10s`                                    | grace period for in-flight requests        |
 
@@ -186,9 +188,41 @@ actually run the request, so neither the SigV4 signing scope nor a forged
 - The account root and IAM users with no policies are unrestricted, so a
   freshly created user can bootstrap others. Role sessions are always
   evaluated on the role's policies.
-- `/_cloudemu/*` admin endpoints, operations AWS serves without credentials
-  (Cognito sign-in, API Gateway invoke), and the Kubernetes data plane are not
-  IAM-authorized.
+- Operations AWS serves without credentials (Cognito sign-in, API Gateway
+  invoke) and the Kubernetes data plane are not IAM-authorized. The
+  `/_cloudemu/*` admin endpoints use the admin token instead (next section).
+
+### Admin token and the first IAM user
+
+Under `--enforce-auth` every `/_cloudemu/*` endpoint except `health` needs
+`Authorization: Bearer <admin token>`, and answers `401` without it. That
+covers `snapshot` (which returns IAM secret keys), `reset`, `seed`, `cost`,
+`net/*` and the named snapshots. `health` stays open for liveness probes.
+
+Pass the token with `--admin-token` or `CLOUDEMU_ADMIN_TOKEN`. If you set
+neither, serve generates a random one and prints it once on stderr, or writes
+it to `--admin-token-file` (mode 0600) when that is set. Without
+`--enforce-auth` the token is ignored and the control plane stays open, as
+before.
+
+There is no unsigned way to create an IAM access key under `--enforce-auth`,
+so use the admin token to seed the first user with a key you choose:
+
+```bash
+export CLOUDEMU_ADMIN_TOKEN=$(openssl rand -hex 32)
+go run . --enforce-auth &
+
+curl -X POST http://127.0.0.1:4566/_cloudemu/seed \
+  -H "Authorization: Bearer $CLOUDEMU_ADMIN_TOKEN" \
+  -d '{"iamUsers":[{"name":"admin","accessKeys":[
+        {"accessKeyId":"AKIAADMIN00000000001","secretAccessKey":"change-me"}]}]}'
+
+AWS_ACCESS_KEY_ID=AKIAADMIN00000000001 AWS_SECRET_ACCESS_KEY=change-me \
+  aws --endpoint-url http://127.0.0.1:4566 iam create-user --user-name app
+```
+
+A user with no policies is unrestricted, so this one can create the rest over
+the normal IAM API. The same `iamUsers` fixture works in `--init-dir`.
 
 ## Admin, persistence & seeding
 
@@ -216,7 +250,8 @@ go run . --init-dir ./fixtures
 
 `--admin` is on by default; on a non-loopback `--host` it prints a warning, since
 `POST /_cloudemu/reset` wipes all state and `GET /_cloudemu/snapshot` dumps it
-(secrets included) to any caller. Pass `--admin=false` to disable it.
+(secrets included) to any caller. Pass `--enforce-auth` to put it behind the
+admin token, or `--admin=false` to disable it.
 
 The Azure endpoint serves HTTPS with an in-memory self-signed certificate
 (covering `localhost` and the loopback IPs); clients must trust it or skip

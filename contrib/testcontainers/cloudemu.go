@@ -33,10 +33,19 @@ const (
 	k8sPort   = "4570/tcp"
 )
 
+// adminTokenEnv is the server's environment fallback for --admin-token.
+const adminTokenEnv = "CLOUDEMU_ADMIN_TOKEN"
+
+const startupTimeout = 90 * time.Second
+
 // Container is a running cloudemu server. It embeds the testcontainers
 // container, so Terminate and the rest of that API are available directly.
 type Container struct {
 	*testcontainers.DockerContainer
+
+	// adminToken is sent with Reset and Seed when the server runs with
+	// --enforce-auth ("" otherwise).
+	adminToken string
 }
 
 // WithImage overrides the image (default DefaultImage), e.g. to pin a version
@@ -45,12 +54,31 @@ func WithImage(image string) testcontainers.ContainerCustomizer {
 	return testcontainers.WithImage(image)
 }
 
+// WithEnforceAuth starts the server with --enforce-auth. The /_cloudemu
+// control plane then needs adminToken, which Reset and Seed send for you; seed
+// your first IAM user (with a known access key) through Seed before making
+// signed calls. Readiness waits on /_cloudemu/health, which stays open.
+func WithEnforceAuth(adminToken string) testcontainers.CustomizeRequestOption {
+	return func(req *testcontainers.GenericContainerRequest) error {
+		req.Cmd = []string{"serve", "--host", "0.0.0.0", "--enforce-auth"}
+
+		if req.Env == nil {
+			req.Env = map[string]string{}
+		}
+
+		req.Env[adminTokenEnv] = adminToken
+		req.WaitingFor = wait.ForHTTP("/_cloudemu/health").WithPort(awsPort).WithStartupTimeout(startupTimeout)
+
+		return nil
+	}
+}
+
 // Run starts a cloudemu container and waits until the AWS endpoint answers.
 func Run(ctx context.Context, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	base := []testcontainers.ContainerCustomizer{
 		testcontainers.WithExposedPorts(awsPort, azurePort, gcpPort, k8sPort),
 		testcontainers.WithWaitStrategy(
-			wait.ForHTTP("/").WithPort(awsPort).WithStartupTimeout(90 * time.Second),
+			wait.ForHTTP("/").WithPort(awsPort).WithStartupTimeout(startupTimeout),
 		),
 	}
 
@@ -58,7 +86,18 @@ func Run(ctx context.Context, opts ...testcontainers.ContainerCustomizer) (*Cont
 	if err != nil {
 		return nil, fmt.Errorf("run cloudemu: %w", err)
 	}
-	return &Container{DockerContainer: ctr}, nil
+	return &Container{DockerContainer: ctr, adminToken: adminTokenFrom(opts)}, nil
+}
+
+// adminTokenFrom finds the admin token the options hand the server, whether it
+// came from WithEnforceAuth or a plain WithEnv, by applying them to a scratch
+// request.
+func adminTokenFrom(opts []testcontainers.ContainerCustomizer) string {
+	var req testcontainers.GenericContainerRequest
+	for _, o := range opts {
+		_ = o.Customize(&req)
+	}
+	return req.Env[adminTokenEnv]
 }
 
 // AWSEndpoint is the host URL for the AWS surface (point aws-sdk-go-v2 here with
@@ -107,6 +146,9 @@ func (c *Container) control(ctx context.Context, op string, body []byte) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.adminToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.adminToken)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
