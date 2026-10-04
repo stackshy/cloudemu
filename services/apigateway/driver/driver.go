@@ -72,23 +72,70 @@ type Resource struct {
 }
 
 // Method is an HTTP method configured on a Resource, optionally wired to an
-// Integration.
+// Integration. RequestParameters maps a method.request.{location}.{name}
+// expression to whether it is required; RequestModels maps a content type to
+// a model name. MethodResponses is keyed by status code.
 type Method struct {
 	HTTPMethod        string
 	AuthorizationType string
 	APIKeyRequired    bool
+	OperationName     string
+	RequestParameters map[string]bool
+	RequestModels     map[string]string
+	MethodResponses   map[string]*MethodResponse
 	Integration       *Integration
 }
+
+// MethodResponse declares a status code a method can return, the response
+// headers it may carry (method.response.header.{name} -> required) and the
+// models of its body per content type.
+type MethodResponse struct {
+	StatusCode         string
+	ResponseParameters map[string]bool
+	ResponseModels     map[string]string
+}
+
+// IntegrationResponse maps a backend response to a method response.
+// SelectionPattern is a regular expression matched against the backend status
+// code (HTTP and MOCK) or Lambda error message; the response with an empty
+// pattern is the default. ResponseParameters maps
+// method.response.header.{name} to a source expression and ResponseTemplates
+// maps a content type to a VTL template.
+type IntegrationResponse struct {
+	StatusCode         string
+	SelectionPattern   string
+	ResponseParameters map[string]string
+	ResponseTemplates  map[string]string
+	ContentHandling    string
+}
+
+// Integration passthrough behaviors.
+const (
+	PassthroughWhenNoMatch     = "WHEN_NO_MATCH"
+	PassthroughWhenNoTemplates = "WHEN_NO_TEMPLATES"
+	PassthroughNever           = "NEVER"
+)
 
 // Integration is the backend a Method forwards to. For AWS_PROXY/AWS the URI is
 // the Lambda invocation ARN
 // (arn:aws:apigateway:<region>:lambda:path/2015-03-31/functions/<function-arn>/invocations).
+//
+// RequestParameters maps integration.request.{location}.{name} to a source
+// expression and RequestTemplates maps a content type to a VTL template.
+// IntegrationResponses is keyed by status code.
 type Integration struct {
 	Type                  string
 	IntegrationHTTPMethod string
 	URI                   string
 	PassthroughBehavior   string
 	TimeoutInMillis       int
+	Credentials           string
+	RequestParameters     map[string]string
+	RequestTemplates      map[string]string
+	ContentHandling       string
+	CacheNamespace        string
+	CacheKeyParameters    []string
+	IntegrationResponses  map[string]*IntegrationResponse
 }
 
 // Deployment is a point-in-time snapshot of a REST API published to a stage.
@@ -143,16 +190,41 @@ type CreateRestAPIInput struct {
 type PutMethodInput struct {
 	AuthorizationType string
 	APIKeyRequired    bool
+	OperationName     string
+	RequestParameters map[string]bool
+	RequestModels     map[string]string
+}
+
+// PutMethodResponseInput carries the fields PutMethodResponse accepts.
+type PutMethodResponseInput struct {
+	ResponseParameters map[string]bool
+	ResponseModels     map[string]string
+}
+
+// PutIntegrationResponseInput carries the fields PutIntegrationResponse
+// accepts.
+type PutIntegrationResponseInput struct {
+	SelectionPattern   string
+	ResponseParameters map[string]string
+	ResponseTemplates  map[string]string
+	ContentHandling    string
 }
 
 // PutIntegrationInput carries the fields PutIntegration accepts. TimeoutInMillis
 // of 0 selects the AWS default (29000ms); a non-zero value is stored verbatim.
+// An empty CacheNamespace defaults to the resource id.
 type PutIntegrationInput struct {
 	Type                  string
 	IntegrationHTTPMethod string
 	URI                   string
 	PassthroughBehavior   string
 	TimeoutInMillis       int
+	Credentials           string
+	RequestParameters     map[string]string
+	RequestTemplates      map[string]string
+	ContentHandling       string
+	CacheNamespace        string
+	CacheKeyParameters    []string
 }
 
 // CreateDeploymentInput carries the fields CreateDeployment accepts. A non-empty
@@ -377,6 +449,35 @@ type APIGateway interface {
 	UpdateIntegration(ctx context.Context, restAPIID, resourceID, httpMethod string, ops []PatchOperation) (*Integration, error)
 	DeleteIntegration(ctx context.Context, restAPIID, resourceID, httpMethod string) error
 
+	// PutMethodResponse declares a status code on a method. It fails when the
+	// status code is already declared.
+	PutMethodResponse(
+		ctx context.Context, restAPIID, resourceID, httpMethod, statusCode string, in PutMethodResponseInput,
+	) (*MethodResponse, error)
+	GetMethodResponse(ctx context.Context, restAPIID, resourceID, httpMethod, statusCode string) (*MethodResponse, error)
+	// UpdateMethodResponse applies a patchOperations document
+	// (/responseParameters/{name}, /responseModels/{contentType}).
+	UpdateMethodResponse(
+		ctx context.Context, restAPIID, resourceID, httpMethod, statusCode string, ops []PatchOperation,
+	) (*MethodResponse, error)
+	DeleteMethodResponse(ctx context.Context, restAPIID, resourceID, httpMethod, statusCode string) error
+
+	// PutIntegrationResponse creates or replaces an integration response. The
+	// method must declare a method response with the same status code.
+	PutIntegrationResponse(
+		ctx context.Context, restAPIID, resourceID, httpMethod, statusCode string, in PutIntegrationResponseInput,
+	) (*IntegrationResponse, error)
+	GetIntegrationResponse(
+		ctx context.Context, restAPIID, resourceID, httpMethod, statusCode string,
+	) (*IntegrationResponse, error)
+	// UpdateIntegrationResponse applies a patchOperations document
+	// (/selectionPattern, /contentHandling, /responseTemplates/{contentType},
+	// /responseParameters/{name}).
+	UpdateIntegrationResponse(
+		ctx context.Context, restAPIID, resourceID, httpMethod, statusCode string, ops []PatchOperation,
+	) (*IntegrationResponse, error)
+	DeleteIntegrationResponse(ctx context.Context, restAPIID, resourceID, httpMethod, statusCode string) error
+
 	CreateDeployment(ctx context.Context, restAPIID string, in CreateDeploymentInput) (*Deployment, error)
 	GetDeployments(ctx context.Context, restAPIID string) ([]Deployment, error)
 	GetDeployment(ctx context.Context, restAPIID, deploymentID string) (*Deployment, error)
@@ -443,7 +544,9 @@ type APIGateway interface {
 
 	// InvokeRoute routes req through the tree its stage's deployment captured.
 	// It resolves req.HTTPMethod+req.Path ({proxy+} greedy paths and {param}
-	// placeholders supported) and, for an AWS_PROXY/AWS Lambda integration,
-	// invokes the target function and returns its mapped HTTP response.
+	// placeholders supported). An AWS_PROXY/AWS Lambda integration invokes the
+	// target function and returns its mapped HTTP response; a MOCK integration
+	// renders its request template, selects an integration response and
+	// renders that response's mapping template.
 	InvokeRoute(ctx context.Context, req *ProxyRequest) (*ProxyResponse, error)
 }

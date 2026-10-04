@@ -54,6 +54,8 @@ const (
 	segsDocItem     = 4 // {id}/documentation/{parts|versions}/{item}
 	segsMethod      = 5 // {id}/resources/{rid}/methods/{httpMethod}
 	segsIntegration = 6 // {id}/resources/{rid}/methods/{httpMethod}/integration
+	segsMethodResp  = 7 // {id}/resources/{rid}/methods/{httpMethod}/responses/{code}
+	segsIntegResp   = 8 // {id}/resources/{rid}/methods/{httpMethod}/integration/responses/{code}
 )
 
 // Handler serves API Gateway requests against a driver.
@@ -137,6 +139,10 @@ func (h *Handler) serveControlPlane(w http.ResponseWriter, r *http.Request) {
 		h.serveMethod(w, r, segs)
 	case segsIntegration:
 		h.serveIntegration(w, r, segs)
+	case segsMethodResp:
+		h.serveMethodResponse(w, r, segs)
+	case segsIntegResp:
+		h.serveIntegrationResponse(w, r, segs)
 	default:
 		writeError(w, http.StatusNotFound, "NotFoundException", "unsupported API Gateway path")
 	}
@@ -401,6 +407,8 @@ func (h *Handler) serveMethod(w http.ResponseWriter, r *http.Request, segs []str
 
 		mth, err := h.ag.PutMethod(r.Context(), id, resourceID, httpMethod, driver.PutMethodInput{
 			AuthorizationType: req.AuthorizationType, APIKeyRequired: req.APIKeyRequired,
+			OperationName: req.OperationName, RequestParameters: req.RequestParameters,
+			RequestModels: req.RequestModels,
 		})
 		if err != nil {
 			writeErr(w, err)
@@ -432,7 +440,7 @@ func (h *Handler) serveMethod(w http.ResponseWriter, r *http.Request, segs []str
 // /restapis/{id}/resources/{rid}/methods/{httpMethod}/integration:
 // PUT=PutIntegration, GET=GetIntegration.
 func (h *Handler) serveIntegration(w http.ResponseWriter, r *http.Request, segs []string) {
-	if segs[5] != "integration" {
+	if segs[5] != segIntegration {
 		writeError(w, http.StatusNotFound, "NotFoundException", "unsupported API Gateway path")
 		return
 	}
@@ -458,7 +466,10 @@ func (h *Handler) serveIntegration(w http.ResponseWriter, r *http.Request, segs 
 		ig, err := h.ag.PutIntegration(r.Context(), id, resourceID, httpMethod, driver.PutIntegrationInput{
 			Type: req.Type, IntegrationHTTPMethod: req.IntegrationHTTPMethod,
 			URI: req.URI, PassthroughBehavior: req.PassthroughBehavior,
-			TimeoutInMillis: req.TimeoutInMillis,
+			TimeoutInMillis: req.TimeoutInMillis, Credentials: req.Credentials,
+			RequestParameters: req.RequestParameters, RequestTemplates: req.RequestTemplates,
+			ContentHandling: req.ContentHandling, CacheNamespace: req.CacheNamespace,
+			CacheKeyParameters: req.CacheKeyParameters,
 		})
 		if err != nil {
 			writeErr(w, err)

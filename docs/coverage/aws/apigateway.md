@@ -3,7 +3,7 @@
 
 AWS's `apigateway` service · portable interface `driver.APIGateway` · [AWS index](./README.md)
 
-## Operations (50)
+## Operations (58)
 
 | Operation | Description |
 | --- | --- |
@@ -18,7 +18,9 @@ AWS's `apigateway` service · portable interface `driver.APIGateway` · [AWS ind
 | `DeleteDocumentationPart` |  |
 | `DeleteDocumentationVersion` | DeleteDocumentationVersion removes a version. It fails while a stage |
 | `DeleteIntegration` |  |
+| `DeleteIntegrationResponse` |  |
 | `DeleteMethod` |  |
+| `DeleteMethodResponse` |  |
 | `DeleteResource` | DeleteResource removes a resource and its whole descendant subtree, as |
 | `DeleteRestAPI` |  |
 | `DeleteStage` |  |
@@ -33,7 +35,9 @@ AWS's `apigateway` service · portable interface `driver.APIGateway` · [AWS ind
 | `GetDocumentationVersion` |  |
 | `GetDocumentationVersions` |  |
 | `GetIntegration` |  |
+| `GetIntegrationResponse` |  |
 | `GetMethod` |  |
+| `GetMethodResponse` |  |
 | `GetResource` |  |
 | `GetResources` |  |
 | `GetRestAPI` |  |
@@ -44,7 +48,9 @@ AWS's `apigateway` service · portable interface `driver.APIGateway` · [AWS ind
 | `ImportDocumentationParts` |  |
 | `InvokeRoute` | InvokeRoute routes req through the tree its stage's deployment captured. |
 | `PutIntegration` |  |
+| `PutIntegrationResponse` | PutIntegrationResponse creates or replaces an integration response. The |
 | `PutMethod` |  |
+| `PutMethodResponse` | PutMethodResponse declares a status code on a method. It fails when the |
 | `TagResource` | TagResource, UntagResource and GetTags manage tags on a REST API or client |
 | `UntagResource` |  |
 | `UpdateAccount` | UpdateAccount applies a patchOperations document (/cloudwatchRoleArn |
@@ -53,7 +59,9 @@ AWS's `apigateway` service · portable interface `driver.APIGateway` · [AWS ind
 | `UpdateDocumentationPart` | UpdateDocumentationPart applies a patchOperations document (only |
 | `UpdateDocumentationVersion` | UpdateDocumentationVersion applies a patchOperations document (only |
 | `UpdateIntegration` | UpdateIntegration applies a patchOperations document to an integration. |
+| `UpdateIntegrationResponse` | UpdateIntegrationResponse applies a patchOperations document |
 | `UpdateMethod` | UpdateMethod applies a patchOperations document to a method. |
+| `UpdateMethodResponse` | UpdateMethodResponse applies a patchOperations document |
 | `UpdateResource` | UpdateResource applies a patchOperations document to a resource (rename via |
 | `UpdateRestAPI` | UpdateRestAPI applies a patchOperations document to a REST API and returns |
 | `UpdateStage` | UpdateStage applies a patchOperations document to a stage (/description, |
