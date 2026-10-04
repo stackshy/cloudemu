@@ -306,3 +306,7 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusInternalServerError, "InternalServerErrorException", msg)
 	}
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "apigateway" }

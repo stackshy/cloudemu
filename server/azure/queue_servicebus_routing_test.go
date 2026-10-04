@@ -390,9 +390,9 @@ func TestBlobTableRoutingUnaffected(t *testing.T) {
 
 // TestStorageHostRoutesListToItsService: "GET /?comp=list" is List Containers
 // on a blob host and List Queues on a queue host, as on real Azure where the
-// hostname picks the service. A bare host keeps the shared-endpoint rule
-// (Queue owns it). A blob named "messages" on a blob host is a blob, not a
-// queue message call.
+// hostname picks the service. On a bare host it is List Containers unless a
+// Queue client sends it (see storage_dataplane_isolation_test.go). A blob
+// named "messages" on a blob host is a blob, not a queue message call.
 func TestStorageHostRoutesListToItsService(t *testing.T) {
 	ts := newFullAzureServer(t)
 
@@ -409,7 +409,7 @@ func TestStorageHostRoutesListToItsService(t *testing.T) {
 	}{
 		{"blob host lists containers", blobHost, "<Name>ctr-host</Name>", "<Name>q-host</Name>"},
 		{"queue host lists queues", queueHost, "<Name>q-host</Name>", "<Name>ctr-host</Name>"},
-		{"bare host lists queues", "", "<Name>q-host</Name>", "<Name>ctr-host</Name>"},
+		{"bare host lists containers", "", "<Name>ctr-host</Name>", "<Name>q-host</Name>"},
 	}
 
 	for _, tt := range tests {

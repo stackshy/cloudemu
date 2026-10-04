@@ -131,6 +131,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listContainers(w, r, account)
 	case container == "" && q.Get("comp") == compBlobs:
 		h.findBlobsByTags(w, r, account, "")
+	case container == "" && azurearm.IsStorageServiceOp(q):
+		h.serviceOp(w, r, account)
 	case container == "":
 		writeError(w, http.StatusNotImplemented, "NotImplemented", "operation not supported on root")
 	case blob == "" && q.Get("restype") == "container":

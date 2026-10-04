@@ -1,0 +1,177 @@
+[
+  {
+    "name": "cw cbor PutMetricData",
+    "status": 200,
+    "body": "cbor:{}"
+  },
+  {
+    "name": "cw cbor with query Action",
+    "status": 200,
+    "body": "cbor:{\"Metrics\":[{\"MetricName\":\"M\",\"Namespace\":\"Off\"}]}"
+  },
+  {
+    "name": "cw cbor unknown op",
+    "status": 400,
+    "body": "cbor:{\"__type\":\"UnknownOperationException\",\"message\":\"unknown operation: Nope\"}"
+  },
+  {
+    "name": "cw cbor no op",
+    "status": 400,
+    "body": "cbor:{\"__type\":\"InvalidRequest\",\"message\":\"missing operation in path\"}"
+  },
+  {
+    "name": "cw json DescribeAlarms",
+    "status": 200,
+    "body": "{\"MetricAlarms\":[]}"
+  },
+  {
+    "name": "cw json unknown op",
+    "status": 400,
+    "body": "{\"__type\":\"UnknownOperationException\",\"message\":\"unknown operation: Nope\"}"
+  },
+  {
+    "name": "cw query PutMetricData",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\"?\u003e\u003cPutMetricDataResponse xmlns=\"http://monitoring.amazonaws.com/doc/2010-08-01/\"\u003e\u003c/PutMetricDataResponse\u003e"
+  },
+  {
+    "name": "cw query gzip PutMetricData",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\"?\u003e\u003cPutMetricDataResponse xmlns=\"http://monitoring.amazonaws.com/doc/2010-08-01/\"\u003e\u003c/PutMetricDataResponse\u003e"
+  },
+  {
+    "name": "cw query ListMetrics",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\"?\u003e\u003cListMetricsResponse xmlns=\"http://monitoring.amazonaws.com/doc/2010-08-01/\"\u003e\u003cListMetricsResult\u003e\u003cMetrics\u003e\u003cmember\u003e\u003cNamespace\u003eOff\u003c/Namespace\u003e\u003cMetricName\u003eM\u003c/MetricName\u003e\u003cDimensions\u003e\u003c/Dimensions\u003e\u003c/member\u003e\u003cmember\u003e\u003cNamespace\u003eOff\u003c/Namespace\u003e\u003cMetricName\u003eQ\u003c/MetricName\u003e\u003cDimensions\u003e\u003c/Dimensions\u003e\u003c/member\u003e\u003c/Metrics\u003e\u003c/ListMetricsResult\u003e\u003c/ListMetricsResponse\u003e"
+  },
+  {
+    "name": "cw query unknown",
+    "status": 400,
+    "body": "\u003c?xml version=\"1.0\"?\u003e\u003cErrorResponse xmlns=\"http://monitoring.amazonaws.com/doc/2010-08-01/\"\u003e\u003cError\u003e\u003cType\u003eSender\u003c/Type\u003e\u003cCode\u003eInvalidAction\u003c/Code\u003e\u003cMessage\u003eunsupported CloudWatch action: Nope\u003c/Message\u003e\u003c/Error\u003e\u003cRequestId\u003e\u003cv\u003e\u003c/RequestId\u003e\u003c/ErrorResponse\u003e"
+  },
+  {
+    "name": "cw query GET DescribeAlarms",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\"?\u003e\u003cDescribeAlarmsResponse xmlns=\"http://monitoring.amazonaws.com/doc/2010-08-01/\"\u003e\u003cDescribeAlarmsResult\u003e\u003cMetricAlarms\u003e\u003c/MetricAlarms\u003e\u003cCompositeAlarms\u003e\u003c/CompositeAlarms\u003e\u003c/DescribeAlarmsResult\u003e\u003c/DescribeAlarmsResponse\u003e"
+  },
+  {
+    "name": "ec2 DescribeInstances",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cDescribeInstancesResponse xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"\u003e\u003crequestId\u003e\u003cv\u003e\u003c/requestId\u003e\u003creservationSet\u003e\u003c/reservationSet\u003e\u003c/DescribeInstancesResponse\u003e"
+  },
+  {
+    "name": "ec2 unknown",
+    "status": 400,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cResponse\u003e\u003cErrors\u003e\u003cError\u003e\u003cCode\u003eInvalidAction\u003c/Code\u003e\u003cMessage\u003eunknown action: Nope\u003c/Message\u003e\u003c/Error\u003e\u003c/Errors\u003e\u003cError\u003e\u003cCode\u003eInvalidAction\u003c/Code\u003e\u003cMessage\u003eunknown action: Nope\u003c/Message\u003e\u003c/Error\u003e\u003cRequestID\u003e\u003cv\u003e\u003c/RequestID\u003e\u003cRequestId\u003e\u003cv\u003e\u003c/RequestId\u003e\u003c/Response\u003e"
+  },
+  {
+    "name": "ec2 bad body",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cDescribeInstancesResponse xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"\u003e\u003crequestId\u003e\u003cv\u003e\u003c/requestId\u003e\u003creservationSet\u003e\u003c/reservationSet\u003e\u003c/DescribeInstancesResponse\u003e"
+  },
+  {
+    "name": "as CreateAutoScalingGroup",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cCreateAutoScalingGroupResponse xmlns=\"http://autoscaling.amazonaws.com/doc/2011-01-01/\"\u003e\u003cResponseMetadata\u003e\u003cRequestId\u003e\u003cv\u003e\u003c/RequestId\u003e\u003c/ResponseMetadata\u003e\u003c/CreateAutoScalingGroupResponse\u003e"
+  },
+  {
+    "name": "as DescribeAutoScalingGroups",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cDescribeAutoScalingGroupsResponse xmlns=\"http://autoscaling.amazonaws.com/doc/2011-01-01/\"\u003e\u003cDescribeAutoScalingGroupsResult\u003e\u003cAutoScalingGroups\u003e\u003cmember\u003e\u003cAutoScalingGroupName\u003eg\u003c/AutoScalingGroupName\u003e\u003cMinSize\u003e0\u003c/MinSize\u003e\u003cMaxSize\u003e1\u003c/MaxSize\u003e\u003cDesiredCapacity\u003e1\u003c/DesiredCapacity\u003e\u003cStatus\u003eactive\u003c/Status\u003e\u003cCreatedTime\u003e2026-01-02T03:04:05Z\u003c/CreatedTime\u003e\u003cLaunchConfigurationName\u003elc\u003c/LaunchConfigurationName\u003e\u003cInstances\u003e\u003cmember\u003e\u003cInstanceId\u003e\u003cv\u003e\u003c/InstanceId\u003e\u003cAvailabilityZone\u003eus-east-1a\u003c/AvailabilityZone\u003e\u003cLifecycleState\u003eInService\u003c/LifecycleState\u003e\u003cHealthStatus\u003eHealthy\u003c/HealthStatus\u003e\u003cProtectedFromScaleIn\u003efalse\u003c/ProtectedFromScaleIn\u003e\u003c/member\u003e\u003c/Instances\u003e\u003cAvailabilityZones\u003e\u003cmember\u003eus-east-1a\u003c/member\u003e\u003c/AvailabilityZones\u003e\u003cTags\u003e\u003c/Tags\u003e\u003c/member\u003e\u003c/AutoScalingGroups\u003e\u003c/DescribeAutoScalingGroupsResult\u003e\u003cResponseMetadata\u003e\u003cRequestId\u003e\u003cv\u003e\u003c/RequestId\u003e\u003c/ResponseMetadata\u003e\u003c/DescribeAutoScalingGroupsResponse\u003e"
+  },
+  {
+    "name": "as UpdateAutoScalingGroup",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cUpdateAutoScalingGroupResponse xmlns=\"http://autoscaling.amazonaws.com/doc/2011-01-01/\"\u003e\u003cResponseMetadata\u003e\u003cRequestId\u003e\u003cv\u003e\u003c/RequestId\u003e\u003c/ResponseMetadata\u003e\u003c/UpdateAutoScalingGroupResponse\u003e"
+  },
+  {
+    "name": "as SetDesiredCapacity",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cSetDesiredCapacityResponse xmlns=\"http://autoscaling.amazonaws.com/doc/2011-01-01/\"\u003e\u003cResponseMetadata\u003e\u003cRequestId\u003e\u003cv\u003e\u003c/RequestId\u003e\u003c/ResponseMetadata\u003e\u003c/SetDesiredCapacityResponse\u003e"
+  },
+  {
+    "name": "as PutScalingPolicy",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cPutScalingPolicyResponse xmlns=\"http://autoscaling.amazonaws.com/doc/2011-01-01/\"\u003e\u003cPutScalingPolicyResult\u003e\u003cPolicyARN\u003earn:aws:autoscaling:::p\u003c/PolicyARN\u003e\u003c/PutScalingPolicyResult\u003e\u003cResponseMetadata\u003e\u003cRequestId\u003e\u003cv\u003e\u003c/RequestId\u003e\u003c/ResponseMetadata\u003e\u003c/PutScalingPolicyResponse\u003e"
+  },
+  {
+    "name": "as ExecutePolicy",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cExecutePolicyResponse xmlns=\"http://autoscaling.amazonaws.com/doc/2011-01-01/\"\u003e\u003cResponseMetadata\u003e\u003cRequestId\u003e\u003cv\u003e\u003c/RequestId\u003e\u003c/ResponseMetadata\u003e\u003c/ExecutePolicyResponse\u003e"
+  },
+  {
+    "name": "as DeletePolicy (served by IAM)",
+    "status": 404,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cResponse\u003e\u003cErrors\u003e\u003cError\u003e\u003cCode\u003eNoSuchEntity\u003c/Code\u003e\u003cMessage\u003epolicy \u0026#34;\u0026#34; not found\u003c/Message\u003e\u003c/Error\u003e\u003c/Errors\u003e\u003cError\u003e\u003cCode\u003eNoSuchEntity\u003c/Code\u003e\u003cMessage\u003epolicy \u0026#34;\u0026#34; not found\u003c/Message\u003e\u003c/Error\u003e\u003cRequestID\u003e\u003cv\u003e\u003c/RequestID\u003e\u003cRequestId\u003e\u003cv\u003e\u003c/RequestId\u003e\u003c/Response\u003e"
+  },
+  {
+    "name": "as DeleteAutoScalingGroup",
+    "status": 400,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cResponse\u003e\u003cErrors\u003e\u003cError\u003e\u003cCode\u003eResourceInUse\u003c/Code\u003e\u003cMessage\u003eASG \u0026#34;g\u0026#34; has instances; use forceDelete\u003c/Message\u003e\u003c/Error\u003e\u003c/Errors\u003e\u003cError\u003e\u003cCode\u003eResourceInUse\u003c/Code\u003e\u003cMessage\u003eASG \u0026#34;g\u0026#34; has instances; use forceDelete\u003c/Message\u003e\u003c/Error\u003e\u003cRequestID\u003e\u003cv\u003e\u003c/RequestID\u003e\u003cRequestId\u003e\u003cv\u003e\u003c/RequestId\u003e\u003c/Response\u003e"
+  },
+  {
+    "name": "iam ListUsers",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cListUsersResponse xmlns=\"https://iam.amazonaws.com/doc/2010-05-08/\"\u003e\u003cListUsersResult\u003e\u003cUsers\u003e\u003c/Users\u003e\u003cIsTruncated\u003efalse\u003c/IsTruncated\u003e\u003c/ListUsersResult\u003e\u003cResponseMetadata\u003e\u003cRequestId\u003e\u003cv\u003e\u003c/RequestId\u003e\u003c/ResponseMetadata\u003e\u003c/ListUsersResponse\u003e"
+  },
+  {
+    "name": "sts GetCallerIdentity",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cGetCallerIdentityResponse xmlns=\"https://sts.amazonaws.com/doc/2011-06-15/\"\u003e\u003cGetCallerIdentityResult\u003e\u003cArn\u003earn:aws:iam::123456789012:user/AKIAANY\u003c/Arn\u003e\u003cUserId\u003eAIDA14031713B346D219\u003c/UserId\u003e\u003cAccount\u003e123456789012\u003c/Account\u003e\u003c/GetCallerIdentityResult\u003e\u003cResponseMetadata\u003e\u003cRequestId\u003e\u003cv\u003e\u003c/RequestId\u003e\u003c/ResponseMetadata\u003e\u003c/GetCallerIdentityResponse\u003e"
+  },
+  {
+    "name": "sns ListTopics",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cListTopicsResponse xmlns=\"http://sns.amazonaws.com/doc/2010-03-31/\"\u003e\u003cListTopicsResult\u003e\u003cTopics\u003e\u003c/Topics\u003e\u003c/ListTopicsResult\u003e\u003cResponseMetadata\u003e\u003cRequestId\u003e\u003cv\u003e\u003c/RequestId\u003e\u003c/ResponseMetadata\u003e\u003c/ListTopicsResponse\u003e"
+  },
+  {
+    "name": "sagemaker runtime GET",
+    "status": 405,
+    "body": "{\"Message\":\"method not allowed\",\"__type\":\"MethodNotAllowed\"}\n"
+  },
+  {
+    "name": "sagemaker runtime missing endpoint",
+    "status": 404,
+    "body": "{\"Message\":\"NotFound: endpoint \\\"e\\\" not found\",\"__type\":\"ValidationError\"}\n"
+  },
+  {
+    "name": "sagemaker feature store DELETE",
+    "status": 400,
+    "body": "{\"Message\":\"NotFound: feature group \\\"g\\\" not found\",\"__type\":\"ResourceNotFound\"}\n"
+  },
+  {
+    "name": "sagemaker feature store POST",
+    "status": 405,
+    "body": "{\"Message\":\"method not allowed\",\"__type\":\"MethodNotAllowed\"}\n"
+  },
+  {
+    "name": "sagemaker ListModels",
+    "status": 200,
+    "body": "{\"Models\":[]}\n"
+  },
+  {
+    "name": "sagemaker unknown op",
+    "status": 400,
+    "body": "{\"Message\":\"unknown operation: Nope\",\"__type\":\"UnknownOperationException\"}\n"
+  },
+  {
+    "name": "s3 mb",
+    "status": 200,
+    "body": ""
+  },
+  {
+    "name": "s3 ListBuckets",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"\u003e\u003cOwner\u003e\u003cID\u003ecloudemu00000000000000000000000000000000000000000000000000000000\u003c/ID\u003e\u003cDisplayName\u003ecloudemu\u003c/DisplayName\u003e\u003c/Owner\u003e\u003cBuckets\u003e\u003cBucket\u003e\u003cName\u003eoff-bucket\u003c/Name\u003e\u003cCreationDate\u003e2026-01-02T03:04:05Z\u003c/CreationDate\u003e\u003c/Bucket\u003e\u003c/Buckets\u003e\u003c/ListAllMyBucketsResult\u003e"
+  },
+  {
+    "name": "lambda ListFunctions",
+    "status": 200,
+    "body": "{\"Functions\":[]}\n"
+  },
+  {
+    "name": "unknown target",
+    "status": 501,
+    "body": "no handler registered for this request\n"
+  }
+]

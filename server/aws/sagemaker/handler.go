@@ -56,16 +56,16 @@ func isFeatureStorePath(p string) bool {
 // ServeHTTP dispatches by X-Amz-Target for the control plane, falling back to
 // the runtime and feature-store REST paths.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if isRuntimePath(r.URL.Path) {
+	switch classify(r) {
+	case routeRuntime:
 		h.serveRuntime(w, r)
 
 		return
-	}
-
-	if isFeatureStorePath(r.URL.Path) {
+	case routeFeatureStore:
 		h.serveFeatureStoreRuntime(w, r)
 
 		return
+	case routeControl:
 	}
 
 	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
@@ -234,3 +234,7 @@ type wireTag struct {
 	Key   string `json:"Key"`
 	Value string `json:"Value"`
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "sagemaker" }

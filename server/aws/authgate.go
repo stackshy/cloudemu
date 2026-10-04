@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/authctx"
 	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
 	"github.com/stackshy/cloudemu/v2/server/wire"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsauthz"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	"github.com/stackshy/cloudemu/v2/server/wire/sigv4"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
@@ -28,45 +29,54 @@ const tempCredentialPrefix = "ASIA"
 // presigned URL, a query parameter.
 const securityTokenParam = "X-Amz-Security-Token" //nolint:gosec // a header name, not a credential
 
-// newAuthGate builds the SigV4 authentication pre-dispatch hook. It buffers and
-// restores the request body (downstream Matches/ParseForm read it), resolves
-// the caller's secret via the IAM access-key resolver (long-term AKIA keys) or
-// the STS session store (temporary ASIA credentials), verifies the signature,
-// and either attaches the resolved principal to the request context (proceed)
-// or writes a 403 AWS error (stop). clock drives timestamp-expiry evaluation.
-// match is the dispatcher's handler lookup. It binds the public-operation
-// exemption (see exemptPublic) to the handler that will actually serve the
-// request.
-func newAuthGate(
-	iamDriver iamdriver.IAM, accountID string, sessions *stssrv.SessionStore, clock config.Clock,
-	match func(*http.Request) server.Handler,
-) func(http.ResponseWriter, *http.Request) (*http.Request, bool) {
-	resolver, _ := iamDriver.(iamdriver.AccessKeyResolver)
+// gateConfig is what the auth gate needs from the server it guards.
+type gateConfig struct {
+	iam      iamdriver.IAM
+	scope    awsauthz.Scope
+	sessions *stssrv.SessionStore
+	clock    config.Clock
+	// match is the dispatcher's handler lookup. The public exemption and the
+	// authorization plan are bound to the handler it returns.
+	match func(*http.Request) server.Handler
+	// jsonRPC holds the handlers whose operation is named by X-Amz-Target
+	// (see jsonRPCServiceByTarget). The header is never read for any other
+	// handler, so a forged one cannot steer the authorized action.
+	jsonRPC map[server.Handler]bool
+	// authnOnly holds the handlers IAM does not govern (the Kubernetes data
+	// plane, which has its own RBAC). Signed requests to them are only
+	// authenticated.
+	authnOnly map[server.Handler]bool
+}
 
-	if clock == nil {
-		clock = config.RealClock{}
+// newAuthGate builds the SigV4 pre-dispatch hook. It buffers and restores the
+// request body (downstream Matches/ParseForm read it), finds the handler
+// dispatch will pick, lets that handler's public (noAuth) operations through,
+// resolves the caller's secret via the IAM access-key resolver (long-term
+// AKIA keys) or the STS session store (temporary ASIA credentials), verifies
+// the signature, and then authorizes the request against the caller's IAM
+// policies. It either attaches the principal to the request context
+// (proceed) or writes a 403 AWS error (stop).
+func newAuthGate(g *gateConfig) func(http.ResponseWriter, *http.Request) (*http.Request, bool) {
+	resolver, _ := g.iam.(iamdriver.AccessKeyResolver)
+
+	if g.clock == nil {
+		g.clock = config.RealClock{}
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
 		body := drainBody(r)
 		restore := func() { r.Body = io.NopCloser(bytes.NewReader(body)) }
 
-		// Operations AWS serves without SigV4 (noAuth) skip authentication and
-		// authorization. The handler lookup may read the body, so restore it
-		// before and after.
 		restore()
 
-		public := exemptPublic(r, body, match)
+		probe, h, probed := probeRoute(r, body, g.match)
 
-		restore()
-
-		if public {
+		if probed && servedPublicly(probe, h) {
 			return r, true
 		}
 
 		akid := sigv4.AccessKeyID(r)
 		if akid == "" {
-			restore()
 			writeAuthError(w, r, &sigv4.AuthError{
 				Code:       "MissingAuthenticationToken",
 				Message:    "Request is missing Authentication Token",
@@ -88,9 +98,9 @@ func newAuthGate(
 		)
 
 		if strings.HasPrefix(akid, tempCredentialPrefix) {
-			principal, roleSession, aerr = verifyTempCredential(r, body, akid, accountID, sessions, clock)
+			principal, roleSession, aerr = verifyTempCredential(r, body, akid, g.scope.AccountID, g.sessions, g.clock)
 		} else {
-			principal, aerr = sigv4.Verify(r, body, resolverLookup(r, resolver), clock)
+			principal, aerr = sigv4.Verify(r, body, resolverLookup(r, resolver), g.clock)
 		}
 
 		restore()
@@ -100,11 +110,9 @@ func newAuthGate(
 			return r, false
 		}
 
-		if !authorize(w, r, principal, iamDriver, body, accountID, roleSession) {
-			return r, false
-		}
+		plan := g.resolvePlan(probe, h, probed, body)
 
-		return withPrincipal(r, principal), true
+		return g.authorize(w, r, h, plan, &principal, roleSession)
 	}
 }
 

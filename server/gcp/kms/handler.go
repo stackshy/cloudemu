@@ -49,7 +49,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/stackshy/cloudemu/v2/config"
+	kmsprov "github.com/stackshy/cloudemu/v2/providers/gcp/kms"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -91,15 +92,25 @@ type route struct {
 	kind                        routeKind
 }
 
-// Handler serves cloudkms.googleapis.com v1 control-plane requests.
+// Handler serves cloudkms.googleapis.com v1 requests against the persisted
+// Cloud KMS provider mock. Key ring and crypto key IAM policies live in the
+// shared GCP resource-policy store.
 type Handler struct {
-	store *store
+	kms *kmsprov.Mock
+	iam gcpiam.Store
 }
 
-// New returns a Cloud KMS handler. clock stamps createTime/destroyTime; pass a
-// config.FakeClock for deterministic tests, or nil for the real clock.
-func New(clock config.Clock) *Handler {
-	return &Handler{store: newStore(clock)}
+// New returns a Cloud KMS handler over m, keeping IAM policies in iam.
+func New(m *kmsprov.Mock, iam gcpiam.Store) *Handler {
+	return &Handler{kms: m, iam: iam}
+}
+
+// ref converts the parsed path to the provider's resource reference.
+func (rt *route) ref() *kmsprov.Ref {
+	return &kmsprov.Ref{
+		Project: rt.project, Location: rt.location,
+		KeyRing: rt.keyRing, CryptoKey: rt.cryptoKey, Version: rt.version,
+	}
 }
 
 // Path-tail depths after the [projects, {p}, locations, {l}, keyRings] head:
@@ -355,19 +366,29 @@ func (h *Handler) serveVersionNoVerb(w http.ResponseWriter, r *http.Request, rt 
 	}
 }
 
-// serveIamVerb dispatches the IAM policy custom methods shared by keyRings and
-// cryptoKeys.
+// serveIamVerb serves the IAM policy custom methods shared by keyRings and
+// cryptoKeys once the addressed resource is known to exist.
 func (h *Handler) serveIamVerb(w http.ResponseWriter, r *http.Request, rt *route) {
-	switch rt.verb {
-	case verbGetIam:
-		getOnly(w, r, func() { h.getIamPolicy(w, rt) })
-	case verbSetIam:
-		postOnly(w, r, func() { h.setIamPolicy(w, r, rt) })
-	case verbTestIam:
-		postOnly(w, r, func() { h.testIamPermissions(w, r) })
-	default:
+	if rt.verb != verbGetIam && rt.verb != verbSetIam && rt.verb != verbTestIam {
 		writeUnsupported(w)
+		return
 	}
+
+	ref := rt.ref()
+	name := kmsprov.RingName(ref)
+	_, err := h.kms.GetKeyRing(ref)
+
+	if rt.kind == kindCryptoKey {
+		name = kmsprov.KeyName(ref)
+		_, err = h.kms.GetCryptoKey(ref)
+	}
+
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	gcpiam.Serve(w, r, rt.verb, name, h.iam)
 }
 
 func writeUnsupported(w http.ResponseWriter) {

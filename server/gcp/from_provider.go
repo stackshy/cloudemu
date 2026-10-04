@@ -28,6 +28,7 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		CertificateManager:   p.CertificateManager,
 		AccessContextManager: p.AccessContextManager,
 		PrivateCA:            p.PrivateCA,
+		KMS:                  p.KMS,
 		GKEBackup:            p.GKEBackup,
 		GKEHub:               p.GKEHub,
 		DataFusion:           p.DataFusion,
