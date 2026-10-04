@@ -434,7 +434,9 @@ generated cert's SANs with `--tls-host <name>` and trust that cert in your clien
 | `--k8s-progression` | `false` | client-created Pods start Pending and move to Running on a ticker (env `CLOUDEMU_K8S_PROGRESSION`) |
 | `--k8s-progression-interval` | (built-in) | tick interval for `--k8s-progression` (env `CLOUDEMU_K8S_PROGRESSION_INTERVAL`) |
 | `--tick-interval` | `1s` | how often time-driven work runs, such as CloudWatch alarms, Azure Monitor metric alerts and GCP alert policies firing their actions; `0` turns it off (env `CLOUDEMU_TICK_INTERVAL`) |
-| `--enforce-auth` | `false` | require authentication: SigV4 verification for AWS (long-term IAM keys and STS temporary credentials), Bearer-token claim checks for Azure (see `cloudemu serve -h` for the exact scope) |
+| `--enforce-auth` | `false` | require authentication: SigV4 verification for AWS (long-term IAM keys and STS temporary credentials), Bearer-token claim checks for Azure (see `cloudemu serve -h` for the exact scope). The `/_cloudemu` endpoints then need the admin token |
+| `--admin-token` | (random) | with `--enforce-auth`, the bearer token for `/_cloudemu/*` except `health`; unset means a random token printed once on stderr (env `CLOUDEMU_ADMIN_TOKEN`) |
+| `--admin-token-file` | (none) | with `--enforce-auth`, write the admin token here (mode 0600) instead of printing it; `start` sets it to `~/.cloudemu/admin-token` (env `CLOUDEMU_ADMIN_TOKEN_FILE`) |
 | `--vcr` | (off) | record or replay the wire protocol: `record` \| `replay` (requires `--vcr-cassette`) |
 | `--vcr-cassette` | (none) | path to the cassette file to record into / replay from |
 | `--vcr-strict` | `true` | in `replay`, return `501` for a request with no recorded match (rather than passing through) |
@@ -492,6 +494,29 @@ depending on which port you POST it to:
   "secrets": [{ "name": "db-password", "value": "s3cr3t" }],
   "instances": [{ "imageId": "ami-123", "instanceType": "t3.micro", "count": 2 }]
 }
+```
+
+### Under `--enforce-auth`
+
+With `--enforce-auth` every `/_cloudemu` endpoint except `health` needs the
+admin token as `Authorization: Bearer <token>` and returns `401` without it, so
+nobody can dump state (IAM secret keys included) or replace it anonymously.
+Set the token with `--admin-token` or `CLOUDEMU_ADMIN_TOKEN`; otherwise serve
+generates one and prints it once on stderr. `cloudemu start` writes it to
+`~/.cloudemu/admin-token`, where `cloudemu snapshot`, `net` and `cost` pick it
+up (`CLOUDEMU_ADMIN_TOKEN` overrides the file).
+
+```sh
+curl -X POST http://127.0.0.1:4566/_cloudemu/reset -H "Authorization: Bearer $CLOUDEMU_ADMIN_TOKEN"
+```
+
+There is no unsigned way to create an access key under `--enforce-auth`, so
+seed the first IAM user with a key you pick. A user with no policies is
+unrestricted and can create the others over the IAM API:
+
+```json
+{ "iamUsers": [{ "name": "admin", "accessKeys": [
+    { "accessKeyId": "AKIAADMIN00000000001", "secretAccessKey": "change-me" } ] }] }
 ```
 
 In-process tests can load the same fixtures with the

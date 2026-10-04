@@ -87,12 +87,14 @@ type CommonConfig struct {
 	TLSKey   string
 	TLSHosts StringList
 
-	EndpointsFile string
-	Admin         bool
-	LogRequests   bool
-	Quiet         bool
-	EnforceAuth   bool
-	AsyncSettle   bool
+	EndpointsFile  string
+	Admin          bool
+	AdminToken     string
+	AdminTokenFile string
+	LogRequests    bool
+	Quiet          bool
+	EnforceAuth    bool
+	AsyncSettle    bool
 
 	ShutdownTimeout time.Duration
 
@@ -143,7 +145,9 @@ func RegisterCommon(fs *flag.FlagSet, c *CommonConfig, getenv func(string) strin
 	fs.StringVar(&c.TLSKey, "tls-key", "", "PEM key file matching --tls-cert")
 	fs.Var(&c.TLSHosts, "tls-host", "extra SAN host/IP for the generated self-signed cert (repeatable)")
 	fs.StringVar(&c.EndpointsFile, "endpoints-file", "", "write the resolved endpoints as JSON to this path")
-	fs.BoolVar(&c.Admin, "admin", true, "mount the /_cloudemu control plane (reset, health) for test isolation")
+	fs.BoolVar(&c.Admin, "admin", true,
+		"mount the /_cloudemu control plane (reset, seed, snapshot, health) for test isolation; "+
+			"under --enforce-auth it needs --admin-token")
 	fs.BoolVar(&c.LogRequests, "log-requests", false, "log every HTTP request (method, path, status, duration)")
 	fs.BoolVar(&c.Quiet, "quiet", false, "suppress the startup banner")
 	fs.DurationVar(&c.ShutdownTimeout, "shutdown-timeout", defaultShutdownTimeout, "grace period for in-flight requests on shutdown")
@@ -156,7 +160,35 @@ func RegisterCommon(fs *flag.FlagSet, c *CommonConfig, getenv func(string) strin
 	registerK8sProgressionFlags(fs, c, getenv)
 	registerTickFlag(fs, c, getenv)
 	registerEnforceAuthFlag(fs, c)
+	registerAdminTokenFlags(fs, c, getenv)
 	registerVCRFlags(fs, c)
+}
+
+// secretFlag is a string flag whose value never shows up in -h output, so an
+// admin token taken from the environment is not echoed as the "default".
+type secretFlag struct{ p *string }
+
+func (secretFlag) String() string { return "" }
+
+func (s secretFlag) Set(v string) error {
+	*s.p = v
+
+	return nil
+}
+
+// registerAdminTokenFlags registers the credential that guards the /_cloudemu
+// control plane under --enforce-auth.
+func registerAdminTokenFlags(fs *flag.FlagSet, c *CommonConfig, getenv func(string) string) {
+	c.AdminToken = getenv("CLOUDEMU_ADMIN_TOKEN")
+	fs.Var(secretFlag{&c.AdminToken}, "admin-token",
+		"with --enforce-auth, the bearer token every /_cloudemu endpoint except health requires "+
+			"(Authorization: Bearer <token>). Default: a random token generated at startup and printed once, or written "+
+			"to --admin-token-file. Ignored without --enforce-auth, where the control plane stays open (env CLOUDEMU_ADMIN_TOKEN). "+
+			"Under --enforce-auth there is no unsigned way to create the first IAM access key, so seed it with this token: "+
+			`POST /_cloudemu/seed {"iamUsers":[{"name":"admin","accessKeys":[{"accessKeyId":"AKIA...","secretAccessKey":"..."}]}]}`)
+	fs.StringVar(&c.AdminTokenFile, "admin-token-file", getenv("CLOUDEMU_ADMIN_TOKEN_FILE"),
+		"with --enforce-auth, write the admin token to this file (mode 0600) instead of printing it; "+
+			"cloudemu start sets it so the snapshot, net and cost commands find the token (env CLOUDEMU_ADMIN_TOKEN_FILE)")
 }
 
 // registerVCRFlags registers the record/replay (VCR) flag group. --vcr selects
@@ -214,7 +246,8 @@ func registerEnforceAuthFlag(fs *flag.FlagSet, c *CommonConfig) {
 			"checks land). Root and users with no policies are unrestricted. Azure: "+
 			"validate each request's Bearer token claims (accepted audience, expiry, a principal claim) and reject "+
 			"missing/malformed/expired/wrong-audience tokens with 401. The token signature is not verified (no Azure AD signing "+
-			"key), so this is claims-based authentication only; RBAC authorization is a follow-up")
+			"key), so this is claims-based authentication only; RBAC authorization is a follow-up. The /_cloudemu admin endpoints "+
+			"(all but health) then require the --admin-token bearer token")
 }
 
 // Validate checks the cross-field constraints both entrypoints share: --tls-cert
@@ -268,6 +301,8 @@ func (c *CommonConfig) ToServerkitConfig(providers []string) serverkit.Config {
 		TickInterval:           c.TickInterval,
 		AzureSubscription:      c.AzureSubscription,
 		Admin:                  c.Admin,
+		AdminToken:             c.AdminToken,
+		AdminTokenFile:         c.AdminTokenFile,
 		Persist:                c.Persist,
 		StateFile:              c.StateFile,
 		PersistMetadataOnly:    c.PersistMetadataOnly,

@@ -115,12 +115,20 @@ func wantOK(t *testing.T, what string, err error) {
 	}
 }
 
-func adminCall(t *testing.T, method, endpoint string, body []byte) []byte {
+const testAdminToken = "test-admin-token"
+
+// adminDo calls a /_cloudemu endpoint, sending token as a bearer token when it
+// is non-empty, and returns the status and body.
+func adminDo(t *testing.T, method, endpoint, token string, body []byte) (int, []byte) {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(context.Background(), method, endpoint, bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
+	}
+
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
@@ -130,48 +138,111 @@ func adminCall(t *testing.T, method, endpoint string, body []byte) []byte {
 	defer resp.Body.Close()
 
 	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("unsigned %s %s under --enforce-auth: %d %s", method, endpoint, resp.StatusCode, raw)
+
+	return resp.StatusCode, raw
+}
+
+// adminCall calls a /_cloudemu endpoint with the admin token and requires 200.
+func adminCall(t *testing.T, method, endpoint string, body []byte) []byte {
+	t.Helper()
+
+	status, raw := adminDo(t, method, endpoint, testAdminToken, body)
+	if status != http.StatusOK {
+		t.Fatalf("%s %s with the admin token: %d %s", method, endpoint, status, raw)
 	}
 
 	return raw
 }
 
-// bootstrapUser starts a server with auth off, creates a policy-less "boot"
-// user with a key, and returns the whole-emulator snapshot holding it.
-func bootstrapUser(t *testing.T) ([]byte, aws.Credentials) {
+// enforceAuthServer starts an --enforce-auth server with a known admin token.
+func enforceAuthServer(t *testing.T) (string, func()) {
 	t.Helper()
 
 	cfg := testConfig(t, allEnginesOff())
 	cfg.Admin = true
+	cfg.EnforceAuth = true
+	cfg.AdminToken = testAdminToken
 
-	url, stop := startAWS(t, cfg, mustOptions(t, &cfg))
+	return startAWS(t, cfg, mustOptions(t, &cfg))
+}
+
+// seedBootUser creates the first IAM user through the admin seed endpoint, the
+// documented bootstrap under --enforce-auth, and returns its key.
+func seedBootUser(t *testing.T, endpoint string) aws.Credentials {
+	t.Helper()
+
+	creds := aws.Credentials{AccessKeyID: "AKIABOOTSTRAP0000001", SecretAccessKey: "boot-secret-key"}
+	fixture := `{"iamUsers":[{"name":"boot","accessKeys":[{"accessKeyId":"` + creds.AccessKeyID +
+		`","secretAccessKey":"` + creds.SecretAccessKey + `"}]}]}`
+	adminCall(t, http.MethodPost, endpoint+"/_cloudemu/seed", []byte(fixture))
+
+	return creds
+}
+
+// TestEnforceAuthAdminEndpointsNeedToken covers AUTHN-X3 end to end: under
+// --enforce-auth the control plane refuses callers without the admin token,
+// health stays open, and the token can bootstrap the first IAM user.
+func TestEnforceAuthAdminEndpointsNeedToken(t *testing.T) {
+	endpoint, stop := enforceAuthServer(t)
 	defer stop()
 
-	boot := clientsFor(t, url, aws.Credentials{AccessKeyID: "test", SecretAccessKey: "test"}).newUser(t, "boot", "")
+	gated := []struct {
+		method, path string
+		body         []byte
+	}{
+		{http.MethodGet, "/_cloudemu/snapshot", nil},
+		{http.MethodPost, "/_cloudemu/snapshot", []byte(`{"schemaVersion":1}`)},
+		{http.MethodPost, "/_cloudemu/reset", nil},
+		{http.MethodPost, "/_cloudemu/seed", []byte(`{"buckets":[{"name":"x"}]}`)},
+		{http.MethodGet, "/_cloudemu/cost", nil},
+	}
 
-	return adminCall(t, http.MethodGet, url+"/_cloudemu/snapshot", nil), boot
+	for _, g := range gated {
+		for _, token := range []string{"", "wrong-token"} {
+			if status, _ := adminDo(t, g.method, endpoint+g.path, token, g.body); status != http.StatusUnauthorized {
+				t.Errorf("%s %s token=%q = %d, want 401", g.method, g.path, token, status)
+			}
+		}
+	}
+
+	if status, _ := adminDo(t, http.MethodGet, endpoint+"/_cloudemu/health", "", nil); status != http.StatusOK {
+		t.Fatalf("health without a token = %d, want 200", status)
+	}
+
+	boot := clientsFor(t, endpoint, seedBootUser(t, endpoint))
+
+	ctx := context.Background()
+	_, err := boot.iam.CreateUser(ctx, &iam.CreateUserInput{UserName: aws.String("second")})
+	wantOK(t, "CreateUser signed by the seeded key", err)
+
+	snap := adminCall(t, http.MethodGet, endpoint+"/_cloudemu/snapshot", nil)
+	if !strings.Contains(string(snap), "boot-secret-key") {
+		t.Fatal("authenticated snapshot is missing the key secret needed for restore")
+	}
+
+	adminCall(t, http.MethodPost, endpoint+"/_cloudemu/reset", nil)
+
+	_, err = boot.iam.ListUsers(ctx, &iam.ListUsersInput{})
+	wantCode(t, "ListUsers after reset", err, "InvalidClientTokenId")
+
+	adminCall(t, http.MethodPost, endpoint+"/_cloudemu/snapshot", snap)
+
+	_, err = boot.iam.GetUser(ctx, &iam.GetUserInput{UserName: aws.String("second")})
+	wantOK(t, "GetUser after restore", err)
 }
 
 // TestEnforceAuthAuthorizesQueryAndREST drives real SDK clients against
 // cloudemu serve with --enforce-auth: IAM, EC2, Auto Scaling and SQS calls are
-// authorized against the caller's policies, while the admin endpoints stay
-// unsigned.
+// authorized against the caller's policies, while the admin endpoints take the
+// admin token instead of a signature.
 func TestEnforceAuthAuthorizesQueryAndREST(t *testing.T) {
-	snapshot, bootCreds := bootstrapUser(t)
-
-	cfg := testConfig(t, allEnginesOff())
-	cfg.Admin = true
-	cfg.EnforceAuth = true
-
-	endpoint, stop := startAWS(t, cfg, mustOptions(t, &cfg))
+	endpoint, stop := enforceAuthServer(t)
 	defer stop()
 
 	adminCall(t, http.MethodGet, endpoint+"/_cloudemu/health", nil)
-	adminCall(t, http.MethodPost, endpoint+"/_cloudemu/snapshot", snapshot)
 
 	ctx := context.Background()
-	boot := clientsFor(t, endpoint, bootCreds)
+	boot := clientsFor(t, endpoint, seedBootUser(t, endpoint))
 
 	t.Run("iam", func(t *testing.T) {
 		limited := clientsFor(t, endpoint, boot.newUser(t, "limited", allowDoc("dynamodb:*")))
@@ -247,7 +318,7 @@ func TestEnforceAuthAuthorizesQueryAndREST(t *testing.T) {
 		}
 	})
 
-	t.Run("admin reset stays unsigned", func(t *testing.T) {
+	t.Run("admin reset with the token", func(t *testing.T) {
 		adminCall(t, http.MethodPost, endpoint+"/_cloudemu/reset", nil)
 	})
 }

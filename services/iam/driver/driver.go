@@ -219,6 +219,15 @@ type AccessKeyResolver interface {
 	AccessKeyByID(ctx context.Context, id string) (AccessKeyAuth, bool)
 }
 
+// AccessKeyImporter is an optional capability: an IAM implementation that can
+// register an access key whose id and secret the caller chooses. The seed
+// fixtures use it so the first IAM user under --enforce-auth gets a key the
+// operator already knows (CreateAccessKey would need a signed request, and
+// there is no key to sign it with yet). AWS-only, like AccessKeyResolver.
+type AccessKeyImporter interface {
+	ImportAccessKey(ctx context.Context, userName, accessKeyID, secretAccessKey string) error
+}
+
 // PolicyInspector is an optional capability: an IAM implementation that can
 // report whether a principal has any policies in effect. The AWS authorization
 // gate type-asserts for it so it can leave a principal with no policies defined

@@ -11,12 +11,17 @@ package seed
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
+	"regexp"
+	"strings"
+	"unicode"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
@@ -28,6 +33,22 @@ type Fixtures struct {
 	Tables    []Table    `json:"tables,omitempty"`
 	Secrets   []Secret   `json:"secrets,omitempty"`
 	Instances []Instance `json:"instances,omitempty"`
+	IAMUsers  []IAMUser  `json:"iamUsers,omitempty"`
+}
+
+// IAMUser is an IAM user plus access keys whose id and secret the fixture sets.
+// Under --enforce-auth this is how the first user gets a key: there is no
+// signed request to call CreateAccessKey with until one exists. A user with no
+// policies is unrestricted, so it can then create everyone else over the API.
+type IAMUser struct {
+	Name       string      `json:"name"`
+	AccessKeys []AccessKey `json:"accessKeys,omitempty"`
+}
+
+// AccessKey is a long-term access key with a fixed id and secret.
+type AccessKey struct {
+	AccessKeyID     string `json:"accessKeyId"`
+	SecretAccessKey string `json:"secretAccessKey"`
 }
 
 // Bucket is an object-storage bucket and its initial objects.
@@ -74,6 +95,7 @@ type Target struct {
 	Database dbdriver.Database
 	Secrets  secretsdriver.Secrets
 	Compute  computedriver.Compute
+	IAM      iamdriver.IAM
 }
 
 // Load parses fixtures from JSON bytes.
@@ -112,6 +134,10 @@ func (f Fixtures) ResourceCount() int {
 			c = 1
 		}
 		n += c
+	}
+
+	for _, u := range f.IAMUsers {
+		n += 1 + len(u.AccessKeys)
 	}
 	return n
 }
@@ -161,6 +187,59 @@ func (f Fixtures) Validate(t Target) error {
 			return fmt.Errorf("instance: imageId is required")
 		}
 	}
+
+	return validateIAMUsers(f.IAMUsers, t.IAM)
+}
+
+var (
+	errNoIAMDriver  = errors.New("fixtures declare iamUsers but Target.IAM is nil")
+	errIAMUserName  = errors.New("iamUser: name is required")
+	errNoKeyImport  = errors.New("this provider cannot seed access keys")
+	errAccessKeyID  = errors.New("accessKeyId must be AKIA followed by 16 uppercase letters or digits, as AWS issues them")
+	errAccessSecret = errors.New("secretAccessKey must be 1 to 128 characters with no whitespace")
+)
+
+// accessKeyIDPattern is the shape of a long-term AWS access key id.
+var accessKeyIDPattern = regexp.MustCompile(`^AKIA[A-Z0-9]{16}$`)
+
+// maxSecretLen bounds a seeded secret; real AWS secrets are 40 characters.
+const maxSecretLen = 128
+
+func validSecret(s string) bool {
+	return s != "" && len(s) <= maxSecretLen && !strings.ContainsFunc(s, unicode.IsSpace)
+}
+
+func validateIAMUsers(users []IAMUser, d iamdriver.IAM) error {
+	if len(users) == 0 {
+		return nil
+	}
+
+	if d == nil {
+		return errNoIAMDriver
+	}
+
+	_, canImport := d.(iamdriver.AccessKeyImporter)
+
+	for _, u := range users {
+		if u.Name == "" {
+			return errIAMUserName
+		}
+
+		if len(u.AccessKeys) > 0 && !canImport {
+			return fmt.Errorf("iamUser %q: %w", u.Name, errNoKeyImport)
+		}
+
+		for _, k := range u.AccessKeys {
+			if !accessKeyIDPattern.MatchString(k.AccessKeyID) {
+				return fmt.Errorf("iamUser %q: accessKeyId %q: %w", u.Name, k.AccessKeyID, errAccessKeyID)
+			}
+
+			if !validSecret(k.SecretAccessKey) {
+				return fmt.Errorf("iamUser %q, key %s: %w", u.Name, k.AccessKeyID, errAccessSecret)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -180,7 +259,7 @@ func IgnoreExisting() Option {
 }
 
 // Apply validates the whole fixture set, then writes it through t's drivers in
-// a fixed order (buckets, tables, secrets, instances). Validation runs first so
+// a fixed order (buckets, tables, secrets, instances, IAM users). Validation runs first so
 // an invalid fixture is rejected before anything is created. Writes are not
 // transactional: on a mid-write failure (e.g. seeding a backend that isn't
 // empty), earlier resources remain. Reset and retry against a fresh backend,
@@ -209,7 +288,34 @@ func Apply(ctx context.Context, f Fixtures, t Target, opts ...Option) error {
 		return err
 	}
 
-	return applyInstances(ctx, f.Instances, t.Compute, o.ignoreExisting)
+	if err := applyInstances(ctx, f.Instances, t.Compute, o.ignoreExisting); err != nil {
+		return err
+	}
+
+	return applyIAMUsers(ctx, f.IAMUsers, t.IAM, o.ignoreExisting)
+}
+
+func applyIAMUsers(ctx context.Context, users []IAMUser, d iamdriver.IAM, ignoreExisting bool) error {
+	for _, u := range users {
+		if _, err := d.CreateUser(ctx, iamdriver.UserConfig{Name: u.Name}); err != nil {
+			if !ignoreExisting || !cerrors.IsAlreadyExists(err) {
+				return fmt.Errorf("seed iam user %q: %w", u.Name, err)
+			}
+		}
+
+		// Validate already confirmed d is an importer when any keys are declared.
+		importer, _ := d.(iamdriver.AccessKeyImporter)
+
+		for _, k := range u.AccessKeys {
+			if err := importer.ImportAccessKey(ctx, u.Name, k.AccessKeyID, k.SecretAccessKey); err != nil {
+				if !ignoreExisting || !cerrors.IsAlreadyExists(err) {
+					return fmt.Errorf("seed access key %q for %q: %w", k.AccessKeyID, u.Name, err)
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 func applyBuckets(ctx context.Context, buckets []Bucket, d storagedriver.Bucket, ignoreExisting bool) error {

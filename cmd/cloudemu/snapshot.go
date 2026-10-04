@@ -4,7 +4,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -113,12 +112,12 @@ func snapshotSave(dir, name string, force bool) error {
 		}
 	}
 
-	base, err := adminBaseURL(dir)
+	api, err := newAdminAPI(dir)
 	if err != nil {
 		return err
 	}
 
-	body, err := snapshotRequest(http.MethodGet, base, nil)
+	body, err := snapshotRequest(api, http.MethodGet, nil)
 	if err != nil {
 		return err
 	}
@@ -165,12 +164,12 @@ func snapshotLoad(dir, name string) error {
 		return err
 	}
 
-	base, err := adminBaseURL(dir)
+	api, err := newAdminAPI(dir)
 	if err != nil {
 		return err
 	}
 
-	if _, err := snapshotRequest(http.MethodPost, base, body); err != nil {
+	if _, err := snapshotRequest(api, http.MethodPost, body); err != nil {
 		return err
 	}
 
@@ -283,61 +282,26 @@ func readSnapshotMeta(path string) *persist.Meta {
 	return s.Meta
 }
 
-// adminBaseURL reads the daemon's endpoints file and returns a plain-HTTP base
-// URL for the control plane (avoids the self-signed HTTPS endpoints).
-func adminBaseURL(dir string) (string, error) {
-	eps, err := readEndpoints(endpointsPath(dir))
-	if errors.Is(err, os.ErrNotExist) {
-		return "", errSnapDaemonDown
-	}
-
-	if err != nil {
-		return "", err
-	}
-
-	for _, k := range []string{"aws", "gcp"} {
-		if ep := eps[k]; strings.HasPrefix(ep, "http://") {
-			return strings.TrimRight(ep, "/"), nil
-		}
-	}
-
-	return "", errSnapNoEndpoint
-}
-
 // snapshotRequest calls the daemon's /_cloudemu/snapshot endpoint. For GET body
 // is nil and the response bytes are returned; for POST body is the snapshot.
-func snapshotRequest(method, base string, body []byte) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), snapHTTPTimeout)
-	defer cancel()
+func snapshotRequest(api adminAPI, method string, body []byte) ([]byte, error) {
+	var (
+		reader io.Reader
+		ct     string
+	)
 
-	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
+		ct = "application/json"
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, base+"/_cloudemu/snapshot", reader)
+	status, rb, err := api.do(method, "snapshot", reader, ct)
 	if err != nil {
 		return nil, err
 	}
 
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errSnapDaemonDown, err)
-	}
-	defer resp.Body.Close()
-
-	rb, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode == http.StatusNotImplemented {
-		return nil, errSnapAdminOff
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: %s: %s", errSnapServer, resp.Status, strings.TrimSpace(string(rb)))
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("%w: %d %s: %s", errSnapServer, status, http.StatusText(status), strings.TrimSpace(string(rb)))
 	}
 
 	return rb, nil

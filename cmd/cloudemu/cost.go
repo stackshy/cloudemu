@@ -27,12 +27,12 @@ func runCost(args []string) error {
 		return err
 	}
 
-	base, err := adminBaseURL(dir)
+	api, err := newAdminAPI(dir)
 	if err != nil {
 		return err
 	}
 
-	body, err := netGET(base, "cost", url.Values{})
+	body, err := netGET(api, "cost", url.Values{})
 	if err != nil {
 		return err
 	}
