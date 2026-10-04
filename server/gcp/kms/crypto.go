@@ -80,19 +80,22 @@ func (v *versionModel) randomSecret(n int) error {
 }
 
 func (v *versionModel) generateRSA(alg string) error {
-	bits := 0
+	var (
+		k   *rsa.PrivateKey
+		err error
+	)
 
-	for _, size := range []int{2048, 3072, 4096} {
-		if strings.Contains(alg, "_"+strconv.Itoa(size)) {
-			bits = size
-		}
-	}
-
-	if bits == 0 {
+	switch {
+	case strings.Contains(alg, "_4096"):
+		k, err = rsa.GenerateKey(rand.Reader, 4096)
+	case strings.Contains(alg, "_3072"):
+		k, err = rsa.GenerateKey(rand.Reader, 3072)
+	case strings.Contains(alg, "_2048"):
+		k, err = rsa.GenerateKey(rand.Reader, 2048)
+	default:
 		return errUnsupportedAlg(alg)
 	}
 
-	k, err := rsa.GenerateKey(rand.Reader, bits)
 	if err != nil {
 		return cerrors.Newf(cerrors.Internal, "generate RSA key: %v", err)
 	}
