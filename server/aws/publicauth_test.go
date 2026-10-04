@@ -105,8 +105,8 @@ func TestEnforcedGateAdmitsUnsignedPublicOps(t *testing.T) {
 		req  rawReq
 		want int
 	}{
-		// Cognito user-pool public ops are not routed yet, so the handler answers
-		// UnknownOperationException (400): the point is the gate let them through.
+		// The empty bodies fail Cognito's own validation (400): the point is the
+		// gate let them through.
 		{"cognito-idp InitiateAuth", jsonRPC(idpTarget+"InitiateAuth", `{}`), http.StatusBadRequest},
 		{"cognito-idp SignUp", jsonRPC(idpTarget+"SignUp", `{}`), http.StatusBadRequest},
 		{"cognito-idp RespondToAuthChallenge", jsonRPC(idpTarget+"RespondToAuthChallenge", `{}`), http.StatusBadRequest},

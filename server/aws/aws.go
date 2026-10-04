@@ -765,6 +765,12 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 	// services, so registration order is unconstrained.
 	if d.Cognito != nil {
 		srv.Register(rpc(cognitosrv.New(d.Cognito)))
+
+		// The pool's GET /{poolId}/.well-known/* documents must register before
+		// S3, the permissive REST fallback that would otherwise claim the path.
+		if keys, ok := d.Cognito.(cognitodriver.KeySetProvider); ok {
+			srv.Register(cognitosrv.NewWellKnown(keys))
+		}
 	}
 
 	// AWS Config matches the X-Amz-Target prefix "StarlingDoveService.",

@@ -32,3 +32,15 @@ type APIError struct {
 
 func (e *APIError) Error() string { return e.Err.Error() }
 func (e *APIError) Unwrap() error { return e.Err }
+
+// Exception names for groups, sign-up and sign-in.
+const (
+	ExGroupExists           = "GroupExistsException"
+	ExCodeMismatch          = "CodeMismatchException"
+	ExExpiredCode           = "ExpiredCodeException"
+	ExUserNotConfirmed      = "UserNotConfirmedException"
+	ExPasswordResetRequired = "PasswordResetRequiredException"
+	ExUnsupportedOperation  = "UnsupportedOperationException"
+	ExUnsupportedTokenType  = "UnsupportedTokenTypeException"
+	ExUnauthorized          = "UnauthorizedException"
+)

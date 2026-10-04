@@ -145,6 +145,9 @@ func (m *Mock) DeleteUserPool(_ context.Context, id string) error {
 	}
 
 	m.deletePoolUsers(id)
+	m.deletePoolGroups(id)
+	m.deleteLogins(func(l *loginRecord) bool { return l.PoolID == id })
+	m.deletePoolKeys(id)
 	m.userPools.Delete(id)
 	m.deleteTags(pool.ARN)
 
