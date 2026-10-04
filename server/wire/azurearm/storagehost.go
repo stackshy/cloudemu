@@ -1,6 +1,21 @@
 package azurearm
 
-import "strings"
+import (
+	"net/url"
+	"strings"
+)
+
+// Storage service labels of an {account}.{service}.{suffix} host.
+const (
+	StorageServiceQueue = "queue"
+	StorageServiceTable = "table"
+)
+
+// restype values of the account-level storage service operations.
+const (
+	restypeService = "service"
+	restypeAccount = "account"
+)
 
 // storageServices are the Azure Storage data-plane service labels that sit
 // between the account name and the storage DNS suffix, as in
@@ -48,4 +63,32 @@ func StorageHost(host string) (account, service string, ok bool) {
 	}
 
 	return "", "", false
+}
+
+// PeelStorageAccount reads a path-style storage request
+// (https://host:port/{account}/...), as the SDKs build it for an IP or
+// emulator endpoint. The leading segment is taken as the account, and the
+// rest of the path returned, when isAccount accepts it and either more path
+// follows or the request is an account-level operation (rootOp), such as
+// "GET /{account}?comp=list". Otherwise the request belongs to the default
+// account ("") and path is returned unchanged.
+func PeelStorageAccount(path string, rootOp bool, isAccount func(name string) bool) (account, rest string) {
+	name, after, more := strings.Cut(strings.TrimPrefix(path, "/"), "/")
+	if name == "" || (!more && !rootOp) || !isAccount(name) {
+		return "", path
+	}
+
+	return name, "/" + after
+}
+
+// IsStorageServiceOp reports whether q selects an account-level storage
+// service operation: Get/Set Service Properties, Get Service Stats
+// (restype=service) or Get Account Information (restype=account).
+func IsStorageServiceOp(q url.Values) bool {
+	switch q.Get("restype") {
+	case restypeService, restypeAccount:
+		return true
+	}
+
+	return false
 }

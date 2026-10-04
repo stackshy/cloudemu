@@ -32,6 +32,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
+	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 const (
@@ -42,6 +43,9 @@ const (
 
 	compList     = "list"
 	compMetadata = "metadata"
+
+	// segMessages is the path segment of the queue message surface.
+	segMessages = "messages"
 
 	// maxUpdateVisibilityTimeout is the Azure ceiling for a message's visibility
 	// timeout (7 days, in seconds).
@@ -79,7 +83,8 @@ const (
 // Handler serves Azure Queue Storage REST requests against a messagequeue
 // driver.
 type Handler struct {
-	mq mqdriver.MessageQueue
+	mq       mqdriver.MessageQueue
+	accounts storagedriver.AzureStorageAccounts
 }
 
 // New returns a Queue handler backed by mq.
@@ -101,52 +106,68 @@ func New(mq mqdriver.MessageQueue) *Handler {
 //   - PUT|DELETE /{queue} with no restype=container query: Blob container ops
 //     always carry restype=container, so a bare PUT/DELETE on a single path
 //     segment is a queue create/delete. Disjoint from Blob container ops.
-//   - GET /?comp=list (list queues): this shape is byte-for-byte identical to
-//     Blob's list-containers; Azure disambiguates only by hostname. When both
-//     handlers are registered, the Queue handler (registered first) owns it.
+//   - GET /?comp=list (list queues) and the account-level service calls
+//     (?restype=service|account): these shapes are byte-for-byte identical to
+//     Blob's, and Azure tells them apart by hostname. The Queue handler claims
+//     them on an {account}.queue host, and on a bare host only for a Queue
+//     client (see isQueueClient). Every other root request goes to Blob.
 //
-// The two shared-hostname shapes above are inherent to serving Queue and Blob
-// on one endpoint (real Azure uses distinct hostnames); documented, not fixable
-// without host-based routing.
+// A path-style /{account}/ prefix naming an existing storage account is
+// peeled before the shape checks (see resolve).
 //
 // Registered before the permissive Blob fallback so these shapes win.
-func (*Handler) Matches(r *http.Request) bool {
+func (h *Handler) Matches(r *http.Request) bool {
 	if strings.HasPrefix(r.URL.Path, "/subscriptions/") {
 		return false
 	}
 
 	// A storage host names its service, so a request to another service's
 	// host (such as {account}.blob.core.windows.net) is never a Queue call.
-	if _, svc, ok := azurearm.StorageHost(r.Host); ok && svc != "queue" {
+	_, svc, storageHost := azurearm.StorageHost(r.Host)
+	if storageHost && svc != azurearm.StorageServiceQueue {
 		return false
 	}
 
-	queue, sub, msgID := parseQueuePath(r.URL.Path)
+	_, path := h.resolve(r)
+	queue, sub, _ := parseQueuePath(path)
 	q := r.URL.Query()
 
-	// /{queue}/messages[/{id}]: the unambiguous queue message surface.
-	if sub == "messages" {
-		_ = msgID
-
+	switch {
+	case sub == segMessages:
+		// /{queue}/messages[/{id}]: the unambiguous queue message surface.
 		return true
+	case queue == "":
+		return matchesRootOp(r, storageHost)
+	case sub != "" || q.Get("restype") != "" || r.Header.Get("X-Ms-Blob-Type") != "":
+		// Blob container ops carry restype=container and Put Blob carries
+		// x-ms-blob-type.
+		return false
 	}
 
-	// GET /?comp=list: list queues (see Matches doc: shares Blob's shape).
-	if queue == "" {
-		return r.Method == http.MethodGet && q.Get("comp") == compList && q.Get("restype") == ""
-	}
+	return matchesQueueOp(r.Method, q.Get("comp"))
+}
 
-	// Bare /{queue} create/delete: PUT or DELETE with no container/blob query
-	// markers. Blob container ops carry restype=container.
-	if sub == "" {
-		switch r.Method {
-		case http.MethodPut, http.MethodDelete:
-			return q.Get("restype") == ""
-		case http.MethodGet, http.MethodHead:
-			// GET|HEAD /{queue}?comp=metadata: queue properties. Blob container
-			// metadata carries restype=container, so this is unambiguous.
-			return q.Get("comp") == compMetadata && q.Get("restype") == ""
-		}
+// matchesRootOp reports whether an account-root request is a Queue call: List
+// Queues or an account-level service call, on a queue host or from a Queue
+// client.
+func matchesRootOp(r *http.Request, queueHost bool) bool {
+	q := r.URL.Query()
+	listQueues := r.Method == http.MethodGet && q.Get("comp") == compList && q.Get("restype") == ""
+
+	return (listQueues || azurearm.IsStorageServiceOp(q)) && (queueHost || isQueueClient(r))
+}
+
+// matchesQueueOp reports whether a bare /{queue} request is a queue create,
+// delete or metadata call.
+func matchesQueueOp(method, comp string) bool {
+	switch method {
+	case http.MethodPut:
+		return comp == "" || comp == compMetadata
+	case http.MethodDelete:
+		return comp == ""
+	case http.MethodGet, http.MethodHead:
+		// GET|HEAD /{queue}?comp=metadata: queue properties.
+		return comp == compMetadata
 	}
 
 	return false
@@ -156,17 +177,24 @@ func (*Handler) Matches(r *http.Request) bool {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Ms-Version", xmsVersion)
 
-	queue, sub, msgID := parseQueuePath(r.URL.Path)
+	account, path := h.resolve(r)
+	queue, sub, msgID := parseQueuePath(path)
 	q := r.URL.Query()
+
+	if queue != "" {
+		queue = queueKey(account, queue)
+	}
 
 	switch {
 	case queue == "" && r.Method == http.MethodGet && q.Get("comp") == compList:
-		h.listQueues(w, r)
+		h.listQueues(w, r, account)
+	case queue == "" && azurearm.IsStorageServiceOp(q):
+		azurearm.ServeStorageServiceOp(w, r)
 	case queue == "":
 		writeError(w, http.StatusNotImplemented, "NotImplemented", "operation not supported on root")
-	case sub == "messages" && msgID == "":
+	case sub == segMessages && msgID == "":
 		h.messagesOp(w, r, queue)
-	case sub == "messages":
+	case sub == segMessages:
 		h.messageIDOp(w, r, queue, msgID)
 	case sub == "":
 		h.queueOp(w, r, queue)
@@ -327,18 +355,21 @@ func (h *Handler) deleteQueue(w http.ResponseWriter, r *http.Request, queue stri
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *Handler) listQueues(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) listQueues(w http.ResponseWriter, r *http.Request, account string) {
 	prefix := r.URL.Query().Get("prefix")
 
-	queues, err := h.mq.ListQueues(r.Context(), prefix)
+	queues, err := h.mq.ListQueues(r.Context(), "")
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
 	out := listQueuesResult{Prefix: prefix}
+
 	for _, qi := range queues {
-		out.Queues.Queues = append(out.Queues.Queues, queueXML{Name: qi.Name})
+		if name, ok := inAccount(qi.Name, account); ok && strings.HasPrefix(name, prefix) {
+			out.Queues.Queues = append(out.Queues.Queues, queueXML{Name: name})
+		}
 	}
 
 	writeXML(w, http.StatusOK, out)

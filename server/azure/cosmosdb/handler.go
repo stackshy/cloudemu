@@ -353,10 +353,12 @@ func (h *Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	// A root "GET /?comp=list" is a Storage service call (list queues / list
-	// containers), not a Cosmos account probe (which carries no query). Decline
-	// it so the Queue and Blob handlers, registered after this one, serve it.
-	if rest == "/" && r.URL.Query().Get("comp") == "list" {
+	// A root request carrying comp= or restype= is a Storage account-level call
+	// (list queues or containers, service properties, account information,
+	// find blobs by tags), not a Cosmos account probe (which carries no query).
+	// Decline it so the Queue, Table and Blob handlers, registered after this
+	// one, serve it.
+	if q := r.URL.Query(); rest == "/" && (q.Has("comp") || q.Has("restype")) {
 		return false
 	}
 

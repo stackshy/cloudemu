@@ -527,6 +527,9 @@ func buildSendMessage(input *driver.SendMessageInput, sessionID string, now time
 	}
 
 	visibleAt := now.Add(time.Duration(delaySeconds) * time.Second)
+	if input.ScheduledEnqueueTime.After(visibleAt) {
+		visibleAt = input.ScheduledEnqueueTime
+	}
 
 	return &sbMessage{
 		ID:              idgen.GenerateID("sb-msg-"),
