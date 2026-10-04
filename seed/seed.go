@@ -14,6 +14,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"regexp"
+	"strings"
+	"unicode"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
@@ -189,11 +192,22 @@ func (f Fixtures) Validate(t Target) error {
 }
 
 var (
-	errNoIAMDriver   = errors.New("fixtures declare iamUsers but Target.IAM is nil")
-	errIAMUserName   = errors.New("iamUser: name is required")
-	errNoKeyImport   = errors.New("this provider cannot seed access keys")
-	errAccessKeyPair = errors.New("accessKeyId and secretAccessKey are required")
+	errNoIAMDriver  = errors.New("fixtures declare iamUsers but Target.IAM is nil")
+	errIAMUserName  = errors.New("iamUser: name is required")
+	errNoKeyImport  = errors.New("this provider cannot seed access keys")
+	errAccessKeyID  = errors.New("accessKeyId must be AKIA followed by 16 uppercase letters or digits, as AWS issues them")
+	errAccessSecret = errors.New("secretAccessKey must be 1 to 128 characters with no whitespace")
 )
+
+// accessKeyIDPattern is the shape of a long-term AWS access key id.
+var accessKeyIDPattern = regexp.MustCompile(`^AKIA[A-Z0-9]{16}$`)
+
+// maxSecretLen bounds a seeded secret; real AWS secrets are 40 characters.
+const maxSecretLen = 128
+
+func validSecret(s string) bool {
+	return s != "" && len(s) <= maxSecretLen && !strings.ContainsFunc(s, unicode.IsSpace)
+}
 
 func validateIAMUsers(users []IAMUser, d iamdriver.IAM) error {
 	if len(users) == 0 {
@@ -216,8 +230,12 @@ func validateIAMUsers(users []IAMUser, d iamdriver.IAM) error {
 		}
 
 		for _, k := range u.AccessKeys {
-			if k.AccessKeyID == "" || k.SecretAccessKey == "" {
-				return fmt.Errorf("iamUser %q: %w", u.Name, errAccessKeyPair)
+			if !accessKeyIDPattern.MatchString(k.AccessKeyID) {
+				return fmt.Errorf("iamUser %q: accessKeyId %q: %w", u.Name, k.AccessKeyID, errAccessKeyID)
+			}
+
+			if !validSecret(k.SecretAccessKey) {
+				return fmt.Errorf("iamUser %q, key %s: %w", u.Name, k.AccessKeyID, errAccessSecret)
 			}
 		}
 	}

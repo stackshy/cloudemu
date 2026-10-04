@@ -2,6 +2,10 @@ package iam
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -48,5 +52,48 @@ func TestImportAccessKey(t *testing.T) {
 	keys, err := m.ListAccessKeys(ctx, "boot")
 	if err != nil || len(keys) != 2 || keys[0].Status != "Active" {
 		t.Fatalf("ListAccessKeys = %+v, %v", keys, err)
+	}
+}
+
+// TestImportAccessKeyConcurrentSameID checks that concurrent imports of one id
+// leave exactly one winner and never overwrite the stored secret.
+func TestImportAccessKeyConcurrentSameID(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	const n = 16
+
+	for i := range n {
+		if _, err := m.CreateUser(ctx, driver.UserConfig{Name: fmt.Sprintf("u%d", i)}); err != nil {
+			t.Fatalf("CreateUser: %v", err)
+		}
+	}
+
+	var (
+		wg   sync.WaitGroup
+		wins atomic.Int32
+	)
+
+	for i := range n {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			if m.ImportAccessKey(ctx, fmt.Sprintf("u%d", i), "AKIARACE", fmt.Sprintf("s%d", i)) == nil {
+				wins.Add(1)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	if got := wins.Load(); got != 1 {
+		t.Fatalf("%d concurrent imports succeeded, want 1", got)
+	}
+
+	ak, _ := m.AccessKeyByID(ctx, "AKIARACE")
+	if "s"+strings.TrimPrefix(ak.UserName, "u") != ak.SecretAccessKey {
+		t.Fatalf("stored key pairs owner %s with secret %s from another import", ak.UserName, ak.SecretAccessKey)
 	}
 }

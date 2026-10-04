@@ -13,10 +13,13 @@ package cloudemu
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -54,13 +57,37 @@ func WithImage(image string) testcontainers.ContainerCustomizer {
 	return testcontainers.WithImage(image)
 }
 
+// defaultCmd mirrors the image's CMD, used as the base when WithEnforceAuth
+// adds its flag and no command was set yet.
+func defaultCmd() []string { return []string{"serve", "--host", "0.0.0.0"} }
+
 // WithEnforceAuth starts the server with --enforce-auth. The /_cloudemu
-// control plane then needs adminToken, which Reset and Seed send for you; seed
-// your first IAM user (with a known access key) through Seed before making
-// signed calls. Readiness waits on /_cloudemu/health, which stays open.
+// control plane then needs adminToken, which Reset and Seed send for you; an
+// empty adminToken gets a random one generated here and passed to the
+// container. Seed your first IAM user (with a known access key) through Seed
+// before making signed calls. --enforce-auth is appended to any command set by
+// an earlier option (the image's default command otherwise). Readiness waits
+// on /_cloudemu/health, which stays open.
 func WithEnforceAuth(adminToken string) testcontainers.CustomizeRequestOption {
+	// Generate once, outside the closure: Run applies the options twice (once
+	// to learn the token), and both passes must agree on it.
+	if adminToken == "" {
+		buf := make([]byte, 32)
+		if _, err := rand.Read(buf); err != nil {
+			return func(*testcontainers.GenericContainerRequest) error {
+				return fmt.Errorf("generate admin token: %w", err)
+			}
+		}
+		adminToken = hex.EncodeToString(buf)
+	}
+
 	return func(req *testcontainers.GenericContainerRequest) error {
-		req.Cmd = []string{"serve", "--host", "0.0.0.0", "--enforce-auth"}
+		if len(req.Cmd) == 0 {
+			req.Cmd = defaultCmd()
+		}
+		if !slices.Contains(req.Cmd, "--enforce-auth") {
+			req.Cmd = append(req.Cmd, "--enforce-auth")
+		}
 
 		if req.Env == nil {
 			req.Env = map[string]string{}

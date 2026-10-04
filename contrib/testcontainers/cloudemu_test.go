@@ -18,14 +18,26 @@ import (
 // on a published image. Override with CLOUDEMU_TEST_IMAGE to use another tag.
 const testImage = "cloudemu:tctest"
 
+// dockerOK is set by TestMain when the container tests can run. Tests that need
+// no Docker run either way.
+var dockerOK bool //nolint:gochecknoglobals // set once in TestMain, read by tests
+
+func requireDocker(t *testing.T) {
+	t.Helper()
+	if !dockerOK {
+		t.Skip("needs Docker (skipped in -short, with CLOUDEMU_SKIP_DOCKER, or when docker is missing)")
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse() // so testing.Short() is readable here
 	if testing.Short() || os.Getenv("CLOUDEMU_SKIP_DOCKER") != "" {
-		os.Exit(0)
+		os.Exit(m.Run())
 	}
 	if _, err := exec.LookPath("docker"); err != nil {
-		os.Exit(0) // no docker → nothing to test here
+		os.Exit(m.Run()) // no docker → only the Docker-free tests run
 	}
+	dockerOK = true
 	if os.Getenv("CLOUDEMU_TEST_IMAGE") == "" {
 		build := exec.Command("docker", "build", "-t", testImage, "../..")
 		build.Stdout, build.Stderr = os.Stderr, os.Stderr
@@ -47,9 +59,7 @@ func image() string {
 // TestRunResetSeed is the #248 acceptance: start the container, drive it over
 // its mapped endpoint, and exercise the reset/seed control plane.
 func TestRunResetSeed(t *testing.T) {
-	if testing.Short() {
-		t.Skip("starts a container; skipped in -short")
-	}
+	requireDocker(t)
 	ctx := context.Background()
 
 	ctr, err := cloudemu.Run(ctx, cloudemu.WithImage(image()))
@@ -100,9 +110,7 @@ func TestRunResetSeed(t *testing.T) {
 // Seed carry the admin token, an unauthenticated reset is refused, and health
 // (the readiness probe) stays open.
 func TestEnforceAuthAdminToken(t *testing.T) {
-	if testing.Short() {
-		t.Skip("starts a container; skipped in -short")
-	}
+	requireDocker(t)
 	ctx := context.Background()
 
 	ctr, err := cloudemu.Run(ctx, cloudemu.WithImage(image()), cloudemu.WithEnforceAuth("tc-admin-token"))

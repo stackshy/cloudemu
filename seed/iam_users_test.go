@@ -2,6 +2,7 @@ package seed_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2"
@@ -12,7 +13,7 @@ func TestSeedIAMUserWithAccessKey(t *testing.T) {
 	ctx := context.Background()
 	cloud := cloudemu.NewAWS()
 
-	f, err := seed.Load([]byte(`{"iamUsers":[{"name":"admin","accessKeys":[{"accessKeyId":"AKIASEED","secretAccessKey":"seed-secret"}]}]}`))
+	f, err := seed.Load([]byte(`{"iamUsers":[{"name":"admin","accessKeys":[{"accessKeyId":"AKIASEED000000000001","secretAccessKey":"seed-secret"}]}]}`))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -26,7 +27,7 @@ func TestSeedIAMUserWithAccessKey(t *testing.T) {
 		t.Fatalf("Apply: %v", err)
 	}
 
-	ak, ok := cloud.IAM.AccessKeyByID(ctx, "AKIASEED")
+	ak, ok := cloud.IAM.AccessKeyByID(ctx, "AKIASEED000000000001")
 	if !ok || ak.SecretAccessKey != "seed-secret" || ak.UserName != "admin" {
 		t.Fatalf("seeded key = %+v ok=%v", ak, ok)
 	}
@@ -50,8 +51,21 @@ func TestSeedIAMUserValidation(t *testing.T) {
 	}{
 		"no IAM driver":  {`{"iamUsers":[{"name":"a"}]}`, seed.Target{}},
 		"missing name":   {`{"iamUsers":[{"accessKeys":[]}]}`, seed.Target{IAM: cloud.IAM}},
-		"missing secret": {`{"iamUsers":[{"name":"a","accessKeys":[{"accessKeyId":"AKIA"}]}]}`, seed.Target{IAM: cloud.IAM}},
-		"no key import":  {`{"iamUsers":[{"name":"a","accessKeys":[{"accessKeyId":"K","secretAccessKey":"S"}]}]}`, seed.Target{IAM: cloudemu.NewGCP().IAM}},
+		"missing secret": {`{"iamUsers":[{"name":"a","accessKeys":[{"accessKeyId":"AKIAAAAAAAAAAAAAAAAA"}]}]}`, seed.Target{IAM: cloud.IAM}},
+		"short key id":   {`{"iamUsers":[{"name":"a","accessKeys":[{"accessKeyId":"AKIA","secretAccessKey":"s"}]}]}`, seed.Target{IAM: cloud.IAM}},
+		"lowercase id": {
+			`{"iamUsers":[{"name":"a","accessKeys":[{"accessKeyId":"AKIAaaaaaaaaaaaaaaaa","secretAccessKey":"s"}]}]}`,
+			seed.Target{IAM: cloud.IAM},
+		},
+		"temporary id prefix": {
+			`{"iamUsers":[{"name":"a","accessKeys":[{"accessKeyId":"ASIAAAAAAAAAAAAAAAAA","secretAccessKey":"s"}]}]}`,
+			seed.Target{IAM: cloud.IAM},
+		},
+		"secret with space": {
+			`{"iamUsers":[{"name":"a","accessKeys":[{"accessKeyId":"AKIAAAAAAAAAAAAAAAAA","secretAccessKey":"a b"}]}]}`,
+			seed.Target{IAM: cloud.IAM},
+		},
+		"no key import": {`{"iamUsers":[{"name":"a","accessKeys":[{"accessKeyId":"K","secretAccessKey":"S"}]}]}`, seed.Target{IAM: cloudemu.NewGCP().IAM}},
 	}
 
 	for name, tc := range cases {
@@ -63,5 +77,12 @@ func TestSeedIAMUserValidation(t *testing.T) {
 		if err := seed.Apply(context.Background(), f, tc.target); err == nil {
 			t.Errorf("%s: Apply = nil, want a validation error", name)
 		}
+	}
+
+	long := seed.Fixtures{IAMUsers: []seed.IAMUser{{Name: "a", AccessKeys: []seed.AccessKey{
+		{AccessKeyID: "AKIAAAAAAAAAAAAAAAAA", SecretAccessKey: strings.Repeat("x", 129)},
+	}}}}
+	if err := seed.Apply(context.Background(), long, seed.Target{IAM: cloud.IAM}); err == nil {
+		t.Error("129-character secret: Apply = nil, want a validation error")
 	}
 }

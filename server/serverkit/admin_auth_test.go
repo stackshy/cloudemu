@@ -140,6 +140,66 @@ func TestEnforceAuthGeneratedTokenWrittenToFile(t *testing.T) {
 	}
 }
 
+// TestAdminTokenFileResistsPreCreation covers a shared directory where someone
+// planted the token path first: a world-readable file they hold open, or a
+// symlink to a file they can read. Neither may receive the token.
+func TestAdminTokenFileResistsPreCreation(t *testing.T) {
+	dir := t.TempDir()
+
+	planted := filepath.Join(dir, "planted")
+	if err := os.WriteFile(planted, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	held, err := os.Open(planted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+
+	victim := filepath.Join(dir, "victim")
+	if err := os.WriteFile(victim, []byte("victim\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	link := filepath.Join(dir, "linked")
+	if err := os.Symlink(victim, link); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{planted, link} {
+		if err := writeAdminTokenFile(path, "the-token"); err != nil {
+			t.Fatalf("writeAdminTokenFile(%s): %v", path, err)
+		}
+
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+			t.Fatalf("%s: mode %v, want a regular 0600 file", path, info.Mode())
+		}
+
+		if got, _ := os.ReadFile(path); string(got) != "the-token\n" {
+			t.Fatalf("%s holds %q", path, got)
+		}
+	}
+
+	if got, _ := io.ReadAll(held); string(got) != "old\n" {
+		t.Fatalf("a descriptor opened before the write sees %q, want the old content", got)
+	}
+
+	if got, _ := os.ReadFile(victim); string(got) != "victim\n" {
+		t.Fatalf("the symlink target was written through: %q", got)
+	}
+
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 3 {
+		t.Fatalf("dir has %d entries, want 3: planted, victim, linked (no leftover temp files)", len(entries))
+	}
+}
+
 func TestDangerWarningQuietUnderEnforceAuth(t *testing.T) {
 	if w := dangerWarning(&Config{Admin: true, EnforceAuth: true, Host: "0.0.0.0"}); w != "" {
 		t.Fatalf("token-gated admin on a public host: want no warning, got %q", w)
@@ -186,6 +246,13 @@ func TestSeedBootstrapsIAMUserUnderEnforceAuth(t *testing.T) {
 	fixture := `{"iamUsers":[{"name":"admin","accessKeys":[{"accessKeyId":"AKIABOOTSTRAP0000001","secretAccessKey":"boot-secret"}]}]}`
 	if rec := adminDo(h, http.MethodPost, "/_cloudemu/seed", "tok", fixture); rec.Code != http.StatusOK {
 		t.Fatalf("seed iam user = %d %s", rec.Code, rec.Body.String())
+	}
+
+	bad := `{"iamUsers":[{"name":"x","accessKeys":[{"accessKeyId":"not-a-key","secretAccessKey":"s"}]}]}`
+
+	rec := adminDo(h, http.MethodPost, "/_cloudemu/seed", "tok", bad)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "AKIA followed by 16") {
+		t.Fatalf("malformed access key id = %d %s, want 400 naming the expected format", rec.Code, rec.Body.String())
 	}
 
 	app.rebuildMu.Lock()

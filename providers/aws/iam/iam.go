@@ -1279,22 +1279,22 @@ func (m *Mock) ImportAccessKey(_ context.Context, userName, accessKeyID, secretA
 		return errors.Newf(errors.NotFound, "user %q not found", userName)
 	}
 
-	if m.accessKeys.Has(accessKeyID) {
-		return errors.Newf(errors.AlreadyExists, "access key %q already exists", accessKeyID)
-	}
-
 	if m.countAccessKeys(userName) >= maxAccessKeysPerUser {
 		return errors.Newf(errors.ResourceExhausted,
 			"Cannot exceed quota for AccessKeysPerUser: %d", maxAccessKeysPerUser)
 	}
 
-	m.accessKeys.Set(accessKeyID, &accessKeyData{
+	// SetIfAbsent checks and inserts under one lock, so two concurrent imports of
+	// the same id can't overwrite each other's secret.
+	if !m.accessKeys.SetIfAbsent(accessKeyID, &accessKeyData{
 		AccessKeyID:     accessKeyID,
 		SecretAccessKey: secretAccessKey,
 		UserName:        userName,
 		Status:          "Active",
 		CreatedAt:       m.opts.Clock.Now().UTC().Format(timeFormat),
-	})
+	}) {
+		return errors.Newf(errors.AlreadyExists, "access key %q already exists", accessKeyID)
+	}
 
 	return nil
 }

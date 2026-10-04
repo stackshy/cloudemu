@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // adminTokenBytes is the entropy of a generated admin token (hex-encoded to 64
@@ -57,14 +58,40 @@ func (a *App) setupAdminToken() error {
 }
 
 // writeAdminTokenFile writes token to path with owner-only permissions. The
-// file is removed first so an existing file with looser permissions can't keep
-// them, since WriteFile only applies the mode when it creates the file.
+// token goes into a fresh temp file in the same directory (os.CreateTemp opens
+// it O_CREATE|O_EXCL with mode 0600, so nobody can pre-create it or hold it
+// open), which is then renamed over path. Rename replaces whatever sits at path,
+// a symlink included, without following it, so a file or link planted there in
+// a shared directory can neither redirect the write nor read the token.
 func writeAdminTokenFile(path, token string) error {
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("replace admin token file: %w", err)
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("write admin token file: %w", err)
 	}
 
-	if err := os.WriteFile(path, []byte(token+"\n"), adminTokenFileMode); err != nil {
+	tmpName := tmp.Name()
+
+	// Remove the temp file on any failure before the rename. After a successful
+	// rename it no longer exists under this name, so the Remove is a no-op.
+	defer os.Remove(tmpName)
+
+	if err := tmp.Chmod(adminTokenFileMode); err != nil {
+		_ = tmp.Close()
+
+		return fmt.Errorf("write admin token file: %w", err)
+	}
+
+	if _, err := tmp.WriteString(token + "\n"); err != nil {
+		_ = tmp.Close()
+
+		return fmt.Errorf("write admin token file: %w", err)
+	}
+
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("write admin token file: %w", err)
+	}
+
+	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("write admin token file: %w", err)
 	}
 
