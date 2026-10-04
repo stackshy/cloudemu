@@ -356,7 +356,7 @@ func (m *Mock) verifyAccessToken(token string) (userRecord, error) {
 }
 
 // liveTokenUser checks that a verified token's login is not revoked and that
-// its user still exists and is enabled.
+// its user still exists and may still sign in.
 func (m *Mock) liveTokenUser(poolID string, claims map[string]any) (userRecord, error) {
 	originJTI, _ := claims["origin_jti"].(string)
 	sub, _ := claims[attrSub].(string)
@@ -371,8 +371,8 @@ func (m *Mock) liveTokenUser(poolID string, claims map[string]any) (userRecord, 
 		return userRecord{}, notAuthorized("Access Token has been revoked")
 	}
 
-	if !rec.User.Enabled {
-		return userRecord{}, notAuthorized("User is disabled.")
+	if err := checkCanSignIn(&rec); err != nil {
+		return userRecord{}, err
 	}
 
 	return rec, nil

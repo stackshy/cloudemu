@@ -310,17 +310,35 @@ func (m *Mock) newSignUpRecord(pool *driver.UserPool, in driver.SignUpInput) (us
 	return rec, nil
 }
 
-// clientUser resolves the client, verifies SECRET_HASH, and finds the user a
-// client-side operation names. It must run under m.mu.
-func (m *Mock) clientUser(in driver.ClientUserInput) (driver.UserPool, string, userRecord, error) {
+// clientTarget is the client, pool and (when found) user a client-side
+// operation names.
+type clientTarget struct {
+	client driver.UserPoolClient
+	pool   driver.UserPool
+	key    string
+	rec    userRecord
+	found  bool
+}
+
+// hidesUsers reports whether the client hides whether a user exists
+// (PreventUserExistenceErrors ENABLED).
+func (t *clientTarget) hidesUsers() bool {
+	return t.client.PreventUserExistenceErrors == existenceEnabled
+}
+
+// clientUser resolves the client, verifies SECRET_HASH, and looks up the user a
+// client-side operation names. A missing user is reported through found, so
+// the caller can answer the way the client's existence-error setting asks. It
+// must run under m.mu.
+func (m *Mock) clientUser(in driver.ClientUserInput) (clientTarget, error) {
 	client, err := m.clientByID(in.ClientID)
 	if err != nil {
-		return driver.UserPool{}, "", userRecord{}, err
+		return clientTarget{}, err
 	}
 
 	pool, ok := m.userPools.Get(client.UserPoolID)
 	if !ok {
-		return driver.UserPool{}, "", userRecord{}, poolNotFound(client.UserPoolID)
+		return clientTarget{}, poolNotFound(client.UserPoolID)
 	}
 
 	key, rec, found := m.resolveUser(&pool, in.Username)
@@ -331,14 +349,27 @@ func (m *Mock) clientUser(in driver.ClientUserInput) (driver.UserPool, string, u
 	}
 
 	if err := checkSecretHash(client, in.SecretHash, "Unable to verify secret hash for client "+client.ClientID, names...); err != nil {
-		return driver.UserPool{}, "", userRecord{}, err
+		return clientTarget{}, err
 	}
 
-	if !found {
-		return driver.UserPool{}, "", userRecord{}, clientUserNotFound()
+	return clientTarget{client: client, pool: pool, key: key, rec: copyUserRecord(rec), found: found}, nil
+}
+
+// simulatedDelivery is the CodeDeliveryDetails a client that hides user
+// existence returns for an unknown username, shaped like a real delivery to
+// the attribute the pool verifies.
+func simulatedDelivery(pool *driver.UserPool, username string) *driver.CodeDeliveryDetails {
+	email := username
+	if !isEmailFormat(email) {
+		email = username + "@example.com"
 	}
 
-	return pool, key, copyUserRecord(rec), nil
+	attrs := []driver.Attribute{{Name: attrEmail, Value: email}}
+	if isPhoneFormat(username) {
+		attrs = append(attrs, driver.Attribute{Name: attrPhoneNumber, Value: username})
+	}
+
+	return codeDelivery(pool, attrs)
 }
 
 // ConfirmSignUp confirms an UNCONFIRMED user with the code that was sent. The
@@ -347,21 +378,27 @@ func (m *Mock) ConfirmSignUp(_ context.Context, in driver.ConfirmSignUpInput) er
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	pool, key, rec, err := m.clientUser(in.ClientUserInput)
+	t, err := m.clientUser(in.ClientUserInput)
 	if err != nil {
 		return err
 	}
+
+	if !t.found {
+		if t.hidesUsers() {
+			return codeMismatch()
+		}
+
+		return clientUserNotFound()
+	}
+
+	pool, key, rec := t.pool, t.key, t.rec
 
 	if rec.User.UserStatus != driver.UserStatusUnconfirmed {
 		return cannotConfirm(rec.User.UserStatus)
 	}
 
-	if rec.Code == nil || !hmac.Equal([]byte(rec.Code.Code), []byte(in.ConfirmationCode)) {
-		return codeMismatch()
-	}
-
-	if !m.now().Before(rec.Code.ExpiresAt) {
-		return expiredCode()
+	if err := m.checkCode(rec.Code, in.ConfirmationCode); err != nil {
+		return err
 	}
 
 	if d := rec.Code.Delivery; d != nil {
@@ -383,15 +420,38 @@ func (m *Mock) ConfirmSignUp(_ context.Context, in driver.ConfirmSignUpInput) er
 	return nil
 }
 
+// checkCode compares a confirmation code with the outstanding one.
+func (m *Mock) checkCode(want *pendingCode, got string) error {
+	if want == nil || !hmac.Equal([]byte(want.Code), []byte(got)) {
+		return codeMismatch()
+	}
+
+	if !m.now().Before(want.ExpiresAt) {
+		return expiredCode()
+	}
+
+	return nil
+}
+
 // ResendConfirmationCode issues a fresh code to an UNCONFIRMED user.
 func (m *Mock) ResendConfirmationCode(_ context.Context, in driver.ClientUserInput) (*driver.CodeDeliveryDetails, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	pool, key, rec, err := m.clientUser(in)
+	t, err := m.clientUser(in)
 	if err != nil {
 		return nil, err
 	}
+
+	if !t.found {
+		if t.hidesUsers() {
+			return simulatedDelivery(&t.pool, in.Username), nil
+		}
+
+		return nil, clientUserNotFound()
+	}
+
+	pool, key, rec := t.pool, t.key, t.rec
 
 	if rec.User.UserStatus != driver.UserStatusUnconfirmed {
 		return nil, invalidParameter("User is already confirmed.")

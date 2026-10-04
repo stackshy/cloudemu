@@ -22,6 +22,7 @@ const (
 	userAttrPrefix    = "userAttributes."
 	sessionBytes      = 96
 	existenceEnabled  = "ENABLED"
+	dummySalt         = "00000000000000000000000000000000"
 	allowFlowPrefix   = "ALLOW_"
 	legacyAdminNoSRP  = "ADMIN_NO_SRP_AUTH"
 	allowAdminUserPwd = "ALLOW_ADMIN_USER_PASSWORD_AUTH"
@@ -42,6 +43,7 @@ type challengeSession struct {
 	poolID    string
 	clientID  string
 	username  string
+	sub       string
 	challenge string
 	expires   time.Time
 }
@@ -217,6 +219,10 @@ func (m *Mock) passwordAuth(pool *driver.UserPool, client driver.UserPoolClient,
 	}
 
 	if !found {
+		// Spend the same hashing work as a real check so the response time
+		// does not tell an unknown username from a wrong password.
+		_ = pbkdf2Hash(dummySalt, password, pbkdf2Iterations)
+
 		return nil, unknownUser(&client)
 	}
 
@@ -299,6 +305,7 @@ func (m *Mock) newPasswordChallenge(pool *driver.UserPool, client *driver.UserPo
 		poolID:    pool.ID,
 		clientID:  client.ClientID,
 		username:  rec.User.Username,
+		sub:       attrValue(rec.User.Attributes, attrSub),
 		challenge: driver.ChallengeNewPasswordRequired,
 		expires:   m.now().Add(time.Duration(client.AuthSessionValidity) * time.Minute),
 	}
@@ -374,8 +381,8 @@ func (m *Mock) refreshUser(l *loginRecord) (userRecord, error) {
 		return userRecord{}, invalidRefreshToken()
 	}
 
-	if !rec.User.Enabled {
-		return userRecord{}, notAuthorized("User is disabled.")
+	if err := checkCanSignIn(&rec); err != nil {
+		return userRecord{}, err
 	}
 
 	return rec, nil
@@ -414,17 +421,11 @@ func (m *Mock) respond(in *driver.RespondToAuthChallengeInput, admin bool) (*dri
 		return nil, err
 	}
 
-	key, rec, found := m.resolveUser(&pool, username)
-	if !found || rec.User.Username != sess.username {
-		return nil, invalidSession()
-	}
-
-	if err := checkSecretHash(client, in.ChallengeResponses[paramSecretHash], noSecretReceived(client.ClientID),
-		username, rec.User.Username); err != nil {
+	key, rec, err := m.challengeUser(&pool, &client, &sess, username, in.ChallengeResponses[paramSecretHash])
+	if err != nil {
 		return nil, err
 	}
 
-	rec = copyUserRecord(rec)
 	if err := m.applyNewPassword(&pool, key, &rec, in.ChallengeResponses); err != nil {
 		return nil, err
 	}
@@ -433,6 +434,32 @@ func (m *Mock) respond(in *driver.RespondToAuthChallengeInput, admin bool) (*dri
 	m.users.Set(key, rec)
 
 	return m.signIn(client, &rec)
+}
+
+// challengeUser finds the user a challenge answer names and checks it is still
+// the user the session was issued to and still in the challenge's state. An
+// admin can disable, reset or confirm the user between the two calls.
+func (m *Mock) challengeUser(
+	pool *driver.UserPool, client *driver.UserPoolClient, sess *challengeSession, username, hash string,
+) (string, userRecord, error) {
+	key, rec, found := m.resolveUser(pool, username)
+	if !found || rec.User.Username != sess.username || attrValue(rec.User.Attributes, attrSub) != sess.sub {
+		return "", userRecord{}, invalidSession()
+	}
+
+	if err := checkSecretHash(*client, hash, noSecretReceived(client.ClientID), username, rec.User.Username); err != nil {
+		return "", userRecord{}, err
+	}
+
+	if err := checkCanSignIn(&rec); err != nil {
+		return "", userRecord{}, err
+	}
+
+	if rec.User.UserStatus != driver.UserStatusForceChangePassword {
+		return "", userRecord{}, invalidSession()
+	}
+
+	return key, copyUserRecord(rec), nil
 }
 
 // takeSession returns a live session for the client and challenge. An expired

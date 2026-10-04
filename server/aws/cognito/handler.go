@@ -22,6 +22,9 @@ import (
 
 const targetPrefix = "AWSCognitoIdentityProviderService."
 
+// iamService is the IAM service prefix of every user-pool operation.
+const iamService = "cognito-idp"
+
 // Handler serves Cognito user-pools JSON-RPC requests against a Cognito driver.
 type Handler struct {
 	cognito cognitodriver.Cognito
@@ -160,4 +163,4 @@ func writeErr(w http.ResponseWriter, err error) {
 
 // IAMService returns the IAM service prefix of the operations this handler
 // serves.
-func (*Handler) IAMService() string { return "cognito-idp" }
+func (*Handler) IAMService() string { return iamService }

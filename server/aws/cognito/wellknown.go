@@ -41,7 +41,7 @@ func (w *WellKnown) PublicRequest(r *http.Request) bool { return w.Matches(r) }
 
 // IAMService returns the IAM service prefix of the user-pool documents. They
 // are public, so no request reaches IAM authorization.
-func (*WellKnown) IAMService() string { return "cognito-idp" }
+func (*WellKnown) IAMService() string { return iamService }
 
 // openIDConfiguration is the discovery document Cognito publishes for a pool.
 type openIDConfiguration struct {
