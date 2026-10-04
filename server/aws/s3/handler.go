@@ -2532,3 +2532,13 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusInternalServerError, "InternalError", msg)
 	}
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "s3" }
+
+// WriteAccessDenied writes the 403 this service returns when IAM denies a
+// call, in its own XML error shape.
+func (*Handler) WriteAccessDenied(w http.ResponseWriter, _ *http.Request, msg string) {
+	writeError(w, http.StatusForbidden, "AccessDenied", msg)
+}

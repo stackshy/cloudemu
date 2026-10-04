@@ -86,3 +86,7 @@ func dispatch[Req any](
 
 	writeJSON(w, out)
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "globalaccelerator" }

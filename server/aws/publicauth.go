@@ -10,44 +10,54 @@ import (
 	"github.com/stackshy/cloudemu/v2/server"
 )
 
-// exemptPublic reports whether r may skip the SigV4 gate because it is an
-// operation AWS serves without credentials (a noAuth operation).
-//
-// The decision belongs to the handler that dispatch will pick for this exact
-// request: the gate runs the dispatcher's own first-match lookup (match) on a
-// probe copy of r and asks that handler, through server.PublicRequester,
-// whether it serves r as a public operation. A handler answers true only for
-// the public routes it really serves, never for its private ones, so a
-// request cannot borrow a public marker (a Host, a path, a target) while being
-// served as something else. When no handler would serve r, it is not exempt.
+// probeRoute finds the handler that dispatch will pick for r, by running the
+// dispatcher's own first-match lookup (match) on a copy of r. Both the public
+// exemption and the authorization plan are bound to that handler, so a
+// request cannot borrow a marker (a Host, a path, a target) of one service
+// while being served by another.
 //
 // The probe gets fresh form state and the same body bytes that dispatch will
 // read, so the lookup and the real dispatch see identical input. A form body
-// or query string that does not parse fails closed, since handlers that parse
-// forms could otherwise disagree about what the request is.
-func exemptPublic(r *http.Request, body []byte, match func(*http.Request) server.Handler) bool {
+// or query string that does not parse returns ok=false: handlers that parse
+// forms could otherwise disagree about what the request is, so callers treat
+// it as fail-closed.
+//
+// The probe's body is left exactly as the Matches calls left it, because the
+// real request's body will be in that same state when the handler serves it.
+// A Resolver reading the probe therefore sees the bytes dispatch sees. That
+// holds only if every Matches that peeks at the body puts it back whole (see
+// wire.PeekBody); TestMatchesLeaveBodyIntact checks it for every handler.
+func probeRoute(
+	r *http.Request, body []byte, match func(*http.Request) server.Handler,
+) (probe *http.Request, h server.Handler, ok bool) {
 	if _, err := url.ParseQuery(r.URL.RawQuery); err != nil {
-		return false
+		return nil, nil, false
 	}
 
 	if strings.HasPrefix(r.Header.Get("Content-Type"), urlEncodedForm) {
 		if _, err := url.ParseQuery(string(body)); err != nil {
-			return false
+			return nil, nil, false
 		}
 	}
 
-	probe := r.Clone(r.Context())
+	probe = r.Clone(r.Context())
 	probe.Form, probe.PostForm, probe.MultipartForm = nil, nil, nil
 	probe.Body = io.NopCloser(bytes.NewReader(body))
 
-	pub, ok := match(probe).(server.PublicRequester)
-	if !ok {
-		return false
-	}
+	h = match(probe)
 
-	probe.Body = io.NopCloser(bytes.NewReader(body))
+	return probe, h, true
+}
 
-	return pub.PublicRequest(probe)
+// servedPublicly reports whether h serves the probed request as an operation
+// AWS serves without credentials (a noAuth operation), which skips both
+// authentication and authorization. A handler answers true only for the
+// public routes it really serves, never for its private ones, and a request
+// no handler would serve is not public.
+func servedPublicly(probe *http.Request, h server.Handler) bool {
+	pub, ok := h.(server.PublicRequester)
+
+	return ok && pub.PublicRequest(probe)
 }
 
 const urlEncodedForm = "application/x-www-form-urlencoded"

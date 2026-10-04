@@ -118,3 +118,7 @@ func (h *Handler) serveRetrieve(w http.ResponseWriter, r *http.Request, p string
 
 	h.retrieve(w, r, parts[1])
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "bedrock" }

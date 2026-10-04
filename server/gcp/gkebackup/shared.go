@@ -1,12 +1,11 @@
 package gkebackup
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
+	"github.com/stackshy/cloudemu/v2/server/wire"
 )
 
 // Backup and DR serves the same .../locations/{l}/backupPlans paths. When both
@@ -37,9 +36,7 @@ func bodyLooksLikeBackupDR(r *http.Request) bool {
 		return false
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
-	_ = r.Body.Close()
-	r.Body = io.NopCloser(bytes.NewReader(raw))
+	raw, err := wire.PeekBody(r, maxBodyBytes)
 
 	if err != nil {
 		return false

@@ -1,12 +1,11 @@
 package cloudids
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
+	"github.com/stackshy/cloudemu/v2/server/wire"
 )
 
 // Vertex AI serves the same /v1/projects/{p}/locations/{l}/endpoints paths.
@@ -61,9 +60,7 @@ func bodyLooksLikeEndpoint(r *http.Request) bool {
 		return false
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
-	_ = r.Body.Close()
-	r.Body = io.NopCloser(bytes.NewReader(raw))
+	raw, err := wire.PeekBody(r, maxBodyBytes)
 
 	if err != nil {
 		return false

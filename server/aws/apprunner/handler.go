@@ -139,3 +139,7 @@ func mapWire[T any, W any](items []T, conv func(T) W) []W {
 
 	return out
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "apprunner" }

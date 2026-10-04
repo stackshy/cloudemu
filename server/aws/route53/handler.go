@@ -213,3 +213,13 @@ func (h *Handler) serveRRSet(w http.ResponseWriter, r *http.Request, id string) 
 func writeMethodNotAllowed(w http.ResponseWriter) {
 	writeError(w, http.StatusMethodNotAllowed, "InvalidInput", "method not allowed")
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "route53" }
+
+// WriteAccessDenied writes the 403 this service returns when IAM denies a
+// call, in its own XML error shape.
+func (*Handler) WriteAccessDenied(w http.ResponseWriter, _ *http.Request, msg string) {
+	writeError(w, http.StatusForbidden, "AccessDenied", msg)
+}

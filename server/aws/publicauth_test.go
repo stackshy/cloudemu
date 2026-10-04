@@ -218,6 +218,18 @@ func TestAuthzSkipsPublicOps(t *testing.T) {
 		typ != accessDeny {
 		t.Fatalf("private ListUserPools: %d %s, want 403 %s", status, typ, accessDeny)
 	}
+
+	// A signed execute-api invoke stays public: the data plane answers it
+	// (here: no such API), never the IAM gate.
+	for _, rq := range []sreq{
+		{method: http.MethodGet, path: "/prod/pets", service: "execute-api", host: execHost},
+		{method: http.MethodGet, path: "/restapis/abc123/prod/_user_request_/pets", service: "execute-api"},
+	} {
+		status, body := doSigned(t, ts, creds, rq)
+		if strings.Contains(body, "is not authorized") || strings.Contains(body, accessDeny) {
+			t.Fatalf("signed execute-api %s denied by the gate: %d %s", rq.path, status, body)
+		}
+	}
 }
 
 func stsClient(ts *httptest.Server, creds aws.Credentials) *awssts.Client {
