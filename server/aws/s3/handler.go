@@ -26,6 +26,10 @@ import (
 )
 
 const (
+	// serviceName is the S3 service name in SigV4 scopes, IAM actions and
+	// endpoint hostnames.
+	serviceName = "s3"
+
 	defaultMaxKeys = 1000
 	xmlns          = "http://s3.amazonaws.com/doc/2006-03-01/"
 	// maxPutObjectSize caps PutObject bodies at 5 GiB (S3 single-PUT limit).
@@ -142,7 +146,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	// request explicitly signed for a different service; it then reaches that
 	// service's handler or cleanly 501s. Unsigned requests carry no scope and
 	// still fall to S3, preserving path-style access for unsigned callers.
-	if svc := awsquery.CredentialScopeService(r.Header.Get("Authorization")); svc != "" && svc != "s3" {
+	if svc := awsquery.CredentialScopeService(r.Header.Get("Authorization")); svc != "" && svc != serviceName {
 		return false
 	}
 
@@ -2330,7 +2334,7 @@ func writeErr(w http.ResponseWriter, err error) {
 
 // IAMService returns the IAM service prefix of the operations this handler
 // serves.
-func (*Handler) IAMService() string { return "s3" }
+func (*Handler) IAMService() string { return serviceName }
 
 // WriteAccessDenied writes the 403 this service returns when IAM denies a
 // call, in its own XML error shape.

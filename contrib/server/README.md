@@ -178,13 +178,20 @@ actually run the request, so neither the SigV4 signing scope nor a forged
   `UnauthorizedOperation`, and other query services return `AccessDenied`.
   `sts:GetCallerIdentity` needs no permission, and `sts:GetSessionToken` is
   blocked only by an explicit `Deny`.
-- REST services (S3, Lambda, API Gateway, EKS, Route 53, CloudFront and the
-  rest) are checked at service level for now. A request passes only when the
-  caller's policies allow every action of that service on every resource,
-  such as `s3:*` on `*` or `AdministratorAccess`. **A fine-grained or
-  resource-scoped REST policy (for example `s3:GetObject` on one bucket) is
-  denied until that service gets per-operation checks.** A `Deny` that touches
-  the service also denies the request.
+- S3 is checked per operation on the bucket ARN (`arn:aws:s3:::bucket`) or
+  object ARN (`arn:aws:s3:::bucket/key`), for path-style, virtual-hosted and
+  presigned requests. CopyObject and UploadPartCopy also need `s3:GetObject`
+  on the source. A DeleteObjects request is checked key by key, and one
+  denied key denies the whole request (real S3 deletes the allowed keys and
+  reports the others). Bucket policies are not evaluated yet.
+- The other REST services (Lambda, API Gateway, EKS, Route 53, CloudFront and
+  the rest) are checked at service level for now. A request passes only when
+  the caller's policies allow every action of that service on every resource,
+  such as `lambda:*` on `*` or `AdministratorAccess`. **A fine-grained or
+  resource-scoped policy on one of these services (for example
+  `lambda:InvokeFunction` on one function) is denied until that service gets
+  per-operation checks.** A `Deny` that touches the service also denies the
+  request.
 - The account root and IAM users with no policies are unrestricted, so a
   freshly created user can bootstrap others. Role sessions are always
   evaluated on the role's policies.

@@ -1,8 +1,10 @@
 package s3
 
 import (
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // opID names the S3 operation a request runs. classify picks it from the
@@ -119,7 +121,7 @@ var (
 // only the request line and headers, never the body, and has no side
 // effects; both ServeHTTP and IAMChecks call it.
 func classify(r *http.Request) (opID, opArgs) {
-	bucket, key := parsePath(r.URL.Path)
+	bucket, key := bucketAndKey(r)
 	a := opArgs{bucket: bucket, key: key, notAllowed: msgNotAllowed}
 
 	switch {
@@ -136,6 +138,53 @@ func classify(r *http.Request) (opID, opArgs) {
 		op := classifyObject(r, &a)
 		return op, a
 	}
+}
+
+// bucketAndKey resolves the bucket and key of a request. A virtual-hosted
+// request names the bucket in the Host and the key in the whole path; a
+// path-style request carries both in the path.
+func bucketAndKey(r *http.Request) (bucket, key string) {
+	if b := vhostBucket(r.Host); b != "" {
+		return b, strings.TrimPrefix(r.URL.Path, "/")
+	}
+
+	return parsePath(r.URL.Path)
+}
+
+// vhostBucket returns the bucket a virtual-hosted Host names, or "" for a
+// path-style request. It recognizes the S3 endpoint forms
+// "<bucket>.s3.<...>" and "<bucket>.s3-<...>" (AWS and LocalStack-style
+// hostnames) and "<bucket>.localhost", which is what SDKs send for a
+// virtual-hosted request to an endpoint of http://localhost:<port>. A Host
+// that is an IP address, a bare name, or anything else stays path-style.
+func vhostBucket(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+
+	host = strings.ToLower(host)
+
+	var bucket string
+
+	for _, marker := range []string{".s3.", ".s3-"} {
+		if i := strings.Index(host, marker); i > 0 {
+			bucket = host[:i]
+			break
+		}
+	}
+
+	if bucket == "" {
+		bucket = strings.TrimSuffix(host, ".localhost")
+		if bucket == host || bucket == serviceName {
+			return ""
+		}
+	}
+
+	if !validBucketName(bucket) {
+		return ""
+	}
+
+	return bucket
 }
 
 // classifyBucket names a bucket-level operation.
