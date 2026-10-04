@@ -53,6 +53,8 @@ const (
 
 	DefaultTargetHealthSettle = 2 * time.Second // ELBv2 target initial->healthy
 	DefaultTargetDrainSettle  = 2 * time.Second // ELBv2 target draining->removed
+
+	DefaultStackSettle = 5 * time.Second // CloudFormation stack *_IN_PROGRESS->*_COMPLETE
 )
 
 // Window is a read-time overlay describing a resource still settling into its

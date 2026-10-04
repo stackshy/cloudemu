@@ -95,6 +95,7 @@ const (
 	ExceptionChangeSetNotFound      = "ChangeSetNotFound"
 	ExceptionInvalidChangeSetStatus = "InvalidChangeSetStatus"
 	ExceptionLimitExceeded          = "LimitExceededException"
+	ExceptionTokenAlreadyExists     = "TokenAlreadyExistsException"
 )
 
 // ChangeTarget is the part of a resource a change detail touches. The value

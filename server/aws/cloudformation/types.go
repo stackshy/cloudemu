@@ -47,6 +47,10 @@ func createInput(form url.Values) cfn.CreateStackInput {
 		DisableRollback:             formBool(form, "DisableRollback"),
 		EnableTerminationProtection: formBool(form, "EnableTerminationProtection"),
 		RetainExceptOnCreate:        formBool(form, "RetainExceptOnCreate"),
+
+		StackPolicyBody:    form.Get("StackPolicyBody"),
+		StackPolicyURL:     form.Get("StackPolicyURL"),
+		ClientRequestToken: form.Get("ClientRequestToken"),
 	}
 }
 
@@ -68,6 +72,12 @@ func updateInput(form url.Values) cfn.UpdateStackInput {
 		DisableRollback:      formBool(form, "DisableRollback"),
 		RetainExceptOnCreate: formBool(form, "RetainExceptOnCreate"),
 		NotificationARNs:     updateNotificationARNs(form),
+
+		StackPolicyBody:             form.Get("StackPolicyBody"),
+		StackPolicyURL:              form.Get("StackPolicyURL"),
+		StackPolicyDuringUpdateBody: form.Get("StackPolicyDuringUpdateBody"),
+		StackPolicyDuringUpdateURL:  form.Get("StackPolicyDuringUpdateURL"),
+		ClientRequestToken:          form.Get("ClientRequestToken"),
 	}
 }
 
@@ -219,6 +229,7 @@ type eventXML struct {
 	Timestamp            string `xml:"Timestamp"`
 	ResourceStatus       string `xml:"ResourceStatus"`
 	ResourceStatusReason string `xml:"ResourceStatusReason,omitempty"`
+	ClientRequestToken   string `xml:"ClientRequestToken,omitempty"`
 }
 
 type describeStackEventsResponse struct {

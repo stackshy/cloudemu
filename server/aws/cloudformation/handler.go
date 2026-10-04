@@ -35,6 +35,10 @@
 //	UpdateTerminationProtection API.UpdateTerminationProtection
 //	DescribeAccountLimits      API.DescribeAccountLimits
 //	EstimateTemplateCost       API.EstimateTemplateCost
+//	SetStackPolicy             API.SetStackPolicy
+//	GetStackPolicy             API.GetStackPolicy
+//	CancelUpdateStack          API.CancelUpdateStack
+//	RollbackStack              API.RollbackStack
 //
 // Templates may be JSON or YAML, given inline (TemplateBody) or as an S3
 // object URL (TemplateURL).
@@ -83,6 +87,11 @@ var cfnActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	actionUpdateTerminationProtection: {},
 	actionDescribeAccountLimits:       {},
 	actionEstimateTemplateCost:        {},
+
+	actionSetStackPolicy:    {},
+	actionGetStackPolicy:    {},
+	actionCancelUpdateStack: {},
+	actionRollbackStack:     {},
 }
 
 // Handler serves CloudFormation query-protocol requests against a stack API.
@@ -153,6 +162,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case actionListExports, actionListImports, actionUpdateTerminationProtection, actionDescribeAccountLimits,
 		actionEstimateTemplateCost:
 		h.serveAccount(w, r)
+	case actionSetStackPolicy, actionGetStackPolicy, actionCancelUpdateStack, actionRollbackStack:
+		h.serveStackControl(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction",
 			"unknown CloudFormation action: "+r.Form.Get("Action"))

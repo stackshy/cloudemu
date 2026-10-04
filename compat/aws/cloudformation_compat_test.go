@@ -2,11 +2,13 @@ package aws
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfn "github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	cfntypes "github.com/aws/aws-sdk-go-v2/service/cloudformation/types"
+	"github.com/aws/smithy-go"
 
 	cloudemu "github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/internal/compat"
@@ -116,6 +118,7 @@ func TestAWSCloudFormationCompat(t *testing.T) {
 		return continueUpdateRollback(ctx, client)
 	})
 
+	stackControlOps(ctx, sess, client, stack)
 	changeSetOps(ctx, sess, client)
 	exportOps(ctx, sess, client)
 
@@ -123,6 +126,88 @@ func TestAWSCloudFormationCompat(t *testing.T) {
 		_, err := client.DeleteStack(ctx, &awscfn.DeleteStackInput{StackName: aws.String(stack)})
 		return err
 	})
+}
+
+// stackControlOps sets and reads a stack policy, checks CancelUpdateStack
+// refuses a stack that is not updating, and rolls an UPDATE_FAILED stack
+// back.
+func stackControlOps(ctx context.Context, sess *compat.AWSSession, client *awscfn.Client, stack string) {
+	const (
+		svc    = "cloudformation"
+		policy = `{"Statement":[{"Effect":"Allow","Action":"Update:*","Principal":"*","Resource":"*"}]}`
+	)
+
+	sess.Op(svc, "SetStackPolicy", func() error {
+		_, err := client.SetStackPolicy(ctx, &awscfn.SetStackPolicyInput{
+			StackName: aws.String(stack), StackPolicyBody: aws.String(policy),
+		})
+
+		return err
+	})
+
+	sess.Op(svc, "GetStackPolicy", func() error {
+		out, err := client.GetStackPolicy(ctx, &awscfn.GetStackPolicyInput{StackName: aws.String(stack)})
+		if err != nil {
+			return err
+		}
+
+		if aws.ToString(out.StackPolicyBody) != policy {
+			return errCompat("policy not returned")
+		}
+
+		return nil
+	})
+
+	sess.Op(svc, "CancelUpdateStack", func() error {
+		_, err := client.CancelUpdateStack(ctx, &awscfn.CancelUpdateStackInput{StackName: aws.String(stack)})
+
+		var ae smithy.APIError
+		if !errors.As(err, &ae) || ae.ErrorCode() != "ValidationError" {
+			return errCompat("CancelUpdateStack on a finished update must be a ValidationError")
+		}
+
+		return nil
+	})
+
+	sess.Op(svc, "RollbackStack", func() error {
+		return rollbackStack(ctx, client)
+	})
+}
+
+// rollbackStack leaves a stack UPDATE_FAILED with rollback disabled, then
+// rolls it back.
+func rollbackStack(ctx context.Context, client *awscfn.Client) error {
+	const name = "compat-rollback-stack"
+
+	if _, err := client.CreateStack(ctx, &awscfn.CreateStackInput{
+		StackName: aws.String(name), TemplateBody: aws.String(changeSetTemplate),
+	}); err != nil {
+		return err
+	}
+
+	if _, err := client.UpdateStack(ctx, &awscfn.UpdateStackInput{
+		StackName: aws.String(name), DisableRollback: aws.Bool(true),
+		TemplateBody: aws.String(`{"Resources":{"Bad":{"Type":"AWS::Unknown::Thing"}}}`),
+	}); err != nil {
+		return err
+	}
+
+	if _, err := client.RollbackStack(ctx, &awscfn.RollbackStackInput{StackName: aws.String(name)}); err != nil {
+		return err
+	}
+
+	out, err := client.DescribeStacks(ctx, &awscfn.DescribeStacksInput{StackName: aws.String(name)})
+	if err != nil {
+		return err
+	}
+
+	if out.Stacks[0].StackStatus != cfntypes.StackStatusUpdateRollbackComplete {
+		return errCompat("status " + string(out.Stacks[0].StackStatus))
+	}
+
+	_, err = client.DeleteStack(ctx, &awscfn.DeleteStackInput{StackName: aws.String(name)})
+
+	return err
 }
 
 // changeSetOps creates a stack from a CREATE change set, then creates and
