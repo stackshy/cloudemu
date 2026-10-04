@@ -82,27 +82,6 @@ func configSubresourceKey(q url.Values) string {
 	return ""
 }
 
-// bucketConfigOp answers a bucket configuration sub-resource. When the driver
-// implements RawBucketConfig (real S3 semantics), PUT persists the document,
-// GET echoes it back, and DELETE removes it. That way aws_s3_bucket_policy,
-// _cors_configuration, _server_side_encryption_configuration, _lifecycle_* and
-// _website read back what was written instead of a perpetual "not configured"
-// diff. GET on an unconfigured sub-resource still returns the AWS-correct
-// "not configured"/default response.
-//
-// Without the RawBucketConfig capability a write is accepted as a no-op (so it
-// does not fall through to create/delete the bucket) and reads return defaults.
-func (h *Handler) bucketConfigOp(w http.ResponseWriter, r *http.Request, bucket, sub string) {
-	switch r.Method {
-	case http.MethodPut:
-		h.putBucketConfig(w, r, bucket, sub)
-	case http.MethodDelete:
-		h.deleteBucketConfig(w, r, bucket, sub)
-	default:
-		h.getBucketConfig(w, r, bucket, sub)
-	}
-}
-
 // putBucketConfig persists a configuration document when the driver supports it,
 // otherwise accepts the write as a no-op.
 func (h *Handler) putBucketConfig(w http.ResponseWriter, r *http.Request, bucket, sub string) {

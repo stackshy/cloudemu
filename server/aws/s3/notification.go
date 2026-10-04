@@ -67,26 +67,6 @@ type notificationConfigurationXML struct {
 	LambdaConfigurations []lambdaConfigurationXML `xml:"CloudFunctionConfiguration"`
 }
 
-// bucketNotificationOp dispatches PUT/GET for the bucket ?notification
-// sub-resource. Without this a PUT ?notification fell through to CreateBucket
-// (BucketAlreadyOwnedByYou), and S3 event pipelines could not be wired.
-func (h *Handler) bucketNotificationOp(w http.ResponseWriter, r *http.Request, bucket string) {
-	notifier, ok := h.bucket.(bucketNotifier)
-	if !ok {
-		writeError(w, http.StatusNotImplemented, "NotImplemented", "notifications not supported")
-		return
-	}
-
-	switch r.Method {
-	case http.MethodPut:
-		h.putBucketNotification(w, r, bucket, notifier)
-	case http.MethodGet:
-		h.getBucketNotification(w, r, bucket, notifier)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-	}
-}
-
 func (*Handler) putBucketNotification(w http.ResponseWriter, r *http.Request, bucket string, notifier bucketNotifier) {
 	var body notificationConfigurationXML
 	if err := xml.NewDecoder(r.Body).Decode(&body); err != nil {
