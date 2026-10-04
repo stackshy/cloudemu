@@ -9828,6 +9828,12 @@
     "interface": "provider-native",
     "operations": [
       {
+        "name": "AsymmetricDecrypt"
+      },
+      {
+        "name": "AsymmetricSign"
+      },
+      {
         "name": "CreateCryptoKey"
       },
       {
@@ -9837,7 +9843,16 @@
         "name": "CreateKeyRing"
       },
       {
+        "name": "Decrypt"
+      },
+      {
         "name": "DestroyCryptoKeyVersion"
+      },
+      {
+        "name": "Encrypt"
+      },
+      {
+        "name": "GenerateRandomBytes"
       },
       {
         "name": "GetCryptoKey"
@@ -9846,10 +9861,10 @@
         "name": "GetCryptoKeyVersion"
       },
       {
-        "name": "GetIamPolicy"
+        "name": "GetKeyRing"
       },
       {
-        "name": "GetKeyRing"
+        "name": "GetPublicKey"
       },
       {
         "name": "ListCryptoKeyVersions"
@@ -9861,13 +9876,13 @@
         "name": "ListKeyRings"
       },
       {
+        "name": "MacSign"
+      },
+      {
+        "name": "MacVerify"
+      },
+      {
         "name": "RestoreCryptoKeyVersion"
-      },
-      {
-        "name": "SetIamPolicy"
-      },
-      {
-        "name": "TestIamPermissions"
       },
       {
         "name": "UpdateCryptoKey"

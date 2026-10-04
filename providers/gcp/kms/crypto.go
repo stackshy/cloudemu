@@ -7,6 +7,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -27,9 +28,10 @@ const (
 	aes256KeyBytes        = 32
 	aes128KeyBytes        = 16
 
-	algEd25519 = "EC_SIGN_ED25519"
-	algP256    = "EC_SIGN_P256_SHA256"
-	algP384    = "EC_SIGN_P384_SHA384"
+	algEd25519   = "EC_SIGN_ED25519"
+	algSymmetric = "GOOGLE_SYMMETRIC_ENCRYPTION"
+	algP256      = "EC_SIGN_P256_SHA256"
+	algP384      = "EC_SIGN_P384_SHA384"
 )
 
 // errUnsupportedAlg reports an algorithm the emulator cannot back with real
@@ -45,17 +47,17 @@ func errInvalidCiphertext() error {
 	return cerrors.New(cerrors.InvalidArgument, "Decryption failed: the ciphertext is invalid.")
 }
 
-// ensureMaterial generates the version's key on first use. Callers hold s.mu
-// for writing.
-func (v *versionModel) ensureMaterial() error {
-	if v.secret != nil || v.priv != nil {
+// ensureMaterial generates the version's key on first use. Callers hold m.mu
+// and store v afterwards.
+func (v *Version) ensureMaterial() error {
+	if v.Secret != nil || v.PrivateKey != nil {
 		return nil
 	}
 
-	alg := v.algorithm
+	alg := v.Algorithm
 
 	switch {
-	case alg == algorithmSymmetric || strings.HasPrefix(alg, "AES_256"):
+	case alg == algSymmetric || strings.HasPrefix(alg, "AES_256"):
 		return v.randomSecret(aes256KeyBytes)
 	case strings.HasPrefix(alg, "AES_128"):
 		return v.randomSecret(aes128KeyBytes)
@@ -68,13 +70,13 @@ func (v *versionModel) ensureMaterial() error {
 	}
 }
 
-func (v *versionModel) randomSecret(n int) error {
+func (v *Version) randomSecret(n int) error {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
 		return cerrors.Newf(cerrors.Internal, "generate key: %v", err)
 	}
 
-	v.secret = b
+	v.Secret = b
 
 	return nil
 }
@@ -87,7 +89,7 @@ const (
 	rsaBits4096 = 4096
 )
 
-func (v *versionModel) generateRSA(alg string) error {
+func (v *Version) generateRSA(alg string) error {
 	var (
 		k   *rsa.PrivateKey
 		err error
@@ -108,12 +110,10 @@ func (v *versionModel) generateRSA(alg string) error {
 		return cerrors.Newf(cerrors.Internal, "generate RSA key: %v", err)
 	}
 
-	v.priv = k
-
-	return nil
+	return v.setPrivate(k)
 }
 
-func (v *versionModel) generateEC(alg string) error {
+func (v *Version) generateEC(alg string) error {
 	var (
 		k   crypto.Signer
 		err error
@@ -134,9 +134,7 @@ func (v *versionModel) generateEC(alg string) error {
 		return cerrors.Newf(cerrors.Internal, "generate key: %v", err)
 	}
 
-	v.priv = k
-
-	return nil
+	return v.setPrivate(k)
 }
 
 // hashFor returns the digest an algorithm name ends in (SHA256 by default).
@@ -155,8 +153,8 @@ func hashFor(alg string) crypto.Hash {
 	}
 }
 
-func (v *versionModel) gcm() (cipher.AEAD, error) {
-	block, err := aes.NewCipher(v.secret)
+func (v *Version) gcm() (cipher.AEAD, error) {
+	block, err := aes.NewCipher(v.Secret)
 	if err != nil {
 		return nil, cerrors.Newf(cerrors.Internal, "aes: %v", err)
 	}
@@ -171,15 +169,15 @@ func (v *versionModel) gcm() (cipher.AEAD, error) {
 
 // seal encrypts plaintext with AES-GCM, binding aad, and prefixes the version
 // id so decrypt can find this version later.
-func (v *versionModel) seal(plaintext, aad []byte) ([]byte, error) {
+func (v *Version) seal(plaintext, aad []byte) ([]byte, error) {
 	aead, err := v.gcm()
 	if err != nil {
 		return nil, err
 	}
 
-	id, err := strconv.ParseUint(v.id, 10, 32)
+	id, err := strconv.ParseUint(v.ID, 10, 32)
 	if err != nil {
-		return nil, cerrors.Newf(cerrors.Internal, "version id %q: %v", v.id, err)
+		return nil, cerrors.Newf(cerrors.Internal, "version id %q: %v", v.ID, err)
 	}
 
 	out := make([]byte, 0, ciphertextHeader+aead.NonceSize()+len(plaintext)+aead.Overhead())
@@ -205,7 +203,7 @@ func ciphertextVersion(ct []byte) (string, bool) {
 	return strconv.FormatUint(uint64(binary.BigEndian.Uint32(ct[1:ciphertextHeader])), 10), true
 }
 
-func (v *versionModel) open(ct, aad []byte) ([]byte, error) {
+func (v *Version) open(ct, aad []byte) ([]byte, error) {
 	aead, err := v.gcm()
 	if err != nil {
 		return nil, err
@@ -226,37 +224,47 @@ func (v *versionModel) open(ct, aad []byte) ([]byte, error) {
 
 // sign produces an asymmetricSign signature. digest is the pre-hashed input;
 // data is the raw input, required for Ed25519 and RSA_SIGN_RAW_PKCS1_*.
-func (v *versionModel) sign(digest, data []byte) ([]byte, error) {
-	switch k := v.priv.(type) {
+func (v *Version) sign(digest, data []byte) ([]byte, error) {
+	priv, err := v.signer()
+	if err != nil {
+		return nil, err
+	}
+
+	switch k := priv.(type) {
 	case ed25519.PrivateKey:
 		return ed25519.Sign(k, data), nil
 	case *rsa.PrivateKey:
-		if strings.HasPrefix(v.algorithm, "RSA_SIGN_RAW_PKCS1") {
+		if strings.HasPrefix(v.Algorithm, "RSA_SIGN_RAW_PKCS1") {
 			return rsa.SignPKCS1v15(rand.Reader, k, 0, data)
 		}
 
-		if strings.HasPrefix(v.algorithm, "RSA_SIGN_PSS") {
-			return rsa.SignPSS(rand.Reader, k, hashFor(v.algorithm), digest,
+		if strings.HasPrefix(v.Algorithm, "RSA_SIGN_PSS") {
+			return rsa.SignPSS(rand.Reader, k, hashFor(v.Algorithm), digest,
 				&rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash})
 		}
 
-		return rsa.SignPKCS1v15(rand.Reader, k, hashFor(v.algorithm), digest)
+		return rsa.SignPKCS1v15(rand.Reader, k, hashFor(v.Algorithm), digest)
 	case *ecdsa.PrivateKey:
 		return ecdsa.SignASN1(rand.Reader, k, digest)
 	default:
-		return nil, errUnsupportedAlg(v.algorithm)
+		return nil, errUnsupportedAlg(v.Algorithm)
 	}
 }
 
 // decryptOAEP is asymmetricDecrypt: RSA-OAEP with the algorithm's hash and an
 // empty label, as Cloud KMS specifies.
-func (v *versionModel) decryptOAEP(ct []byte) ([]byte, error) {
-	k, ok := v.priv.(*rsa.PrivateKey)
-	if !ok {
-		return nil, errUnsupportedAlg(v.algorithm)
+func (v *Version) decryptOAEP(ct []byte) ([]byte, error) {
+	priv, err := v.signer()
+	if err != nil {
+		return nil, err
 	}
 
-	pt, err := rsa.DecryptOAEP(hashFor(v.algorithm).New(), nil, k, ct, nil)
+	k, ok := priv.(*rsa.PrivateKey)
+	if !ok {
+		return nil, errUnsupportedAlg(v.Algorithm)
+	}
+
+	pt, err := rsa.DecryptOAEP(hashFor(v.Algorithm).New(), nil, k, ct, nil)
 	if err != nil {
 		return nil, errInvalidCiphertext()
 	}
@@ -265,15 +273,55 @@ func (v *versionModel) decryptOAEP(ct []byte) ([]byte, error) {
 }
 
 // publicKeyPEM encodes the version's public key as a PKIX "PUBLIC KEY" PEM.
-func (v *versionModel) publicKeyPEM() (string, error) {
-	if v.priv == nil {
-		return "", errUnsupportedAlg(v.algorithm)
+func (v *Version) publicKeyPEM() (string, error) {
+	priv, err := v.signer()
+	if err != nil {
+		return "", err
 	}
 
-	der, err := x509.MarshalPKIXPublicKey(v.priv.Public())
+	der, err := x509.MarshalPKIXPublicKey(priv.Public())
 	if err != nil {
 		return "", cerrors.Newf(cerrors.Internal, "marshal public key: %v", err)
 	}
 
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})), nil
+}
+
+// mac is macSign: HMAC of data under the version's secret.
+func (v *Version) mac(data []byte) []byte {
+	mac := hmac.New(hashFor(v.Algorithm).New, v.Secret)
+	mac.Write(data)
+
+	return mac.Sum(nil)
+}
+
+// setPrivate stores k as PKCS#8 DER, the form snapshots persist.
+func (v *Version) setPrivate(k crypto.Signer) error {
+	der, err := x509.MarshalPKCS8PrivateKey(k)
+	if err != nil {
+		return cerrors.Newf(cerrors.Internal, "marshal private key: %v", err)
+	}
+
+	v.PrivateKey = der
+
+	return nil
+}
+
+// signer parses the version's PKCS#8 private key.
+func (v *Version) signer() (crypto.Signer, error) {
+	if v.PrivateKey == nil {
+		return nil, errUnsupportedAlg(v.Algorithm)
+	}
+
+	k, err := x509.ParsePKCS8PrivateKey(v.PrivateKey)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.Internal, "parse private key: %v", err)
+	}
+
+	s, ok := k.(crypto.Signer)
+	if !ok {
+		return nil, errUnsupportedAlg(v.Algorithm)
+	}
+
+	return s, nil
 }
