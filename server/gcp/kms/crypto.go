@@ -79,6 +79,14 @@ func (v *versionModel) randomSecret(n int) error {
 	return nil
 }
 
+// RSA modulus sizes Cloud KMS offers. Each is passed to rsa.GenerateKey as a
+// constant, so no key is ever generated below 2048 bits.
+const (
+	rsaBits2048 = 2048
+	rsaBits3072 = 3072
+	rsaBits4096 = 4096
+)
+
 func (v *versionModel) generateRSA(alg string) error {
 	var (
 		k   *rsa.PrivateKey
@@ -87,11 +95,11 @@ func (v *versionModel) generateRSA(alg string) error {
 
 	switch {
 	case strings.Contains(alg, "_4096"):
-		k, err = rsa.GenerateKey(rand.Reader, 4096)
+		k, err = rsa.GenerateKey(rand.Reader, rsaBits4096)
 	case strings.Contains(alg, "_3072"):
-		k, err = rsa.GenerateKey(rand.Reader, 3072)
+		k, err = rsa.GenerateKey(rand.Reader, rsaBits3072)
 	case strings.Contains(alg, "_2048"):
-		k, err = rsa.GenerateKey(rand.Reader, 2048)
+		k, err = rsa.GenerateKey(rand.Reader, rsaBits2048)
 	default:
 		return errUnsupportedAlg(alg)
 	}
