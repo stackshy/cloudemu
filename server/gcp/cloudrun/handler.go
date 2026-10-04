@@ -45,12 +45,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	"github.com/stackshy/cloudemu/v2/server/gcp/opmeta"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/services/cloudrun/driver"
 )
 
@@ -78,11 +79,8 @@ const (
 // Handler serves Cloud Run Admin API v2 requests against a CloudRun driver.
 type Handler struct {
 	cr driver.CloudRun
-	mu sync.RWMutex
-	// policies stores the IAM policy set via setIamPolicy, keyed by a resource's
-	// canonical name. CloudEmu does not enforce IAM; the policy is stored so a
-	// set/get (and Terraform's *_iam_member read-back) round-trips.
-	policies map[string]*iamPolicy
+	// iam stores job and service IAM policies keyed by canonical name.
+	iam gcpiam.Store
 	// ops records every operation this handler mints so a poll replays it and
 	// an unknown name is 404 NOT_FOUND, as real Cloud Run answers.
 	ops *lro.Registry
@@ -90,8 +88,11 @@ type Handler struct {
 
 // New returns a Cloud Run handler backed by cr.
 func New(cr driver.CloudRun) *Handler {
-	return &Handler{cr: cr, policies: make(map[string]*iamPolicy), ops: lro.NewRegistry()}
+	return &Handler{cr: cr, iam: resourceiam.New(), ops: lro.NewRegistry()}
 }
+
+// SetIAMStore wires the shared resource IAM store.
+func (h *Handler) SetIAMStore(s gcpiam.Store) { h.iam = s }
 
 // SetOperationRegistry records this handler's operations in the server-wide
 // registry instead of its own.

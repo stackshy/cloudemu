@@ -32,10 +32,11 @@ package artifactregistry
 import (
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 )
@@ -56,12 +57,8 @@ const minRepoCollectionParts = 5
 type Handler struct {
 	registry crdriver.ContainerRegistry
 
-	// policies stores repo IAM policies set via :setIamPolicy, keyed by the
-	// repository resource name. CloudEmu does not enforce IAM; it stores the
-	// policy so setIamPolicy → getIamPolicy round-trips (Terraform's
-	// google_artifact_registry_repository_iam_* flow).
-	mu       sync.RWMutex
-	policies map[string]*iamPolicy
+	// iam stores repository IAM policies keyed by repository resource name.
+	iam gcpiam.Store
 
 	// ops records created operations with the shared poller so a client that
 	// polls the returned operation name gets the typed response (and unknown
@@ -75,8 +72,11 @@ type Handler struct {
 
 // New returns an Artifact Registry handler backed by reg.
 func New(reg crdriver.ContainerRegistry) *Handler {
-	return &Handler{registry: reg, policies: make(map[string]*iamPolicy), clock: config.RealClock{}}
+	return &Handler{registry: reg, iam: resourceiam.New(), clock: config.RealClock{}}
 }
+
+// SetIAMStore wires the shared resource IAM store.
+func (h *Handler) SetIAMStore(s gcpiam.Store) { h.iam = s }
 
 // SetOperationRegistry wires the shared LRO poller so created operations are
 // resolvable (with their response) through the full server's operations host.

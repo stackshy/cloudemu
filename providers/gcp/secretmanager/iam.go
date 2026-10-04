@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
@@ -20,14 +21,15 @@ func (m *Mock) GetSecretIAMPolicy(ctx context.Context, name string) (*driver.GCP
 	defer sd.mu.RUnlock()
 
 	if sd.iam == nil {
-		return &driver.GCPIAMPolicy{Version: 1, Etag: newEtag()}, nil
+		return &driver.GCPIAMPolicy{Version: 1, Etag: resourceiam.InitialEtag()}, nil
 	}
 
 	return clonePolicy(sd.iam), nil
 }
 
 // SetSecretIAMPolicy stores the secret's IAM policy and returns it with a
-// refreshed etag.
+// refreshed etag. An empty etag is a blind overwrite; an etag that no longer
+// matches the stored policy is resourceiam.ErrAborted (real 409 ABORTED).
 func (m *Mock) SetSecretIAMPolicy(ctx context.Context, name string, policy driver.GCPIAMPolicy) (*driver.GCPIAMPolicy, error) {
 	sd, ok := m.secrets.Get(m.key(ctx, name))
 	if !ok {
@@ -37,12 +39,21 @@ func (m *Mock) SetSecretIAMPolicy(ctx context.Context, name string, policy drive
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
+	cur := resourceiam.InitialEtag()
+	if sd.iam != nil {
+		cur = sd.iam.Etag
+	}
+
+	if policy.Etag != "" && policy.Etag != cur {
+		return nil, resourceiam.ErrAborted
+	}
+
 	stored := clonePolicy(&policy)
 	if stored.Version == 0 {
 		stored.Version = 1
 	}
 
-	stored.Etag = newEtag()
+	stored.Etag = resourceiam.NextEtag(cur)
 	sd.iam = stored
 
 	return clonePolicy(stored), nil

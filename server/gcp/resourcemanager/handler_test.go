@@ -47,6 +47,10 @@ func TestMatches(t *testing.T) {
 		{"delete on project", http.MethodDelete, "/v1/projects/demo", false},
 		{"unknown verb", http.MethodPost, "/v1/projects/demo:frobnicate", false},
 		{"wrong prefix", http.MethodPost, "/v2/projects/demo:getIamPolicy", false},
+		{"org getIamPolicy", http.MethodPost, "/v1/organizations/123:getIamPolicy", true},
+		{"org setIamPolicy", http.MethodPost, "/v1/organizations/123:setIamPolicy", true},
+		{"org get", http.MethodGet, "/v1/organizations/123", false},
+		{"org roles", http.MethodPost, "/v1/organizations/123/roles", false},
 	}
 
 	for _, tc := range cases {

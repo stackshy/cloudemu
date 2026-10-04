@@ -100,15 +100,23 @@ func setPolicy(w http.ResponseWriter, r *http.Request, name string, s Store) {
 	}
 
 	out, err := s.Set(name, pol, req.UpdateMask)
-
-	switch {
-	case errors.Is(err, resourceiam.ErrAborted):
-		gcprest.WriteError(w, http.StatusConflict, "aborted", err.Error())
-	case err != nil:
-		gcprest.WriteCErr(w, err)
-	default:
-		gcprest.WriteJSON(w, http.StatusOK, out)
+	if err != nil {
+		WriteErr(w, err)
+		return
 	}
+
+	gcprest.WriteJSON(w, http.StatusOK, out)
+}
+
+// WriteErr writes a setIamPolicy failure: a stale etag (resourceiam.ErrAborted)
+// is the real 409 ABORTED, anything else maps through gcprest.WriteCErr.
+func WriteErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, resourceiam.ErrAborted) {
+		gcprest.WriteError(w, http.StatusConflict, "aborted", err.Error())
+		return
+	}
+
+	gcprest.WriteCErr(w, err)
 }
 
 // ComputeName returns the full resource name of the compute resource rp
