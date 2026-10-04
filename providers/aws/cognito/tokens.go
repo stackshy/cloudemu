@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	stderrors "errors"
+	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -32,6 +33,7 @@ const (
 	refreshIVLen         = 12
 	refreshTagLen        = 16
 	jwtSegments          = 3
+	maxDurationSeconds   = math.MaxInt64 / int64(time.Second)
 )
 
 // refreshHeader is the JWE protected header Cognito refresh tokens carry. The
@@ -135,22 +137,35 @@ func validity(value *int32, unit string, def time.Duration) time.Duration {
 	return unitDuration(*value, unit, driver.TimeUnitHours)
 }
 
+// unitDuration converts a validity value in a unit to a duration. The product
+// is computed in seconds, which cannot overflow for an int32 value, and a
+// result past the largest time.Duration saturates rather than wrapping, so a
+// huge value is rejected by the range check instead of becoming a short one.
 func unitDuration(value int32, unit, defUnit string) time.Duration {
 	if unit == "" {
 		unit = defUnit
 	}
 
-	d := time.Duration(value)
+	per := int64(time.Hour / time.Second)
 
 	switch unit {
 	case driver.TimeUnitSeconds:
-		return d * time.Second
+		per = 1
 	case driver.TimeUnitMinutes:
-		return d * time.Minute
+		per = int64(time.Minute / time.Second)
 	case driver.TimeUnitDays:
-		return d * 24 * time.Hour
+		per = int64(24 * time.Hour / time.Second)
+	}
+
+	secs := int64(value) * per
+
+	switch {
+	case secs > maxDurationSeconds:
+		return time.Duration(math.MaxInt64)
+	case secs < -maxDurationSeconds:
+		return time.Duration(math.MinInt64)
 	default:
-		return d * time.Hour
+		return time.Duration(secs) * time.Second
 	}
 }
 

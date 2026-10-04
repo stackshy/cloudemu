@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"math/big"
 	"slices"
 	"strings"
@@ -23,6 +24,8 @@ const (
 	codeSpace    = 1_000_000
 	codeValidity = 24 * time.Hour
 	phoneTailLen = 4
+	// fakePhoneTail bounds the last four digits of a simulated phone number.
+	fakePhoneTail = 10000
 )
 
 // pendingCode is the confirmation code outstanding for a user. Delivery is
@@ -359,17 +362,42 @@ func (m *Mock) clientUser(in driver.ClientUserInput) (clientTarget, error) {
 // existence returns for an unknown username, shaped like a real delivery to
 // the attribute the pool verifies.
 func simulatedDelivery(pool *driver.UserPool, username string) *driver.CodeDeliveryDetails {
-	email := username
-	if !isEmailFormat(email) {
-		email = username + "@example.com"
+	switch {
+	case slices.Contains(pool.AutoVerifiedAttributes, attrEmail):
+		dest := firstChar(username) + "***@e***"
+		if isEmailFormat(username) {
+			dest = maskEmail(username)
+		}
+
+		return &driver.CodeDeliveryDetails{Destination: dest, DeliveryMedium: driver.DeliveryMediumEmail, AttributeName: attrEmail}
+	case slices.Contains(pool.AutoVerifiedAttributes, attrPhoneNumber):
+		dest := maskPhone(fakePhone(username))
+		if isPhoneFormat(username) {
+			dest = maskPhone(username)
+		}
+
+		return &driver.CodeDeliveryDetails{Destination: dest, DeliveryMedium: driver.DeliveryMediumSMS, AttributeName: attrPhoneNumber}
+	default:
+		return nil
+	}
+}
+
+// firstChar returns the first character of s, or "u" for an empty string.
+func firstChar(s string) string {
+	for _, r := range s {
+		return string(r)
 	}
 
-	attrs := []driver.Attribute{{Name: attrEmail, Value: email}}
-	if isPhoneFormat(username) {
-		attrs = append(attrs, driver.Attribute{Name: attrPhoneNumber, Value: username})
-	}
+	return "u"
+}
 
-	return codeDelivery(pool, attrs)
+// fakePhone derives a stable phone number from a username, so repeated
+// resends for the same unknown user report the same masked destination.
+func fakePhone(username string) string {
+	sum := sha256.Sum256([]byte(username))
+	n := (int(sum[0])<<8 | int(sum[1])) % fakePhoneTail
+
+	return fmt.Sprintf("+1555555%04d", n)
 }
 
 // ConfirmSignUp confirms an UNCONFIRMED user with the code that was sent. The
