@@ -2,6 +2,7 @@ package tablestorage
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -57,11 +58,31 @@ func tableName(key string) string {
 	return name
 }
 
+// tableSDKProducts are the User-Agent product names of the Azure SDK Table
+// clients, lowercased.
+//
+//nolint:gochecknoglobals // read-only lookup table, not mutable state
+var tableSDKProducts = []string{
+	"azsdk-go-aztables",
+	"azsdk-python-data-tables",
+	"azsdk-java-azure-data-tables",
+	"azsdk-js-data-tables",
+	"azsdk-net-data.tables",
+}
+
 // isTableClient reports whether a root request on a host that does not name
-// its service comes from a Table client. The account-level service calls have
-// the same shape for Blob, Queue and Table, so on a bare host the Azure SDK's
-// user agent (azsdk-go-aztables, azsdk-python-data-tables and so on) tells
-// them apart.
+// its service comes from an Azure SDK Table client. The account-level service
+// calls have the same shape for Blob, Queue and Table, so on a bare host only
+// a product token of the User-Agent (such as "azsdk-go-aztables/v1.3.0")
+// picks Table. Free text such as an application id is ignored.
 func isTableClient(r *http.Request) bool {
-	return strings.Contains(strings.ToLower(r.UserAgent()), "table")
+	for _, token := range strings.Fields(strings.ToLower(r.UserAgent())) {
+		product, _, _ := strings.Cut(token, "/")
+
+		if slices.Contains(tableSDKProducts, product) {
+			return true
+		}
+	}
+
+	return false
 }

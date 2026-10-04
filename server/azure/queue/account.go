@@ -2,6 +2,7 @@ package queue
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -69,11 +70,33 @@ func inAccount(key, account string) (string, bool) {
 	return name, acct == account
 }
 
+// queueSDKProducts are the User-Agent product names of the Azure SDK Queue
+// clients, lowercased.
+//
+//nolint:gochecknoglobals // read-only lookup table, not mutable state
+var queueSDKProducts = []string{
+	"azsdk-go-azqueue",
+	"azsdk-python-storage-queue",
+	"azsdk-java-azure-storage-queue",
+	"azsdk-js-storage-queue",
+	"azsdk-net-storage.queues",
+}
+
 // isQueueClient reports whether a request on a host that does not name its
-// service comes from a Queue client. List Queues and the account-level
-// service calls have the same shape as their Blob counterparts, so on a bare
-// host the Azure SDK's user agent (azsdk-go-azqueue, azsdk-python-storage-queue,
-// azsdk-net-Storage.Queues and so on) tells them apart; anything else is Blob.
+// service comes from an Azure SDK Queue client. List Queues and the
+// account-level service calls have the same shape as their Blob counterparts,
+// so on a bare host only a product token of the User-Agent (such as
+// "azsdk-go-azqueue/v1.0.0") picks Queue. Free text such as an application id
+// is ignored, and anything else goes to Blob. Other Queue clients should use
+// the {account}.queue host or the path-style /{account}/ form.
 func isQueueClient(r *http.Request) bool {
-	return strings.Contains(strings.ToLower(r.UserAgent()), "queue")
+	for _, token := range strings.Fields(strings.ToLower(r.UserAgent())) {
+		product, _, _ := strings.Cut(token, "/")
+
+		if slices.Contains(queueSDKProducts, product) {
+			return true
+		}
+	}
+
+	return false
 }

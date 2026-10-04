@@ -223,6 +223,40 @@ func TestStorageRootListAndServiceOps(t *testing.T) {
 	}
 }
 
+// TestBareHostRootListByUserAgent pins the bare-host rule for the shared
+// "GET /?comp=list" shape: only an Azure SDK Queue product token picks Queue.
+// An application id that merely contains "queue" stays with Blob, as does a
+// request with no User-Agent.
+func TestBareHostRootListByUserAgent(t *testing.T) {
+	ts := newIsolationServer(t)
+
+	st, body, _ := storageDo(t, ts, "", "", http.MethodPut, "/ctr1?restype=container", "", nil)
+	expectStatus(t, "create container", st, http.StatusCreated, body)
+
+	st, body, _ = storageDo(t, ts, "", "", http.MethodPut, "/q1", "", nil)
+	expectStatus(t, "create queue", st, http.StatusCreated, body)
+
+	tests := []struct {
+		name, ua, want string
+	}{
+		{"blob client with queue-like app id", "myqueue-worker azsdk-go-azblob/v1.6.0 (go1.25; darwin)", "ctr1"},
+		{"azqueue", queueUA, "q1"},
+		{"python queue sdk", "azsdk-python-storage-queue/12.10.0 Python/3.12", "q1"},
+		{"net queue sdk", "azsdk-net-Storage.Queues/12.19.0 (.NET 8.0)", "q1"},
+		{"no user agent", "", "ctr1"},
+		{"table client with queue-like app id", "queue-sync azsdk-go-aztables/v1.3.0", "ctr1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st, body, _ := storageDo(t, ts, "", tt.ua, http.MethodGet, "/?comp=list", "", nil)
+			if st != http.StatusOK || !strings.Contains(body, "<Name>"+tt.want+"</Name>") {
+				t.Fatalf("GET /?comp=list with UA %q = %d %s, want %s", tt.ua, st, body, tt.want)
+			}
+		})
+	}
+}
+
 // TestQueuePathStyleLeavesBlobPuts guards the path-style peel: a Put Blob into
 // a container of the default account whose name matches a storage account is
 // still a blob write, not a queue create.
