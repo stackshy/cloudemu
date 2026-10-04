@@ -41,6 +41,7 @@ import (
 	gkebackupprov "github.com/stackshy/cloudemu/v2/providers/gcp/gkebackup"
 	gkehubprov "github.com/stackshy/cloudemu/v2/providers/gcp/gkehub"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/iam"
+	kmsprov "github.com/stackshy/cloudemu/v2/providers/gcp/kms"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/loadbalancer"
 	managedkafkaprov "github.com/stackshy/cloudemu/v2/providers/gcp/managedkafka"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/memorystore"
@@ -119,6 +120,7 @@ type Provider struct {
 	CertificateManager   *certmanagerprov.Mock
 	AccessContextManager *acmprov.Mock
 	PrivateCA            *privatecaprov.Mock
+	KMS                  *kmsprov.Mock
 	Dataplex             *dataplexprov.Mock
 	Metastore            *metastoreprov.Mock
 	VPCAccess            *vpcaccessprov.Mock
@@ -194,6 +196,7 @@ func New(opts ...config.Option) *Provider {
 		CertificateManager:   certmanagerprov.New(o),
 		AccessContextManager: acmprov.New(o),
 		PrivateCA:            privatecaprov.New(o),
+		KMS:                  kmsprov.New(o),
 		Dataplex:             dataplexprov.New(o),
 		Metastore:            metastoreprov.New(o),
 		VPCAccess:            vpcaccessprov.New(o),
