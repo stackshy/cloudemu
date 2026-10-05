@@ -13,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/oci/identity"
 	"github.com/stackshy/cloudemu/v2/server/oci/monitoring"
+	"github.com/stackshy/cloudemu/v2/server/oci/objectstorage"
 	"github.com/stackshy/cloudemu/v2/server/oci/vcn"
 	"github.com/stackshy/cloudemu/v2/server/oci/workrequest"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
@@ -92,6 +93,20 @@ func New(d Drivers) *server.Server {
 
 	if d.Monitoring != nil {
 		srv.Register(monitoring.New(d.Monitoring))
+	}
+
+	if d.ObjectStorage != nil {
+		osHandler := objectstorage.New(d.ObjectStorage, d.WorkRequests)
+
+		if comps, ok := d.Identity.(identity.Compartments); ok {
+			osHandler.SetCompartmentChecker(func(id string) bool {
+				_, err := comps.GetCompartment(context.Background(), id)
+
+				return err == nil
+			})
+		}
+
+		srv.Register(osHandler)
 	}
 
 	if d.VCN != nil {

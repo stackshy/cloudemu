@@ -106,6 +106,12 @@ func TestHandlerMatches(t *testing.T) {
 		{name: "non-GET is not claimed", method: http.MethodPost, path: "/20160918/workRequests", expect: false},
 		{name: "unrelated path", method: http.MethodGet, path: "/20160918/instances", expect: false},
 		{name: "too many trailing segments", method: http.MethodGet, path: "/20160918/workRequests/a/b/c", expect: false},
+		{name: "unversioned object storage poll", method: http.MethodGet, path: "/workRequests/ocid1.workrequest.oc1.iad.a", expect: true},
+		{name: "object key named workRequests", method: http.MethodGet, path: "/n/ns/b/tfb/o/workRequests/x", expect: false},
+		{name: "bucket named workRequests", method: http.MethodGet, path: "/n/ns/b/workRequests", expect: false},
+		{name: "PAR redemption of a workRequests key", method: http.MethodGet, path: "/p/tok/n/ns/b/tfb/o/workRequests", expect: false},
+		{name: "non-version prefix", method: http.MethodGet, path: "/v1/workRequests/abc", expect: false},
+		{name: "workRequests after a resource", method: http.MethodGet, path: "/20160918/vcns/workRequests", expect: false},
 	}
 
 	for _, tc := range tests {
