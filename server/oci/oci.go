@@ -96,7 +96,17 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.Logging != nil {
-		srv.Register(ocilogging.New(d.Logging, d.WorkRequests))
+		logHandler := ocilogging.New(d.Logging, d.WorkRequests)
+
+		if comps, ok := d.Identity.(identity.Compartments); ok {
+			logHandler.SetCompartmentChecker(func(id string) bool {
+				_, err := comps.GetCompartment(context.Background(), id)
+
+				return err == nil
+			})
+		}
+
+		srv.Register(logHandler)
 	}
 
 	if d.VCN != nil {

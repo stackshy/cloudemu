@@ -13,16 +13,17 @@
 //	  POST                 /20200531/logGroups/{logGroupId}/actions/changeCompartment
 //	  POST/GET             /20200531/logGroups/{logGroupId}/logs      — create, list
 //	  GET/PUT/DELETE       /20200531/logGroups/{logGroupId}/logs/{logId}
+//	  POST                 /20200531/logGroups/{logGroupId}/logs/{logId}/actions/changeLogGroup
 //
-//	loggingingestion — the data plane, /20200601
-//	  POST                 /20200601/logs/{logId}/actions/push        — PutLogs
+//	loggingingestion — the data plane, /20200831
+//	  POST                 /20200831/logs/{logId}/actions/push        — PutLogs
 //
 //	loggingsearch — the query plane, /20190909
 //	  POST                 /20190909/search                           — SearchLogs
 //
 // A log lives at a top-level /logs collection only under the ingestion prefix;
 // the control plane nests it under its log group. That is what keeps the two
-// apart, and Matches claims /logs for /20200601 alone.
+// apart, and Matches claims /logs for /20200831 alone.
 //
 // Not emulated: /20200531/unifiedAgentConfigurations and
 // /20200531/logSavedSearches, which the logging driver has no shape for — the
@@ -47,7 +48,7 @@ import (
 // The three API version prefixes OCI Logging is published under.
 const (
 	versionControl   = "20200531"
-	versionIngestion = "20200601"
+	versionIngestion = "20200831"
 	versionSearch    = "20190909"
 )
 
@@ -60,12 +61,11 @@ const (
 	segSavedSearches  = "logSavedSearches"
 	subActions        = "actions"
 	actionChangeComp  = "changeCompartment"
+	actionChangeLogGp = "changeLogGroup"
 	actionPush        = "push"
 	entityTypeGroup   = "loggroup"
 	entityTypeLog     = "log"
 	specVersionOCI    = "1.0"
-	fieldTypeString   = "STRING"
-	sourceTypeService = "OCISERVICE"
 )
 
 // Work request operations the asynchronous mutations record.
@@ -73,10 +73,11 @@ const (
 	operationCreateGroup = "CREATE_LOG_GROUP"
 	operationUpdateGroup = "UPDATE_LOG_GROUP"
 	operationDeleteGroup = "DELETE_LOG_GROUP"
-	operationMoveGroup   = "CHANGE_LOG_GROUP_COMPARTMENT"
+	operationMoveGroup   = "MOVE_LOG_GROUP"
 	operationCreateLog   = "CREATE_LOG"
 	operationUpdateLog   = "UPDATE_LOG"
 	operationDeleteLog   = "DELETE_LOG"
+	operationMoveLog     = "MOVE_LOG"
 )
 
 // OCI error codes the handler raises itself.
@@ -87,8 +88,9 @@ const (
 	codeNotFound         = "NotAuthorizedOrNotFound"
 )
 
-// maxPathSegments is /{version}/{collection}/{id}/{sub}/{subId}.
-const maxPathSegments = 5
+// maxPathSegments is /{version}/{collection}/{id}/{sub}/{subId}/actions/{action},
+// the shape of an action on a log nested under its group.
+const maxPathSegments = 7
 
 // Extras is the OCI-only surface the portable logging driver cannot express:
 // log groups and logs are addressed by OCID inside a compartment, a log
@@ -109,6 +111,7 @@ type Extras interface {
 	ListLogs(ctx context.Context, groupID string, f logprovider.LogFilter) ([]logprovider.Log, error)
 	UpdateLog(ctx context.Context, groupID, logID string, u logprovider.LogUpdate) (*logprovider.Log, error)
 	DeleteLog(ctx context.Context, groupID, logID string) error
+	MoveLog(ctx context.Context, groupID, logID, targetGroupID string) error
 
 	PutLogs(ctx context.Context, logID string, batches []logprovider.LogEntryBatch) error
 	SearchLogs(ctx context.Context, req logprovider.SearchRequest) (*logprovider.SearchResult, error)
@@ -118,6 +121,11 @@ type Extras interface {
 type Handler struct {
 	extras Extras
 	work   *workrequest.Store
+
+	// compartmentExists reports whether a compartment OCID exists. It is nil
+	// unless SetCompartmentChecker wires it from Identity; a nil checker skips
+	// the check so handlers built without identity keep working.
+	compartmentExists func(id string) bool
 }
 
 // New returns a Logging handler. work records the asynchronous log group and
@@ -128,6 +136,25 @@ func New(l logdriver.Logging, work *workrequest.Store) *Handler {
 	return &Handler{extras: extras, work: work}
 }
 
+// SetCompartmentChecker wires a compartment-existence check so a create or a
+// move into a compartment that does not exist is rejected with 404
+// NotAuthorizedOrNotFound, as real OCI does. When unset (nil) the check is
+// skipped, so handlers constructed without identity keep working.
+func (h *Handler) SetCompartmentChecker(fn func(id string) bool) { h.compartmentExists = fn }
+
+// requireCompartment reports whether compartmentID exists; if not it writes
+// the OCI 404 NotAuthorizedOrNotFound and returns false. A nil checker (no
+// identity wired) is a no-op that allows the request.
+func (h *Handler) requireCompartment(w http.ResponseWriter, r *http.Request, compartmentID string) bool {
+	if h.compartmentExists == nil || compartmentID == "" || h.compartmentExists(compartmentID) {
+		return true
+	}
+
+	ocirest.WriteError(w, r, http.StatusNotFound, codeNotFound, compartmentID+" not found")
+
+	return false
+}
+
 // route is a parsed Logging path.
 type route struct {
 	Version    string
@@ -135,6 +162,10 @@ type route struct {
 	ID         string
 	Sub        string
 	SubID      string
+	// SubActions and SubAction address an action on a nested resource, as in
+	// /logGroups/{id}/logs/{logId}/actions/changeLogGroup.
+	SubActions string
+	SubAction  string
 }
 
 // Matches claims each of the three Logging API surfaces at its own version
@@ -248,7 +279,7 @@ func (h *Handler) requireWork(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// parsePath splits /{version}/{collection}[/{id}[/{sub}[/{subId}]]].
+// parsePath splits /{version}/{collection}[/{id}[/{sub}[/{subId}[/actions/{action}]]]].
 func parsePath(urlPath string) (route, bool) {
 	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
 	if len(parts) < 2 || len(parts) > maxPathSegments {
@@ -275,23 +306,49 @@ func parsePath(urlPath string) (route, bool) {
 		rt.SubID = parts[4]
 	}
 
+	if len(parts) > 5 { //nolint:mnd // then an action on the nested resource
+		rt.SubActions = parts[5]
+	}
+
+	if len(parts) > 6 { //nolint:mnd // and the action's name
+		rt.SubAction = parts[6]
+	}
+
 	return rt, true
 }
 
-// paginate applies OCI's limit and opaque page cursor, stamping the cursor for
-// the next page. The cursor is the offset the next page starts at.
-func paginate[T any](w http.ResponseWriter, r *http.Request, items []T) []T {
-	start := 0
+// pageOffset reads OCI's opaque page cursor, which CloudEmu mints as the
+// offset the next page starts at. An absent cursor is the first page; one
+// CloudEmu did not mint is rejected rather than silently restarting at zero,
+// which would loop a paginating client forever.
+func pageOffset(w http.ResponseWriter, r *http.Request) (int, bool) {
+	token := ocirest.Page(r)
+	if token == "" {
+		return 0, true
+	}
 
-	if token := ocirest.Page(r); token != "" {
-		if n, err := strconv.Atoi(token); err == nil && n > 0 {
-			start = n
-		}
+	n, err := strconv.Atoi(token)
+	if err != nil || n < 0 {
+		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter,
+			"page "+strconv.Quote(token)+" is not a cursor this API returned in opc-next-page")
+
+		return 0, false
+	}
+
+	return n, true
+}
+
+// paginate applies OCI's limit and page cursor, stamping opc-next-page when
+// more items follow.
+func paginate[T any](w http.ResponseWriter, r *http.Request, items []T) ([]T, bool) {
+	start, ok := pageOffset(w, r)
+	if !ok {
+		return nil, false
 	}
 
 	// items[:0] rather than nil: an empty page is [] on the wire, not null.
 	if start >= len(items) {
-		return items[:0]
+		return items[:0], true
 	}
 
 	end := min(start+ocirest.Limit(r), len(items))
@@ -299,7 +356,7 @@ func paginate[T any](w http.ResponseWriter, r *http.Request, items []T) []T {
 		ocirest.SetNextPage(w, strconv.Itoa(end))
 	}
 
-	return items[start:end]
+	return items[start:end], true
 }
 
 // methodNotAllowed is the response for a verb a collection does not serve.

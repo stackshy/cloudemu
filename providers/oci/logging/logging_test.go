@@ -224,21 +224,38 @@ func TestUpdateGroup(t *testing.T) {
 	})
 }
 
-func TestDeleteGroupRemovesItsLogs(t *testing.T) {
+func TestDeleteGroupRequiresItEmpty(t *testing.T) {
 	ctx := context.Background()
 	m := newMock(t)
 	g := newGroup(t, m, compartmentA, "app-logs")
 	l := newCustomLog(t, m, g.ID, "stdout")
 
-	require.NoError(t, m.DeleteGroup(ctx, g.ID))
-
-	_, err := m.GetGroup(ctx, g.ID)
-	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
+	err := m.DeleteGroup(ctx, g.ID)
+	require.Error(t, err, "real OCI refuses to delete a group that still holds logs")
+	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
 
 	_, err = m.GetLog(ctx, g.ID, l.ID)
+	require.NoError(t, err, "a refused delete leaves the logs in place")
+
+	require.NoError(t, m.DeleteLog(ctx, g.ID, l.ID))
+	require.NoError(t, m.DeleteGroup(ctx, g.ID))
+
+	_, err = m.GetGroup(ctx, g.ID)
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
 
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(m.DeleteGroup(ctx, g.ID)))
+}
+
+func TestPortableDeleteLogGroupCascades(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+	g := newGroup(t, m, compartmentA, "app-logs")
+	l := newCustomLog(t, m, g.ID, "stdout")
+
+	require.NoError(t, m.DeleteLogGroup(ctx, "app-logs"))
+
+	_, err := m.GetLog(ctx, g.ID, l.ID)
+	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err), "the portable delete takes the group's logs with it")
 }
 
 func TestMoveGroupCarriesItsLogs(t *testing.T) {
@@ -437,7 +454,7 @@ func TestPutLogs(t *testing.T) {
 		g := newGroup(t, m, compartmentA, "app-logs")
 		l := newCustomLog(t, m, g.ID, "stdout")
 
-		require.NoError(t, m.PutLogs(ctx, l.ID, []ocilogging.LogEntryBatch{{
+		require.NoError(t, m.PutLogs(ctx, l.ID, validBatches([]ocilogging.LogEntryBatch{{
 			Source: "host-a",
 			Type:   "custom",
 			Entries: []ocilogging.LogEntryItem{
@@ -445,7 +462,7 @@ func TestPutLogs(t *testing.T) {
 				{Data: "second"},
 			},
 			DefaultLogEntryTime: when.Add(time.Minute),
-		}}))
+		}})))
 
 		entries, err := m.Entries(ctx, l.ID)
 		require.NoError(t, err)
@@ -491,7 +508,7 @@ func TestPutLogs(t *testing.T) {
 		l, err := m.CreateLog(ctx, g.ID, ocilogging.LogSpec{DisplayName: "stdout"})
 		require.NoError(t, err)
 
-		err = m.PutLogs(ctx, l.ID, []ocilogging.LogEntryBatch{{Entries: []ocilogging.LogEntryItem{{Data: "x"}}}})
+		err = m.PutLogs(ctx, l.ID, validBatches([]ocilogging.LogEntryBatch{{Entries: []ocilogging.LogEntryItem{{Data: "x"}}}}))
 		require.Error(t, err)
 		assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
 	})
@@ -796,7 +813,7 @@ func TestPortableReadLimitTruncates(t *testing.T) {
 		entries[i] = ocilogging.LogEntryItem{Data: "line-" + strconv.Itoa(i), Time: searchWindowStart}
 	}
 
-	require.NoError(t, m.PutLogs(ctx, l.ID, []ocilogging.LogEntryBatch{{Entries: entries}}))
+	require.NoError(t, m.PutLogs(ctx, l.ID, validBatches([]ocilogging.LogEntryBatch{{Entries: entries}})))
 
 	events, err := m.GetLogEvents(ctx, &driver.LogQueryInput{LogGroup: "app-logs", Limit: 2})
 	require.NoError(t, err)
@@ -843,7 +860,7 @@ func newSearchFixture(t *testing.T) *searchFixture {
 
 	at := func(min int) time.Time { return searchWindowStart.Add(time.Duration(min) * time.Minute) }
 
-	require.NoError(t, m.PutLogs(ctx, f.stdout.ID, []ocilogging.LogEntryBatch{{
+	require.NoError(t, m.PutLogs(ctx, f.stdout.ID, validBatches([]ocilogging.LogEntryBatch{{
 		Source:  "host-a",
 		Type:    "com.oraclecloud.custom",
 		Subject: "app",
@@ -852,19 +869,19 @@ func newSearchFixture(t *testing.T) *searchFixture {
 			{ID: "e-10", Data: `{"level":"error","code":500}`, Time: at(10)},
 			{ID: "e-20", Data: "plain text line", Time: at(20)},
 		},
-	}}))
+	}})))
 
-	require.NoError(t, m.PutLogs(ctx, f.stderr.ID, []ocilogging.LogEntryBatch{{
+	require.NoError(t, m.PutLogs(ctx, f.stderr.ID, validBatches([]ocilogging.LogEntryBatch{{
 		Source:  "host-b",
 		Type:    "com.oraclecloud.custom",
 		Subject: "sidecar",
 		Entries: []ocilogging.LogEntryItem{{ID: "e-40", Data: `{"level":"warn"}`, Time: at(40)}},
-	}}))
+	}})))
 
-	require.NoError(t, m.PutLogs(ctx, f.otherIn.ID, []ocilogging.LogEntryBatch{{
+	require.NoError(t, m.PutLogs(ctx, f.otherIn.ID, validBatches([]ocilogging.LogEntryBatch{{
 		Source:  "host-c",
 		Entries: []ocilogging.LogEntryItem{{ID: "e-50", Data: "audit line", Time: at(50)}},
-	}}))
+	}})))
 
 	return f
 }
@@ -986,11 +1003,11 @@ func TestSearchSortIsStableOnEqualTimes(t *testing.T) {
 	l := newCustomLog(t, m, g.ID, "stdout")
 
 	same := searchWindowStart.Add(time.Minute)
-	require.NoError(t, m.PutLogs(ctx, l.ID, []ocilogging.LogEntryBatch{{Entries: []ocilogging.LogEntryItem{
+	require.NoError(t, m.PutLogs(ctx, l.ID, validBatches([]ocilogging.LogEntryBatch{{Entries: []ocilogging.LogEntryItem{
 		{ID: "e-c", Data: "c", Time: same},
 		{ID: "e-a", Data: "a", Time: same},
 		{ID: "e-b", Data: "b", Time: same},
-	}}}))
+	}}})))
 
 	res, err := m.SearchLogs(ctx, ocilogging.SearchRequest{
 		Query:     `search "` + compartmentA + `" | sort by datetime desc`,
@@ -1333,7 +1350,7 @@ func TestUpdateLogFields(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, compartmentA, withCfg.Configuration.CompartmentID, "the log's compartment is filled in")
-	assert.Equal(t, "OCISERVICE", withCfg.Configuration.Source.SourceType, "the only source type OCI defines")
+	assert.Empty(t, withCfg.Configuration.Source.SourceType, "a CUSTOM log is given no service source type")
 
 	sl, err := m.CreateLog(ctx, g.ID, ocilogging.LogSpec{
 		DisplayName: "flowlogs",
@@ -1360,9 +1377,9 @@ func TestIngestionPublishesMetrics(t *testing.T) {
 	mon := &recordingMonitoring{}
 	m.SetMonitoring(mon)
 
-	require.NoError(t, m.PutLogs(ctx, l.ID, []ocilogging.LogEntryBatch{{
+	require.NoError(t, m.PutLogs(ctx, l.ID, validBatches([]ocilogging.LogEntryBatch{{
 		Entries: []ocilogging.LogEntryItem{{Data: "hello", Time: searchWindowStart}},
-	}}))
+	}})))
 
 	names := make([]string, 0, len(mon.data))
 	for _, d := range mon.data {
@@ -1382,9 +1399,9 @@ func TestIngestionSurvivesAMonitoringFailure(t *testing.T) {
 
 	m.SetMonitoring(&recordingMonitoring{err: errFailedPublish})
 
-	require.NoError(t, m.PutLogs(ctx, l.ID, []ocilogging.LogEntryBatch{{
+	require.NoError(t, m.PutLogs(ctx, l.ID, validBatches([]ocilogging.LogEntryBatch{{
 		Entries: []ocilogging.LogEntryItem{{Data: "hello", Time: searchWindowStart}},
-	}}), "metric publication is best-effort")
+	}})), "metric publication is best-effort")
 
 	entries, err := m.Entries(ctx, l.ID)
 	require.NoError(t, err)
@@ -1411,4 +1428,372 @@ func (r *recordingMonitoring) PutMetricData(_ context.Context, data []mondriver.
 	r.data = append(r.data, data...)
 
 	return nil
+}
+
+// TestReadsDoNotAliasTheStore guards the copy every read makes: a caller
+// mutating what it was handed must not change what the mock holds.
+func TestReadsDoNotAliasTheStore(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	g, err := m.CreateGroup(ctx, ocilogging.LogGroupSpec{
+		CompartmentID: compartmentA, DisplayName: "app-logs", FreeformTags: map[string]string{"env": "dev"},
+	})
+	require.NoError(t, err)
+
+	l, err := m.CreateLog(ctx, g.ID, ocilogging.LogSpec{
+		DisplayName:  "flowlogs",
+		LogType:      ocilogging.LogTypeService,
+		FreeformTags: map[string]string{"env": "dev"},
+		Configuration: &ocilogging.LogConfiguration{Source: ocilogging.LogSource{
+			Service: "flowlogs", Resource: "ocid1.subnet.oc1.iad.a", Category: "all",
+			Parameters: map[string]string{"k": "v"},
+		}},
+	})
+	require.NoError(t, err)
+
+	gotGroup, err := m.GetGroup(ctx, g.ID)
+	require.NoError(t, err)
+	gotGroup.FreeformTags["env"] = "changed"
+
+	gotLog, err := m.GetLog(ctx, g.ID, l.ID)
+	require.NoError(t, err)
+	gotLog.FreeformTags["env"] = "changed"
+	gotLog.Configuration.CompartmentID = "changed"
+	gotLog.Configuration.Source.Parameters["k"] = "changed"
+
+	againGroup, err := m.GetGroup(ctx, g.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "dev", againGroup.FreeformTags["env"])
+
+	againLog, err := m.GetLog(ctx, g.ID, l.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "dev", againLog.FreeformTags["env"])
+	assert.Equal(t, compartmentA, againLog.Configuration.CompartmentID)
+	assert.Equal(t, "v", againLog.Configuration.Source.Parameters["k"])
+}
+
+func TestCustomLogHasNoSynthesizedSource(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+	g := newGroup(t, m, compartmentA, "app-logs")
+
+	l := newCustomLog(t, m, g.ID, "stdout")
+	assert.Nil(t, l.Configuration, "a CUSTOM log created without a configuration carries none")
+
+	got, err := m.GetLog(ctx, g.ID, l.ID)
+	require.NoError(t, err)
+	assert.Nil(t, got.Configuration)
+
+	svc, err := m.CreateLog(ctx, g.ID, ocilogging.LogSpec{
+		DisplayName: "flowlogs",
+		LogType:     ocilogging.LogTypeService,
+		Configuration: &ocilogging.LogConfiguration{Source: ocilogging.LogSource{
+			Service: "flowlogs", Resource: "ocid1.subnet.oc1.iad.a", Category: "all",
+		}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "OCISERVICE", svc.Configuration.Source.SourceType, "a SERVICE log defaults the only source type OCI defines")
+}
+
+func TestRetentionDurationIsValidated(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		days       int
+		expectCode cerrors.Code
+	}{
+		{name: "30 is the minimum", days: 30},
+		{name: "a 30-day step", days: 90},
+		{name: "180 is the maximum", days: 180},
+		{name: "below the minimum", days: 7, expectCode: cerrors.InvalidArgument},
+		{name: "not a 30-day step", days: 45, expectCode: cerrors.InvalidArgument},
+		{name: "above the maximum", days: 210, expectCode: cerrors.InvalidArgument},
+		{name: "negative", days: -30, expectCode: cerrors.InvalidArgument},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newMock(t)
+			g := newGroup(t, m, compartmentA, "app-logs")
+
+			_, createErr := m.CreateLog(ctx, g.ID, ocilogging.LogSpec{
+				DisplayName: "created", RetentionDuration: tc.days,
+			})
+
+			l := newCustomLog(t, m, g.ID, "updated")
+			name := "renamed"
+			days := tc.days
+			_, updateErr := m.UpdateLog(ctx, g.ID, l.ID, ocilogging.LogUpdate{
+				DisplayName: &name, RetentionDuration: &days,
+			})
+
+			if tc.expectCode == cerrors.OK {
+				require.NoError(t, createErr)
+				require.NoError(t, updateErr)
+
+				return
+			}
+
+			assert.Equal(t, tc.expectCode, cerrors.GetCode(createErr))
+			assert.Equal(t, tc.expectCode, cerrors.GetCode(updateErr))
+
+			got, err := m.GetLog(ctx, g.ID, l.ID)
+			require.NoError(t, err)
+			assert.Equal(t, "updated", got.DisplayName, "a rejected update applies none of its fields")
+		})
+	}
+}
+
+// validBatches fills the fields OCI's LogEntryBatch makes mandatory where a
+// test leaves them unset, so a test states only what it is about. The default
+// entry time is the fake clock's now, which is when an untimed entry lands.
+func validBatches(batches []ocilogging.LogEntryBatch) []ocilogging.LogEntryBatch {
+	for i := range batches {
+		if batches[i].Source == "" {
+			batches[i].Source = "test-host"
+		}
+
+		if batches[i].Type == "" {
+			batches[i].Type = "com.oraclecloud.custom"
+		}
+
+		if batches[i].DefaultLogEntryTime.IsZero() {
+			batches[i].DefaultLogEntryTime = time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+		}
+	}
+
+	return batches
+}
+
+func TestPutLogsRequiresTheMandatoryBatchFields(t *testing.T) {
+	ctx := context.Background()
+	when := time.Date(2026, 8, 8, 11, 0, 0, 0, time.UTC)
+	full := ocilogging.LogEntryBatch{
+		Source: "host-a", Type: "custom", DefaultLogEntryTime: when,
+		Entries: []ocilogging.LogEntryItem{{Data: "x"}},
+	}
+
+	tests := []struct {
+		name     string
+		mutate   func(b *ocilogging.LogEntryBatch)
+		contains string
+	}{
+		{name: "source", mutate: func(b *ocilogging.LogEntryBatch) { b.Source = "" }, contains: "source is required"},
+		{name: "type", mutate: func(b *ocilogging.LogEntryBatch) { b.Type = "" }, contains: "type is required"},
+		{
+			name:     "defaultlogentrytime",
+			mutate:   func(b *ocilogging.LogEntryBatch) { b.DefaultLogEntryTime = time.Time{} },
+			contains: "defaultlogentrytime is required",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newMock(t)
+			g := newGroup(t, m, compartmentA, "app-logs")
+			l := newCustomLog(t, m, g.ID, "stdout")
+
+			bad := full
+			tc.mutate(&bad)
+
+			// The valid batch first: a rejected call must store none of it.
+			err := m.PutLogs(ctx, l.ID, []ocilogging.LogEntryBatch{full, bad})
+			require.Error(t, err)
+			assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+			assert.Contains(t, err.Error(), tc.contains)
+			assert.Contains(t, err.Error(), "logEntryBatches[1]", "the error names the batch")
+
+			entries, entryErr := m.Entries(ctx, l.ID)
+			require.NoError(t, entryErr)
+			assert.Empty(t, entries, "a rejected call ingests nothing")
+		})
+	}
+}
+
+func TestMoveLog(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("the log and its entries follow it into the target group", func(t *testing.T) {
+		m := newMock(t)
+		src := newGroup(t, m, compartmentA, "src")
+		dst := newGroup(t, m, compartmentB, "dst")
+		l := newCustomLog(t, m, src.ID, "stdout")
+
+		require.NoError(t, m.PutLogs(ctx, l.ID, validBatches([]ocilogging.LogEntryBatch{{
+			Entries: []ocilogging.LogEntryItem{{Data: "kept"}},
+		}})))
+
+		require.NoError(t, m.MoveLog(ctx, src.ID, l.ID, dst.ID))
+
+		got, err := m.GetLog(ctx, dst.ID, l.ID)
+		require.NoError(t, err)
+		assert.Equal(t, dst.ID, got.LogGroupID)
+		assert.Equal(t, compartmentB, got.CompartmentID, "a moved log takes its new group's compartment")
+
+		_, err = m.GetLog(ctx, src.ID, l.ID)
+		assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
+
+		entries, err := m.Entries(ctx, l.ID)
+		require.NoError(t, err)
+		assert.Len(t, entries, 1)
+	})
+
+	t.Run("a service log's configuration follows the compartment", func(t *testing.T) {
+		m := newMock(t)
+		src := newGroup(t, m, compartmentA, "src")
+		dst := newGroup(t, m, compartmentB, "dst")
+
+		l, err := m.CreateLog(ctx, src.ID, ocilogging.LogSpec{
+			DisplayName: "flowlogs", LogType: ocilogging.LogTypeService,
+			Configuration: &ocilogging.LogConfiguration{Source: ocilogging.LogSource{
+				Service: "flowlogs", Resource: "ocid1.subnet.oc1.iad.a", Category: "all",
+			}},
+		})
+		require.NoError(t, err)
+
+		require.NoError(t, m.MoveLog(ctx, src.ID, l.ID, dst.ID))
+
+		got, err := m.GetLog(ctx, dst.ID, l.ID)
+		require.NoError(t, err)
+		assert.Equal(t, compartmentB, got.Configuration.CompartmentID)
+		assert.Equal(t, compartmentA, l.Configuration.CompartmentID, "the value handed out earlier is unchanged")
+	})
+
+	t.Run("moving into its own group is a no-op", func(t *testing.T) {
+		m := newMock(t)
+		g := newGroup(t, m, compartmentA, "src")
+		l := newCustomLog(t, m, g.ID, "stdout")
+
+		require.NoError(t, m.MoveLog(ctx, g.ID, l.ID, g.ID))
+	})
+
+	tests := []struct {
+		name       string
+		setup      func(m *ocilogging.Mock) (groupID, logID, target string)
+		expectCode cerrors.Code
+	}{
+		{
+			name: "no target",
+			setup: func(m *ocilogging.Mock) (string, string, string) {
+				g := newGroup(t, m, compartmentA, "src")
+				return g.ID, newCustomLog(t, m, g.ID, "stdout").ID, ""
+			},
+			expectCode: cerrors.InvalidArgument,
+		},
+		{
+			name: "unknown log",
+			setup: func(m *ocilogging.Mock) (string, string, string) {
+				g := newGroup(t, m, compartmentA, "src")
+				return g.ID, "ocid1.log.oc1.iad.missing", g.ID
+			},
+			expectCode: cerrors.NotFound,
+		},
+		{
+			name: "unknown target group",
+			setup: func(m *ocilogging.Mock) (string, string, string) {
+				g := newGroup(t, m, compartmentA, "src")
+				return g.ID, newCustomLog(t, m, g.ID, "stdout").ID, "ocid1.loggroup.oc1.iad.missing"
+			},
+			expectCode: cerrors.NotFound,
+		},
+		{
+			name: "the target already holds a log of that name",
+			setup: func(m *ocilogging.Mock) (string, string, string) {
+				src := newGroup(t, m, compartmentA, "src")
+				dst := newGroup(t, m, compartmentA, "dst")
+				newCustomLog(t, m, dst.ID, "stdout")
+
+				return src.ID, newCustomLog(t, m, src.ID, "stdout").ID, dst.ID
+			},
+			expectCode: cerrors.AlreadyExists,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newMock(t)
+			groupID, logID, target := tc.setup(m)
+
+			err := m.MoveLog(ctx, groupID, logID, target)
+			require.Error(t, err)
+			assert.Equal(t, tc.expectCode, cerrors.GetCode(err))
+		})
+	}
+}
+
+func TestSearchOffsets(t *testing.T) {
+	ctx := context.Background()
+	f := newSearchFixture(t)
+
+	page := func(offset, limit int) *ocilogging.SearchResult {
+		t.Helper()
+
+		res, err := f.m.SearchLogs(ctx, ocilogging.SearchRequest{
+			Query:     `search "` + compartmentA + `"`,
+			TimeStart: searchWindowStart,
+			TimeEnd:   searchWindowEnd,
+			Limit:     limit,
+			Offset:    offset,
+		})
+		require.NoError(t, err)
+
+		return res
+	}
+
+	first := page(0, 3)
+	require.Len(t, first.Entries, 3)
+	assert.Equal(t, 3, first.NextOffset, "a truncated page says where the next starts")
+
+	last := page(first.NextOffset, 3)
+	require.Len(t, last.Entries, 1)
+	assert.Equal(t, "e-40", last.Entries[0].ID)
+	assert.Zero(t, last.NextOffset, "the last page has no next")
+
+	assert.Empty(t, page(100, 3).Entries, "an offset past the end is an empty page")
+
+	_, err := f.m.SearchLogs(ctx, ocilogging.SearchRequest{
+		Query:     `search "` + compartmentA + `"`,
+		TimeStart: searchWindowStart,
+		TimeEnd:   searchWindowEnd,
+		Offset:    -1,
+	})
+	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+}
+
+// TestSearchTheRootCompartmentByTenancy covers the default compartment: the
+// tenancy is the root compartment, so a search scoped to the tenancy OCID must
+// find what was logged there rather than refuse the OCID.
+func TestSearchTheRootCompartmentByTenancy(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	const tenancy = "ocid1.tenancy.oc1..aaaaaaaacloudemulocaltenancy"
+
+	g := newGroup(t, m, tenancy, "root-logs")
+	l := newCustomLog(t, m, g.ID, "stdout")
+
+	require.NoError(t, m.PutLogs(ctx, l.ID, validBatches([]ocilogging.LogEntryBatch{{
+		Entries: []ocilogging.LogEntryItem{{ID: "e-root", Data: "x", Time: searchWindowStart}},
+	}})))
+
+	for _, query := range []string{
+		`search "` + tenancy + `"`,
+		`search "` + tenancy + `/` + g.ID + `/` + l.ID + `"`,
+	} {
+		res, err := m.SearchLogs(ctx, ocilogging.SearchRequest{
+			Query: query, TimeStart: searchWindowStart, TimeEnd: searchWindowEnd,
+		})
+		require.NoError(t, err, query)
+		require.Len(t, res.Entries, 1, query)
+		assert.Equal(t, "e-root", res.Entries[0].ID)
+	}
+
+	_, err := m.SearchLogs(ctx, ocilogging.SearchRequest{
+		Query:     `search "` + tenancy + `/` + tenancy + `"`,
+		TimeStart: searchWindowStart, TimeEnd: searchWindowEnd,
+	})
+	require.Error(t, err, "a tenancy names a compartment, not a log group")
+	assert.Contains(t, err.Error(), "is not a log group OCID")
 }

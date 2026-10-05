@@ -47,7 +47,7 @@ func (m *Mock) createGroup(spec LogGroupSpec) (*LogGroup, error) {
 
 	m.groups.Set(g.ID, g)
 
-	out := *g
+	out := g.clone()
 
 	return &out, nil
 }
@@ -62,7 +62,7 @@ func (m *Mock) GetGroup(_ context.Context, id string) (*LogGroup, error) {
 		return nil, cerrors.Newf(cerrors.NotFound, "log group %q not found", id)
 	}
 
-	out := *g
+	out := g.clone()
 
 	return &out, nil
 }
@@ -74,7 +74,7 @@ func (m *Mock) ListGroups(_ context.Context, compartmentID, displayName string) 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if err := requireName(compartmentID, "compartmentId"); err != nil {
+	if err := requireName(compartmentID, compartmentIDName); err != nil {
 		return nil, err
 	}
 
@@ -89,7 +89,7 @@ func (m *Mock) ListGroups(_ context.Context, compartmentID, displayName string) 
 			continue
 		}
 
-		out = append(out, *g)
+		out = append(out, g.clone())
 	}
 
 	return out, nil
@@ -124,13 +124,14 @@ func (m *Mock) UpdateGroup(_ context.Context, id string, u LogGroupUpdate) (*Log
 
 	g.TimeLastModified = m.now()
 
-	out := *g
+	out := g.clone()
 
 	return &out, nil
 }
 
-// DeleteGroup deletes a log group and the logs inside it. Deleting the group
-// discards their entries with them.
+// DeleteGroup deletes an empty log group. Real OCI refuses to delete a group
+// that still holds logs, so this does too; the portable DeleteLogGroup is the
+// path that cascades.
 func (m *Mock) DeleteGroup(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -139,8 +140,9 @@ func (m *Mock) DeleteGroup(_ context.Context, id string) error {
 		return cerrors.Newf(cerrors.NotFound, "log group %q not found", id)
 	}
 
-	for _, rec := range m.logsIn(id) {
-		m.logs.Delete(rec.Log.ID)
+	if n := len(m.logsIn(id)); n > 0 {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"log group %q still holds %d log(s); delete them before the group", id, n)
 	}
 
 	m.groups.Delete(id)
@@ -153,7 +155,7 @@ func (m *Mock) MoveGroup(_ context.Context, id, compartmentID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if err := requireName(compartmentID, "compartmentId"); err != nil {
+	if err := requireName(compartmentID, compartmentIDName); err != nil {
 		return err
 	}
 
@@ -174,7 +176,9 @@ func (m *Mock) MoveGroup(_ context.Context, id, compartmentID string) error {
 		rec.Log.CompartmentID = compartmentID
 
 		if rec.Log.Configuration != nil {
-			rec.Log.Configuration.CompartmentID = compartmentID
+			cfg := *rec.Log.Configuration
+			cfg.CompartmentID = compartmentID
+			rec.Log.Configuration = &cfg
 		}
 	}
 

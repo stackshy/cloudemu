@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -131,16 +132,16 @@ func TestMatches(t *testing.T) {
 		{name: "unified agent configurations are claimed to be reported unemulated", method: http.MethodGet, path: "/20200531/unifiedAgentConfigurations", expect: true},
 		{name: "saved searches are claimed to be reported unemulated", method: http.MethodGet, path: "/20200531/logSavedSearches", expect: true},
 
-		// Ingestion plane, /20200601.
-		{name: "ingestion push", method: http.MethodPost, path: "/20200601/logs/ocid1.log.oc1.iad.a/actions/push", expect: true},
+		// Ingestion plane, /20200831.
+		{name: "ingestion push", method: http.MethodPost, path: "/20200831/logs/ocid1.log.oc1.iad.a/actions/push", expect: true},
 
 		// Search plane, /20190909.
 		{name: "search", method: http.MethodPost, path: "/20190909/search", expect: true},
 
 		// A collection claimed under one prefix must not be claimed under another.
 		{name: "top-level logs is the ingestion plane's, not the control plane's", method: http.MethodGet, path: "/20200531/logs", expect: false},
-		{name: "log groups are not on the ingestion prefix", method: http.MethodPost, path: "/20200601/logGroups", expect: false},
-		{name: "search is not on the ingestion prefix", method: http.MethodPost, path: "/20200601/search", expect: false},
+		{name: "log groups are not on the ingestion prefix", method: http.MethodPost, path: "/20200831/logGroups", expect: false},
+		{name: "search is not on the ingestion prefix", method: http.MethodPost, path: "/20200831/search", expect: false},
 		{name: "log groups are not on the search prefix", method: http.MethodGet, path: "/20190909/logGroups", expect: false},
 		{name: "logs are not on the search prefix", method: http.MethodPost, path: "/20190909/logs/a/actions/push", expect: false},
 		{name: "search is not on the control prefix", method: http.MethodPost, path: "/20200531/search", expect: false},
@@ -156,7 +157,10 @@ func TestMatches(t *testing.T) {
 		{name: "version alone", method: http.MethodGet, path: "/20200531", expect: false},
 		{name: "root", method: http.MethodGet, path: "/", expect: false},
 		{name: "unknown version", method: http.MethodGet, path: "/19990101/logGroups", expect: false},
-		{name: "too many segments", method: http.MethodGet, path: "/20200531/logGroups/g/logs/l/extra", expect: false},
+		{
+			name: "too many segments", method: http.MethodGet,
+			path: "/20200531/logGroups/g/logs/l/actions/changeLogGroup/extra", expect: false,
+		},
 		{name: "empty segment", method: http.MethodGet, path: "/20200531//logGroups", expect: false},
 	}
 
@@ -215,7 +219,7 @@ func TestLogGroupLifecycle(t *testing.T) {
 
 	t.Run("change compartment", func(t *testing.T) {
 		rec := do(t, h, http.MethodPost, "/20200531/logGroups/"+groupID+"/actions/changeCompartment",
-			map[string]any{"targetCompartmentId": "ocid1.compartment.oc1..moved"})
+			map[string]any{"compartmentId": "ocid1.compartment.oc1..moved"})
 		require.Equal(t, http.StatusAccepted, rec.Code)
 		assert.NotEmpty(t, rec.Header().Get(ocirest.HeaderWorkRequestID))
 	})
@@ -401,15 +405,16 @@ func TestPutLogs(t *testing.T) {
 	logID := createLog(t, h, work, groupID, "stdout")
 
 	push := func(body any) *httptest.ResponseRecorder {
-		return do(t, h, http.MethodPost, "/20200601/logs/"+logID+"/actions/push", body)
+		return do(t, h, http.MethodPost, "/20200831/logs/"+logID+"/actions/push", body)
 	}
 
 	t.Run("success", func(t *testing.T) {
 		rec := push(map[string]any{
 			"specversion": "1.0",
 			"logEntryBatches": []any{map[string]any{
-				"source": "host-a",
-				"type":   "custom",
+				"source":              "host-a",
+				"type":                "custom",
+				"defaultlogentrytime": "2026-08-08T12:00:00Z",
 				"entries": []any{
 					map[string]any{"data": "hello", "id": "e1", "time": "2026-08-08T10:00:00Z"},
 				},
@@ -427,35 +432,38 @@ func TestPutLogs(t *testing.T) {
 	}{
 		{
 			name: "specversion is required", method: http.MethodPost,
-			path: "/20200601/logs/" + logID + "/actions/push",
+			path: "/20200831/logs/" + logID + "/actions/push",
 			body: map[string]any{"logEntryBatches": []any{}}, expectCode: http.StatusBadRequest,
 		},
 		{
 			name: "unreadable timestamp", method: http.MethodPost,
-			path: "/20200601/logs/" + logID + "/actions/push",
+			path: "/20200831/logs/" + logID + "/actions/push",
 			body: map[string]any{
-				"specversion":     "1.0",
-				"logEntryBatches": []any{map[string]any{"entries": []any{map[string]any{"data": "x", "time": "yesterday"}}}},
+				"specversion": "1.0",
+				"logEntryBatches": []any{map[string]any{
+					"source": "host-a", "type": "custom", "defaultlogentrytime": "2026-08-08T12:00:00Z",
+					"entries": []any{map[string]any{"data": "x", "time": "yesterday"}},
+				}},
 			},
 			expectCode: http.StatusBadRequest,
 		},
 		{
 			name: "unknown log", method: http.MethodPost,
-			path: "/20200601/logs/ocid1.log.oc1.iad.missing/actions/push",
+			path: "/20200831/logs/ocid1.log.oc1.iad.missing/actions/push",
 			body: map[string]any{"specversion": "1.0"}, expectCode: http.StatusNotFound,
 		},
 		{
 			name: "the ingestion plane publishes only push", method: http.MethodPost,
-			path: "/20200601/logs/" + logID + "/actions/pull",
+			path: "/20200831/logs/" + logID + "/actions/pull",
 			body: map[string]any{"specversion": "1.0"}, expectCode: http.StatusNotFound,
 		},
 		{
 			name: "the ingestion plane has no collection", method: http.MethodGet,
-			path: "/20200601/logs", expectCode: http.StatusNotFound,
+			path: "/20200831/logs", expectCode: http.StatusNotFound,
 		},
 		{
 			name: "push is POST only", method: http.MethodGet,
-			path: "/20200601/logs/" + logID + "/actions/push", expectCode: http.StatusMethodNotAllowed,
+			path: "/20200831/logs/" + logID + "/actions/push", expectCode: http.StatusMethodNotAllowed,
 		},
 	}
 
@@ -472,11 +480,12 @@ func TestSearchLogs(t *testing.T) {
 	groupID := createGroup(t, h, work, "app-logs")
 	logID := createLog(t, h, work, groupID, "stdout")
 
-	rec := do(t, h, http.MethodPost, "/20200601/logs/"+logID+"/actions/push", map[string]any{
+	rec := do(t, h, http.MethodPost, "/20200831/logs/"+logID+"/actions/push", map[string]any{
 		"specversion": "1.0",
 		"logEntryBatches": []any{map[string]any{
-			"source": "host-a",
-			"type":   "custom",
+			"source":              "host-a",
+			"type":                "custom",
+			"defaultlogentrytime": "2026-08-08T12:00:00Z",
 			"entries": []any{
 				map[string]any{"data": `{"level":"ERROR","msg":"boom"}`, "id": "e1", "time": "2026-08-08T10:00:00Z"},
 				map[string]any{"data": `{"level":"INFO","msg":"fine"}`, "id": "e2", "time": "2026-08-08T10:05:00Z"},
@@ -663,7 +672,7 @@ func TestDriverWithoutOCICapabilityIs501(t *testing.T) {
 
 	for _, path := range []string{
 		"/20200531/logGroups",
-		"/20200601/logs/l/actions/push",
+		"/20200831/logs/l/actions/push",
 		"/20190909/search",
 	} {
 		t.Run(path, func(t *testing.T) {
@@ -736,9 +745,11 @@ func TestSearchSortAndProvenance(t *testing.T) {
 	push := func(logID string, entries ...any) {
 		t.Helper()
 
-		rec := do(t, h, http.MethodPost, "/20200601/logs/"+logID+"/actions/push", map[string]any{
-			"specversion":     "1.0",
-			"logEntryBatches": []any{map[string]any{"source": "host-a", "type": "custom", "entries": entries}},
+		rec := do(t, h, http.MethodPost, "/20200831/logs/"+logID+"/actions/push", map[string]any{
+			"specversion": "1.0",
+			"logEntryBatches": []any{map[string]any{
+				"source": "host-a", "type": "custom", "defaultlogentrytime": "2026-08-08T12:00:00Z", "entries": entries,
+			}},
 		})
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	}
@@ -873,7 +884,7 @@ func TestLogGroupMutations(t *testing.T) {
 	t.Run("move between compartments", func(t *testing.T) {
 		rec := do(t, h, http.MethodPost,
 			"/20200531/logGroups/"+groupID+"/actions/changeCompartment",
-			map[string]any{"targetCompartmentId": compartmentB})
+			map[string]any{"compartmentId": compartmentB})
 		require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 
 		got := do(t, h, http.MethodGet, "/20200531/logGroups/"+groupID, nil)
@@ -916,7 +927,7 @@ func TestLogGroupMutationErrors(t *testing.T) {
 		{
 			name: "move an unknown group", method: http.MethodPost,
 			path: "/20200531/logGroups/" + missing + "/actions/changeCompartment",
-			body: map[string]any{"targetCompartmentId": compartmentB}, expectCode: http.StatusNotFound,
+			body: map[string]any{"compartmentId": compartmentB}, expectCode: http.StatusNotFound,
 		},
 		{
 			name: "move needs a target compartment", method: http.MethodPost,
@@ -1019,7 +1030,7 @@ func TestLogMutations(t *testing.T) {
 		assert.InDelta(t, 90, body["retentionDuration"], 0)
 
 		cfg := body["configuration"].(map[string]any)
-		assert.Equal(t, "OCISERVICE", cfg["source"].(map[string]any)["sourceType"])
+		assert.NotContains(t, cfg["source"].(map[string]any), "sourceType", "a CUSTOM log has no service source")
 		assert.Equal(t, true, cfg["archiving"].(map[string]any)["isEnabled"])
 	})
 
@@ -1087,7 +1098,15 @@ func TestRoutingEdges(t *testing.T) {
 		{name: "malformed path", method: http.MethodGet, path: "/20200531", expectCode: http.StatusBadRequest},
 		{
 			name: "too many segments", method: http.MethodGet,
-			path: "/20200531/logGroups/" + groupID + "/logs/l/extra/more", expectCode: http.StatusBadRequest,
+			path: "/20200531/logGroups/" + groupID + "/logs/l/actions/changeLogGroup/x", expectCode: http.StatusBadRequest,
+		},
+		{
+			name: "an unknown log action", method: http.MethodPost,
+			path: "/20200531/logGroups/" + groupID + "/logs/l/actions/archive", expectCode: http.StatusNotFound,
+		},
+		{
+			name: "a log action is POST only", method: http.MethodGet,
+			path: "/20200531/logGroups/" + groupID + "/logs/l/actions/changeLogGroup", expectCode: http.StatusMethodNotAllowed,
 		},
 		{
 			name: "unknown API version", method: http.MethodGet,
@@ -1137,7 +1156,7 @@ func TestMalformedBodies(t *testing.T) {
 		},
 		"create log": {http.MethodPost, "/20200531/logGroups/" + groupID + "/logs"},
 		"update log": {http.MethodPut, "/20200531/logGroups/" + groupID + "/logs/" + logID},
-		"push":       {http.MethodPost, "/20200601/logs/" + logID + "/actions/push"},
+		"push":       {http.MethodPost, "/20200831/logs/" + logID + "/actions/push"},
 		"search":     {http.MethodPost, "/20190909/search"},
 	}
 
@@ -1180,4 +1199,271 @@ func TestCreateLogErrors(t *testing.T) {
 			assert.Equal(t, tc.expectCode, rec.Code, rec.Body.String())
 		})
 	}
+}
+
+// The wire contract of oci-go-sdk v65, copied from the SDK rather than from this
+// handler's constants, so a drift in the handler cannot drift the test with it.
+const (
+	// logging/logging_loggingmanagement_client.go: client.BasePath.
+	sdkControlBase = "/20200531"
+	// loggingingestion/loggingingestion_logging_client.go: client.BasePath.
+	sdkIngestionBase = "/20200831"
+	// loggingsearch/loggingsearch_logsearch_client.go: client.BasePath.
+	sdkSearchBase = "/20190909"
+)
+
+// sdkOperationTypes is logging.OperationTypesEnum: the only values a client's
+// GetMappingOperationTypesEnum recognizes on a work request.
+//
+//nolint:gochecknoglobals // immutable copy of the SDK enum.
+var sdkOperationTypes = map[string]bool{
+	"CREATE_LOG": true, "UPDATE_LOG": true, "DELETE_LOG": true, "MOVE_LOG": true,
+	"CREATE_LOG_GROUP": true, "UPDATE_LOG_GROUP": true, "DELETE_LOG_GROUP": true, "MOVE_LOG_GROUP": true,
+	"CREATE_CONFIGURATION": true, "UPDATE_CONFIGURATION": true, "DELETE_CONFIGURATION": true,
+	"MOVE_CONFIGURATION": true,
+}
+
+// operationOf returns the operation type of the work request a 202 stamped,
+// asserting it is one the SDK defines.
+func operationOf(t *testing.T, work *workrequest.Store, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+	wr, ok := work.Get(rec.Header().Get(ocirest.HeaderWorkRequestID))
+	require.True(t, ok)
+	assert.True(t, sdkOperationTypes[wr.OperationType],
+		"%q is not in the SDK's OperationTypesEnum", wr.OperationType)
+
+	return wr.OperationType
+}
+
+// TestSDKContract drives every OCI Logging operation CloudEmu serves through the
+// exact path and body shape oci-go-sdk v65 sends. Both shapes earlier tests
+// missed — ingestion's API version and ChangeLogGroupCompartmentDetails'
+// compartmentId — fail here.
+func TestSDKContract(t *testing.T) {
+	h, work := newHandler(t)
+
+	create := do(t, h, http.MethodPost, sdkControlBase+"/logGroups", map[string]any{
+		"compartmentId": compartmentA, "displayName": "app-logs",
+	})
+	assert.Equal(t, "CREATE_LOG_GROUP", operationOf(t, work, create))
+	groupID := resourceOf(t, work, create, "loggroup")
+	otherID := createGroup(t, h, work, "other-logs")
+
+	createdLog := do(t, h, http.MethodPost, sdkControlBase+"/logGroups/"+groupID+"/logs", map[string]any{
+		"displayName": "stdout", "logType": "CUSTOM", "isEnabled": true, "retentionDuration": 30,
+	})
+	assert.Equal(t, "CREATE_LOG", operationOf(t, work, createdLog))
+	logID := resourceOf(t, work, createdLog, "log")
+
+	t.Run("GetLog carries the tenancy", func(t *testing.T) {
+		rec := do(t, h, http.MethodGet, sdkControlBase+"/logGroups/"+groupID+"/logs/"+logID, nil)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, "ocid1.tenancy.oc1..aaaaaaaacloudemulocaltenancy", body["tenancyId"])
+		assert.NotContains(t, body, "configuration", "a CUSTOM log created without one has no configuration")
+	})
+
+	t.Run("PutLogs at the ingestion client's base path", func(t *testing.T) {
+		path := sdkIngestionBase + "/logs/" + logID + "/actions/push"
+		require.True(t, h.Matches(httptest.NewRequest(http.MethodPost, path, nil)))
+
+		// PutLogsDetails / LogEntryBatch / LogEntry, every mandatory field set.
+		rec := do(t, h, http.MethodPost, path, map[string]any{
+			"specversion": "1.0",
+			"logEntryBatches": []any{map[string]any{
+				"source": "host-a", "type": "com.example.app", "subject": "app",
+				"defaultlogentrytime": "2026-08-08T10:00:00Z",
+				"entries":             []any{map[string]any{"id": "e1", "data": "hello", "time": "2026-08-08T10:00:00Z"}},
+			}},
+		})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+		found := do(t, h, http.MethodPost, sdkSearchBase+"/search", map[string]any{
+			"searchQuery": `search "` + compartmentA + `"`,
+			"timeStart":   "2026-08-08T09:00:00Z",
+			"timeEnd":     "2026-08-08T11:00:00Z",
+		})
+		require.Equal(t, http.StatusOK, found.Code)
+		assert.Equal(t, []string{"e1"}, resultIDs(t, found), "a follow-up search finds what PutLogs ingested")
+	})
+
+	t.Run("the retired ingestion version is not claimed", func(t *testing.T) {
+		assert.False(t, h.Matches(httptest.NewRequest(http.MethodPost, "/20200601/logs/"+logID+"/actions/push", nil)))
+	})
+
+	t.Run("ChangeLogLogGroup moves a log and records MOVE_LOG", func(t *testing.T) {
+		// ChangeLogLogGroupDetails.
+		rec := do(t, h, http.MethodPost,
+			sdkControlBase+"/logGroups/"+groupID+"/logs/"+logID+"/actions/changeLogGroup",
+			map[string]any{"targetLogGroupId": otherID})
+		assert.Equal(t, "MOVE_LOG", operationOf(t, work, rec))
+
+		got := do(t, h, http.MethodGet, sdkControlBase+"/logGroups/"+otherID+"/logs/"+logID, nil)
+		assert.Equal(t, http.StatusOK, got.Code, "the log is now addressed through its new group")
+	})
+
+	t.Run("ChangeLogGroupCompartment reads compartmentId and records MOVE_LOG_GROUP", func(t *testing.T) {
+		// ChangeLogGroupCompartmentDetails.
+		rec := do(t, h, http.MethodPost, sdkControlBase+"/logGroups/"+otherID+"/actions/changeCompartment",
+			map[string]any{"compartmentId": compartmentB})
+		assert.Equal(t, "MOVE_LOG_GROUP", operationOf(t, work, rec))
+
+		got := do(t, h, http.MethodGet, sdkControlBase+"/logGroups/"+otherID, nil)
+
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(got.Body.Bytes(), &body))
+		assert.Equal(t, compartmentB, body["compartmentId"])
+	})
+
+	t.Run("the old targetCompartmentId body is refused, not accepted", func(t *testing.T) {
+		rec := do(t, h, http.MethodPost, sdkControlBase+"/logGroups/"+groupID+"/actions/changeCompartment",
+			map[string]any{"targetCompartmentId": compartmentB})
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, rec.Body.String(), "compartmentId is required")
+	})
+
+	t.Run("deleting a group that holds logs is 409 IncorrectState", func(t *testing.T) {
+		rec := do(t, h, http.MethodDelete, sdkControlBase+"/logGroups/"+otherID, nil)
+		require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+		assert.Equal(t, "IncorrectState", codeOf(t, rec))
+	})
+
+	t.Run("delete the log, then the emptied group", func(t *testing.T) {
+		assert.Equal(t, "DELETE_LOG", operationOf(t, work,
+			do(t, h, http.MethodDelete, sdkControlBase+"/logGroups/"+otherID+"/logs/"+logID, nil)))
+		assert.Equal(t, "DELETE_LOG_GROUP", operationOf(t, work,
+			do(t, h, http.MethodDelete, sdkControlBase+"/logGroups/"+otherID, nil)))
+	})
+}
+
+func TestWireRejectsWhatOCIRejects(t *testing.T) {
+	h, work := newHandler(t)
+	groupID := createGroup(t, h, work, "app-logs")
+	logID := createLog(t, h, work, groupID, "stdout")
+	push := "/20200831/logs/" + logID + "/actions/push"
+
+	batch := func(drop string) map[string]any {
+		b := map[string]any{
+			"source": "host-a", "type": "custom", "defaultlogentrytime": "2026-08-08T10:00:00Z",
+			"entries": []any{map[string]any{"id": "e1", "data": "x"}},
+		}
+		delete(b, drop)
+
+		return map[string]any{"specversion": "1.0", "logEntryBatches": []any{b}}
+	}
+
+	tests := []struct {
+		name     string
+		method   string
+		path     string
+		body     any
+		code     int
+		contains string
+	}{
+		{name: "batch missing source", method: http.MethodPost, path: push, body: batch("source"),
+			code: http.StatusBadRequest, contains: "source is required"},
+		{name: "batch missing type", method: http.MethodPost, path: push, body: batch("type"),
+			code: http.StatusBadRequest, contains: "type is required"},
+		{name: "batch missing defaultlogentrytime", method: http.MethodPost, path: push,
+			body: batch("defaultlogentrytime"), code: http.StatusBadRequest, contains: "defaultlogentrytime is required"},
+		{name: "create with retentionDuration 7", method: http.MethodPost,
+			path: "/20200531/logGroups/" + groupID + "/logs",
+			body: map[string]any{"displayName": "short", "logType": "CUSTOM", "retentionDuration": 7},
+			code: http.StatusBadRequest, contains: "retentionDuration 7 is not valid"},
+		{name: "update with retentionDuration 45", method: http.MethodPut,
+			path: "/20200531/logGroups/" + groupID + "/logs/" + logID,
+			body: map[string]any{"retentionDuration": 45},
+			code: http.StatusBadRequest, contains: "retentionDuration 45 is not valid"},
+		{name: "move a log with no target", method: http.MethodPost,
+			path: "/20200531/logGroups/" + groupID + "/logs/" + logID + "/actions/changeLogGroup",
+			body: map[string]any{}, code: http.StatusBadRequest, contains: "targetLogGroupId is required"},
+		{name: "move a log into an unknown group", method: http.MethodPost,
+			path: "/20200531/logGroups/" + groupID + "/logs/" + logID + "/actions/changeLogGroup",
+			body: map[string]any{"targetLogGroupId": "ocid1.loggroup.oc1.iad.missing"},
+			code: http.StatusNotFound, contains: "not found"},
+		{name: "a list page this API never minted", method: http.MethodGet,
+			path: "/20200531/logGroups?compartmentId=" + compartmentA + "&page=garbage",
+			code: http.StatusBadRequest, contains: "is not a cursor"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(t, h, tc.method, tc.path, tc.body)
+			require.Equal(t, tc.code, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), tc.contains)
+		})
+	}
+}
+
+func TestSearchPaginates(t *testing.T) {
+	h, work := newHandler(t)
+	groupID := createGroup(t, h, work, "app-logs")
+	logID := createLog(t, h, work, groupID, "stdout")
+
+	entries := make([]any, 0, 5)
+	for i := range 5 {
+		entries = append(entries, map[string]any{
+			"id": "e" + strconv.Itoa(i), "data": "x", "time": "2026-08-08T10:0" + strconv.Itoa(i) + ":00Z",
+		})
+	}
+
+	rec := do(t, h, http.MethodPost, "/20200831/logs/"+logID+"/actions/push", map[string]any{
+		"specversion": "1.0",
+		"logEntryBatches": []any{map[string]any{
+			"source": "host-a", "type": "custom", "defaultlogentrytime": "2026-08-08T10:00:00Z", "entries": entries,
+		}},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	search := func(query string) *httptest.ResponseRecorder {
+		return do(t, h, http.MethodPost, "/20190909/search"+query, map[string]any{
+			"searchQuery": `search "` + compartmentA + `"`,
+			"timeStart":   "2026-08-08T09:00:00Z",
+			"timeEnd":     "2026-08-08T11:00:00Z",
+		})
+	}
+
+	var (
+		got  []string
+		page string
+	)
+
+	for pages := 0; ; pages++ {
+		require.Less(t, pages, 5, "pagination must terminate")
+
+		query := "?limit=2"
+		if page != "" {
+			query += "&page=" + page
+		}
+
+		res := search(query)
+		require.Equal(t, http.StatusOK, res.Code, res.Body.String())
+
+		got = append(got, resultIDs(t, res)...)
+
+		page = res.Header().Get(ocirest.HeaderNextPage)
+		if page == "" {
+			break
+		}
+	}
+
+	assert.Equal(t, []string{"e0", "e1", "e2", "e3", "e4"}, got, "every entry, once, in order, across pages")
+
+	t.Run("a page past the end is empty, with no cursor", func(t *testing.T) {
+		res := search("?limit=2&page=10")
+		require.Equal(t, http.StatusOK, res.Code)
+		assert.Empty(t, resultIDs(t, res))
+		assert.Empty(t, res.Header().Get(ocirest.HeaderNextPage))
+	})
+
+	t.Run("a page this API never minted is rejected", func(t *testing.T) {
+		res := search("?page=garbage")
+		require.Equal(t, http.StatusBadRequest, res.Code)
+		assert.Contains(t, res.Body.String(), "is not a cursor")
+	})
 }
