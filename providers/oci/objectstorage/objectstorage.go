@@ -163,7 +163,7 @@ type bucketData struct {
 	multiparts *memstore.Store[*multipartUpload]
 	pars       *memstore.Store[*parData]
 	retention  *memstore.Store[*retentionRuleData]
-	lifecycle  *driver.LifecycleConfig
+	lifecycle  *LifecyclePolicy
 	// versions maps an object name to its chain, oldest first. Only populated
 	// once versioning has been enabled on the bucket.
 	versions map[string][]*objectVersion
@@ -212,6 +212,9 @@ func namespaceFor(tenancyOCID string) string {
 // Namespace returns the tenancy's Object Storage namespace.
 func (m *Mock) Namespace() string { return m.namespace }
 
+// Region returns the OCI region the emulated Object Storage endpoint serves.
+func (m *Mock) Region() string { return m.opts.OCIRegion() }
+
 // Scope returns the compartment a bucket was created in. It is an OPTIONAL
 // capability, discovered by type assertion: the portable Bucket driver has no
 // compartment parameter, so OCI scoping is exposed alongside it.
@@ -238,7 +241,12 @@ func (m *Mock) CreateBucket(ctx context.Context, name string) error {
 
 // DeleteBucket removes an empty bucket. OCI refuses to delete a bucket that
 // still holds objects or uncommitted multipart uploads.
-func (m *Mock) DeleteBucket(_ context.Context, name string) error {
+func (m *Mock) DeleteBucket(ctx context.Context, name string) error {
+	return m.DeleteBucketIf(ctx, name, "")
+}
+
+// DeleteBucketIf is DeleteBucket guarded by an if-match ETag.
+func (m *Mock) DeleteBucketIf(_ context.Context, name, ifMatch string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -247,12 +255,17 @@ func (m *Mock) DeleteBucket(_ context.Context, name string) error {
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", name)
 	}
 
+	if err := checkETag(bkt.ETag, ifMatch, ""); err != nil {
+		return err
+	}
+
 	if bkt.objects.Len() > 0 || len(bkt.versions) > 0 {
-		return cerrors.Newf(cerrors.FailedPrecondition, "bucket %q is not empty", name)
+		return serviceErrorf(CodeBucketNotEmpty, cerrors.FailedPrecondition, "bucket %q is not empty", name)
 	}
 
 	if bkt.multiparts.Len() > 0 {
-		return cerrors.Newf(cerrors.FailedPrecondition, "bucket %q has uncommitted multipart uploads", name)
+		return serviceErrorf(CodeBucketNotEmpty, cerrors.FailedPrecondition,
+			"bucket %q has uncommitted multipart uploads", name)
 	}
 
 	m.buckets.Delete(name)
@@ -316,7 +329,10 @@ func objectLocked(bkt *bucketData, name string) (*objectData, error) {
 func (m *Mock) now() string { return m.opts.Clock.Now().UTC().Format(timeFormat) }
 
 // newETag mints the opaque entity tag OCI stamps on buckets and objects.
-func newETag() string { return idgen.GenerateID("") }
+// newETag mints an opaque ETag per write. It is random rather than a content
+// hash, so re-uploading identical bytes still changes it, and rather than the
+// process counter, which restarts after a persist restore.
+func newETag() string { return idgen.UUID() }
 
 func contentMD5(data []byte) string {
 	sum := md5.Sum(data) //nolint:gosec // OCI reports content MD5; not a security primitive

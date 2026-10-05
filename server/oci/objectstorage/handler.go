@@ -80,6 +80,7 @@ const (
 	codeNotImplemented   = "NotImplemented"
 	codeNotFound         = "NotAuthorizedOrNotFound"
 	codeNotAuthorized    = "NotAuthenticated"
+	codeInvalidRange     = "InvalidRange"
 )
 
 // operationCopy is the work request a copyObject records.
@@ -92,6 +93,7 @@ const operationCopy = "COPY_OBJECT"
 // served 501 for every path this handler claims.
 type Extras interface {
 	Namespace() string
+	Region() string
 	Metadata(ctx context.Context) osprovider.NamespaceMetadata
 	Scope(bucket string) scope.Scope
 
@@ -130,7 +132,15 @@ type Extras interface {
 	DeletePAR(ctx context.Context, bucket, parID string) error
 	ResolvePAR(ctx context.Context, token string) (*osprovider.PreauthenticatedRequest, error)
 
+	PutLifecyclePolicy(
+		ctx context.Context, bucket string, rules []osprovider.LifecycleRule,
+	) (*osprovider.LifecyclePolicy, error)
+	GetLifecyclePolicy(ctx context.Context, bucket string) (*osprovider.LifecyclePolicy, error)
 	DeleteLifecyclePolicy(ctx context.Context, bucket string) error
+
+	DeleteBucketIf(ctx context.Context, name, ifMatch string) error
+	CopyObjectWith(ctx context.Context, spec osprovider.CopySpec) error
+	DeleteObjectIf(ctx context.Context, bucket, key, versionID, ifMatch string) (string, bool, error)
 }
 
 // Handler serves OCI Object Storage against a storage driver.
@@ -139,6 +149,11 @@ type Handler struct {
 	extras    Extras
 	versioned driver.VersionedBucket
 	work      *workrequest.Store
+
+	// compartmentExists reports whether a compartment OCID exists. It is nil
+	// unless SetCompartmentChecker wires it from Identity; a nil checker skips
+	// the check so handlers built without identity keep working.
+	compartmentExists func(id string) bool
 }
 
 // New returns an Object Storage handler. work records the asynchronous copy;
@@ -148,6 +163,25 @@ func New(b driver.Bucket, work *workrequest.Store) *Handler {
 	versioned, _ := b.(driver.VersionedBucket)
 
 	return &Handler{store: b, extras: extras, versioned: versioned, work: work}
+}
+
+// SetCompartmentChecker wires a compartment-existence check so a bucket created
+// in, or moved to, a compartment that does not exist is rejected with
+// 404 NotAuthorizedOrNotFound, as real OCI does. When unset (nil) the check is
+// skipped, so handlers constructed without identity keep working.
+func (h *Handler) SetCompartmentChecker(fn func(id string) bool) { h.compartmentExists = fn }
+
+// requireCompartment reports whether compartmentID exists; if not it writes
+// the OCI 404 NotAuthorizedOrNotFound and returns false. A nil checker (no
+// identity wired) is a no-op that allows the request.
+func (h *Handler) requireCompartment(w http.ResponseWriter, r *http.Request, compartmentID string) bool {
+	if h.compartmentExists == nil || compartmentID == "" || h.compartmentExists(compartmentID) {
+		return true
+	}
+
+	ocirest.WriteError(w, r, http.StatusNotFound, codeNotFound, compartmentID+" not found")
+
+	return false
 }
 
 // route is a parsed Object Storage path.

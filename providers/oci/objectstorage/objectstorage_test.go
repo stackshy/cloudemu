@@ -116,6 +116,7 @@ func TestBucketOCIDShape(t *testing.T) {
 
 	par, err := m.CreatePAR(context.Background(), testBucket, objectstorage.PARSpec{
 		Name: "par", ObjectName: "k", AccessType: objectstorage.PARObjectRead,
+		TimeExpires: time.Now().Add(time.Hour),
 	})
 	require.NoError(t, err)
 	assert.Regexp(t, regexp.MustCompile(`^ocid1\.preauthenticatedrequest\.oc1\.iad\.[a-z0-9]+$`), par.ID)
@@ -617,12 +618,16 @@ func TestLifecyclePolicyExpiry(t *testing.T) {
 	require.NoError(t, m.PutLifecycleConfig(ctx, testBucket, driver.LifecycleConfig{Rules: []driver.LifecycleRule{
 		{ID: "expire-logs", Prefix: "logs/", ExpirationDays: 30, Enabled: true},
 		{ID: "off", Prefix: "logs/disabled", ExpirationDays: 1, Enabled: false},
-		{ID: "keep", Prefix: "keep/", Enabled: true},
 	}}))
 
 	stored, err := m.GetLifecycleConfig(ctx, testBucket)
 	require.NoError(t, err)
-	require.Len(t, stored.Rules, 3)
+	require.Len(t, stored.Rules, 2)
+
+	err = m.PutLifecycleConfig(ctx, testBucket, driver.LifecycleConfig{Rules: []driver.LifecycleRule{
+		{ID: "keep", Prefix: "keep/", Enabled: true},
+	}})
+	require.Error(t, err, "a portable rule with no action is refused, not stored as a no-op")
 
 	expired, err = m.EvaluateLifecycle(ctx, testBucket)
 	require.NoError(t, err)
@@ -640,7 +645,7 @@ func TestLifecyclePolicyExpiry(t *testing.T) {
 	expired, err = m.EvaluateLifecycle(ctx, testBucket)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"logs/disabled.txt", "logs/old.txt"}, expired,
-		"only the enabled logs/ rule ages objects out; keep/ has no ExpirationDays")
+		"only the enabled logs/ rule ages objects out")
 
 	_, err = m.EvaluateLifecycle(ctx, "missing")
 	require.Error(t, err)
@@ -1038,9 +1043,9 @@ func TestPARAccessTypesGrantTheRightVerbs(t *testing.T) {
 		t.Run(tc.accessType, func(t *testing.T) {
 			par, err := m.CreatePAR(ctx, testBucket, objectstorage.PARSpec{
 				Name: tc.accessType, ObjectName: tc.object, AccessType: tc.accessType,
+				TimeExpires: time.Now().Add(time.Hour),
 			})
 			require.NoError(t, err)
-			assert.NotEmpty(t, par.TimeExpires, "an unset timeExpires defaults to the maximum lifetime")
 
 			assert.Equal(t, tc.getOK, objectstorage.PARAllows(par, http.MethodGet, "a.txt"))
 			assert.Equal(t, tc.getOK, objectstorage.PARAllows(par, http.MethodHead, "a.txt"))
@@ -1061,12 +1066,27 @@ func TestPARAccessTypesGrantTheRightVerbs(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
 
+	// OCI PARs commonly live for months or years; there is no S3-style week cap.
 	_, err = m.CreatePAR(ctx, testBucket, objectstorage.PARSpec{
-		Name: "too-long", ObjectName: "a.txt", AccessType: objectstorage.PARObjectRead,
-		TimeExpires: time.Now().Add(30 * 24 * time.Hour),
+		Name: "a-year-out", ObjectName: "a.txt", AccessType: objectstorage.PARObjectRead,
+		TimeExpires: time.Now().Add(365 * 24 * time.Hour),
+	})
+	require.NoError(t, err)
+
+	_, err = m.CreatePAR(ctx, testBucket, objectstorage.PARSpec{
+		Name: "no-expiry", ObjectName: "a.txt", AccessType: objectstorage.PARObjectRead,
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "maximum lifetime")
+	assert.Contains(t, err.Error(), "timeExpires is required")
+
+	// On the AnyObject types objectName is a prefix.
+	scoped, err := m.CreatePAR(ctx, testBucket, objectstorage.PARSpec{
+		Name: "logs-only", ObjectName: "logs/", AccessType: objectstorage.PARAnyObjectRead,
+		TimeExpires: time.Now().Add(time.Hour),
+	})
+	require.NoError(t, err)
+	assert.True(t, objectstorage.PARAllows(scoped, http.MethodGet, "logs/app.log"))
+	assert.False(t, objectstorage.PARAllows(scoped, http.MethodGet, "secret/payroll.csv"))
 
 	_, err = m.CreatePAR(ctx, testBucket, objectstorage.PARSpec{
 		Name: "past", ObjectName: "a.txt", AccessType: objectstorage.PARObjectRead,
@@ -1386,4 +1406,106 @@ func TestMetricsEmission(t *testing.T) {
 	names, err := mon.ListMetrics(ctx, "oci_objectstorage")
 	require.NoError(t, err)
 	assert.Subset(t, names, []string{"PutRequests", "StoredBytes", "GetRequests", "DeleteRequests"})
+}
+
+// Enabling versioning on a bucket that already holds objects must keep the
+// original as a prior version once it is overwritten.
+func TestEnablingVersioningSeedsExistingObjects(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name   string
+		enable func(m *objectstorage.Mock) error
+	}{
+		{"SetVersioningStatus", func(m *objectstorage.Mock) error {
+			return m.SetVersioningStatus(ctx, testBucket, objectstorage.VersioningEnabled)
+		}},
+		{"UpdateBucket", func(m *objectstorage.Mock) error {
+			on := objectstorage.VersioningEnabled
+			_, err := m.UpdateBucket(ctx, testBucket, objectstorage.BucketUpdate{Versioning: &on})
+
+			return err
+		}},
+		{"portable SetBucketVersioning", func(m *objectstorage.Mock) error {
+			return m.SetBucketVersioning(ctx, testBucket, true)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, eng := range []bool{false, true} {
+				m := newMock(t)
+				if eng {
+					m = newEngineMock(t, newFakeStorageEngine())
+				}
+
+				newBucket(t, m, testBucket)
+				require.NoError(t, m.PutObject(ctx, testBucket, "k", []byte("original"), "text/plain", nil))
+				require.NoError(t, tc.enable(m))
+				require.NoError(t, m.PutObject(ctx, testBucket, "k", []byte("second"), "text/plain", nil))
+
+				list, err := m.ListObjectVersions(ctx, testBucket, driver.ListOptions{})
+				require.NoError(t, err)
+				require.Len(t, list.Versions, 2, "engine=%v", eng)
+
+				oldest := list.Versions[len(list.Versions)-1]
+				assert.NotEmpty(t, oldest.VersionID)
+
+				got, err := m.GetObjectVersion(ctx, testBucket, "k", oldest.VersionID)
+				require.NoError(t, err)
+				assert.Equal(t, []byte("original"), got.Data, "engine=%v", eng)
+			}
+		})
+	}
+}
+
+// A rule's target and object-name filter govern what it selects: a rule for
+// previous versions never ages out a live object, and patterns apply.
+func TestLifecycleHonoursTargetAndPatterns(t *testing.T) {
+	clock := config.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	m := objectstorage.New(config.NewOptions(
+		config.WithRegion("us-ashburn-1"),
+		config.WithCompartmentID(testCompartment),
+		config.WithClock(clock),
+	))
+	ctx := context.Background()
+	newBucket(t, m, testBucket)
+
+	for _, k := range []string{"logs/app.log", "logs/keep-me.log", "logs/data.csv", "other/x.log"} {
+		require.NoError(t, m.PutObject(ctx, testBucket, k, []byte("v"), "text/plain", nil))
+	}
+
+	policy, err := m.PutLifecyclePolicy(ctx, testBucket, []objectstorage.LifecycleRule{
+		{
+			Name: "versions-only", Action: objectstorage.LifecycleDelete, TimeAmount: 1,
+			TimeUnit: objectstorage.UnitDays, Target: objectstorage.TargetPreviousVersions, IsEnabled: true,
+		},
+		{
+			Name: "logs", Action: objectstorage.LifecycleDelete, TimeAmount: 1, TimeUnit: objectstorage.UnitYears,
+			IsEnabled: true, InclusionPrefixes: []string{"logs/"},
+			InclusionPatterns: []string{"*.log"}, ExclusionPatterns: []string{"*keep*"},
+		},
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, policy.TimeCreated)
+
+	clock.Advance(2 * hoursPerDay * time.Hour)
+
+	expired, err := m.EvaluateLifecycle(ctx, testBucket)
+	require.NoError(t, err)
+	assert.Empty(t, expired, "the previous-versions rule must not touch live objects")
+
+	clock.Advance(365 * hoursPerDay * time.Hour)
+
+	expired, err = m.EvaluateLifecycle(ctx, testBucket)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"logs/app.log"}, expired, "prefix, inclusion and exclusion patterns all apply")
+
+	got, err := m.GetLifecyclePolicy(ctx, testBucket)
+	require.NoError(t, err)
+	assert.Equal(t, objectstorage.UnitYears, got.Rules[1].TimeUnit, "the unit reads back as sent")
+	assert.Equal(t, objectstorage.TargetPreviousVersions, got.Rules[0].Target)
+
+	// The portable read refuses rather than flattening a rule it cannot carry.
+	_, err = m.GetLifecycleConfig(ctx, testBucket)
+	require.Error(t, err)
+	assert.Equal(t, cerrors.Unimplemented, cerrors.GetCode(err))
 }

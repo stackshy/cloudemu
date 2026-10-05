@@ -96,7 +96,17 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.ObjectStorage != nil {
-		srv.Register(objectstorage.New(d.ObjectStorage, d.WorkRequests))
+		osHandler := objectstorage.New(d.ObjectStorage, d.WorkRequests)
+
+		if comps, ok := d.Identity.(identity.Compartments); ok {
+			osHandler.SetCompartmentChecker(func(id string) bool {
+				_, err := comps.GetCompartment(context.Background(), id)
+
+				return err == nil
+			})
+		}
+
+		srv.Register(osHandler)
 	}
 
 	if d.VCN != nil {

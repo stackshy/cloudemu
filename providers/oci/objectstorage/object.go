@@ -36,6 +36,8 @@ type PutOptions struct {
 	ContentType string
 	StorageTier string
 	Metadata    map[string]string
+	IfMatch     string
+	IfNoneMatch string
 }
 
 func (m *Mock) PutObject(
@@ -70,6 +72,18 @@ func (m *Mock) PutObjectWith(
 		return nil, err
 	}
 
+	existing, exists := bkt.objects.Get(key)
+
+	currentETag := ""
+	if exists {
+		currentETag = existing.ETag
+	}
+
+	if err := checkETag(currentETag, opts.IfMatch, opts.IfNoneMatch); err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+
 	if err := retentionBlocksLocked(bkt, key, m.opts.Clock.Now()); err != nil {
 		m.mu.Unlock()
 		return nil, err
@@ -78,7 +92,7 @@ func (m *Mock) PutObjectWith(
 	now := m.now()
 	created := now
 
-	if existing, ok := bkt.objects.Get(key); ok {
+	if exists {
 		created = existing.TimeCreated
 	}
 
@@ -88,7 +102,7 @@ func (m *Mock) PutObjectWith(
 		Size:         int64(len(data)),
 		ContentType:  orDefault(opts.ContentType, "application/octet-stream"),
 		ContentMD5:   contentMD5(data),
-		ETag:         objectETag(data),
+		ETag:         newETag(),
 		TimeCreated:  created,
 		TimeModified: now,
 		Metadata:     cloneMeta(opts.Metadata),
@@ -268,47 +282,80 @@ func (m *Mock) RenameObject(ctx context.Context, bucket, sourceName, newName str
 // CopyObject copies an object between buckets in this namespace. OCI runs the
 // copy asynchronously; the wire layer records the work request.
 func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src driver.CopySource) error {
+	return m.CopyObjectWith(ctx, CopySpec{
+		SourceBucket: src.Bucket, SourceObject: src.Key,
+		DestinationBucket: dstBucket, DestinationObject: dstKey,
+	})
+}
+
+// CopySpec is OCI's CopyObjectDetails within one namespace and region. Nil
+// Metadata keeps the source's user metadata; an empty StorageTier keeps its
+// tier.
+type CopySpec struct {
+	SourceBucket       string
+	SourceObject       string
+	SourceVersionID    string
+	SourceIfMatch      string
+	DestinationBucket  string
+	DestinationObject  string
+	DestinationIfMatch string
+	// DestinationIfNoneMatch accepts only "*", as OCI's does.
+	DestinationIfNoneMatch string
+	Metadata               map[string]string
+	StorageTier            string
+}
+
+// CopyObjectWith copies an object, honoring the source version, both sides'
+// ETag preconditions, and a replacement metadata set and storage tier.
+//
+//nolint:gocritic // CopySpec is a request shape, passed by value like BucketSpec.
+func (m *Mock) CopyObjectWith(ctx context.Context, spec CopySpec) error {
+	if spec.StorageTier != "" && !validStorageTier(spec.StorageTier) {
+		return cerrors.Newf(cerrors.InvalidArgument, "unsupported storageTier %q", spec.StorageTier)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	srcBkt, err := m.bucketLocked(src.Bucket)
+	srcBkt, err := m.bucketLocked(spec.SourceBucket)
 	if err != nil {
-		return cerrors.Newf(cerrors.NotFound, "source bucket %q not found", src.Bucket)
+		return cerrors.Newf(cerrors.NotFound, "source bucket %q not found", spec.SourceBucket)
 	}
 
-	srcObj, err := objectLocked(srcBkt, src.Key)
+	src, err := copySourceLocked(srcBkt, spec)
 	if err != nil {
-		return cerrors.Newf(cerrors.NotFound, "source object %q not found in bucket %q", src.Key, src.Bucket)
-	}
-
-	dstBkt, err := m.bucketLocked(dstBucket)
-	if err != nil {
-		return cerrors.Newf(cerrors.NotFound, "destination bucket %q not found", dstBucket)
-	}
-
-	if err := retentionBlocksLocked(dstBkt, dstKey, m.opts.Clock.Now()); err != nil {
 		return err
+	}
+
+	dstBkt, err := m.copyDestinationLocked(spec, src.etag)
+	if err != nil {
+		return err
+	}
+
+	metadata := cloneMeta(src.metadata)
+	if spec.Metadata != nil {
+		metadata = cloneMeta(spec.Metadata)
 	}
 
 	now := m.now()
 	dstObj := &objectData{
-		Name:         dstKey,
-		Data:         cloneBytes(srcObj.Data),
-		Size:         srcObj.Size,
-		ContentType:  srcObj.ContentType,
-		ContentMD5:   srcObj.ContentMD5,
-		ETag:         srcObj.ETag,
+		Name:         spec.DestinationObject,
+		Data:         cloneBytes(src.data),
+		Size:         src.size,
+		ContentType:  src.contentType,
+		ContentMD5:   src.contentMD5,
+		ETag:         newETag(),
 		TimeCreated:  now,
 		TimeModified: now,
-		Metadata:     cloneMeta(srcObj.Metadata),
-		StorageTier:  srcObj.StorageTier,
+		Metadata:     metadata,
+		StorageTier:  orDefault(spec.StorageTier, src.storageTier),
 	}
 	storeObjectLocked(dstBkt, dstObj)
 
 	if m.engineWired() {
 		if err := storageengine.Copy(ctx, m.opts.StorageEngine,
-			engineRef(dstBucket, dstKey, dstObj.VersionID),
-			engineRef(src.Bucket, src.Key, srcObj.VersionID)); err != nil {
+			engineRef(spec.DestinationBucket, spec.DestinationObject, dstObj.VersionID),
+			engineRef(spec.SourceBucket, spec.SourceObject, src.versionID)); err != nil {
 			return err
 		}
 
@@ -316,6 +363,56 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 	}
 
 	return nil
+}
+
+// copyDestinationLocked resolves a copy's destination bucket once both sides'
+// preconditions and the destination's retention hold. Callers hold mu.
+//
+//nolint:gocritic // mirrors CopyObjectWith's by-value spec.
+func (m *Mock) copyDestinationLocked(spec CopySpec, sourceETag string) (*bucketData, error) {
+	if err := checkETag(sourceETag, spec.SourceIfMatch, ""); err != nil {
+		return nil, err
+	}
+
+	dstBkt, err := m.bucketLocked(spec.DestinationBucket)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.NotFound, "destination bucket %q not found", spec.DestinationBucket)
+	}
+
+	current := targetETagLocked(dstBkt, spec.DestinationObject, "")
+	if err := checkETag(current, spec.DestinationIfMatch, spec.DestinationIfNoneMatch); err != nil {
+		return nil, err
+	}
+
+	if err := retentionBlocksLocked(dstBkt, spec.DestinationObject, m.opts.Clock.Now()); err != nil {
+		return nil, err
+	}
+
+	return dstBkt, nil
+}
+
+// copySourceLocked resolves a copy's source: the current object, or the named
+// version. Callers hold mu.
+//
+//nolint:gocritic // mirrors CopyObjectWith's by-value spec.
+func copySourceLocked(bkt *bucketData, spec CopySpec) (*objectVersion, error) {
+	if spec.SourceVersionID == "" {
+		obj, err := objectLocked(bkt, spec.SourceObject)
+		if err != nil {
+			return nil, cerrors.Newf(cerrors.NotFound, "source object %q not found in bucket %q",
+				spec.SourceObject, spec.SourceBucket)
+		}
+
+		return versionOf(obj), nil
+	}
+
+	for _, v := range bkt.versions[spec.SourceObject] {
+		if v.versionID == spec.SourceVersionID && !v.deleteMarker {
+			return v, nil
+		}
+	}
+
+	return nil, cerrors.Newf(cerrors.NotFound, "version %q of %q not found", spec.SourceVersionID, spec.SourceObject)
 }
 
 func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOptions) (*driver.ListResult, error) {

@@ -43,7 +43,7 @@ func (h *Handler) createRetentionRule(w http.ResponseWriter, r *http.Request, bu
 
 	rule, err := h.extras.CreateRetentionRule(r.Context(), bucket, spec)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -59,7 +59,7 @@ func (h *Handler) updateRetentionRule(w http.ResponseWriter, r *http.Request, bu
 
 	rule, err := h.extras.UpdateRetentionRule(r.Context(), bucket, ruleID, spec)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -70,7 +70,7 @@ func (h *Handler) updateRetentionRule(w http.ResponseWriter, r *http.Request, bu
 func (h *Handler) getRetentionRule(w http.ResponseWriter, r *http.Request, bucket, ruleID string) {
 	rule, err := h.extras.GetRetentionRule(r.Context(), bucket, ruleID)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -80,7 +80,7 @@ func (h *Handler) getRetentionRule(w http.ResponseWriter, r *http.Request, bucke
 func (h *Handler) listRetentionRules(w http.ResponseWriter, r *http.Request, bucket string) {
 	rules, err := h.extras.ListRetentionRules(r.Context(), bucket)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -94,7 +94,7 @@ func (h *Handler) listRetentionRules(w http.ResponseWriter, r *http.Request, buc
 
 func (h *Handler) deleteRetentionRule(w http.ResponseWriter, r *http.Request, bucket, ruleID string) {
 	if err := h.extras.DeleteRetentionRule(r.Context(), bucket, ruleID); err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 

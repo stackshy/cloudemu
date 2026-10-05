@@ -17,7 +17,7 @@ import (
 const metaPrefix = "opc-meta-"
 
 // headerStorageTier is the per-object storage tier header.
-const headerStorageTier = "storage-tier"
+const headerStorageTier = "Storage-Tier"
 
 // defaultContentType is what OCI reports for an object stored without one.
 const defaultContentType = "application/octet-stream"
@@ -63,9 +63,11 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, obje
 		ContentType: r.Header.Get("Content-Type"),
 		StorageTier: r.Header.Get(headerStorageTier),
 		Metadata:    metadataFrom(r.Header),
+		IfMatch:     r.Header.Get("If-Match"),
+		IfNoneMatch: r.Header.Get("If-None-Match"),
 	})
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -96,18 +98,145 @@ func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, obje
 
 	obj, err := h.fetchObject(r, bucket, object, versionID)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
+
+	etag := obj.Info.ETag
 
 	details, detailsErr := h.extras.ObjectDetailsOf(r.Context(), bucket, object)
 	if detailsErr == nil && versionID == "" {
 		stampObjectHeaders(w, details)
+
+		etag = details.ETag
 	} else {
 		stampInfoHeaders(w, &obj.Info)
 	}
 
+	if !readPreconditionsHold(w, r, etag) {
+		return
+	}
+
+	w.Header().Set("Accept-Ranges", "bytes")
+
+	if spec := r.Header.Get("Range"); spec != "" {
+		writeRange(w, r, spec, obj.Info.ContentType, obj.Data)
+		return
+	}
+
 	writeRaw(w, r, obj.Info.ContentType, obj.Data)
+}
+
+// readPreconditionsHold applies if-match and if-none-match to a read. A
+// failed if-match is 412 IfMatchFailed; a matching if-none-match is 304, as
+// HTTP and OCI's GetObject and HeadObject define it.
+func readPreconditionsHold(w http.ResponseWriter, r *http.Request, etag string) bool {
+	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" && ifMatch != "*" && ifMatch != etag {
+		ocirest.WriteError(w, r, http.StatusPreconditionFailed, osprovider.CodeIfMatchFailed,
+			"the if-match ETag "+strconv.Quote(ifMatch)+" does not match the current ETag")
+
+		return false
+	}
+
+	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" && (ifNoneMatch == "*" || ifNoneMatch == etag) {
+		stampRequestID(w, r)
+		w.WriteHeader(http.StatusNotModified)
+
+		return false
+	}
+
+	return true
+}
+
+// writeRange answers a single byte range with 206 and Content-Range. OCI serves
+// one range per request, so a multi-range header is refused rather than
+// answered with the whole object.
+func writeRange(w http.ResponseWriter, r *http.Request, spec, contentType string, data []byte) {
+	size := int64(len(data))
+
+	start, end, ok, multi := parseRange(spec, size)
+	if multi {
+		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter,
+			"only a single byte range is supported, got "+strconv.Quote(spec))
+
+		return
+	}
+
+	if !ok {
+		w.Header().Set("Content-Range", "bytes */"+strconv.FormatInt(size, 10))
+		ocirest.WriteError(w, r, http.StatusRequestedRangeNotSatisfiable, codeInvalidRange,
+			"range "+strconv.Quote(spec)+" is not satisfiable for an object of "+strconv.FormatInt(size, 10)+" bytes")
+
+		return
+	}
+
+	if contentType == "" {
+		contentType = defaultContentType
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+	w.Header().Set("Content-Range", "bytes "+strconv.FormatInt(start, 10)+"-"+strconv.FormatInt(end, 10)+
+		"/"+strconv.FormatInt(size, 10))
+	stampRequestID(w, r)
+	w.WriteHeader(http.StatusPartialContent)
+	w.Write(data[start : end+1]) //nolint:errcheck // best-effort response
+}
+
+// parseRange reads a bytes=start-end, bytes=start- or bytes=-suffix header
+// against an object of size bytes, clamping end to the last byte.
+func parseRange(spec string, size int64) (start, end int64, ok, multi bool) {
+	unit, set, found := strings.Cut(spec, "=")
+	if !found || strings.TrimSpace(unit) != "bytes" {
+		return 0, 0, false, false
+	}
+
+	if strings.Contains(set, ",") {
+		return 0, 0, false, true
+	}
+
+	first, last, found := strings.Cut(strings.TrimSpace(set), "-")
+	if !found || size == 0 {
+		return 0, 0, false, false
+	}
+
+	if first == "" {
+		start, end, ok = suffixRange(last, size)
+		return start, end, ok, false
+	}
+
+	start, end, ok = boundedRange(first, last, size)
+
+	return start, end, ok, false
+}
+
+// suffixRange reads bytes=-n: the last n bytes.
+func suffixRange(last string, size int64) (start, end int64, ok bool) {
+	n, err := strconv.ParseInt(last, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, 0, false
+	}
+
+	return max(size-n, 0), size - 1, true
+}
+
+// boundedRange reads bytes=start- and bytes=start-end, clamping end.
+func boundedRange(first, last string, size int64) (start, end int64, ok bool) {
+	start, err := strconv.ParseInt(first, 10, 64)
+	if err != nil || start < 0 || start >= size {
+		return 0, 0, false
+	}
+
+	if last == "" {
+		return start, size - 1, true
+	}
+
+	end, err = strconv.ParseInt(last, 10, 64)
+	if err != nil || end < start {
+		return 0, 0, false
+	}
+
+	return start, min(end, size-1), true
 }
 
 // fetchObject reads the current object, or a specific version when the caller
@@ -129,30 +258,36 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, obj
 
 	if versionID != "" {
 		if h.versioned == nil {
-			ocirest.WriteDriverError(w, r, errVersioningUnsupported())
+			writeDriverError(w, r, errVersioningUnsupported())
 			return
 		}
 
 		info, err := h.versioned.HeadObjectVersion(r.Context(), bucket, object, versionID)
 		if err != nil {
-			ocirest.WriteDriverError(w, r, err)
+			writeDriverError(w, r, err)
 			return
 		}
 
 		stampInfoHeaders(w, info)
-		writeHead(w, r, info.Size, info.ContentType)
+
+		if readPreconditionsHold(w, r, info.ETag) {
+			writeHead(w, r, info.Size, info.ContentType)
+		}
 
 		return
 	}
 
 	details, err := h.extras.ObjectDetailsOf(r.Context(), bucket, object)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
 	stampObjectHeaders(w, details)
-	writeHead(w, r, details.Size, details.ContentType)
+
+	if readPreconditionsHold(w, r, details.ETag) {
+		writeHead(w, r, details.Size, details.ContentType)
+	}
 }
 
 // writeHead answers a HeadObject. The response carries no body, so the object's
@@ -166,46 +301,34 @@ func writeHead(w http.ResponseWriter, r *http.Request, size int64, contentType s
 
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	w.Header().Set("Accept-Ranges", "bytes")
 	stampRequestID(w, r)
 	w.WriteHeader(http.StatusOK)
 }
 
+// deleteObject deletes the current object, or one version, honoring
+// if-match and reporting the delete marker OCI stamps when the bucket keeps
+// history.
 func (h *Handler) deleteObject(w http.ResponseWriter, r *http.Request, bucket, object string) {
 	versionID := r.URL.Query().Get("versionId")
 
-	if versionID != "" || h.versioned != nil {
-		h.deleteObjectVersion(w, r, bucket, object, versionID)
+	if versionID != "" && h.versioned == nil {
+		writeDriverError(w, r, errVersioningUnsupported())
 		return
 	}
 
-	if err := h.store.DeleteObject(r.Context(), bucket, object); err != nil {
-		ocirest.WriteDriverError(w, r, err)
-		return
-	}
-
-	ocirest.WriteJSON(w, r, http.StatusNoContent, nil)
-}
-
-// deleteObjectVersion deletes through the versioned capability, reporting the
-// delete marker OCI stamps when the bucket keeps history.
-func (h *Handler) deleteObjectVersion(w http.ResponseWriter, r *http.Request, bucket, object, versionID string) {
-	if h.versioned == nil {
-		ocirest.WriteDriverError(w, r, errVersioningUnsupported())
-		return
-	}
-
-	deleted, marker, err := h.versioned.DeleteObjectVersion(r.Context(), bucket, object, versionID)
+	deleted, marker, err := h.extras.DeleteObjectIf(r.Context(), bucket, object, versionID, r.Header.Get("If-Match"))
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
 	if deleted != "" {
-		w.Header().Set("version-id", deleted)
+		w.Header().Set("Version-Id", deleted)
 	}
 
 	if marker {
-		w.Header().Set("is-delete-marker", "true")
+		w.Header().Set("Is-Delete-Marker", "true")
 	}
 
 	ocirest.WriteJSON(w, r, http.StatusNoContent, nil)
@@ -216,7 +339,7 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 
 	objects, prefixes, next, err := h.extras.ListObjectDetails(r.Context(), bucket, opts)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -271,13 +394,13 @@ func (h *Handler) listObjectVersions(w http.ResponseWriter, r *http.Request, buc
 	}
 
 	if h.versioned == nil {
-		ocirest.WriteDriverError(w, r, errVersioningUnsupported())
+		writeDriverError(w, r, errVersioningUnsupported())
 		return
 	}
 
 	result, err := h.versioned.ListObjectVersions(r.Context(), bucket, listOptions(r))
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -298,7 +421,9 @@ func (h *Handler) listObjectVersions(w http.ResponseWriter, r *http.Request, buc
 		})
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusOK, out)
+	writePageAs(w, r, out.Items, func(page []objectVersionBody) any {
+		return listObjectVersionsBody{Items: page, Prefixes: out.Prefixes}
+	})
 }
 
 func (h *Handler) renameObject(w http.ResponseWriter, r *http.Request, bucket string) {
@@ -310,7 +435,7 @@ func (h *Handler) renameObject(w http.ResponseWriter, r *http.Request, bucket st
 
 	details, err := h.extras.RenameObject(r.Context(), bucket, req.SourceName, req.NewName)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -332,25 +457,25 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket stri
 		return
 	}
 
-	if req.SourceObjectName == "" || req.DestinationBucket == "" || req.DestinationObjectName == "" {
-		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter,
-			"sourceObjectName, destinationBucket and destinationObjectName are required")
-
+	if msg := h.copyDestinationProblem(&req); msg != "" {
+		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter, msg)
 		return
 	}
 
-	if req.DestinationNamespace != "" && req.DestinationNamespace != h.extras.Namespace() {
-		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter,
-			"cross-namespace copy is not emulated; destinationNamespace must be "+h.extras.Namespace())
-
-		return
-	}
-
-	err := h.store.CopyObject(r.Context(), req.DestinationBucket, req.DestinationObjectName, driver.CopySource{
-		Bucket: bucket, Key: req.SourceObjectName,
+	err := h.extras.CopyObjectWith(r.Context(), osprovider.CopySpec{
+		SourceBucket:           bucket,
+		SourceObject:           req.SourceObjectName,
+		SourceVersionID:        req.SourceVersionID,
+		SourceIfMatch:          req.SourceObjectIfMatchETag,
+		DestinationBucket:      req.DestinationBucket,
+		DestinationObject:      req.DestinationObjectName,
+		DestinationIfMatch:     req.DestinationObjectIfMatchETag,
+		DestinationIfNoneMatch: req.DestinationObjectIfNoneMatchETag,
+		Metadata:               req.DestinationObjectMetadata,
+		StorageTier:            req.DestinationObjectStorageTier,
 	})
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -362,6 +487,23 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket stri
 
 	ocirest.SetWorkRequestID(w, id)
 	ocirest.WriteJSON(w, r, http.StatusAccepted, nil)
+}
+
+// copyDestinationProblem names what is wrong with a copy's required fields or
+// its destination, or returns "" when the copy can proceed. A destination in
+// another region or namespace is refused, not copied locally.
+func (h *Handler) copyDestinationProblem(req *copyObjectBody) string {
+	switch {
+	case req.SourceObjectName == "" || req.DestinationRegion == "" ||
+		req.DestinationBucket == "" || req.DestinationObjectName == "":
+		return "sourceObjectName, destinationRegion, destinationBucket and destinationObjectName are required"
+	case req.DestinationRegion != h.extras.Region():
+		return "cross-region copy is not emulated; destinationRegion must be " + h.extras.Region()
+	case req.DestinationNamespace != "" && req.DestinationNamespace != h.extras.Namespace():
+		return "cross-namespace copy is not emulated; destinationNamespace must be " + h.extras.Namespace()
+	default:
+		return ""
+	}
 }
 
 func (h *Handler) updateStorageTier(w http.ResponseWriter, r *http.Request, bucket string) {
@@ -379,7 +521,7 @@ func (h *Handler) updateStorageTier(w http.ResponseWriter, r *http.Request, buck
 	}
 
 	if err := h.extras.UpdateObjectStorageTier(r.Context(), bucket, req.ObjectName, req.StorageTier); err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -408,15 +550,15 @@ func metadataFrom(header http.Header) map[string]string {
 
 func stampObjectHeaders(w http.ResponseWriter, d *osprovider.ObjectDetails) {
 	w.Header().Set("ETag", d.ETag)
-	w.Header().Set("last-modified", d.TimeModified)
+	w.Header().Set("Last-Modified", d.TimeModified)
 	w.Header().Set(headerStorageTier, d.StorageTier)
 
 	if d.MD5 != "" {
-		w.Header().Set("opc-content-md5", d.MD5)
+		w.Header().Set("Opc-Content-Md5", d.MD5)
 	}
 
 	if d.VersionID != "" {
-		w.Header().Set("version-id", d.VersionID)
+		w.Header().Set("Version-Id", d.VersionID)
 	}
 
 	for k, v := range d.Metadata {
@@ -426,10 +568,10 @@ func stampObjectHeaders(w http.ResponseWriter, d *osprovider.ObjectDetails) {
 
 func stampInfoHeaders(w http.ResponseWriter, info *driver.ObjectInfo) {
 	w.Header().Set("ETag", info.ETag)
-	w.Header().Set("last-modified", info.LastModified)
+	w.Header().Set("Last-Modified", info.LastModified)
 
 	if info.VersionID != "" {
-		w.Header().Set("version-id", info.VersionID)
+		w.Header().Set("Version-Id", info.VersionID)
 	}
 
 	for k, v := range info.Metadata {

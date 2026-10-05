@@ -8,7 +8,6 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
-	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 var _ snapshot.Snapshottable = (*Mock)(nil)
@@ -43,7 +42,7 @@ type bucketSnapshot struct {
 	Metadata            map[string]string             `json:"metadata,omitempty"`
 	FreeformTags        map[string]string             `json:"freeformTags,omitempty"`
 	DefinedTags         map[string]map[string]string  `json:"definedTags,omitempty"`
-	Lifecycle           *driver.LifecycleConfig       `json:"lifecycle,omitempty"`
+	Lifecycle           *LifecyclePolicy              `json:"lifecycle,omitempty"`
 	Objects             map[string]*objectSnapshot    `json:"objects,omitempty"`
 	Versions            map[string][]*versionSnapshot `json:"versions,omitempty"`
 	PARs                []*parSnapshot                `json:"pars,omitempty"`

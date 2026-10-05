@@ -26,6 +26,8 @@ type createBucketBody struct {
 // the caller sent from one it omitted, which is what OCI's partial update
 // needs.
 type updateBucketBody struct {
+	Namespace           string                       `json:"namespace"`
+	Name                *string                      `json:"name"`
 	CompartmentID       *string                      `json:"compartmentId"`
 	PublicAccessType    *string                      `json:"publicAccessType"`
 	Versioning          *string                      `json:"versioning"`
@@ -116,11 +118,17 @@ type renameObjectBody struct {
 
 // copyObjectBody is the copyObject action request.
 type copyObjectBody struct {
-	SourceObjectName      string `json:"sourceObjectName"`
-	DestinationRegion     string `json:"destinationRegion"`
-	DestinationNamespace  string `json:"destinationNamespace"`
-	DestinationBucket     string `json:"destinationBucket"`
-	DestinationObjectName string `json:"destinationObjectName"`
+	SourceObjectName                 string            `json:"sourceObjectName"`
+	SourceObjectIfMatchETag          string            `json:"sourceObjectIfMatchETag"`
+	SourceVersionID                  string            `json:"sourceVersionId"`
+	DestinationRegion                string            `json:"destinationRegion"`
+	DestinationNamespace             string            `json:"destinationNamespace"`
+	DestinationBucket                string            `json:"destinationBucket"`
+	DestinationObjectName            string            `json:"destinationObjectName"`
+	DestinationObjectIfMatchETag     string            `json:"destinationObjectIfMatchETag"`
+	DestinationObjectIfNoneMatchETag string            `json:"destinationObjectIfNoneMatchETag"`
+	DestinationObjectMetadata        map[string]string `json:"destinationObjectMetadata"`
+	DestinationObjectStorageTier     string            `json:"destinationObjectStorageTier"`
 }
 
 // updateTierBody is the updateObjectStorageTier action request.
@@ -220,11 +228,14 @@ type retentionRuleListBody struct {
 // lifecycleFilterBody is a lifecycle rule's object-name filter.
 type lifecycleFilterBody struct {
 	InclusionPrefixes []string `json:"inclusionPrefixes,omitempty"`
+	InclusionPatterns []string `json:"inclusionPatterns,omitempty"`
+	ExclusionPatterns []string `json:"exclusionPatterns,omitempty"`
 }
 
 // lifecycleRuleBody is one OCI object lifecycle rule.
 type lifecycleRuleBody struct {
 	Name             string               `json:"name"`
+	Target           string               `json:"target,omitempty"`
 	Action           string               `json:"action"`
 	TimeAmount       int64                `json:"timeAmount"`
 	TimeUnit         string               `json:"timeUnit"`
@@ -234,5 +245,6 @@ type lifecycleRuleBody struct {
 
 // lifecycleBody is the object lifecycle policy.
 type lifecycleBody struct {
-	Items []lifecycleRuleBody `json:"items"`
+	TimeCreated string              `json:"timeCreated,omitempty"`
+	Items       []lifecycleRuleBody `json:"items"`
 }

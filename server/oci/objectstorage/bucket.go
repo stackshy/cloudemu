@@ -50,6 +50,10 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
 	bkt, err := h.extras.CreateBucketWith(r.Context(), osprovider.BucketSpec{
 		Name:                req.Name,
 		CompartmentID:       req.CompartmentID,
@@ -64,7 +68,7 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request) {
 		DefinedTags:         req.DefinedTags,
 	})
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -80,7 +84,7 @@ func (h *Handler) listBuckets(w http.ResponseWriter, r *http.Request) {
 
 	buckets, err := h.extras.ListBucketsIn(r.Context(), compartmentID)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -100,7 +104,7 @@ func (h *Handler) listBuckets(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusOK, out)
+	writePage(w, r, out)
 }
 
 // serveBucketItem serves GET/HEAD/POST/DELETE on one bucket.
@@ -122,7 +126,7 @@ func (h *Handler) serveBucketItem(w http.ResponseWriter, r *http.Request, bucket
 func (h *Handler) getBucket(w http.ResponseWriter, r *http.Request, bucket string) {
 	bkt, err := h.extras.BucketDetails(r.Context(), bucket)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -133,7 +137,7 @@ func (h *Handler) getBucket(w http.ResponseWriter, r *http.Request, bucket strin
 func (h *Handler) headBucket(w http.ResponseWriter, r *http.Request, bucket string) {
 	bkt, err := h.extras.BucketDetails(r.Context(), bucket)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -148,7 +152,20 @@ func (h *Handler) updateBucket(w http.ResponseWriter, r *http.Request, bucket st
 		return
 	}
 
+	if req.Namespace != "" && req.Namespace != h.extras.Namespace() {
+		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter,
+			"moving a bucket to another namespace is not emulated; namespace must be "+h.extras.Namespace())
+
+		return
+	}
+
+	if req.CompartmentID != nil && !h.requireCompartment(w, r, *req.CompartmentID) {
+		return
+	}
+
 	bkt, err := h.extras.UpdateBucket(r.Context(), bucket, osprovider.BucketUpdate{
+		Name:                req.Name,
+		IfMatch:             r.Header.Get("If-Match"),
 		CompartmentID:       req.CompartmentID,
 		PublicAccessType:    req.PublicAccessType,
 		Versioning:          req.Versioning,
@@ -160,7 +177,7 @@ func (h *Handler) updateBucket(w http.ResponseWriter, r *http.Request, bucket st
 		DefinedTags:         req.DefinedTags,
 	})
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -169,8 +186,8 @@ func (h *Handler) updateBucket(w http.ResponseWriter, r *http.Request, bucket st
 }
 
 func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, bucket string) {
-	if err := h.store.DeleteBucket(r.Context(), bucket); err != nil {
-		ocirest.WriteDriverError(w, r, err)
+	if err := h.extras.DeleteBucketIf(r.Context(), bucket, r.Header.Get("If-Match")); err != nil {
+		writeDriverError(w, r, err)
 		return
 	}
 

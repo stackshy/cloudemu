@@ -149,18 +149,9 @@ func (m *Mock) CompleteMultipartUpload(
 			"upload %q is for object %q, not %q", uploadID, mp.object, key)
 	}
 
-	ordered := append([]driver.UploadPart(nil), parts...)
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].PartNumber < ordered[j].PartNumber })
-
-	var data []byte
-
-	for _, p := range ordered {
-		buf, exists := mp.parts[p.PartNumber]
-		if !exists {
-			return cerrors.Newf(cerrors.InvalidArgument, "part %d was never uploaded to %q", p.PartNumber, uploadID)
-		}
-
-		data = append(data, buf...)
+	data, err := assembleParts(mp, parts)
+	if err != nil {
+		return err
 	}
 
 	if err := retentionBlocksLocked(bkt, mp.object, m.opts.Clock.Now()); err != nil {
@@ -174,7 +165,7 @@ func (m *Mock) CompleteMultipartUpload(
 		Size:         int64(len(data)),
 		ContentType:  mp.contentType,
 		ContentMD5:   contentMD5(data),
-		ETag:         objectETag(data),
+		ETag:         newETag(),
 		TimeCreated:  now,
 		TimeModified: now,
 		Metadata:     cloneMeta(mp.metadata),
@@ -191,6 +182,31 @@ func (m *Mock) CompleteMultipartUpload(
 	bkt.multiparts.Delete(uploadID)
 
 	return nil
+}
+
+// assembleParts concatenates the named parts in ascending part-number order,
+// refusing a part never uploaded or one whose etag does not match.
+func assembleParts(mp *multipartUpload, parts []driver.UploadPart) ([]byte, error) {
+	ordered := append([]driver.UploadPart(nil), parts...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].PartNumber < ordered[j].PartNumber })
+
+	var data []byte
+
+	for _, p := range ordered {
+		buf, exists := mp.parts[p.PartNumber]
+		if !exists {
+			return nil, cerrors.Newf(cerrors.InvalidArgument, "part %d was never uploaded to %q", p.PartNumber, mp.id)
+		}
+
+		if p.ETag != "" && p.ETag != objectETag(buf) {
+			return nil, cerrors.Newf(cerrors.InvalidArgument,
+				"part %d's etag %q does not match the uploaded part", p.PartNumber, p.ETag)
+		}
+
+		data = append(data, buf...)
+	}
+
+	return data, nil
 }
 
 func (m *Mock) AbortMultipartUpload(_ context.Context, bucket, key, uploadID string) error {

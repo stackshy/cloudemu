@@ -63,7 +63,7 @@ func (h *Handler) createUpload(w http.ResponseWriter, r *http.Request, bucket st
 		Metadata:    req.Metadata,
 	})
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -79,7 +79,7 @@ func (h *Handler) createUpload(w http.ResponseWriter, r *http.Request, bucket st
 func (h *Handler) listUploads(w http.ResponseWriter, r *http.Request, bucket string) {
 	uploads, err := h.store.ListMultipartUploads(r.Context(), bucket)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -97,7 +97,7 @@ func (h *Handler) listUploads(w http.ResponseWriter, r *http.Request, bucket str
 		})
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusOK, out)
+	writePage(w, r, out)
 }
 
 func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, object, uploadID string) {
@@ -118,7 +118,7 @@ func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, obj
 
 	part, err := h.store.UploadPart(r.Context(), bucket, object, uploadID, partNum, data)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -148,18 +148,26 @@ func (h *Handler) commitUpload(w http.ResponseWriter, r *http.Request, bucket, o
 	}
 
 	parts := make([]driver.UploadPart, 0, len(req.PartsToCommit))
+
 	for _, p := range req.PartsToCommit {
+		if p.ETag == "" {
+			ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter,
+				"partsToCommit part "+strconv.Itoa(p.PartNum)+" needs the etag UploadPart returned")
+
+			return
+		}
+
 		parts = append(parts, driver.UploadPart{PartNumber: p.PartNum, ETag: p.ETag})
 	}
 
 	if err := h.store.CompleteMultipartUpload(r.Context(), bucket, object, uploadID, parts); err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
 	details, err := h.extras.ObjectDetailsOf(r.Context(), bucket, object)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -170,7 +178,7 @@ func (h *Handler) commitUpload(w http.ResponseWriter, r *http.Request, bucket, o
 func (h *Handler) listParts(w http.ResponseWriter, r *http.Request, bucket, object, uploadID string) {
 	parts, err := h.store.ListParts(r.Context(), bucket, object, uploadID)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -179,12 +187,12 @@ func (h *Handler) listParts(w http.ResponseWriter, r *http.Request, bucket, obje
 		out = append(out, partBody{PartNumber: p.PartNumber, ETag: p.ETag, Size: p.Size})
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusOK, out)
+	writePage(w, r, out)
 }
 
 func (h *Handler) abortUpload(w http.ResponseWriter, r *http.Request, bucket, object, uploadID string) {
 	if err := h.store.AbortMultipartUpload(r.Context(), bucket, object, uploadID); err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 

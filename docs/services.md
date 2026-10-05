@@ -212,16 +212,42 @@ which `GET /n` returns.
 
 `ListBuckets` is the one collection OCI scopes by compartment, so it is the
 only route here that requires `compartmentId`; every other list is scoped by
-its bucket. An unspecified `limit` on `ListObjects` yields OCI's page size of
-1000, not the 100 the other OCI services default to. `copyObject` is
-asynchronous in real OCI, so it returns `202` with an `opc-work-request-id` the
-shared work-request poller answers; every other mutation here is synchronous.
+its bucket. Every list pages by `limit` and `page` (`start` for `ListObjects`)
+and returns the cursor as `opc-next-page`; an unspecified `limit` yields OCI's
+Object Storage page size of 1000, not the 100 the other OCI services default
+to. `copyObject` is asynchronous in real OCI, so it returns `202` with an
+`opc-work-request-id` the shared work-request poller answers at
+`/workRequests/{id}`; every other mutation here is synchronous. A create into,
+or a move to, a compartment Identity does not know is `404
+NotAuthorizedOrNotFound`, as for VCN.
+
+ETags are opaque and minted per write, so re-uploading identical bytes changes
+them. `if-match` and `if-none-match` are honored on Put, Get, Head and Delete
+object, on UpdateBucket and DeleteBucket, and on both sides of `copyObject`: a
+failed write precondition is `412 IfMatchFailed` / `IfNoneMatchFailed`, a
+matching `if-none-match` on a read is `304`. GetObject serves a single byte
+`Range` with `206` and `Content-Range`; an unsatisfiable range is `416`, a
+multi-range request is refused. `copyObject` requires `destinationRegion` and
+refuses another region or namespace; a source version, replacement metadata
+and a destination storage tier all apply. A multipart commit checks each
+part's `etag`. UpdateBucket's `name` renames the bucket, its objects and PARs
+moving with it. Errors carry Object Storage's own codes where it has one:
+`BucketAlreadyExists`, `BucketNotEmpty`.
 
 Buckets refuse deletion while they hold objects or uncommitted multipart
 uploads. Versioning is the OCI tri-state — `Disabled`, `Enabled`, `Suspended` —
-and never returns to `Disabled` once enabled; a `Suspended` bucket reuses the
-`null` version rather than appending. Retention rules with an elapsed lock
-block overwrites and deletes, and a locked rule cannot be weakened.
+and never returns to `Disabled` once enabled; enabling it seeds the objects
+already present as versions, and a `Suspended` bucket reuses the `null` version
+rather than appending. Retention rules with an elapsed lock block overwrites
+and deletes, and a locked rule cannot be weakened. Lifecycle rules are stored
+exactly as sent — unit, `target` and all three `objectNameFilter` lists — and
+the policy reports its `timeCreated`; `ABORT` requires the `multipart-uploads`
+target, and only rules aimed at `objects` age out live objects.
+
+A pre-authenticated request requires `timeExpires`, with no S3-style cap, and
+on the `AnyObject` types `objectName` is a prefix. Its redemption token is drawn
+from `crypto/rand`, so tokens issued after a persist restore never collide with
+restored ones.
 
 Object bytes flow through `config.WithStorageEngine` when one is wired, the
 same seam AWS S3, Azure Blob and GCP GCS use, keyed by object version so each

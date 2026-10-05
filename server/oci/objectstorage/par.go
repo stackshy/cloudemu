@@ -61,7 +61,7 @@ func (h *Handler) createPAR(w http.ResponseWriter, r *http.Request, bucket strin
 
 	par, err := h.extras.CreatePAR(r.Context(), bucket, spec)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -75,7 +75,7 @@ func (h *Handler) createPAR(w http.ResponseWriter, r *http.Request, bucket strin
 func (h *Handler) listPARs(w http.ResponseWriter, r *http.Request, bucket string) {
 	pars, err := h.extras.ListPARs(r.Context(), bucket, r.URL.Query().Get("objectNamePrefix"))
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -84,13 +84,13 @@ func (h *Handler) listPARs(w http.ResponseWriter, r *http.Request, bucket string
 		out = append(out, toPARBody(&pars[i]))
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusOK, out)
+	writePage(w, r, out)
 }
 
 func (h *Handler) getPAR(w http.ResponseWriter, r *http.Request, bucket, parID string) {
 	par, err := h.extras.GetPAR(r.Context(), bucket, parID)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -99,7 +99,7 @@ func (h *Handler) getPAR(w http.ResponseWriter, r *http.Request, bucket, parID s
 
 func (h *Handler) deletePAR(w http.ResponseWriter, r *http.Request, bucket, parID string) {
 	if err := h.extras.DeletePAR(r.Context(), bucket, parID); err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 
@@ -112,7 +112,7 @@ func (h *Handler) deletePAR(w http.ResponseWriter, r *http.Request, bucket, parI
 func (h *Handler) servePAR(w http.ResponseWriter, r *http.Request, rt *route) {
 	par, err := h.extras.ResolvePAR(r.Context(), rt.PARToken)
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeDriverError(w, r, err)
 		return
 	}
 

@@ -71,6 +71,9 @@ func (f fixture) do(t *testing.T, method, path string, body any) *httptest.Respo
 	return rec
 }
 
+// inAnHour is a timeExpires OCI accepts: required, and in the future.
+func inAnHour() string { return time.Now().Add(time.Hour).UTC().Format(time.RFC3339) }
+
 func (f fixture) bucketPath(bucket string) string {
 	return "/n/" + f.ns + "/b/" + bucket
 }
@@ -299,7 +302,8 @@ func TestObjectActions(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 
 	rec = f.do(t, http.MethodPost, f.bucketPath("src")+"/actions/copyObject", map[string]any{
-		"sourceObjectName": "new", "destinationBucket": "dst", "destinationObjectName": "copied",
+		"sourceObjectName": "new", "destinationRegion": "us-ashburn-1",
+		"destinationBucket": "dst", "destinationObjectName": "copied",
 	})
 	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
 	assert.NotEmpty(t, rec.Header().Get("opc-work-request-id"))
@@ -346,9 +350,11 @@ func TestMultipartWire(t *testing.T) {
 
 	rec = f.do(t, http.MethodPut, base+"&uploadPartNum=1", []byte("aaa"))
 	require.Equal(t, http.StatusOK, rec.Code)
+	etag1 := rec.Header().Get("ETag")
 
 	rec = f.do(t, http.MethodPut, base+"&uploadPartNum=2", []byte("bbb"))
 	require.Equal(t, http.StatusOK, rec.Code)
+	etag2 := rec.Header().Get("ETag")
 
 	rec = f.do(t, http.MethodPut, base+"&uploadPartNum=notanumber", []byte("x"))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
@@ -365,6 +371,16 @@ func TestMultipartWire(t *testing.T) {
 
 	rec = f.do(t, http.MethodPost, base, map[string]any{
 		"partsToCommit": []map[string]any{{"partNum": 1}, {"partNum": 2}},
+	})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "each committed part needs its etag")
+
+	rec = f.do(t, http.MethodPost, base, map[string]any{
+		"partsToCommit": []map[string]any{{"partNum": 1, "etag": etag1}, {"partNum": 2, "etag": "wrong-etag"}},
+	})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "a mismatched part etag is refused")
+
+	rec = f.do(t, http.MethodPost, base, map[string]any{
+		"partsToCommit": []map[string]any{{"partNum": 1, "etag": etag1}, {"partNum": 2, "etag": etag2}},
 	})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
@@ -422,7 +438,7 @@ func TestPARWire(t *testing.T) {
 	require.NoError(t, f.mock.PutObject(context.Background(), "photos", "a.txt", []byte("hi"), "text/plain", nil))
 
 	rec := f.do(t, http.MethodPost, f.bucketPath("photos")+"/p", map[string]any{
-		"name": "read-a", "objectName": "a.txt", "accessType": "ObjectRead",
+		"name": "read-a", "objectName": "a.txt", "accessType": "ObjectRead", "timeExpires": inAnHour(),
 	})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
@@ -521,7 +537,8 @@ func TestLifecycleWire(t *testing.T) {
 			"objectNameFilter": map[string]any{"inclusionPrefixes": []string{"a/", "b/"}},
 		}},
 	})
-	assert.Equal(t, http.StatusBadRequest, rec.Code, "a dropped prefix would silently change the policy")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"inclusionPrefixes":["a/","b/"]`, "every prefix is kept")
 
 	rec = f.do(t, http.MethodDelete, f.bucketPath("photos")+"/l", nil)
 	assert.Equal(t, http.StatusNoContent, rec.Code)
@@ -656,7 +673,7 @@ func TestListObjectsDefaultPageSizeIsOCIs1000(t *testing.T) {
 	assert.Empty(t, list.NextStartWith)
 	assert.Empty(t, rec.Header().Get("opc-next-page"))
 
-	// An explicit limit is still honoured, and still paginates.
+	// An explicit limit is still honored, and still paginates.
 	rec = f.do(t, http.MethodGet, f.bucketPath("photos")+"/o?limit=100", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 
@@ -788,7 +805,8 @@ func TestMultipartWireErrors(t *testing.T) {
 
 	rec = f.do(t, http.MethodPut, item+"&uploadPartNum=1", []byte("aaa"))
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.NotEmpty(t, rec.Header().Get("ETag"))
+	partETag := rec.Header().Get("ETag")
+	assert.NotEmpty(t, partETag)
 
 	rec = f.do(t, http.MethodGet, item, nil)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -809,10 +827,10 @@ func TestMultipartWireErrors(t *testing.T) {
 	rec = f.do(t, http.MethodPost, item, map[string]any{})
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "partsToCommit is required")
 
-	rec = f.do(t, http.MethodPost, item, map[string]any{"partsToCommit": []map[string]any{{"partNum": 9}}})
+	rec = f.do(t, http.MethodPost, item, map[string]any{"partsToCommit": []map[string]any{{"partNum": 9, "etag": "x"}}})
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "a part that was never uploaded")
 
-	rec = f.do(t, http.MethodPost, item, map[string]any{"partsToCommit": []map[string]any{{"partNum": 1}}})
+	rec = f.do(t, http.MethodPost, item, map[string]any{"partsToCommit": []map[string]any{{"partNum": 1, "etag": partETag}}})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.NotEmpty(t, rec.Header().Get("ETag"))
 
@@ -916,7 +934,7 @@ func TestPARWriteRedemption(t *testing.T) {
 	f.createBucket(t, "photos")
 
 	rec := f.do(t, http.MethodPost, f.bucketPath("photos")+"/p", map[string]any{
-		"name": "write", "objectName": "upload.txt", "accessType": "ObjectWrite",
+		"name": "write", "objectName": "upload.txt", "accessType": "ObjectWrite", "timeExpires": inAnHour(),
 	})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
@@ -1041,10 +1059,22 @@ func TestLifecycleWireErrors(t *testing.T) {
 		{"unsupported time unit", map[string]any{
 			"name": "r", "action": "DELETE", "timeAmount": 1, "timeUnit": "MONTHS", "isEnabled": true,
 		}},
-		{"more than one inclusion prefix", map[string]any{
-			"name": "r", "action": "DELETE", "timeAmount": 1, "timeUnit": "DAYS", "isEnabled": true,
-			"objectNameFilter": map[string]any{"inclusionPrefixes": []string{"a/", "b/"}},
+		{"ABORT without the multipart-uploads target", map[string]any{
+			"name": "r", "action": "ABORT", "timeAmount": 1, "timeUnit": "DAYS", "isEnabled": true,
 		}},
+		{"DELETE aimed at multipart uploads", map[string]any{
+			"name": "r", "action": "DELETE", "timeAmount": 1, "timeUnit": "DAYS", "target": "multipart-uploads",
+		}},
+		{"unsupported target", map[string]any{
+			"name": "r", "action": "DELETE", "timeAmount": 1, "timeUnit": "DAYS", "target": "buckets",
+		}},
+		{"unterminated pattern class", map[string]any{
+			"name": "r", "action": "DELETE", "timeAmount": 1, "timeUnit": "DAYS",
+			"objectNameFilter": map[string]any{"inclusionPatterns": []string{"[abc"}},
+		}},
+		{"missing unit", map[string]any{"name": "r", "action": "DELETE", "timeAmount": 1}},
+		{"non-positive amount", map[string]any{"name": "r", "action": "DELETE", "timeAmount": 0, "timeUnit": "DAYS"}},
+		{"missing name", map[string]any{"action": "DELETE", "timeAmount": 1, "timeUnit": "DAYS"}},
 	}
 
 	for _, tc := range tests {
@@ -1054,40 +1084,43 @@ func TestLifecycleWireErrors(t *testing.T) {
 		})
 	}
 
-	// Every action the handler does model, including the YEARS unit.
-	rec = f.do(t, http.MethodPut, path, map[string]any{"items": []map[string]any{
+	// A policy reads back exactly as written: unit, target and all three
+	// filter lists, plus the policy's timeCreated.
+	sent := []map[string]any{
 		{
-			"name": "expire", "action": "DELETE", "timeAmount": 30, "timeUnit": "DAYS", "isEnabled": true,
-			"objectNameFilter": map[string]any{"inclusionPrefixes": []string{"logs/"}},
+			"name": "old-logs", "action": "DELETE", "timeAmount": 1, "timeUnit": "YEARS", "isEnabled": true,
+			"target": "previous-object-versions",
+			"objectNameFilter": map[string]any{
+				"inclusionPrefixes": []string{"logs/", "audit/"},
+				"inclusionPatterns": []string{"*.log"},
+				"exclusionPatterns": []string{"*keep*"},
+			},
 		},
-		{"name": "archive", "action": "ARCHIVE", "timeAmount": 1, "timeUnit": "YEARS", "isEnabled": true},
-		{"name": "infreq", "action": "INFREQUENT_ACCESS", "timeAmount": 10, "timeUnit": "DAYS", "isEnabled": true},
-		{"name": "abort", "action": "ABORT", "timeAmount": 7, "isEnabled": false},
-	}})
+		{"name": "archive", "action": "ARCHIVE", "timeAmount": 30, "timeUnit": "DAYS", "isEnabled": true, "target": "objects"},
+		{"name": "infreq", "action": "INFREQUENT_ACCESS", "timeAmount": 10, "timeUnit": "DAYS", "isEnabled": false},
+		{"name": "abort", "action": "ABORT", "timeAmount": 7, "timeUnit": "DAYS", "isEnabled": true, "target": "multipart-uploads"},
+	}
+
+	rec = f.do(t, http.MethodPut, path, map[string]any{"items": sent})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	rec = f.do(t, http.MethodGet, path, nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var body struct {
-		Items []struct {
-			Name             string `json:"name"`
-			Action           string `json:"action"`
-			TimeAmount       int64  `json:"timeAmount"`
-			TimeUnit         string `json:"timeUnit"`
-			ObjectNameFilter *struct {
-				InclusionPrefixes []string `json:"inclusionPrefixes"`
-			} `json:"objectNameFilter"`
-		} `json:"items"`
+		TimeCreated string           `json:"timeCreated"`
+		Items       []map[string]any `json:"items"`
 	}
 
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Len(t, body.Items, 4)
-	assert.Equal(t, "DELETE", body.Items[0].Action)
-	assert.Equal(t, []string{"logs/"}, body.Items[0].ObjectNameFilter.InclusionPrefixes)
-	assert.Equal(t, int64(365), body.Items[1].TimeAmount, "YEARS is normalised to days")
-	assert.Equal(t, "DAYS", body.Items[1].TimeUnit)
-	assert.Equal(t, "ABORT", body.Items[3].Action)
+	assert.NotEmpty(t, body.TimeCreated)
+
+	want, err := json.Marshal(sent)
+	require.NoError(t, err)
+
+	got, err := json.Marshal(body.Items)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(want), string(got), "the policy must read back exactly as it was written")
 
 	rec = f.do(t, http.MethodDelete, path, nil)
 	assert.Equal(t, http.StatusNoContent, rec.Code)
@@ -1112,8 +1145,8 @@ func TestObjectActionWireErrors(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	rec = f.do(t, http.MethodPost, base+"/copyObject", map[string]any{
-		"sourceObjectName": "a", "destinationBucket": "dst", "destinationObjectName": "b",
-		"destinationNamespace": "someotherns",
+		"sourceObjectName": "a", "destinationRegion": "us-ashburn-1",
+		"destinationBucket": "dst", "destinationObjectName": "b", "destinationNamespace": "someotherns",
 	})
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "cross-namespace")
@@ -1142,7 +1175,8 @@ func TestCopyObjectWithoutWorkRequests(t *testing.T) {
 	f.createBucket(t, "src")
 
 	rec := f.do(t, http.MethodPost, f.bucketPath("src")+"/actions/copyObject", map[string]any{
-		"sourceObjectName": "a", "destinationBucket": "src", "destinationObjectName": "b",
+		"sourceObjectName": "a", "destinationRegion": "us-ashburn-1",
+		"destinationBucket": "src", "destinationObjectName": "b",
 	})
 	assert.Equal(t, http.StatusNotImplemented, rec.Code)
 }

@@ -8,19 +8,61 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
+	"github.com/stackshy/cloudemu/v2/services/storage/storageengine"
 )
 
 // newVersionID mints an object version id. OCI version ids are opaque.
 func newVersionID() string { return idgen.GenerateID("") }
 
-// setVersioningLocked applies a versioning state to a bucket, allocating the
-// history map the first time versioning is enabled. Callers hold mu.
-func setVersioningLocked(bkt *bucketData, status string) {
+// setVersioningLocked applies a versioning state to a bucket. Enabling it
+// seeds every current object that has no history yet into its chain, so the
+// first overwrite after enabling keeps the original as a prior version.
+// Callers hold mu for writing.
+func (m *Mock) setVersioningLocked(ctx context.Context, bucket string, bkt *bucketData, status string) error {
 	bkt.Versioning = status
 
-	if status == VersioningEnabled && bkt.versions == nil {
+	if status != VersioningEnabled {
+		return nil
+	}
+
+	if bkt.versions == nil {
 		bkt.versions = make(map[string][]*objectVersion)
 	}
+
+	for _, name := range bkt.objects.Keys() {
+		obj, ok := bkt.objects.Get(name)
+		if !ok || len(bkt.versions[name]) > 0 {
+			continue
+		}
+
+		if err := m.assignVersionLocked(ctx, bucket, obj); err != nil {
+			return err
+		}
+
+		appendVersion(bkt, name, versionOf(obj))
+	}
+
+	return nil
+}
+
+// assignVersionLocked gives a pre-versioning object a version id, moving its
+// engine bytes to the versioned reference. Callers hold mu for writing.
+func (m *Mock) assignVersionLocked(ctx context.Context, bucket string, obj *objectData) error {
+	prev := obj.VersionID
+	next := newVersionID()
+
+	if m.engineWired() {
+		if err := storageengine.Copy(ctx, m.opts.StorageEngine,
+			engineRef(bucket, obj.Name, next), engineRef(bucket, obj.Name, prev)); err != nil {
+			return err
+		}
+
+		_ = storageengine.Delete(ctx, m.opts.StorageEngine, engineRef(bucket, obj.Name, prev))
+	}
+
+	obj.VersionID = next
+
+	return nil
 }
 
 // storeObjectLocked writes an object as the bucket's current version and, on a
@@ -139,7 +181,7 @@ func infoOfVersion(name string, v *objectVersion) driver.ObjectInfo {
 // SetBucketVersioning enables versioning, or suspends it when disabling. OCI
 // never returns a bucket to Disabled once it has been enabled; use
 // SetVersioningStatus for the full tri-state.
-func (m *Mock) SetBucketVersioning(_ context.Context, bucket string, enabled bool) error {
+func (m *Mock) SetBucketVersioning(ctx context.Context, bucket string, enabled bool) error {
 	status := VersioningSuspended
 	if enabled {
 		status = VersioningEnabled
@@ -153,9 +195,7 @@ func (m *Mock) SetBucketVersioning(_ context.Context, bucket string, enabled boo
 		return err
 	}
 
-	setVersioningLocked(bkt, status)
-
-	return nil
+	return m.setVersioningLocked(ctx, bucket, bkt, status)
 }
 
 func (m *Mock) GetBucketVersioning(_ context.Context, bucket string) (bool, error) {
@@ -172,7 +212,7 @@ func (m *Mock) GetBucketVersioning(_ context.Context, bucket string) (bool, erro
 
 // SetVersioningStatus sets the bucket's versioning state. OCI's Disabled is
 // accepted only while the bucket has never been versioned.
-func (m *Mock) SetVersioningStatus(_ context.Context, bucket, status string) error {
+func (m *Mock) SetVersioningStatus(ctx context.Context, bucket, status string) error {
 	if !validVersioning(status) {
 		return cerrors.Newf(cerrors.InvalidArgument, "invalid versioning status %q", status)
 	}
@@ -190,9 +230,7 @@ func (m *Mock) SetVersioningStatus(_ context.Context, bucket, status string) err
 			"versioning cannot be set back to Disabled once enabled; use Suspended")
 	}
 
-	setVersioningLocked(bkt, status)
-
-	return nil
+	return m.setVersioningLocked(ctx, bucket, bkt, status)
 }
 
 // VersioningStatus returns "Disabled", "Enabled" or "Suspended".
@@ -279,6 +317,15 @@ func (m *Mock) findVersionLocked(bucket, key, versionID string) (*objectVersion,
 func (m *Mock) DeleteObjectVersion(
 	ctx context.Context, bucket, key, versionID string,
 ) (deletedVersionID string, deleteMarker bool, err error) {
+	return m.DeleteObjectIf(ctx, bucket, key, versionID, "")
+}
+
+// DeleteObjectIf is DeleteObjectVersion guarded by an if-match ETag, checked
+// against the version being deleted: the current object when versionID is
+// empty.
+func (m *Mock) DeleteObjectIf(
+	ctx context.Context, bucket, key, versionID, ifMatch string,
+) (deletedVersionID string, deleteMarker bool, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -287,8 +334,14 @@ func (m *Mock) DeleteObjectVersion(
 		return "", false, err
 	}
 
-	if err := retentionBlocksLocked(bkt, key, m.opts.Clock.Now()); err != nil {
-		return "", false, err
+	if ifMatch != "" {
+		if matchErr := checkETag(targetETagLocked(bkt, key, versionID), ifMatch, ""); matchErr != nil {
+			return "", false, matchErr
+		}
+	}
+
+	if holdErr := retentionBlocksLocked(bkt, key, m.opts.Clock.Now()); holdErr != nil {
+		return "", false, holdErr
 	}
 
 	if versionID == "" {
@@ -302,32 +355,57 @@ func (m *Mock) DeleteObjectVersion(
 		return vid, marker, nil
 	}
 
-	chain := bkt.versions[key]
-
-	idx := -1
-
-	var removed *objectVersion
-
-	for i, v := range chain {
-		if v.versionID == versionID {
-			idx, removed = i, v
-			break
-		}
+	removed, err := removeVersionLocked(bkt, key, versionID)
+	if err != nil {
+		return "", false, err
 	}
 
-	if idx < 0 {
-		return "", false, cerrors.Newf(cerrors.NotFound, "version %q of %q not found", versionID, key)
-	}
-
-	bkt.versions[key] = append(chain[:idx], chain[idx+1:]...)
-	if len(bkt.versions[key]) == 0 {
-		delete(bkt.versions, key)
-	}
-
-	recomputeCurrentLocked(bkt, key)
 	m.purgeLocked(ctx, bucket, key, versionID, removed.deleteMarker)
 
 	return versionID, removed.deleteMarker, nil
+}
+
+// removeVersionLocked drops one version from a name's chain and recomputes the
+// current object. Callers hold mu.
+func removeVersionLocked(bkt *bucketData, key, versionID string) (*objectVersion, error) {
+	chain := bkt.versions[key]
+
+	for i, v := range chain {
+		if v.versionID != versionID {
+			continue
+		}
+
+		bkt.versions[key] = append(chain[:i], chain[i+1:]...)
+		if len(bkt.versions[key]) == 0 {
+			delete(bkt.versions, key)
+		}
+
+		recomputeCurrentLocked(bkt, key)
+
+		return v, nil
+	}
+
+	return nil, cerrors.Newf(cerrors.NotFound, "version %q of %q not found", versionID, key)
+}
+
+// targetETagLocked is the ETag of the version a delete addresses, or empty when
+// it does not exist. Callers hold mu.
+func targetETagLocked(bkt *bucketData, key, versionID string) string {
+	if versionID == "" {
+		if obj, ok := bkt.objects.Get(key); ok {
+			return obj.ETag
+		}
+
+		return ""
+	}
+
+	for _, v := range bkt.versions[key] {
+		if v.versionID == versionID && !v.deleteMarker {
+			return v.etag
+		}
+	}
+
+	return ""
 }
 
 // recomputeCurrentLocked resets a name's current object to its newest stored

@@ -1,12 +1,14 @@
 package objectstorage_test
 
 import (
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/providers/oci/objectstorage"
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
@@ -132,4 +134,60 @@ func TestRestoreRejectsMalformedSnapshot(t *testing.T) {
 	err := m.Restore(t.Context(), []byte("{"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse snapshot")
+}
+
+// A persist restart resets the process id counter while restored PARs keep
+// their tokens and OCIDs. A PAR minted after the restore must not reuse either,
+// or the restored PAR's access URI would resolve to the new one.
+func TestPARsDoNotCollideAfterRestore(t *testing.T) {
+	ctx := t.Context()
+
+	// Both "processes" run the same sequence from a zeroed counter, so the
+	// counter alone would hand the second PAR the first one's token and OCID.
+	idgen.Reset()
+
+	src := newMock(t)
+	newBucket(t, src, "secret")
+	require.NoError(t, src.PutObject(ctx, "secret", "payroll.csv", []byte("salaries"), "text/csv", nil))
+
+	old, err := src.CreatePAR(ctx, "secret", objectstorage.PARSpec{
+		Name: "payroll", ObjectName: "payroll.csv", AccessType: objectstorage.PARObjectRead,
+		TimeExpires: time.Now().Add(time.Hour),
+	})
+	require.NoError(t, err)
+
+	data, err := src.Snapshot(ctx, true)
+	require.NoError(t, err)
+
+	// Restart: the counter starts over, exactly as a fresh process would.
+	idgen.Reset()
+
+	dst := newMock(t)
+	require.NoError(t, dst.Restore(ctx, data))
+	newBucket(t, dst, "public")
+	require.NoError(t, dst.PutObject(ctx, "public", "readme.txt", []byte("hello"), "text/plain", nil))
+
+	fresh, err := dst.CreatePAR(ctx, "public", objectstorage.PARSpec{
+		Name: "readme", ObjectName: "readme.txt", AccessType: objectstorage.PARObjectRead,
+		TimeExpires: time.Now().Add(time.Hour),
+	})
+	require.NoError(t, err)
+
+	assert.NotEqual(t, old.ID, fresh.ID)
+	assert.NotEqual(t, tokenFrom(t, old.AccessURI), tokenFrom(t, fresh.AccessURI))
+
+	for _, tc := range []struct {
+		par    *objectstorage.PreauthenticatedRequest
+		bucket string
+		object string
+	}{
+		{old, "secret", "payroll.csv"},
+		{fresh, "public", "readme.txt"},
+	} {
+		resolved, err := dst.ResolvePAR(ctx, tokenFrom(t, tc.par.AccessURI))
+		require.NoError(t, err)
+		assert.Equal(t, tc.par.ID, resolved.ID)
+		assert.Equal(t, tc.bucket, resolved.Bucket)
+		assert.True(t, objectstorage.PARAllows(resolved, http.MethodGet, tc.object))
+	}
 }

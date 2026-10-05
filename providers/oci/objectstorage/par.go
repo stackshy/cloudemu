@@ -2,8 +2,11 @@ package objectstorage
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -11,9 +14,14 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
-// parMaxLifetime bounds a pre-authenticated request. Real OCI allows a long
-// lifetime but always a bounded one.
-const parMaxLifetime = 7 * hoursPerDay * time.Hour
+// parTokenBytes is the entropy behind a redemption token. The token is the
+// only secret a PAR carries, so it comes from crypto/rand rather than the
+// process counter, which restarts after a persist restore.
+const parTokenBytes = 48
+
+// defaultPresignLifetime is the lifetime GeneratePresignedURL gives a PAR when
+// the portable caller names none; OCI itself requires timeExpires.
+const defaultPresignLifetime = 7 * hoursPerDay * time.Hour
 
 // PreauthenticatedRequest is OCI's presigned-URL equivalent: a first-class
 // resource with its own OCID and lifetime, listable and revocable, rather than
@@ -91,11 +99,6 @@ func (m *Mock) CreatePAR(_ context.Context, bucket string, spec PARSpec) (*Preau
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "objectName is required for accessType %q", spec.AccessType)
 	}
 
-	if !parScopedToObject(spec.AccessType) && spec.ObjectName != "" {
-		return nil, cerrors.Newf(cerrors.InvalidArgument,
-			"objectName is not allowed for bucket-scoped accessType %q", spec.AccessType)
-	}
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -111,8 +114,13 @@ func (m *Mock) CreatePAR(_ context.Context, bucket string, spec PARSpec) (*Preau
 		return nil, err
 	}
 
+	token, err := m.newPARTokenLocked()
+	if err != nil {
+		return nil, err
+	}
+
 	par := &parData{
-		ID:                  idgen.OCID(typePAR, m.opts.Realm, m.opts.OCIRegion()),
+		ID:                  m.newPARIDLocked(),
 		Name:                spec.Name,
 		Bucket:              bucket,
 		ObjectName:          spec.ObjectName,
@@ -120,7 +128,7 @@ func (m *Mock) CreatePAR(_ context.Context, bucket string, spec PARSpec) (*Preau
 		BucketListingAction: spec.BucketListingAction,
 		TimeCreated:         now.Format(timeFormat),
 		TimeExpires:         expires,
-		token:               idgen.GenerateID(""),
+		token:               token,
 	}
 
 	bkt.pars.Set(par.ID, par)
@@ -131,9 +139,11 @@ func (m *Mock) CreatePAR(_ context.Context, bucket string, spec PARSpec) (*Preau
 	return out, nil
 }
 
+// parExpiry validates timeExpires. OCI requires one and caps it only at the
+// far future, so a PAR a year or more out is accepted.
 func parExpiry(requested, now time.Time) (time.Time, error) {
 	if requested.IsZero() {
-		return now.Add(parMaxLifetime), nil
+		return time.Time{}, cerrors.New(cerrors.InvalidArgument, "timeExpires is required")
 	}
 
 	expires := requested.UTC()
@@ -141,19 +151,60 @@ func parExpiry(requested, now time.Time) (time.Time, error) {
 		return time.Time{}, cerrors.New(cerrors.InvalidArgument, "timeExpires must be in the future")
 	}
 
-	if expires.After(now.Add(parMaxLifetime)) {
-		return time.Time{}, cerrors.Newf(cerrors.InvalidArgument,
-			"timeExpires exceeds the maximum lifetime of %s", parMaxLifetime)
+	return expires, nil
+}
+
+// newPARTokenLocked mints a redemption token no live PAR holds. Callers hold mu.
+func (m *Mock) newPARTokenLocked() (string, error) {
+	buf := make([]byte, parTokenBytes)
+
+	for {
+		if _, err := rand.Read(buf); err != nil {
+			return "", cerrors.Newf(cerrors.Internal, "generate pre-authenticated request token: %v", err)
+		}
+
+		token := base64.RawURLEncoding.EncodeToString(buf)
+		if m.findPARLocked(func(p *parData) bool { return p.token == token }) == nil {
+			return token, nil
+		}
+	}
+}
+
+// newPARIDLocked mints a PAR OCID no live PAR holds. The OCID counter restarts
+// after a persist restore while restored PARs keep theirs. Callers hold mu.
+func (m *Mock) newPARIDLocked() string {
+	for {
+		id := idgen.OCID(typePAR, m.opts.Realm, m.opts.OCIRegion())
+		if m.findPARLocked(func(p *parData) bool { return p.ID == id }) == nil {
+			return id
+		}
+	}
+}
+
+// findPARLocked returns the first PAR in any bucket matching pred. Callers
+// hold mu.
+func (m *Mock) findPARLocked(pred func(*parData) bool) *parData {
+	for _, name := range m.buckets.Keys() {
+		bkt, ok := m.buckets.Get(name)
+		if !ok {
+			continue
+		}
+
+		for _, id := range bkt.pars.Keys() {
+			if par, exists := bkt.pars.Get(id); exists && pred(par) {
+				return par
+			}
+		}
 	}
 
-	return expires, nil
+	return nil
 }
 
 // accessURI is the path a PAR is redeemed at, matching the shape real OCI
 // returns: /p/{token}/n/{namespace}/b/{bucket}/o/{object}.
 func (m *Mock) accessURI(par *parData) string {
 	uri := "/p/" + par.token + "/n/" + m.namespace + "/b/" + par.Bucket + "/o/"
-	if par.ObjectName != "" {
+	if parScopedToObject(par.AccessType) {
 		uri += par.ObjectName
 	}
 
@@ -239,29 +290,16 @@ func (m *Mock) ResolvePAR(_ context.Context, token string) (*PreauthenticatedReq
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	now := m.opts.Clock.Now().UTC()
-
-	for _, name := range m.buckets.Keys() {
-		bkt, ok := m.buckets.Get(name)
-		if !ok {
-			continue
-		}
-
-		for _, id := range bkt.pars.Keys() {
-			par, exists := bkt.pars.Get(id)
-			if !exists || par.token != token {
-				continue
-			}
-
-			if !now.Before(par.TimeExpires) {
-				return nil, cerrors.Newf(cerrors.PermissionDenied, "pre-authenticated request %q has expired", par.ID)
-			}
-
-			return projectPAR(par), nil
-		}
+	par := m.findPARLocked(func(p *parData) bool { return p.token == token })
+	if par == nil {
+		return nil, cerrors.New(cerrors.NotFound, "pre-authenticated request not found")
 	}
 
-	return nil, cerrors.New(cerrors.NotFound, "pre-authenticated request not found")
+	if !m.opts.Clock.Now().UTC().Before(par.TimeExpires) {
+		return nil, cerrors.Newf(cerrors.PermissionDenied, "pre-authenticated request %q has expired", par.ID)
+	}
+
+	return projectPAR(par), nil
 }
 
 // parGrantsRead and parGrantsWrite report which verb an access type grants.
@@ -284,8 +322,14 @@ func parGrantsWrite(accessType string) bool {
 }
 
 // PARAllows reports whether a resolved request authorizes method on object.
+// An object-scoped PAR names one object; on the AnyObject types objectName is a
+// prefix, as OCI treats it.
 func PARAllows(par *PreauthenticatedRequest, method, object string) bool {
-	if parScopedToObject(par.AccessType) && par.ObjectName != object {
+	if parScopedToObject(par.AccessType) {
+		if par.ObjectName != object {
+			return false
+		}
+	} else if !strings.HasPrefix(object, par.ObjectName) {
 		return false
 	}
 
@@ -329,7 +373,7 @@ func (m *Mock) GeneratePresignedURL(ctx context.Context, req driver.PresignedURL
 
 	expiresIn := req.ExpiresIn
 	if expiresIn <= 0 {
-		expiresIn = parMaxLifetime
+		expiresIn = defaultPresignLifetime
 	}
 
 	expires := m.opts.Clock.Now().UTC().Add(expiresIn)

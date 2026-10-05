@@ -5,10 +5,12 @@ import (
 	"maps"
 	"sort"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
+	"github.com/stackshy/cloudemu/v2/services/storage/storageengine"
 )
 
 // Encryption algorithms the bucket reports: the Oracle-managed default, or a
@@ -37,6 +39,8 @@ type BucketSpec struct {
 // BucketUpdate is a partial bucket update. A nil pointer leaves the field
 // alone; OCI's UpdateBucket replaces only what the caller sends.
 type BucketUpdate struct {
+	Name                *string
+	IfMatch             string
 	CompartmentID       *string
 	PublicAccessType    *string
 	Versioning          *string
@@ -105,13 +109,105 @@ func validAutoTiering(v string) bool {
 	return v == AutoTieringDisabled || v == AutoTieringInfreq
 }
 
+// maxBucketNameLen is OCI's bucket name limit.
+const maxBucketNameLen = 256
+
+// validateBucketName enforces OCI's bucket name rule: letters, digits,
+// hyphens, underscores and periods, up to 256 characters.
+func validateBucketName(name string) error {
+	if name == "" {
+		return cerrors.New(cerrors.InvalidArgument, "bucket name cannot be empty")
+	}
+
+	if len(name) > maxBucketNameLen {
+		return cerrors.Newf(cerrors.InvalidArgument, "bucket name exceeds %d characters", maxBucketNameLen)
+	}
+
+	for _, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_', c == '.':
+		default:
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"bucket name %q may hold only letters, digits, '-', '_' and '.'", name)
+		}
+	}
+
+	return nil
+}
+
+// renameBucketLocked moves a bucket and everything under it to a new name. Its
+// PARs follow it, and with a storage engine wired the object bytes move to the
+// new name's references. Callers hold mu for writing.
+func (m *Mock) renameBucketLocked(ctx context.Context, bkt *bucketData, newName string) error {
+	oldName := bkt.Name
+
+	if m.engineWired() {
+		for _, ref := range engineRefsLocked(bkt) {
+			if err := storageengine.Copy(ctx, m.opts.StorageEngine,
+				engineRef(newName, ref.Key, ref.Version), engineRef(oldName, ref.Key, ref.Version)); err != nil {
+				return err
+			}
+		}
+
+		for _, ref := range engineRefsLocked(bkt) {
+			_ = storageengine.Delete(ctx, m.opts.StorageEngine, engineRef(oldName, ref.Key, ref.Version))
+		}
+	}
+
+	for _, id := range bkt.pars.Keys() {
+		if par, ok := bkt.pars.Get(id); ok {
+			par.Bucket = newName
+		}
+	}
+
+	bkt.Name = newName
+
+	m.buckets.Delete(oldName)
+	m.buckets.Set(newName, bkt)
+
+	return nil
+}
+
+// engineRefsLocked lists every engine reference a bucket's current objects and
+// stored versions occupy, each once. Callers hold mu.
+func engineRefsLocked(bkt *bucketData) []config.StorageRef {
+	seen := make(map[config.StorageRef]bool)
+
+	var refs []config.StorageRef
+
+	add := func(key, version string) {
+		ref := config.StorageRef{Key: key, Version: version}
+		if !seen[ref] {
+			seen[ref] = true
+
+			refs = append(refs, ref)
+		}
+	}
+
+	for _, name := range bkt.objects.Keys() {
+		if obj, ok := bkt.objects.Get(name); ok {
+			add(name, obj.VersionID)
+		}
+	}
+
+	for name, chain := range bkt.versions {
+		for _, v := range chain {
+			if !v.deleteMarker {
+				add(name, v.versionID)
+			}
+		}
+	}
+
+	return refs
+}
+
 // CreateBucketWith creates a bucket with OCI's bucket settings, recording the
 // compartment it lands in.
 //
 //nolint:gocritic // BucketSpec is a request shape, passed by value like the driver's own config structs.
 func (m *Mock) CreateBucketWith(_ context.Context, spec BucketSpec) (*Bucket, error) {
-	if spec.Name == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "bucket name cannot be empty")
+	if err := validateBucketName(spec.Name); err != nil {
+		return nil, err
 	}
 
 	if err := validateSpec(spec); err != nil {
@@ -122,7 +218,7 @@ func (m *Mock) CreateBucketWith(_ context.Context, spec BucketSpec) (*Bucket, er
 	defer m.mu.Unlock()
 
 	if m.buckets.Has(spec.Name) {
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "bucket %q already exists", spec.Name)
+		return nil, serviceErrorf(CodeBucketAlreadyExists, cerrors.AlreadyExists, "bucket %q already exists", spec.Name)
 	}
 
 	bkt := &bucketData{
@@ -192,7 +288,9 @@ func (m *Mock) BucketDetails(_ context.Context, name string) (*Bucket, error) {
 }
 
 // UpdateBucket applies a partial update, replacing only the fields set.
-func (m *Mock) UpdateBucket(_ context.Context, name string, upd BucketUpdate) (*Bucket, error) {
+//
+//nolint:gocritic // BucketUpdate is a request shape, passed by value like BucketSpec.
+func (m *Mock) UpdateBucket(ctx context.Context, name string, upd BucketUpdate) (*Bucket, error) {
 	if err := validateUpdate(upd); err != nil {
 		return nil, err
 	}
@@ -205,24 +303,68 @@ func (m *Mock) UpdateBucket(_ context.Context, name string, upd BucketUpdate) (*
 		return nil, err
 	}
 
-	applyUpdate(bkt, upd)
+	if err := m.checkUpdateLocked(bkt, &upd); err != nil {
+		return nil, err
+	}
+
+	if upd.Versioning != nil {
+		if err := m.setVersioningLocked(ctx, name, bkt, *upd.Versioning); err != nil {
+			return nil, err
+		}
+	}
+
+	if renamed(name, &upd) {
+		if err := m.renameBucketLocked(ctx, bkt, *upd.Name); err != nil {
+			return nil, err
+		}
+	}
+
+	applyUpdate(bkt, &upd)
 	bkt.ETag = newETag()
 
 	return projectBucket(bkt), nil
 }
 
+// checkUpdateLocked applies the update's if-match and refuses a rename onto an
+// existing bucket. Callers hold mu.
+func (m *Mock) checkUpdateLocked(bkt *bucketData, upd *BucketUpdate) error {
+	if err := checkETag(bkt.ETag, upd.IfMatch, ""); err != nil {
+		return err
+	}
+
+	if renamed(bkt.Name, upd) && m.buckets.Has(*upd.Name) {
+		return serviceErrorf(CodeBucketAlreadyExists, cerrors.AlreadyExists, "bucket %q already exists", *upd.Name)
+	}
+
+	return nil
+}
+
+func renamed(name string, upd *BucketUpdate) bool { return upd.Name != nil && *upd.Name != name }
+
+//nolint:gocritic // BucketUpdate is a request shape, passed by value like BucketSpec.
 func validateUpdate(upd BucketUpdate) error {
+	if upd.Name != nil {
+		if err := validateBucketName(*upd.Name); err != nil {
+			return err
+		}
+	}
+
+	if upd.Versioning != nil && *upd.Versioning == VersioningDisabled {
+		return cerrors.New(cerrors.InvalidArgument,
+			"versioning cannot be set back to Disabled once enabled; use Suspended")
+	}
+
+	return validateUpdateValues(&upd)
+}
+
+// validateUpdateValues rejects an enumerated setting OCI would not accept.
+func validateUpdateValues(upd *BucketUpdate) error {
 	if upd.PublicAccessType != nil && !validPublicAccess(*upd.PublicAccessType) {
 		return cerrors.Newf(cerrors.InvalidArgument, "unsupported publicAccessType %q", *upd.PublicAccessType)
 	}
 
 	if upd.Versioning != nil && !validVersioning(*upd.Versioning) {
 		return cerrors.Newf(cerrors.InvalidArgument, "unsupported versioning %q", *upd.Versioning)
-	}
-
-	if upd.Versioning != nil && *upd.Versioning == VersioningDisabled {
-		return cerrors.New(cerrors.InvalidArgument,
-			"versioning cannot be set back to Disabled once enabled; use Suspended")
 	}
 
 	if upd.AutoTiering != nil && !validAutoTiering(*upd.AutoTiering) {
@@ -232,17 +374,13 @@ func validateUpdate(upd BucketUpdate) error {
 	return nil
 }
 
-func applyUpdate(bkt *bucketData, upd BucketUpdate) {
+func applyUpdate(bkt *bucketData, upd *BucketUpdate) {
 	if upd.CompartmentID != nil {
 		bkt.CompartmentID = *upd.CompartmentID
 	}
 
 	if upd.PublicAccessType != nil {
 		bkt.PublicAccessType = *upd.PublicAccessType
-	}
-
-	if upd.Versioning != nil {
-		setVersioningLocked(bkt, *upd.Versioning)
 	}
 
 	if upd.KMSKeyID != nil {
