@@ -83,10 +83,15 @@ func (m *Mock) PostMetricData(_ context.Context, compartmentID, resourceGroup st
 	return m.postMetricData(compartmentID, resourceGroup, data, false)
 }
 
-// postMetricData records metric data points. allowReserved admits the `oci_`
-// namespaces Oracle keeps for its own service metrics, which a sibling mock
-// emitting its service's metrics is the producer of and the public
-// PostMetricData is not.
+// PostServiceMetricData records a sibling OCI service's own metrics against a
+// compartment. Unlike PostMetricData it admits the oci_ namespaces Oracle
+// reserves for service metrics, which only the service itself produces.
+func (m *Mock) PostServiceMetricData(_ context.Context, compartmentID string, data []driver.MetricDatum) error {
+	return m.postMetricData(compartmentID, "", data, true)
+}
+
+// postMetricData records metric data points. allowReserved admits the oci_
+// namespaces; only PostServiceMetricData sets it.
 func (m *Mock) postMetricData(
 	compartmentID, resourceGroup string, data []driver.MetricDatum, allowReserved bool,
 ) error {

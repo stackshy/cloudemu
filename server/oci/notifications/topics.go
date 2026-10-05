@@ -25,7 +25,7 @@ const (
 // entityTopic is the resource type a topic work request reports.
 const entityTopic = "onstopic"
 
-// Work request operations the asynchronous topic mutations record.
+// Work request operations CloudEmu records for the topic delete and move.
 const (
 	operationDeleteTopic       = "DELETE_TOPIC"
 	operationChangeCompartment = "CHANGE_TOPIC_COMPARTMENT"
@@ -88,6 +88,10 @@ func (h *Handler) createTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
 	info, err := h.notif.CreateTopic(r.Context(), notifdriver.TopicConfig{
 		Name:        req.Name,
 		DisplayName: req.Description,
@@ -99,7 +103,7 @@ func (h *Handler) createTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusCreated, h.topicWire(r, info))
+	h.writeTopic(w, r, http.StatusCreated, info)
 }
 
 func (h *Handler) getTopic(w http.ResponseWriter, r *http.Request, id string) {
@@ -109,7 +113,14 @@ func (h *Handler) getTopic(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusOK, h.topicWire(r, info))
+	h.writeTopic(w, r, http.StatusOK, info)
+}
+
+// writeTopic renders a single topic with the etag header the SDK reads.
+func (h *Handler) writeTopic(w http.ResponseWriter, r *http.Request, status int, info *notifdriver.TopicInfo) {
+	out := h.topicWire(r, info)
+	setEtag(w, out.Etag)
+	ocirest.WriteJSON(w, r, status, out)
 }
 
 // listTopics returns the topics in a compartment. ONS requires compartmentId
@@ -145,7 +156,12 @@ func (h *Handler) listTopics(w http.ResponseWriter, r *http.Request) {
 
 	sortTopics(out, order)
 
-	ocirest.WriteJSON(w, r, http.StatusOK, paginate(w, r, out))
+	page, ok := paginate(w, r, out)
+	if !ok {
+		return
+	}
+
+	ocirest.WriteJSON(w, r, http.StatusOK, page)
 }
 
 // updateTopic replaces a topic's description and tags. ONS does not rename a
@@ -161,25 +177,21 @@ func (h *Handler) updateTopic(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
-	if !h.topicIfMatch(w, r, id) {
-		return
-	}
-
-	info, err := h.notif.UpdateTopic(r.Context(), notifdriver.TopicConfig{
+	info, err := h.extras.UpdateTopicIfMatch(r.Context(), notifdriver.TopicConfig{
 		Name:        id,
 		DisplayName: req.Description,
 		Tags:        req.FreeformTags,
-	})
+	}, ifMatch(r))
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeError(w, r, err)
 		return
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusOK, h.topicWire(r, info))
+	h.writeTopic(w, r, http.StatusOK, info)
 }
 
-// deleteTopic removes a topic and its subscriptions. Real ONS runs it
-// asynchronously and answers 204 with the work request the caller polls.
+// deleteTopic removes a topic and its subscriptions, answering 204. Real ONS
+// returns only an opc-request-id; CloudEmu also records a work request.
 func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request, id string) {
 	if h.work == nil {
 		ocirest.WriteError(w, r, http.StatusNotImplemented, codeNotImplemented, "work requests are not configured")
@@ -192,14 +204,10 @@ func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
-	if !h.topicIfMatch(w, r, id) {
-		return
-	}
-
 	compartmentID := info.Scope.Compartment
 
-	if err := h.notif.DeleteTopic(r.Context(), id); err != nil {
-		ocirest.WriteDriverError(w, r, err)
+	if err := h.extras.DeleteTopicIfMatch(r.Context(), id, ifMatch(r)); err != nil {
+		writeError(w, r, err)
 		return
 	}
 
@@ -213,7 +221,8 @@ func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request, id string)
 	ocirest.WriteJSON(w, r, http.StatusNoContent, nil)
 }
 
-// changeTopicCompartment moves a topic, which ONS runs asynchronously.
+// changeTopicCompartment moves a topic. Real ONS returns only an
+// opc-request-id; CloudEmu also records a work request and answers 202.
 func (h *Handler) changeTopicCompartment(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w, r)
@@ -236,11 +245,15 @@ func (h *Handler) changeTopicCompartment(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	if _, err := h.notif.UpdateTopic(r.Context(), notifdriver.TopicConfig{
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
+	if _, err := h.extras.UpdateTopicIfMatch(r.Context(), notifdriver.TopicConfig{
 		Name:  id,
 		Scope: scope.Scope{Compartment: req.CompartmentID},
-	}); err != nil {
-		ocirest.WriteDriverError(w, r, err)
+	}, ifMatch(r)); err != nil {
+		writeError(w, r, err)
 		return
 	}
 
@@ -280,17 +293,6 @@ func (h *Handler) topicWire(r *http.Request, info *notifdriver.TopicInfo) topicR
 	}
 
 	return out
-}
-
-// topicIfMatch enforces an if-match precondition against a topic's stored
-// etag. An unknown topic passes through to the driver's own 404.
-func (h *Handler) topicIfMatch(w http.ResponseWriter, r *http.Request, id string) bool {
-	details, ok := h.extras.TopicDetails(id)
-	if !ok {
-		return true
-	}
-
-	return checkIfMatch(w, r, details.Etag)
 }
 
 // topicMatches applies ONS's id, name and lifecycleState narrowing.
@@ -358,19 +360,27 @@ func reverse[T any](items []T) {
 }
 
 // paginate applies OCI's limit and opaque page cursor, stamping the cursor for
-// the next page. The cursor is the offset the next page starts at.
-func paginate[T any](w http.ResponseWriter, r *http.Request, items []T) []T {
+// the next page. The cursor is the offset the next page starts at. A cursor
+// this handler never issued is a 400, not a silent restart from page one, so
+// a client holding a corrupted cursor cannot loop forever.
+func paginate[T any](w http.ResponseWriter, r *http.Request, items []T) ([]T, bool) {
 	start := 0
 
 	if token := ocirest.Page(r); token != "" {
-		if n, err := strconv.Atoi(token); err == nil && n > 0 {
-			start = n
+		n, err := strconv.Atoi(token)
+		if err != nil || n < 0 {
+			ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter,
+				"page "+strconv.Quote(token)+" is not a page token this listing issued")
+
+			return nil, false
 		}
+
+		start = n
 	}
 
 	// items[:0] rather than nil: an empty page is [] on the wire, not null.
 	if start >= len(items) {
-		return items[:0]
+		return items[:0], true
 	}
 
 	end := min(start+ocirest.Limit(r), len(items))
@@ -378,5 +388,5 @@ func paginate[T any](w http.ResponseWriter, r *http.Request, items []T) []T {
 		ocirest.SetNextPage(w, strconv.Itoa(end))
 	}
 
-	return items[start:end]
+	return items[start:end], true
 }

@@ -61,9 +61,9 @@ type deliveryPolicy struct {
 	BackoffRetryPolicy *backoffRetryPolicy `json:"backoffRetryPolicy,omitempty"`
 }
 
-// subscriptionResponse is ONS's Subscription; SubscriptionSummary shares its
-// fields.
-type subscriptionResponse struct {
+// subscriptionFields is what ONS's Subscription and SubscriptionSummary share.
+// The two differ only in how they carry the delivery policy.
+type subscriptionFields struct {
 	ID             string            `json:"id"`
 	TopicID        string            `json:"topicId"`
 	CompartmentID  string            `json:"compartmentId"`
@@ -72,7 +72,6 @@ type subscriptionResponse struct {
 	LifecycleState string            `json:"lifecycleState"`
 	CreatedTime    int64             `json:"createdTime"`
 	Metadata       string            `json:"metadata,omitempty"`
-	DeliveryPolicy *deliveryPolicy   `json:"deliveryPolicy,omitempty"`
 	Etag           string            `json:"etag,omitempty"`
 	FreeformTags   map[string]string `json:"freeformTags"`
 	DefinedTags    definedTags       `json:"definedTags"`
@@ -80,6 +79,23 @@ type subscriptionResponse struct {
 	// endpoint, which the emulator cannot do, so a PENDING subscription
 	// carries it back to the caller that must confirm it.
 	ConfirmationToken string `json:"confirmationToken,omitempty"`
+}
+
+// subscriptionResponse is ONS's Subscription, returned by Create, Get and
+// Update. It carries the delivery policy as a JSON-encoded string in
+// deliverPolicy, which the SDK and Terraform read.
+type subscriptionResponse struct {
+	subscriptionFields
+
+	DeliverPolicy string `json:"deliverPolicy,omitempty"`
+}
+
+// subscriptionSummary is ONS's SubscriptionSummary, returned by List. Unlike
+// Subscription it carries the delivery policy as an object in deliveryPolicy.
+type subscriptionSummary struct {
+	subscriptionFields
+
+	DeliveryPolicy *deliveryPolicy `json:"deliveryPolicy,omitempty"`
 }
 
 type messageDetails struct {

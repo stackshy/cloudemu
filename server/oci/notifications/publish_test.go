@@ -102,3 +102,31 @@ func TestPublishRejectsAnOversizedBody(t *testing.T) {
 	})
 	assert.Equal(t, http.StatusOK, atLimit.Code, atLimit.Body.String())
 }
+
+// The SDK sends messageType as a header, so that is where an unknown value
+// must be caught and where JSON must be honoured.
+func TestPublishReadsMessageTypeFromTheHeader(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	id := f.newTopic("alerts", compartment)
+
+	subID, token := f.newSubscription(id, "ops@example.com")
+	confirm := f.do(http.MethodGet,
+		"/20181201/subscriptions/"+subID+"/confirmation?token="+token+"&protocol=EMAIL", nil)
+	require.Equal(t, http.StatusOK, confirm.Code, confirm.Body.String())
+
+	target := "/20181201/topics/" + id + "/messages"
+	body := []byte(`{"body":"{\"k\":1}"}`)
+
+	bad := serve(f.handler, http.MethodPost, target, http.Header{"Messagetype": {"NOPE"}}, body)
+	require.Equal(t, http.StatusBadRequest, bad.Code, bad.Body.String())
+	assert.Contains(t, bad.Body.String(), "NOPE")
+
+	ok := serve(f.handler, http.MethodPost, target, http.Header{"Messagetype": {"JSON"}}, body)
+	require.Equal(t, http.StatusOK, ok.Code, ok.Body.String())
+
+	delivered := f.mock.Deliveries(subID)
+	require.Len(t, delivered, 1)
+	assert.Equal(t, "JSON", delivered[0].Type)
+}

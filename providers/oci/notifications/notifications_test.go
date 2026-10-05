@@ -232,12 +232,38 @@ func TestListTopicsFiltersByCompartment(t *testing.T) {
 	}
 }
 
-func TestSameTopicNameInAnotherCompartment(t *testing.T) {
+// ONS topic names are unique across the tenancy, so the same name in another
+// compartment is a conflict.
+func TestTopicNameIsUniqueAcrossTheTenancy(t *testing.T) {
 	m := newMock(t)
-	first := newTopic(t, m, "alerts", compartment)
-	second := newTopic(t, m, "alerts", otherCompartment)
+	newTopic(t, m, "alerts", compartment)
 
-	assert.NotEqual(t, first, second)
+	_, err := m.CreateTopic(t.Context(), driver.TopicConfig{
+		Name:  "alerts",
+		Scope: scope.Scope{Compartment: otherCompartment},
+	})
+	require.Error(t, err)
+	assert.Equal(t, cerrors.AlreadyExists, cerrors.GetCode(err))
+}
+
+// Moving a topic keeps its name taken across the tenancy: the compartment it
+// left cannot reuse the name either.
+func TestTopicNameStaysTakenAcrossACompartmentMove(t *testing.T) {
+	m := newMock(t)
+	id := newTopic(t, m, "alerts", compartment)
+
+	_, err := m.UpdateTopic(t.Context(), driver.TopicConfig{
+		Name:  id,
+		Scope: scope.Scope{Compartment: otherCompartment},
+	})
+	require.NoError(t, err)
+
+	_, err = m.CreateTopic(t.Context(), driver.TopicConfig{
+		Name:  "alerts",
+		Scope: scope.Scope{Compartment: compartment},
+	})
+	require.Error(t, err)
+	assert.Equal(t, cerrors.AlreadyExists, cerrors.GetCode(err))
 }
 
 func TestCreateSubscription(t *testing.T) {
@@ -357,15 +383,16 @@ func TestConfirmSubscriptionErrors(t *testing.T) {
 		protocol string
 		code     cerrors.Code
 	}{
-		{name: "wrong token", id: sub.ID, token: "nope", code: cerrors.InvalidArgument},
-		{name: "missing token", id: sub.ID, token: "", code: cerrors.InvalidArgument},
+		{name: "wrong token", id: sub.ID, token: "nope", protocol: "EMAIL", code: cerrors.InvalidArgument},
+		{name: "missing token", id: sub.ID, token: "", protocol: "EMAIL", code: cerrors.InvalidArgument},
+		{name: "missing protocol", id: sub.ID, token: sub.ConfirmationToken, code: cerrors.InvalidArgument},
 		{
 			name: "mismatched protocol", id: sub.ID, token: sub.ConfirmationToken,
 			protocol: "SMS", code: cerrors.InvalidArgument,
 		},
 		{
 			name: "unknown subscription", id: "ocid1.onssubscription.oc1.iad.missing",
-			token: sub.ConfirmationToken, code: cerrors.NotFound,
+			token: sub.ConfirmationToken, protocol: "EMAIL", code: cerrors.NotFound,
 		},
 	}
 
@@ -391,7 +418,7 @@ func TestResendConfirmation(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, sub.ConfirmationToken, resent.ConfirmationToken)
 
-	_, err = m.ConfirmSubscription(t.Context(), sub.ID, resent.ConfirmationToken, "")
+	_, err = m.ConfirmSubscription(t.Context(), sub.ID, resent.ConfirmationToken, "EMAIL")
 	require.NoError(t, err)
 
 	_, err = m.ResendSubscriptionConfirmation(t.Context(), sub.ID)
@@ -421,7 +448,7 @@ func TestUnsubscribeByToken(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = m.UnsubscribeByToken(t.Context(), sub.ID, "wrong", "")
+	err = m.UnsubscribeByToken(t.Context(), sub.ID, "wrong", "EMAIL")
 	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
 
 	require.NoError(t, m.UnsubscribeByToken(t.Context(), sub.ID, sub.ConfirmationToken, "EMAIL"))

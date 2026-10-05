@@ -6,6 +6,8 @@ package notifications
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"maps"
 	"regexp"
 	"sync"
@@ -57,6 +59,17 @@ var topicNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // metricNamespace is the namespace ONS publishes its metrics under.
 const metricNamespace = "oci_notification"
+
+// ErrNoEtagMatch marks an if-match precondition that did not hold. It wraps a
+// FailedPrecondition, so a portable caller still sees that code.
+var ErrNoEtagMatch = errors.New("no etag match")
+
+// serviceMetricSink records a service's own metrics into a compartment, under
+// the oci_ namespaces Oracle reserves for them. providers/oci/monitoring.Mock
+// implements it; a portable monitoring driver cannot take a reserved namespace.
+type serviceMetricSink interface {
+	PostServiceMetricData(ctx context.Context, compartmentID string, data []mondriver.MetricDatum) error
+}
 
 // TopicDetails is the OCI-only state of a topic; driver.TopicInfo has no room
 // for it.
@@ -135,9 +148,10 @@ func (m *Mock) CreateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 		place.Compartment = m.opts.CompartmentID
 	}
 
-	if m.topicByName(place.Compartment, cfg.Name) != nil {
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "topic %q already exists in compartment %s",
-			cfg.Name, place.Compartment)
+	// ONS topic names are unique across the tenancy, not per compartment.
+	if existing := m.topicByName(cfg.Name); existing != nil {
+		return nil, cerrors.Newf(cerrors.AlreadyExists, "topic %q already exists in the tenancy (in compartment %s)",
+			cfg.Name, existing.Scope.Compartment)
 	}
 
 	id := idgen.OCID(typeTopic, m.opts.Realm, m.opts.OCIRegion())
@@ -200,9 +214,32 @@ func (m *Mock) UpdateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	td := m.resolveTopic(cfg.Name, cfg.Scope.Compartment)
+	return m.updateTopic(&cfg, "")
+}
+
+// UpdateTopicIfMatch is UpdateTopic under an if-match precondition, compared
+// against the stored etag under the same lock as the write. An empty ifMatch
+// is unconditional.
+//
+//nolint:gocritic // hugeParam: mirrors UpdateTopic's by-value TopicConfig.
+func (m *Mock) UpdateTopicIfMatch(
+	_ context.Context, cfg driver.TopicConfig, ifMatch string,
+) (*driver.TopicInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.updateTopic(&cfg, ifMatch)
+}
+
+// updateTopic applies a topic update. The caller holds mu.
+func (m *Mock) updateTopic(cfg *driver.TopicConfig, ifMatch string) (*driver.TopicInfo, error) {
+	td := m.resolveTopic(cfg.Name)
 	if td == nil {
 		return nil, cerrors.Newf(cerrors.NotFound, "topic %q not found", cfg.Name)
+	}
+
+	if err := checkEtag(td.Etag, ifMatch); err != nil {
+		return nil, err
 	}
 
 	if cfg.DisplayName != "" {
@@ -229,8 +266,27 @@ func (m *Mock) DeleteTopic(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if !m.topics.Has(id) {
+	return m.deleteTopic(id, "")
+}
+
+// DeleteTopicIfMatch is DeleteTopic under an if-match precondition. An empty
+// ifMatch is unconditional.
+func (m *Mock) DeleteTopicIfMatch(_ context.Context, id, ifMatch string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.deleteTopic(id, ifMatch)
+}
+
+// deleteTopic removes a topic and its subscriptions. The caller holds mu.
+func (m *Mock) deleteTopic(id, ifMatch string) error {
+	td, ok := m.topics.Get(id)
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "topic %q not found", id)
+	}
+
+	if err := checkEtag(td.Etag, ifMatch); err != nil {
+		return err
 	}
 
 	m.topics.Delete(id)
@@ -285,10 +341,11 @@ func (m *Mock) topicInfo(td *topicData) *driver.TopicInfo {
 	}
 }
 
-// topicByName finds a topic by name within a compartment. The caller holds mu.
-func (m *Mock) topicByName(compartment, name string) *topicData {
+// topicByName finds a topic by name anywhere in the tenancy, the scope ONS
+// keeps topic names unique across. The caller holds mu.
+func (m *Mock) topicByName(name string) *topicData {
 	for _, td := range m.topics.SortedValues() {
-		if td.Name == name && td.Scope.Compartment == compartment {
+		if td.Name == name {
 			return td
 		}
 	}
@@ -296,33 +353,41 @@ func (m *Mock) topicByName(compartment, name string) *topicData {
 	return nil
 }
 
-// resolveTopic finds a topic by OCID, falling back to its name. The caller
-// holds mu.
-func (m *Mock) resolveTopic(ref, compartment string) *topicData {
+// resolveTopic finds a topic by OCID, falling back to its tenancy-unique name.
+// The caller holds mu.
+func (m *Mock) resolveTopic(ref string) *topicData {
 	if td, ok := m.topics.Get(ref); ok {
 		return td
 	}
 
-	if compartment == "" {
-		compartment = m.opts.CompartmentID
-	}
-
-	return m.topicByName(compartment, ref)
+	return m.topicByName(ref)
 }
 
-// emitMetric records an ONS metric. Called with mu released.
-func (m *Mock) emitMetric(name string, value float64, dims map[string]string) {
+// checkEtag enforces an if-match precondition against a stored etag. An empty
+// want is unconditional.
+func checkEtag(current, want string) error {
+	if want == "" || want == current {
+		return nil
+	}
+
+	return fmt.Errorf("%w: %w", ErrNoEtagMatch,
+		cerrors.Newf(cerrors.FailedPrecondition, "if-match %s does not match the current etag", want))
+}
+
+// emitMetric records an ONS metric in the topic's compartment, keyed by
+// resourceId as real oci_notification metrics are. Called with mu released.
+func (m *Mock) emitMetric(compartmentID, topicID, name string, value float64) {
 	m.mu.RLock()
-	mon := m.monitoring
+	sink, ok := m.monitoring.(serviceMetricSink)
 	m.mu.RUnlock()
 
-	if mon == nil {
+	if !ok {
 		return
 	}
 
-	_ = mon.PutMetricData(context.Background(), []mondriver.MetricDatum{{
+	_ = sink.PostServiceMetricData(context.Background(), compartmentID, []mondriver.MetricDatum{{
 		Namespace: metricNamespace, MetricName: name, Value: value, Unit: "Count",
-		Dimensions: dims, Timestamp: m.opts.Clock.Now(),
+		Dimensions: map[string]string{"resourceId": topicID}, Timestamp: m.opts.Clock.Now(),
 	}})
 }
 
@@ -341,7 +406,7 @@ func validateTopicName(name string) error {
 	return nil
 }
 
-// shortTopicID is the leading run of the OCID's opaque suffix, which ONS
+// shortTopicID is the trailing run of the OCID's opaque suffix, which ONS
 // reports alongside the full OCID.
 func shortTopicID(ocid string) string {
 	suffix := ocid[len(ocid)-min(len(ocid), shortTopicIDLength):]

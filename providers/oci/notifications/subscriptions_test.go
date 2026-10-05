@@ -2,6 +2,10 @@ package notifications_test
 
 import (
 	"context"
+	"errors"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,8 +60,9 @@ func TestUnsubscribeByTokenErrors(t *testing.T) {
 		code                cerrors.Code
 	}{
 		"no token":       {sub.ID, "", "EMAIL", cerrors.InvalidArgument},
-		"unknown id":     {"ocid1.onssubscription.oc1..missing", sub.ConfirmationToken, "", cerrors.NotFound},
-		"wrong token":    {sub.ID, "token-wrong", "", cerrors.InvalidArgument},
+		"no protocol":    {sub.ID, sub.ConfirmationToken, "", cerrors.InvalidArgument},
+		"unknown id":     {"ocid1.onssubscription.oc1..missing", sub.ConfirmationToken, "EMAIL", cerrors.NotFound},
+		"wrong token":    {sub.ID, "token-wrong", "EMAIL", cerrors.InvalidArgument},
 		"bad protocol":   {sub.ID, sub.ConfirmationToken, "CARRIER_PIGEON", cerrors.InvalidArgument},
 		"other protocol": {sub.ID, sub.ConfirmationToken, "SMS", cerrors.InvalidArgument},
 	}
@@ -70,9 +75,9 @@ func TestUnsubscribeByTokenErrors(t *testing.T) {
 		})
 	}
 
-	// The token alone unsubscribes; the protocol is optional. Removes the
-	// subscription, so it runs after the rejection cases.
-	require.NoError(t, m.UnsubscribeByToken(ctx, sub.ID, sub.ConfirmationToken, ""))
+	// The token and its protocol unsubscribe. Removes the subscription, so it
+	// runs after the rejection cases.
+	require.NoError(t, m.UnsubscribeByToken(ctx, sub.ID, sub.ConfirmationToken, "EMAIL"))
 	assert.Empty(t, m.Deliveries(sub.ID))
 }
 
@@ -146,4 +151,107 @@ func TestCreateSubscriptionEndpointValidation(t *testing.T) {
 			assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
 		})
 	}
+}
+
+// ONS does not ask a function subscription to confirm: it starts ACTIVE with no
+// token and receives the very next publish.
+func TestOracleFunctionsSubscriptionStartsActive(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+	topicID := newTopic(t, m, "alpha", compartment)
+
+	sub, err := m.CreateSubscription(ctx, notifications.SubscriptionSpec{
+		TopicID: topicID, CompartmentID: compartment,
+		Protocol: notifications.ProtocolFunctions, Endpoint: "ocid1.fnfunc.oc1..x",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, notifications.StateActive, sub.LifecycleState)
+	assert.Empty(t, sub.ConfirmationToken)
+
+	_, err = m.PublishMessage(ctx, topicID, notifications.MessageSpec{Body: "hello"})
+	require.NoError(t, err)
+	require.Len(t, m.Deliveries(sub.ID), 1)
+
+	// There is no confirmation to resend.
+	_, err = m.ResendSubscriptionConfirmation(ctx, sub.ID)
+	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
+
+	// The portable entry point reports it confirmed, not pending.
+	info, err := m.Subscribe(ctx, driver.SubscriptionConfig{
+		TopicID: topicID, Protocol: "ORACLE_FUNCTIONS", Endpoint: "ocid1.fnfunc.oc1..y",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, notifications.StatusConfirmed, info.Status)
+}
+
+// The if-match precondition is compared under the same lock as the write, so of
+// several writers holding the same etag exactly one wins.
+func TestUpdateTopicIfMatchHasOneWinner(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+	id := newTopic(t, m, "alpha", compartment)
+
+	details, ok := m.TopicDetails(id)
+	require.True(t, ok)
+
+	const writers = 8
+
+	var (
+		wg       sync.WaitGroup
+		won      atomic.Int32
+		rejected atomic.Int32
+	)
+
+	for i := range writers {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			_, err := m.UpdateTopicIfMatch(ctx, driver.TopicConfig{
+				Name: id, DisplayName: "writer " + strconv.Itoa(i),
+			}, details.Etag)
+
+			switch {
+			case err == nil:
+				won.Add(1)
+			case errors.Is(err, notifications.ErrNoEtagMatch):
+				rejected.Add(1)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	assert.Equal(t, int32(1), won.Load())
+	assert.Equal(t, int32(writers-1), rejected.Load())
+}
+
+// A stale etag is refused on every guarded write and leaves the resource alone.
+func TestStaleIfMatchIsRefused(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+	topicID := newTopic(t, m, "alpha", compartment)
+	sub := newPendingSubscription(t, m, topicID)
+
+	err := m.DeleteTopicIfMatch(ctx, topicID, "etag-stale")
+	require.ErrorIs(t, err, notifications.ErrNoEtagMatch)
+	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
+
+	_, err = m.UpdateSubscription(ctx, sub.ID, notifications.SubscriptionPatch{
+		FreeformTags: map[string]string{"team": "ops"}, IfMatch: "etag-stale",
+	})
+	require.ErrorIs(t, err, notifications.ErrNoEtagMatch)
+
+	require.ErrorIs(t, m.DeleteSubscription(ctx, sub.ID, "etag-stale"), notifications.ErrNoEtagMatch)
+
+	// Nothing changed, and the current etag still works.
+	got, err := m.GetSubscription(ctx, sub.ID)
+	require.NoError(t, err)
+	assert.Empty(t, got.FreeformTags)
+	require.NoError(t, m.DeleteSubscription(ctx, sub.ID, got.Etag))
+
+	details, ok := m.TopicDetails(topicID)
+	require.True(t, ok)
+	require.NoError(t, m.DeleteTopicIfMatch(ctx, topicID, details.Etag))
 }

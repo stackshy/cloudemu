@@ -56,10 +56,11 @@ type SubscriptionSpec struct {
 }
 
 // SubscriptionPatch carries the mutable fields of a subscription. A nil field
-// leaves the stored one alone.
+// leaves the stored one alone. IfMatch, when set, must equal the stored etag.
 type SubscriptionPatch struct {
 	DeliveryPolicy *DeliveryPolicy
 	FreeformTags   map[string]string
+	IfMatch        string
 }
 
 // Subscription is an ONS subscription in full.
@@ -142,17 +143,24 @@ func (m *Mock) CreateSubscription(_ context.Context, spec SubscriptionSpec) (*Su
 	}
 
 	sub := &Subscription{
-		ID:                idgen.OCID(typeSubscription, m.opts.Realm, m.opts.OCIRegion()),
-		TopicID:           td.ID,
-		CompartmentID:     compartment,
-		Protocol:          protocol,
-		Endpoint:          spec.Endpoint,
-		Metadata:          spec.Metadata,
-		LifecycleState:    StatePending,
-		CreatedTime:       m.opts.Clock.Now().UTC().UnixMilli(),
-		Etag:              idgen.GenerateID("etag-"),
-		ConfirmationToken: idgen.GenerateID("token-"),
-		FreeformTags:      maps.Clone(spec.FreeformTags),
+		ID:             idgen.OCID(typeSubscription, m.opts.Realm, m.opts.OCIRegion()),
+		TopicID:        td.ID,
+		CompartmentID:  compartment,
+		Protocol:       protocol,
+		Endpoint:       spec.Endpoint,
+		Metadata:       spec.Metadata,
+		LifecycleState: StatePending,
+		CreatedTime:    m.opts.Clock.Now().UTC().UnixMilli(),
+		Etag:           idgen.GenerateID("etag-"),
+		FreeformTags:   maps.Clone(spec.FreeformTags),
+	}
+
+	// ONS does not ask a function subscription to confirm, so it starts ACTIVE
+	// with no token; every other protocol waits on one.
+	if protocol == ProtocolFunctions {
+		sub.LifecycleState = StateActive
+	} else {
+		sub.ConfirmationToken = idgen.GenerateID("token-")
 	}
 
 	m.subs.Set(sub.ID, sub)
@@ -231,6 +239,10 @@ func (m *Mock) UpdateSubscription(_ context.Context, id string, patch Subscripti
 		return nil, cerrors.Newf(cerrors.NotFound, "subscription %q not found", id)
 	}
 
+	if err := checkEtag(sub.Etag, patch.IfMatch); err != nil {
+		return nil, err
+	}
+
 	if patch.DeliveryPolicy != nil {
 		sub.DeliveryPolicy = cloneDeliveryPolicy(patch.DeliveryPolicy)
 	}
@@ -251,11 +263,32 @@ func (m *Mock) Unsubscribe(_ context.Context, subscriptionID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if !m.subs.Delete(subscriptionID) {
-		return cerrors.Newf(cerrors.NotFound, "subscription %q not found", subscriptionID)
+	return m.deleteSubscription(subscriptionID, "")
+}
+
+// DeleteSubscription is Unsubscribe under an if-match precondition. An empty
+// ifMatch is unconditional.
+func (m *Mock) DeleteSubscription(_ context.Context, id, ifMatch string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.deleteSubscription(id, ifMatch)
+}
+
+// deleteSubscription removes a subscription and its delivery history. The
+// caller holds mu.
+func (m *Mock) deleteSubscription(id, ifMatch string) error {
+	sub, ok := m.subs.Get(id)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "subscription %q not found", id)
 	}
 
-	m.deliveries.Delete(subscriptionID)
+	if err := checkEtag(sub.Etag, ifMatch); err != nil {
+		return err
+	}
+
+	m.subs.Delete(id)
+	m.deliveries.Delete(id)
 
 	return nil
 }
@@ -263,8 +296,8 @@ func (m *Mock) Unsubscribe(_ context.Context, subscriptionID string) error {
 // ConfirmSubscription moves a subscription from PENDING to ACTIVE. Until it
 // runs, a publish to the topic delivers nothing to this subscription.
 func (m *Mock) ConfirmSubscription(_ context.Context, id, token, protocol string) (*ConfirmationResult, error) {
-	if token == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "token is required")
+	if err := requireTokenAndProtocol(token, protocol); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
@@ -303,8 +336,8 @@ func (m *Mock) ConfirmSubscription(_ context.Context, id, token, protocol string
 // puts in every delivery, which authenticates with the confirmation token
 // rather than with the caller's credentials.
 func (m *Mock) UnsubscribeByToken(_ context.Context, id, token, protocol string) error {
-	if token == "" {
-		return cerrors.New(cerrors.InvalidArgument, "token is required")
+	if err := requireTokenAndProtocol(token, protocol); err != nil {
+		return err
 	}
 
 	m.mu.Lock()
@@ -378,10 +411,6 @@ func checkToken(sub *Subscription, token, protocol string) error {
 		return cerrors.Newf(cerrors.InvalidArgument, "token does not match subscription %q", sub.ID)
 	}
 
-	if protocol == "" {
-		return nil
-	}
-
 	want, err := normalizeProtocol(protocol)
 	if err != nil {
 		return err
@@ -390,6 +419,19 @@ func checkToken(sub *Subscription, token, protocol string) error {
 	if want != sub.Protocol {
 		return cerrors.Newf(cerrors.InvalidArgument,
 			"protocol %s does not match subscription %q", want, sub.ID)
+	}
+
+	return nil
+}
+
+// requireTokenAndProtocol rejects a token endpoint call missing either
+// parameter; ONS marks both mandatory on confirm and unsubscribe.
+func requireTokenAndProtocol(token, protocol string) error {
+	switch {
+	case token == "":
+		return cerrors.New(cerrors.InvalidArgument, "token is required")
+	case protocol == "":
+		return cerrors.New(cerrors.InvalidArgument, "protocol is required")
 	}
 
 	return nil
