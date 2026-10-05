@@ -1464,7 +1464,7 @@ a source cluster and detach on promote; clone-on-read on every path.
 ## 14. Notification
 
 **Driver interface:** `services/notification/driver/driver.go`
-**AWS:** SNS | **Azure:** Notification Hubs | **GCP:** FCM
+**AWS:** SNS | **Azure:** Notification Hubs | **GCP:** FCM | **OCI:** Notifications (ONS)
 
 ### Topic Operations
 
@@ -1490,6 +1490,101 @@ a source cluster and detach on promote; clone-on-read on every path.
 | `Publish` | `(ctx, input) (*PublishOutput, error)` |
 
 **Total: 8 operations**
+
+### OCI Notifications (ONS)
+
+**Optional capability:** `server/oci/notifications.Extras`. ONS scopes topics
+and subscriptions to a compartment, addresses both by OCID, and gates delivery
+behind a confirmation handshake, none of which the portable model carries. Its
+value types live in `providers/oci/notifications`; a driver that does not
+implement `Extras` is served `501` for every path the handler claims.
+**Provider:** `providers/oci/notifications` | **Wire:** `server/oci/notifications`
+
+| Operation | Route |
+|-----------|-------|
+| `CreateTopic` | `POST /20181201/topics` |
+| `ListTopics` | `GET /20181201/topics` |
+| `GetTopic` | `GET /20181201/topics/{topicId}` |
+| `UpdateTopic` | `PUT /20181201/topics/{topicId}` |
+| `DeleteTopic` | `DELETE /20181201/topics/{topicId}` |
+| `ChangeTopicCompartment` | `POST /20181201/topics/{topicId}/actions/changeCompartment` |
+| `PublishMessage` | `POST /20181201/topics/{topicId}/messages` |
+| `CreateSubscription` | `POST /20181201/subscriptions` |
+| `ListSubscriptions` | `GET /20181201/subscriptions` |
+| `GetSubscription` | `GET /20181201/subscriptions/{id}` |
+| `UpdateSubscription` | `PUT /20181201/subscriptions/{id}` |
+| `DeleteSubscription` | `DELETE /20181201/subscriptions/{id}` |
+| `GetConfirmSubscription` | `GET /20181201/subscriptions/{id}/confirmation` |
+| `GetUnsubscription` | `GET /20181201/subscriptions/{id}/unsubscription` |
+| `ChangeSubscriptionCompartment` | `POST /20181201/subscriptions/{id}/actions/changeCompartment` |
+| `ResendSubscriptionConfirmation` | `POST /20181201/subscriptions/{id}/actions/resendConfirmation` |
+
+Both list routes require `compartmentId` and paginate with `limit` / `page`,
+returning the cursor as `opc-next-page`. `ListTopics` also honours `sortBy`
+(`TIMECREATED`, `LIFECYCLESTATE`) with `sortOrder` `ASC` / `DESC`, plus `id`,
+`name` and `lifecycleState` filters; an unknown sort key is rejected rather
+than answered in an arbitrary order. A page token the listing never issued is
+a `400 InvalidParameter`, not a silent restart from page one.
+`definedTags` are rejected rather than echoed back empty;
+`freeformTags` round-trip.
+
+Topic names are unique **across the tenancy**, not per compartment, so the same
+name in a second compartment is a `409`. When Identity is wired (as `serve`
+does), creating a topic or subscription, or moving either, into a compartment
+that does not exist is a `404 NotAuthorizedOrNotFound`, as for VCN.
+
+Both creates answer `201 Created`. Create, get and update of a topic or a
+subscription return the etag in the `etag` response header as well as the body,
+since that header is where the SDK reads `Etag` from. Update, delete and
+`ChangeTopicCompartment` honour an `if-match` precondition against the stored
+etag, which rotates on every mutation: a stale etag is a `412` with code
+`NoEtagMatch` and the resource is left alone. The comparison happens under the
+same lock as the write, so of several writers holding one etag exactly one
+wins. An absent `if-match` is unconditional.
+
+A single subscription (create, get, update) is ONS's `Subscription`, which
+carries the delivery policy as a JSON-encoded **string** in `deliverPolicy`. A
+list item is `SubscriptionSummary`, which carries it as an **object** in
+`deliveryPolicy`. Terraform's `oci_ons_subscription.delivery_policy` reads the
+former.
+
+Real ONS splits the control plane from the data plane **by host, not by API
+prefix**: `PublishMessage` goes to the topic's own `apiEndpoint` rather than to
+a differently-prefixed path. CloudEmu serves both on one listener, so every
+topic reports the origin the caller reached as its `apiEndpoint` and a publish
+posted there lands back on the same handler. A client that follows
+`apiEndpoint`, as the real SDKs do, needs no special casing.
+
+A subscription is created `PENDING` and receives nothing until it is confirmed.
+Real ONS mails the confirmation token to the endpoint; the emulator has no
+channel to mail it on, so a `PENDING` subscription carries its token in the
+create response, and `GET .../confirmation?token=…&protocol=…` flips it to
+`ACTIVE`. Publishing to a topic whose subscriptions are all `PENDING`
+succeeds and delivers to nobody. `.../unsubscription` takes the same token pair
+and removes the subscription. Both `token` and `protocol` are mandatory on
+these two endpoints; either missing is a `400`. The exception is
+`ORACLE_FUNCTIONS`: ONS does not ask a function to confirm, so that
+subscription is created `ACTIVE` with no token. Protocols are `EMAIL`, `SMS`, `CUSTOM_HTTPS`,
+`SLACK`, `PAGERDUTY` and `ORACLE_FUNCTIONS` (`HTTP` / `HTTPS` alias onto
+`CUSTOM_HTTPS`); anything else is rejected rather than stored unused. The
+endpoint is checked against the protocol at create rather than at first
+delivery: an `EMAIL` endpoint must hold an `@`, and a `CUSTOM_HTTPS`, `SLACK`
+or `PAGERDUTY` endpoint must be an `https` URL. Message bodies are `RAW_TEXT`
+or `JSON`, declared in the `messageType` **header** as the SDK sends it (a
+`messageType` query parameter is accepted as a fallback), and are capped at
+ONS's 64 KB.
+
+`DeleteTopic` answers `204` and `ChangeTopicCompartment` answers `202`. Real
+ONS returns only an `opc-request-id` for both; CloudEmu additionally records a
+work request for each, resolvable through `server/oci/workrequest`, and returns
+its `opc-work-request-id`, which SDK clients ignore. Every subscription
+mutation is synchronous.
+
+Delivery is recorded in-memory and readable through `Deliveries`, keeping the
+most recent 100 messages per subscription; nothing is sent over a real
+transport, so delivery policies (`backoffRetryPolicy`) round-trip but never
+retry. Each publish emits `PublishedMessages` and `DeliveredMessages` under
+`oci_notification` into the topic's own compartment, keyed by `resourceId`.
 
 ---
 
