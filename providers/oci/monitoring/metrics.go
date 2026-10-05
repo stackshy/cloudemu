@@ -78,23 +78,22 @@ type metricSeries struct {
 	points        []metricPoint
 }
 
-// PostMetricData records metric data points against a compartment. It is the
-// customer-facing path, so an Oracle-reserved namespace is refused here.
-func (m *Mock) PostMetricData(ctx context.Context, compartmentID, resourceGroup string, data []driver.MetricDatum) error {
-	for i := range data {
-		if reservedNamespace(data[i].Namespace) {
-			return cerrors.Newf(cerrors.InvalidArgument, "namespace %q uses a prefix Oracle reserves", data[i].Namespace)
-		}
-	}
-
-	return m.postMetricData(ctx, compartmentID, resourceGroup, data)
+// PostMetricData records metric data points against a compartment.
+func (m *Mock) PostMetricData(_ context.Context, compartmentID, resourceGroup string, data []driver.MetricDatum) error {
+	return m.postMetricData(compartmentID, resourceGroup, data, false)
 }
 
-// postMetricData is the shared recorder. Oracle's own emulated services publish
-// through it into their reserved namespaces, which only customers are barred
-// from.
+// PostServiceMetricData records a sibling OCI service's own metrics against a
+// compartment. Unlike PostMetricData it admits the oci_ namespaces Oracle
+// reserves for service metrics, which only the service itself produces.
+func (m *Mock) PostServiceMetricData(_ context.Context, compartmentID string, data []driver.MetricDatum) error {
+	return m.postMetricData(compartmentID, "", data, true)
+}
+
+// postMetricData records metric data points. allowReserved admits the oci_
+// namespaces; only PostServiceMetricData sets it.
 func (m *Mock) postMetricData(
-	_ context.Context, compartmentID, resourceGroup string, data []driver.MetricDatum,
+	compartmentID, resourceGroup string, data []driver.MetricDatum, allowReserved bool,
 ) error {
 	if compartmentID == "" {
 		return cerrors.New(cerrors.InvalidArgument, "compartmentId is required")
@@ -105,7 +104,7 @@ func (m *Mock) postMetricData(
 	}
 
 	for i := range data {
-		if err := validateDatum(&data[i]); err != nil {
+		if err := validateDatum(&data[i], allowReserved); err != nil {
 			return err
 		}
 	}
@@ -336,7 +335,7 @@ func resolutionOf(interval time.Duration, resolution string) (time.Duration, err
 // validateDatum rejects a data point real OCI would reject. Namespace and
 // dimension shapes are checked; the metadata, per-request datapoint cap and
 // ingestion time window are not.
-func validateDatum(d *driver.MetricDatum) error {
+func validateDatum(d *driver.MetricDatum, allowReserved bool) error {
 	switch {
 	case d.Namespace == "":
 		return cerrors.New(cerrors.InvalidArgument, "namespace is required")
@@ -345,6 +344,8 @@ func validateDatum(d *driver.MetricDatum) error {
 	case !validNamespace(d.Namespace):
 		return cerrors.Newf(cerrors.InvalidArgument,
 			"namespace %q must start with a letter and hold only letters, digits and underscores", d.Namespace)
+	case !allowReserved && reservedNamespace(d.Namespace):
+		return cerrors.Newf(cerrors.InvalidArgument, "namespace %q uses a prefix Oracle reserves", d.Namespace)
 	case d.MetricName == "":
 		return cerrors.New(cerrors.InvalidArgument, "metric name is required")
 	case len(d.MetricName) > maxNameLength:

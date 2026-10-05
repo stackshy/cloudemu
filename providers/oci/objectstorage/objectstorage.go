@@ -344,20 +344,32 @@ func objectETag(data []byte) string {
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
-// emitMetric publishes one Object Storage metric, if monitoring is wired.
-// Callers must not hold mu: the monitoring backend is a separate driver.
+// serviceMetricSink records a service's own metrics into a compartment, under
+// the oci_ namespaces Oracle reserves for them. providers/oci/monitoring.Mock
+// implements it; a portable monitoring driver cannot take a reserved namespace.
+type serviceMetricSink interface {
+	PostServiceMetricData(ctx context.Context, compartmentID string, data []mondriver.MetricDatum) error
+}
+
+// emitMetric publishes one Object Storage metric into the bucket's compartment,
+// if monitoring is wired. Callers must not hold mu.
 func (m *Mock) emitMetric(name string, value float64, unit, bucket string) {
 	m.mu.RLock()
-	mon := m.monitoring
+	sink, ok := m.monitoring.(serviceMetricSink)
+
+	compartmentID := m.opts.CompartmentID
+	if bkt, found := m.buckets.Get(bucket); found {
+		compartmentID = bkt.CompartmentID
+	}
 	m.mu.RUnlock()
 
-	if mon == nil {
+	if !ok {
 		return
 	}
 
-	_ = mon.PutMetricData(context.Background(), []mondriver.MetricDatum{{
+	_ = sink.PostServiceMetricData(context.Background(), compartmentID, []mondriver.MetricDatum{{
 		Namespace: metricNamespace, MetricName: name, Value: value, Unit: unit,
-		Dimensions: map[string]string{"bucketName": bucket, "resourceID": bucket},
+		Dimensions: map[string]string{"bucketName": bucket, "resourceId": bucket},
 		Timestamp:  m.opts.Clock.Now(),
 	}})
 }

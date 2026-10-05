@@ -1408,6 +1408,37 @@ func TestMetricsEmission(t *testing.T) {
 	assert.Subset(t, names, []string{"PutRequests", "StoredBytes", "GetRequests", "DeleteRequests"})
 }
 
+// A bucket's metrics land in the bucket's own compartment, keyed by
+// resourceId, as real oci_objectstorage metrics are.
+func TestMetricsLandInTheBucketCompartment(t *testing.T) {
+	const otherCompartment = "ocid1.compartment.oc1..aaaaaaaaother"
+
+	opts := config.NewOptions(config.WithRegion("us-ashburn-1"), config.WithCompartmentID(testCompartment))
+	m := objectstorage.New(opts)
+	mon := monitoring.New(opts)
+	ctx := context.Background()
+
+	m.SetMonitoring(mon)
+
+	_, err := m.CreateBucketWith(ctx, objectstorage.BucketSpec{Name: "elsewhere", CompartmentID: otherCompartment})
+	require.NoError(t, err)
+	require.NoError(t, m.PutObject(ctx, "elsewhere", "k", []byte("hello"), "text/plain", nil))
+
+	filter := monitoring.OCIMetricFilter{Namespace: "oci_objectstorage"}
+
+	there, err := mon.ListOCIMetrics(ctx, otherCompartment, filter)
+	require.NoError(t, err)
+	require.NotEmpty(t, there, "metrics must land in the bucket's compartment")
+
+	for i := range there {
+		assert.Equal(t, "elsewhere", there[i].Dimensions["resourceId"])
+	}
+
+	here, err := mon.ListOCIMetrics(ctx, testCompartment, filter)
+	require.NoError(t, err)
+	assert.Empty(t, here, "nothing may land in the default compartment")
+}
+
 // Enabling versioning on a bucket that already holds objects must keep the
 // original as a prior version once it is overwritten.
 func TestEnablingVersioningSeedsExistingObjects(t *testing.T) {
