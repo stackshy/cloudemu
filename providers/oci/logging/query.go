@@ -9,6 +9,7 @@ import (
 // OCID prefixes a search scope's segments must carry.
 const (
 	prefixCompartment = "ocid1.compartment."
+	prefixTenancy     = "ocid1.tenancy."
 	prefixLogGroup    = "ocid1.loggroup."
 	prefixLog         = "ocid1.log."
 )
@@ -166,7 +167,9 @@ func parseScope(literal string) (searchScope, error) {
 	var s searchScope
 
 	for i, segment := range segments {
-		if !strings.HasPrefix(segment, prefixes[i]) {
+		// The tenancy is the root compartment, so it addresses one too.
+		isRoot := i == 0 && strings.HasPrefix(segment, prefixTenancy)
+		if !isRoot && !strings.HasPrefix(segment, prefixes[i]) {
 			return searchScope{}, cerrors.Newf(cerrors.InvalidArgument,
 				"search target segment %q is not a %s OCID; CloudEmu's OCI Logging search addresses each "+
 					"segment by OCID", segment, names[i])

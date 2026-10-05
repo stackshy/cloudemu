@@ -60,6 +60,10 @@ const (
 // metricNamespace is the OCI Monitoring namespace Logging publishes under.
 const metricNamespace = "oci_logging"
 
+// compartmentIDName is OCI's name for a compartment, as a request parameter and
+// as a metric dimension.
+const compartmentIDName = "compartmentId"
+
 // Compile-time check that Mock implements driver.Logging.
 var _ driver.Logging = (*Mock)(nil)
 
@@ -100,6 +104,7 @@ type Log struct {
 	ID                string
 	LogGroupID        string
 	CompartmentID     string
+	TenancyID         string
 	DisplayName       string
 	LogType           string
 	IsEnabled         bool
@@ -109,6 +114,29 @@ type Log struct {
 	TimeCreated       string
 	TimeLastModified  string
 	FreeformTags      map[string]string
+}
+
+// clone returns a copy of the group that shares no map with it.
+func (g *LogGroup) clone() LogGroup {
+	out := *g
+	out.FreeformTags = copyTags(g.FreeformTags)
+
+	return out
+}
+
+// clone returns a copy of the log that shares no pointer or map with it, so a
+// value handed to a caller is not written by a later mutation of the store.
+func (l *Log) clone() Log {
+	out := *l
+	out.FreeformTags = copyTags(l.FreeformTags)
+
+	if l.Configuration != nil {
+		cfg := *l.Configuration
+		cfg.Source.Parameters = copyTags(l.Configuration.Source.Parameters)
+		out.Configuration = &cfg
+	}
+
+	return out
 }
 
 // LogEntry is a single ingested log entry.
@@ -324,6 +352,11 @@ func (m *Mock) storedBytes(groupID string) int64 {
 	}
 
 	return total
+}
+
+// ingestionDims are the dimensions OCI Logging's ingestion metrics carry.
+func ingestionDims(compartmentID, groupID, logID string) map[string]string {
+	return map[string]string{"logId": logID, "logGroupId": groupID, compartmentIDName: compartmentID}
 }
 
 // emitMetric publishes one Logging metric. Called with mu released, so a

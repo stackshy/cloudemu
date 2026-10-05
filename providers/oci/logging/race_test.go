@@ -39,9 +39,9 @@ func TestConcurrentOperations(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 
-			_ = m.PutLogs(ctx, logs[i], []ocilogging.LogEntryBatch{{
+			_ = m.PutLogs(ctx, logs[i], validBatches([]ocilogging.LogEntryBatch{{
 				Entries: []ocilogging.LogEntryItem{{Data: "entry-" + strconv.Itoa(i), Time: base}},
-			}})
+			}}))
 
 			_, _ = m.GetLog(ctx, g.ID, logs[i])
 			_, _ = m.ListLogs(ctx, g.ID, ocilogging.LogFilter{})
@@ -96,15 +96,80 @@ func TestConcurrentCreateAndDelete(t *testing.T) {
 				return
 			}
 
-			_, _ = m.CreateLog(ctx, created.ID, ocilogging.LogSpec{DisplayName: "stdout", IsEnabled: true})
+			l, logErr := m.CreateLog(ctx, created.ID, ocilogging.LogSpec{DisplayName: "stdout", IsEnabled: true})
+			if logErr != nil {
+				return
+			}
+
 			_ = m.MoveGroup(ctx, created.ID, compartmentB)
+			_ = m.DeleteLog(ctx, created.ID, l.ID)
 			_ = m.DeleteGroup(ctx, created.ID)
 		}(i)
 	}
 
 	wg.Wait()
 
-	groups, err := m.ListGroups(ctx, compartmentA, "")
+	for _, c := range []string{compartmentA, compartmentB} {
+		groups, err := m.ListGroups(ctx, c, "")
+		require.NoError(t, err)
+		require.Empty(t, groups, "every group was emptied and deleted")
+	}
+}
+
+// TestConcurrentMoveAndRead races a compartment move, which rewrites each log's
+// configuration, against reads that hand that configuration back. A read must
+// not share the stored configuration with the caller.
+func TestConcurrentMoveAndRead(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+	g := newGroup(t, m, compartmentA, "app-logs")
+
+	l, err := m.CreateLog(ctx, g.ID, ocilogging.LogSpec{
+		DisplayName: "flowlogs",
+		LogType:     ocilogging.LogTypeService,
+		IsEnabled:   true,
+		Configuration: &ocilogging.LogConfiguration{Source: ocilogging.LogSource{
+			Service: "flowlogs", Resource: "ocid1.subnet.oc1.iad.a", Category: "all",
+		}},
+	})
 	require.NoError(t, err)
-	require.Empty(t, groups)
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		for i := range concurrency * 4 {
+			target := compartmentA
+			if i%2 == 0 {
+				target = compartmentB
+			}
+
+			_ = m.MoveGroup(ctx, g.ID, target)
+		}
+	}()
+
+	for range concurrency {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for range 4 {
+				if got, getErr := m.GetLog(ctx, g.ID, l.ID); getErr == nil {
+					_ = got.Configuration.CompartmentID
+				}
+
+				if logs, listErr := m.ListLogs(ctx, g.ID, ocilogging.LogFilter{}); listErr == nil {
+					for i := range logs {
+						_ = logs[i].Configuration.CompartmentID
+					}
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
 }

@@ -13,10 +13,12 @@ import (
 
 // SearchRequest is a loggingsearch query over a time range.
 type SearchRequest struct {
-	Query           string
-	TimeStart       time.Time
-	TimeEnd         time.Time
-	Limit           int
+	Query     string
+	TimeStart time.Time
+	TimeEnd   time.Time
+	Limit     int
+	// Offset is how many matching entries to skip, the page cursor's position.
+	Offset          int
 	ReturnFieldInfo bool
 }
 
@@ -39,6 +41,8 @@ type SearchField struct {
 type SearchResult struct {
 	Entries []SearchEntry
 	Fields  []SearchField
+	// NextOffset is where the next page starts, or 0 when this is the last.
+	NextOffset int
 }
 
 // searchScope is one target of a search query's search clause:
@@ -89,21 +93,36 @@ const (
 	fieldDatetime = "datetime"
 )
 
+// Record fields a where clause resolves, with the logContent. prefix stripped,
+// and the one type every returned field reports.
+const (
+	fieldData              = "data"
+	fieldID                = "id"
+	fieldType              = "type"
+	fieldSubject           = "subject"
+	fieldSource            = "source"
+	fieldOracleCompartment = "oracle.compartmentid"
+	fieldOracleLogGroup    = "oracle.loggroupid"
+	fieldOracleLog         = "oracle.logid"
+	fieldOracleIngested    = "oracle.ingestedtime"
+	fieldTypeString        = "STRING"
+)
+
 // canonicalFields is the record shape a search returns, reported when the
 // caller asks for field info.
 //
 //nolint:gochecknoglobals // immutable record-shape table.
 var canonicalFields = []SearchField{
-	{Name: "datetime", Type: "STRING"},
-	{Name: "logContent.data", Type: "STRING"},
-	{Name: "logContent.id", Type: "STRING"},
-	{Name: "logContent.source", Type: "STRING"},
-	{Name: "logContent.subject", Type: "STRING"},
-	{Name: "logContent.time", Type: "STRING"},
-	{Name: "logContent.type", Type: "STRING"},
-	{Name: "logContent.oracle.compartmentid", Type: "STRING"},
-	{Name: "logContent.oracle.loggroupid", Type: "STRING"},
-	{Name: "logContent.oracle.logid", Type: "STRING"},
+	{Name: "datetime", Type: fieldTypeString},
+	{Name: "logContent.data", Type: fieldTypeString},
+	{Name: "logContent.id", Type: fieldTypeString},
+	{Name: "logContent.source", Type: fieldTypeString},
+	{Name: "logContent.subject", Type: fieldTypeString},
+	{Name: "logContent.time", Type: fieldTypeString},
+	{Name: "logContent.type", Type: fieldTypeString},
+	{Name: "logContent.oracle.compartmentid", Type: fieldTypeString},
+	{Name: "logContent.oracle.loggroupid", Type: fieldTypeString},
+	{Name: "logContent.oracle.logid", Type: fieldTypeString},
 }
 
 // SearchLogs runs a search query over a time range — the loggingsearch data
@@ -130,17 +149,27 @@ func (m *Mock) SearchLogs(_ context.Context, req SearchRequest) (*SearchResult, 
 		return nil, err
 	}
 
+	if req.Offset < 0 {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "offset %d must not be negative", req.Offset)
+	}
+
 	m.mu.RLock()
 	matched := m.collect(q, req.TimeStart, req.TimeEnd)
 	m.mu.RUnlock()
 
 	sortEntries(matched, q)
 
-	if len(matched) > limit {
-		matched = matched[:limit]
+	out := &SearchResult{Entries: matched[:0]}
+
+	if req.Offset < len(matched) {
+		end := min(req.Offset+limit, len(matched))
+		out.Entries = matched[req.Offset:end]
+
+		if end < len(matched) {
+			out.NextOffset = end
+		}
 	}
 
-	out := &SearchResult{Entries: matched}
 	if req.ReturnFieldInfo {
 		out.Fields = canonicalFields
 	}
@@ -236,10 +265,10 @@ func sortEntries(entries []SearchEntry, q *searchQuery) {
 //
 //nolint:gochecknoglobals // immutable field lookup table.
 var entryFields = map[string]struct{}{
-	"data": {}, "id": {}, "type": {}, "subject": {}, "source": {},
+	fieldData: {}, fieldID: {}, fieldType: {}, fieldSubject: {}, fieldSource: {},
 	fieldTime: {}, fieldDatetime: {},
-	"oracle.compartmentid": {}, "oracle.loggroupid": {},
-	"oracle.logid": {}, "oracle.ingestedtime": {},
+	fieldOracleCompartment: {}, fieldOracleLogGroup: {},
+	fieldOracleLog: {}, fieldOracleIngested: {},
 }
 
 // resolveField canonicalises a field named in a where clause, rejecting one
@@ -256,7 +285,7 @@ func resolveField(field string) (fieldRef, error) {
 					"not a nested path", field)
 		}
 
-		return fieldRef{name: "data", jsonKey: key}, nil
+		return fieldRef{name: fieldData, jsonKey: key}, nil
 	}
 
 	if _, ok := entryFields[name]; !ok {
@@ -287,15 +316,15 @@ func fieldValue(e *LogEntry, g *LogGroup, l *Log, ref fieldRef) string {
 	}
 
 	switch ref.name {
-	case "data":
+	case fieldData:
 		return e.Data
-	case "id":
+	case fieldID:
 		return e.ID
-	case "type":
+	case fieldType:
 		return e.Type
-	case "subject":
+	case fieldSubject:
 		return e.Subject
-	case "source":
+	case fieldSource:
 		return e.Source
 	case fieldTime, fieldDatetime:
 		return e.Time.UTC().Format(timeFormat)
@@ -307,13 +336,13 @@ func fieldValue(e *LogEntry, g *LogGroup, l *Log, ref fieldRef) string {
 // provenanceValue reads one of the oracle.* fields OCI stamps onto a record.
 func provenanceValue(e *LogEntry, g *LogGroup, l *Log, name string) string {
 	switch name {
-	case "oracle.compartmentid":
+	case fieldOracleCompartment:
 		return g.CompartmentID
-	case "oracle.loggroupid":
+	case fieldOracleLogGroup:
 		return l.LogGroupID
-	case "oracle.logid":
+	case fieldOracleLog:
 		return l.ID
-	case "oracle.ingestedtime":
+	case fieldOracleIngested:
 		return e.IngestedTime.UTC().Format(timeFormat)
 	default:
 		return ""

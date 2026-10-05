@@ -25,8 +25,14 @@ type updateLogGroupRequest struct {
 	DefinedTags  definedTags       `json:"definedTags,omitempty"`
 }
 
+// changeCompartmentRequest is ChangeLogGroupCompartmentDetails.
 type changeCompartmentRequest struct {
-	TargetCompartmentID string `json:"targetCompartmentId"`
+	CompartmentID string `json:"compartmentId"`
+}
+
+// changeLogGroupRequest is ChangeLogLogGroupDetails.
+type changeLogGroupRequest struct {
+	TargetLogGroupID string `json:"targetLogGroupId"`
 }
 
 type logGroupResponse struct {
@@ -83,6 +89,7 @@ type logResponse struct {
 	ID                string                `json:"id"`
 	LogGroupID        string                `json:"logGroupId"`
 	CompartmentID     string                `json:"compartmentId"`
+	TenancyID         string                `json:"tenancyId,omitempty"`
 	DisplayName       string                `json:"displayName"`
 	LogType           string                `json:"logType"`
 	IsEnabled         bool                  `json:"isEnabled"`
@@ -95,7 +102,7 @@ type logResponse struct {
 	DefinedTags       definedTags           `json:"definedTags"`
 }
 
-// Ingestion plane — /20200601.
+// Ingestion plane — /20200831.
 
 type putLogsEntry struct {
 	Data string `json:"data"`

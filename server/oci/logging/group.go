@@ -68,6 +68,10 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
 	g, err := h.extras.CreateGroup(r.Context(), logprovider.LogGroupSpec{
 		CompartmentID: req.CompartmentID,
 		DisplayName:   req.DisplayName,
@@ -100,7 +104,12 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toLogGroupResponse(&groups[i]))
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusOK, paginate(w, r, out))
+	page, ok := paginate(w, r, out)
+	if !ok {
+		return
+	}
+
+	ocirest.WriteJSON(w, r, http.StatusOK, page)
 }
 
 func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request, id string) {
@@ -168,17 +177,21 @@ func (h *Handler) moveGroup(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	if req.TargetCompartmentID == "" {
-		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter, "targetCompartmentId is required")
+	if req.CompartmentID == "" {
+		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter, "compartmentId is required")
 		return
 	}
 
-	if err := h.extras.MoveGroup(r.Context(), id, req.TargetCompartmentID); err != nil {
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
+	if err := h.extras.MoveGroup(r.Context(), id, req.CompartmentID); err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
 
-	h.accept(w, r, operationMoveGroup, req.TargetCompartmentID, entityTypeGroup, workrequest.ActionUpdated, id)
+	h.accept(w, r, operationMoveGroup, req.CompartmentID, entityTypeGroup, workrequest.ActionUpdated, id)
 }
 
 func toLogGroupResponse(g *logprovider.LogGroup) logGroupResponse {

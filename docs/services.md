@@ -1488,25 +1488,48 @@ ingestion plane alone; the control plane nests logs under their log group.
 | `GetLog` | `GET /20200531/logGroups/{logGroupId}/logs/{logId}` |
 | `UpdateLog` | `PUT /20200531/logGroups/{logGroupId}/logs/{logId}` |
 | `DeleteLog` | `DELETE /20200531/logGroups/{logGroupId}/logs/{logId}` |
-| `PutLogs` | `POST /20200601/logs/{logId}/actions/push` |
+| `ChangeLogLogGroup` | `POST /20200531/logGroups/{logGroupId}/logs/{logId}/actions/changeLogGroup` |
+| `PutLogs` | `POST /20200831/logs/{logId}/actions/push` |
 | `SearchLogs` | `POST /20190909/search` |
 
-`ListLogGroups` requires `compartmentId` and paginates with `limit` / `page`,
-returning the cursor as `opc-next-page`. `ListLogs` takes no `compartmentId` —
+The version prefixes are the oci-go-sdk clients' `BasePath`s — `20200531` for
+`logging`, `20200831` for `loggingingestion`, `20190909` for `loggingsearch` —
+and the handler tests pin them as SDK literals rather than handler constants.
+
+`ListLogGroups` requires `compartmentId`; it, `ListLogs` and `SearchLogs`
+paginate with `limit` / `page`, returning the cursor as `opc-next-page`. A
+`page` this API never returned is rejected with `400` rather than silently
+restarting at the first page. `ListLogs` takes no `compartmentId` —
 the log group in the path fixes the compartment, as it does in real OCI — and
 narrows on `displayName`, `logType`, `sourceService`, `sourceResource` and
 `lifecycleState`. Every log group and log mutation is asynchronous in real OCI,
 so each answers `202` with an `opc-work-request-id`; the created resource's
-OCID comes back on the work request. Ingestion and search are synchronous.
+OCID comes back on the work request, whose `operationType` is one of the SDK's
+`OperationTypesEnum` values (`CREATE_LOG_GROUP`, `MOVE_LOG_GROUP`, `MOVE_LOG`,
+…). Ingestion and search are synchronous.
 
-A CUSTOM log takes entries from `PutLogs`; a SERVICE log is fed by the service
-its `configuration.source` names, so ingesting into one is refused rather than
-accepted and dropped, as is ingesting into a disabled log.
+When the server wires Identity, creating a log group in, or moving one into, a
+compartment that does not exist is `404 NotAuthorizedOrNotFound`, as in VCN.
+`ChangeLogGroupCompartment` reads the target from `compartmentId`, the
+`ChangeLogGroupCompartmentDetails` field. Deleting a log group that still holds
+logs is `409 IncorrectState`, as real OCI requires the group empty; the
+portable `DeleteLogGroup` is the path that cascades. A log's
+`retentionDuration` must be 30 to 180 days in 30-day steps; any other value is
+`400`. A log response carries the configured `tenancyId`.
+
+A CUSTOM log takes entries from `PutLogs` and has no service source: it carries
+a `configuration` only when the caller supplied one, never a synthesized
+`sourceType`. A SERVICE log is fed by the service its `configuration.source`
+names, so ingesting into one is refused rather than accepted and dropped, as is
+ingesting into a disabled log. Every `LogEntryBatch` must carry `source`, `type`
+and `defaultlogentrytime`, which the SDK marks mandatory; a call with a batch
+missing one is `400` naming the batch and field, and ingests nothing.
 
 Search queries are read in the form
 `search "compartmentId[/logGroupId[/logId]]" | where <field> = '<value>' [and …]
 | sort by datetime [asc|desc]`, with `*` as the wildcard and comma-separated
-search targets. Everything else is rejected naming what it tripped on rather
+search targets. The tenancy OCID addresses the root compartment, where log
+groups created without one land. Everything else is rejected naming what it tripped on rather
 than answered with an empty result set: the `summarize`, `stats`, `topN` and
 `extract` operators; `or`, `not` and parenthesised where clauses; the `>`, `<`,
 `>=`, `<=`, `=~` and `!~` operators; a field the record shape has no place for,

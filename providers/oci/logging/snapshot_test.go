@@ -25,7 +25,7 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	audit := newCustomLog(t, src, groupB.ID, "audit")
 
 	when := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
-	require.NoError(t, src.PutLogs(ctx, stdout.ID, []ocilogging.LogEntryBatch{{
+	require.NoError(t, src.PutLogs(ctx, stdout.ID, validBatches([]ocilogging.LogEntryBatch{{
 		Source:  "host-a",
 		Type:    "com.oraclecloud.custom",
 		Subject: "app",
@@ -33,7 +33,7 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 			{ID: "e-1", Data: `{"level":"error"}`, Time: when},
 			{ID: "e-2", Data: "plain line", Time: when.Add(time.Minute)},
 		},
-	}}))
+	}})))
 
 	data, err := src.Snapshot(ctx, false)
 	require.NoError(t, err)

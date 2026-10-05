@@ -43,11 +43,14 @@ func (m *Mock) createLog(groupID string, spec LogSpec) (*Log, error) {
 	retention := spec.RetentionDuration
 	if retention == 0 {
 		retention = g.RetentionDays
+	} else if err := validateRetention(retention); err != nil {
+		return nil, err
 	}
 
 	now := m.now()
 	l := Log{
 		ID:                m.newOCID(typeLog),
+		TenancyID:         m.opts.TenancyOCID,
 		LogGroupID:        groupID,
 		CompartmentID:     g.CompartmentID,
 		DisplayName:       spec.DisplayName,
@@ -63,7 +66,7 @@ func (m *Mock) createLog(groupID string, spec LogSpec) (*Log, error) {
 
 	m.logs.Set(l.ID, &logRecord{Log: l})
 
-	out := l
+	out := l.clone()
 
 	return &out, nil
 }
@@ -93,11 +96,10 @@ func normalizeConfiguration(logType string, cfg *LogConfiguration, compartmentID
 		}
 	}
 
+	// A CUSTOM log has no service source: it carries a configuration only
+	// when the caller supplied one, and never a synthesized source type.
 	if cfg == nil {
-		return &LogConfiguration{
-			CompartmentID: compartmentID,
-			Source:        LogSource{SourceType: sourceTypeOCIService},
-		}, nil
+		return nil, nil //nolint:nilnil // no configuration is a valid CUSTOM log
 	}
 
 	out := *cfg
@@ -107,7 +109,7 @@ func normalizeConfiguration(logType string, cfg *LogConfiguration, compartmentID
 		out.CompartmentID = compartmentID
 	}
 
-	if out.Source.SourceType == "" {
+	if logType == LogTypeService && out.Source.SourceType == "" {
 		out.Source.SourceType = sourceTypeOCIService
 	}
 
@@ -124,7 +126,7 @@ func (m *Mock) GetLog(_ context.Context, groupID, logID string) (*Log, error) {
 		return nil, err
 	}
 
-	out := rec.Log
+	out := rec.Log.clone()
 
 	return &out, nil
 }
@@ -146,7 +148,7 @@ func (m *Mock) ListLogs(_ context.Context, groupID string, f LogFilter) ([]Log, 
 
 	for _, rec := range recs {
 		if matchesLogFilter(&rec.Log, f) {
-			out = append(out, rec.Log)
+			out = append(out, rec.Log.clone())
 		}
 	}
 
@@ -191,12 +193,14 @@ func (m *Mock) UpdateLog(_ context.Context, groupID, logID string, u LogUpdate) 
 		return nil, err
 	}
 
-	if u.DisplayName != nil && *u.DisplayName != rec.Log.DisplayName {
-		if _, taken := m.logByName(groupID, *u.DisplayName); taken {
-			return nil, cerrors.Newf(cerrors.AlreadyExists,
-				"log %q already exists in log group %q", *u.DisplayName, groupID)
-		}
+	// Validate every field before applying any, so a rejected update leaves
+	// the log as it was.
+	rename, cfg, err := m.validateLogUpdate(rec, groupID, &u)
+	if err != nil {
+		return nil, err
+	}
 
+	if rename {
 		rec.Log.DisplayName = *u.DisplayName
 	}
 
@@ -208,12 +212,7 @@ func (m *Mock) UpdateLog(_ context.Context, groupID, logID string, u LogUpdate) 
 		rec.Log.RetentionDuration = *u.RetentionDuration
 	}
 
-	if u.Configuration != nil {
-		cfg, cfgErr := normalizeConfiguration(rec.Log.LogType, u.Configuration, rec.Log.CompartmentID)
-		if cfgErr != nil {
-			return nil, cfgErr
-		}
-
+	if cfg != nil {
 		rec.Log.Configuration = cfg
 	}
 
@@ -223,9 +222,81 @@ func (m *Mock) UpdateLog(_ context.Context, groupID, logID string, u LogUpdate) 
 
 	rec.Log.TimeLastModified = m.now()
 
-	out := rec.Log
+	out := rec.Log.clone()
 
 	return &out, nil
+}
+
+// validateLogUpdate checks an update against the log it applies to, reporting
+// whether it renames the log and the normalized configuration it sets, if any.
+// The caller holds mu.
+func (m *Mock) validateLogUpdate(
+	rec *logRecord, groupID string, u *LogUpdate,
+) (rename bool, cfg *LogConfiguration, err error) {
+	rename = u.DisplayName != nil && *u.DisplayName != rec.Log.DisplayName
+	if rename {
+		if _, taken := m.logByName(groupID, *u.DisplayName); taken {
+			return false, nil, cerrors.Newf(cerrors.AlreadyExists,
+				"log %q already exists in log group %q", *u.DisplayName, groupID)
+		}
+	}
+
+	if u.RetentionDuration != nil {
+		if retErr := validateRetention(*u.RetentionDuration); retErr != nil {
+			return false, nil, retErr
+		}
+	}
+
+	if u.Configuration != nil {
+		cfg, err = normalizeConfiguration(rec.Log.LogType, u.Configuration, rec.Log.CompartmentID)
+		if err != nil {
+			return false, nil, err
+		}
+	}
+
+	return rename, cfg, nil
+}
+
+// MoveLog moves a log, with its entries, into another log group. The log takes
+// the target group's compartment.
+func (m *Mock) MoveLog(_ context.Context, groupID, logID, targetGroupID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err := requireName(targetGroupID, "targetLogGroupId"); err != nil {
+		return err
+	}
+
+	rec, err := m.findLog(groupID, logID)
+	if err != nil {
+		return err
+	}
+
+	target, ok := m.groups.Get(targetGroupID)
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "log group %q not found", targetGroupID)
+	}
+
+	if targetGroupID == groupID {
+		return nil
+	}
+
+	if _, taken := m.logByName(targetGroupID, rec.Log.DisplayName); taken {
+		return cerrors.Newf(cerrors.AlreadyExists,
+			"log %q already exists in log group %q", rec.Log.DisplayName, targetGroupID)
+	}
+
+	rec.Log.LogGroupID = targetGroupID
+	rec.Log.CompartmentID = target.CompartmentID
+	rec.Log.TimeLastModified = m.now()
+
+	if rec.Log.Configuration != nil {
+		cfg := *rec.Log.Configuration
+		cfg.CompartmentID = target.CompartmentID
+		rec.Log.Configuration = &cfg
+	}
+
+	return nil
 }
 
 // DeleteLog deletes a log and the entries ingested into it.
@@ -252,4 +323,23 @@ func (m *Mock) findLog(groupID, logID string) (*logRecord, error) {
 	}
 
 	return rec, nil
+}
+
+// Retention bounds OCI accepts for a log, in days.
+const (
+	minRetentionDays  = 30
+	maxRetentionDays  = 180
+	retentionStepDays = 30
+)
+
+// validateRetention rejects a retentionDuration OCI does not accept: 30 to 180
+// days, in 30-day steps.
+func validateRetention(days int) error {
+	if days < minRetentionDays || days > maxRetentionDays || days%retentionStepDays != 0 {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"retentionDuration %d is not valid; OCI accepts %d to %d days in steps of %d",
+			days, minRetentionDays, maxRetentionDays, retentionStepDays)
+	}
+
+	return nil
 }

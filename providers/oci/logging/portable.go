@@ -224,7 +224,7 @@ func (m *Mock) PutLogEvents(ctx context.Context, logGroup, streamName string, ev
 	mon := m.monitoring
 	m.mu.Unlock()
 
-	dims := map[string]string{"logId": logID, "logGroupId": groupID, "compartmentId": compartmentID}
+	dims := ingestionDims(compartmentID, groupID, logID)
 	m.emitMetric(ctx, mon, "IngestedLogEntries", float64(count), dims)
 	m.emitMetric(ctx, mon, "IngestedLogBytes", float64(bytes), dims)
 

@@ -3,6 +3,7 @@ package logging
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	logprovider "github.com/stackshy/cloudemu/v2/providers/oci/logging"
@@ -34,16 +35,26 @@ func (h *Handler) serveSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	offset, ok := pageOffset(w, r)
+	if !ok {
+		return
+	}
+
 	result, err := h.extras.SearchLogs(r.Context(), logprovider.SearchRequest{
 		Query:           req.SearchQuery,
 		TimeStart:       start,
 		TimeEnd:         end,
 		Limit:           ocirest.Limit(r),
+		Offset:          offset,
 		ReturnFieldInfo: req.IsReturnFieldInfo,
 	})
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
+	}
+
+	if result.NextOffset > 0 {
+		ocirest.SetNextPage(w, strconv.Itoa(result.NextOffset))
 	}
 
 	ocirest.WriteJSON(w, r, http.StatusOK, toSearchResponse(result))

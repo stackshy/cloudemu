@@ -12,6 +12,10 @@ import (
 // data plane. A SERVICE log is fed by the service that owns it, so ingesting
 // into one is refused rather than silently accepted.
 func (m *Mock) PutLogs(ctx context.Context, logID string, batches []LogEntryBatch) error {
+	if err := validateBatches(batches); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 
 	rec, ok := m.logs.Get(logID)
@@ -37,7 +41,7 @@ func (m *Mock) PutLogs(ctx context.Context, logID string, batches []LogEntryBatc
 	mon := m.monitoring
 	m.mu.Unlock()
 
-	dims := map[string]string{"logId": logID, "logGroupId": groupID, "compartmentId": compartmentID}
+	dims := ingestionDims(compartmentID, groupID, logID)
 	m.emitMetric(ctx, mon, "IngestedLogEntries", float64(count), dims)
 	m.emitMetric(ctx, mon, "IngestedLogBytes", float64(bytes), dims)
 
@@ -106,4 +110,23 @@ func (m *Mock) Entries(_ context.Context, logID string) ([]LogEntry, error) {
 	copy(out, rec.Entries)
 
 	return out, nil
+}
+
+// validateBatches rejects a batch missing a field OCI's LogEntryBatch makes
+// mandatory, before any batch is ingested, so a rejected call stores nothing.
+func validateBatches(batches []LogEntryBatch) error {
+	for i := range batches {
+		b := &batches[i]
+
+		switch {
+		case b.Source == "":
+			return cerrors.Newf(cerrors.InvalidArgument, "logEntryBatches[%d].source is required", i)
+		case b.Type == "":
+			return cerrors.Newf(cerrors.InvalidArgument, "logEntryBatches[%d].type is required", i)
+		case b.DefaultLogEntryTime.IsZero():
+			return cerrors.Newf(cerrors.InvalidArgument, "logEntryBatches[%d].defaultlogentrytime is required", i)
+		}
+	}
+
+	return nil
 }

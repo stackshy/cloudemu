@@ -11,6 +11,11 @@ import (
 // serveLogs maps method and path shape onto the log operations nested under a
 // log group.
 func (h *Handler) serveLogs(w http.ResponseWriter, r *http.Request, rt *route) {
+	if rt.SubActions != "" {
+		h.serveLogAction(w, r, rt)
+		return
+	}
+
 	if rt.SubID == "" {
 		switch r.Method {
 		case http.MethodPost:
@@ -34,6 +39,54 @@ func (h *Handler) serveLogs(w http.ResponseWriter, r *http.Request, rt *route) {
 	default:
 		methodNotAllowed(w, r)
 	}
+}
+
+// serveLogAction serves the one action OCI defines on a log.
+func (h *Handler) serveLogAction(w http.ResponseWriter, r *http.Request, rt *route) {
+	if rt.SubActions != subActions || rt.SubAction != actionChangeLogGp {
+		ocirest.WriteError(w, r, http.StatusNotFound, codeNotFound,
+			"unknown log action "+rt.SubActions+"/"+rt.SubAction)
+
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, r)
+		return
+	}
+
+	h.moveLog(w, r, rt.ID, rt.SubID)
+}
+
+// moveLog moves a log into another log group.
+func (h *Handler) moveLog(w http.ResponseWriter, r *http.Request, groupID, logID string) {
+	if !h.requireWork(w, r) {
+		return
+	}
+
+	var req changeLogGroupRequest
+
+	if !ocirest.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if req.TargetLogGroupID == "" {
+		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter, "targetLogGroupId is required")
+		return
+	}
+
+	if err := h.extras.MoveLog(r.Context(), groupID, logID, req.TargetLogGroupID); err != nil {
+		ocirest.WriteDriverError(w, r, err)
+		return
+	}
+
+	l, err := h.extras.GetLog(r.Context(), req.TargetLogGroupID, logID)
+	if err != nil {
+		ocirest.WriteDriverError(w, r, err)
+		return
+	}
+
+	h.accept(w, r, operationMoveLog, l.CompartmentID, entityTypeLog, workrequest.ActionUpdated, logID)
 }
 
 func (h *Handler) createLog(w http.ResponseWriter, r *http.Request, groupID string) {
@@ -98,7 +151,12 @@ func (h *Handler) listLogs(w http.ResponseWriter, r *http.Request, groupID strin
 		out = append(out, toLogResponse(&logs[i]))
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusOK, paginate(w, r, out))
+	page, ok := paginate(w, r, out)
+	if !ok {
+		return
+	}
+
+	ocirest.WriteJSON(w, r, http.StatusOK, page)
 }
 
 func (h *Handler) getLog(w http.ResponseWriter, r *http.Request, groupID, logID string) {
@@ -184,6 +242,7 @@ func toLogResponse(l *logprovider.Log) logResponse {
 		ID:                l.ID,
 		LogGroupID:        l.LogGroupID,
 		CompartmentID:     l.CompartmentID,
+		TenancyID:         l.TenancyID,
 		DisplayName:       l.DisplayName,
 		LogType:           l.LogType,
 		IsEnabled:         l.IsEnabled,
