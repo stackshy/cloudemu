@@ -1422,7 +1422,7 @@ a source cluster and detach on promote; clone-on-read on every path.
 ## 13. Logging
 
 **Driver interface:** `services/logging/driver/driver.go`
-**AWS:** CloudWatch Logs | **Azure:** Log Analytics | **GCP:** Cloud Logging
+**AWS:** CloudWatch Logs | **Azure:** Log Analytics | **GCP:** Cloud Logging | **OCI:** Logging (a log group is the log group; a CUSTOM log is the log stream; an ingested log entry is the log event — metric and subscription filters have no OCI equivalent and report `Unimplemented`)
 
 ### Log Group Operations
 
@@ -1448,7 +1448,7 @@ a source cluster and detach on promote; clone-on-read on every path.
 | `PutLogEvents` | `(ctx, logGroup, streamName, events) error` |
 | `GetLogEvents` | `(ctx, input) ([]LogEvent, error)` |
 
-### Filtering and Metric Filters
+### Filtering, Metric Filters and Subscription Filters
 
 | Operation | Signature |
 |-----------|-----------|
@@ -1456,8 +1456,102 @@ a source cluster and detach on promote; clone-on-read on every path.
 | `PutMetricFilter` | `(ctx, config) error` |
 | `DeleteMetricFilter` | `(ctx, logGroup, filterName) error` |
 | `DescribeMetricFilters` | `(ctx, logGroup) ([]MetricFilterInfo, error)` |
+| `PutSubscriptionFilter` | `(ctx, config) error` |
+| `DeleteSubscriptionFilter` | `(ctx, logGroup, filterName) error` |
+| `DescribeSubscriptionFilters` | `(ctx, logGroup) ([]SubscriptionFilterInfo, error)` |
 
-**Total: 13 operations**
+**Total: 17 operations**
+
+### OCI Logging
+
+**Optional capability:** `server/oci/logging.Extras` — OCI addresses log groups
+and logs by OCID inside a compartment, gives a log a type and a service source,
+batches ingestion, and searches with its own query language, none of which the
+portable model carries. Its value types live in `providers/oci/logging`.
+**Provider:** `providers/oci/logging` | **Wire:** `server/oci/logging`
+
+OCI publishes the service on three API surfaces, each at its own version
+prefix. They collapse onto one CloudEmu server, so `Matches` claims each
+prefix's collections exactly. A top-level `/logs` collection belongs to the
+ingestion plane alone; the control plane nests logs under their log group.
+
+| Operation | Route |
+|-----------|-------|
+| `CreateLogGroup` | `POST /20200531/logGroups` |
+| `ListLogGroups` | `GET /20200531/logGroups` |
+| `GetLogGroup` | `GET /20200531/logGroups/{logGroupId}` |
+| `UpdateLogGroup` | `PUT /20200531/logGroups/{logGroupId}` |
+| `DeleteLogGroup` | `DELETE /20200531/logGroups/{logGroupId}` |
+| `ChangeLogGroupCompartment` | `POST /20200531/logGroups/{logGroupId}/actions/changeCompartment` |
+| `CreateLog` | `POST /20200531/logGroups/{logGroupId}/logs` |
+| `ListLogs` | `GET /20200531/logGroups/{logGroupId}/logs` |
+| `GetLog` | `GET /20200531/logGroups/{logGroupId}/logs/{logId}` |
+| `UpdateLog` | `PUT /20200531/logGroups/{logGroupId}/logs/{logId}` |
+| `DeleteLog` | `DELETE /20200531/logGroups/{logGroupId}/logs/{logId}` |
+| `ChangeLogLogGroup` | `POST /20200531/logGroups/{logGroupId}/logs/{logId}/actions/changeLogGroup` |
+| `PutLogs` | `POST /20200831/logs/{logId}/actions/push` |
+| `SearchLogs` | `POST /20190909/search` |
+
+The version prefixes are the oci-go-sdk clients' `BasePath`s — `20200531` for
+`logging`, `20200831` for `loggingingestion`, `20190909` for `loggingsearch` —
+and the handler tests pin them as SDK literals rather than handler constants.
+
+`ListLogGroups` requires `compartmentId`; it, `ListLogs` and `SearchLogs`
+paginate with `limit` / `page`, returning the cursor as `opc-next-page`. A
+`page` this API never returned is rejected with `400` rather than silently
+restarting at the first page. `ListLogs` takes no `compartmentId` —
+the log group in the path fixes the compartment, as it does in real OCI — and
+narrows on `displayName`, `logType`, `sourceService`, `sourceResource` and
+`lifecycleState`. Every log group and log mutation is asynchronous in real OCI,
+so each answers `202` with an `opc-work-request-id`; the created resource's
+OCID comes back on the work request, whose `operationType` is one of the SDK's
+`OperationTypesEnum` values (`CREATE_LOG_GROUP`, `MOVE_LOG_GROUP`, `MOVE_LOG`,
+…). Ingestion and search are synchronous.
+
+When the server wires Identity, creating a log group in, or moving one into, a
+compartment that does not exist is `404 NotAuthorizedOrNotFound`, as in VCN.
+`ChangeLogGroupCompartment` reads the target from `compartmentId`, the
+`ChangeLogGroupCompartmentDetails` field. Deleting a log group that still holds
+logs is `409 IncorrectState`, as real OCI requires the group empty; the
+portable `DeleteLogGroup` is the path that cascades. A log's
+`retentionDuration` must be 30 to 180 days in 30-day steps; any other value is
+`400`. A log response carries the configured `tenancyId`.
+
+A CUSTOM log takes entries from `PutLogs` and has no service source: it carries
+a `configuration` only when the caller supplied one, never a synthesized
+`sourceType`. A SERVICE log is fed by the service its `configuration.source`
+names, so ingesting into one is refused rather than accepted and dropped, as is
+ingesting into a disabled log. Every `LogEntryBatch` must carry `source`, `type`
+and `defaultlogentrytime`, which the SDK marks mandatory; a call with a batch
+missing one is `400` naming the batch and field, and ingests nothing.
+
+Search queries are read in the form
+`search "compartmentId[/logGroupId[/logId]]" | where <field> = '<value>' [and …]
+| sort by datetime [asc|desc]`, with `*` as the wildcard and comma-separated
+search targets. The tenancy OCID addresses the root compartment, where log
+groups created without one land. Everything else is rejected naming what it tripped on rather
+than answered with an empty result set: the `summarize`, `stats`, `topN` and
+`extract` operators; `or`, `not` and parenthesised where clauses; the `>`, `<`,
+`>=`, `<=`, `=~` and `!~` operators; a field the record shape has no place for,
+including a nested payload path; a sort on anything but datetime; and a search
+target segment written as a name where OCI takes an OCID.
+
+Not emulated: `/20200531/unifiedAgentConfigurations` and
+`/20200531/logSavedSearches`, which the logging driver has no shape for. Both
+are claimed so a caller gets a `501` naming the gap rather than a bare `404`.
+A log group's retention is CloudEmu's: real OCI carries retention on the log,
+and the group holds the default its logs inherit so the portable
+`RetentionDays` has somewhere to live. Log group display names are unique per
+compartment, as in real OCI, so the same name may be used in two compartments.
+The portable driver has only a name to address a group by, so a name held in
+more than one compartment is rejected as ambiguous rather than resolved
+arbitrarily; such a group is reachable through the OCI API by OCID.
+
+A read limit is bounded before it sizes an allocation: `GetLogEvents`,
+`FilterLogEvents` and `SearchLogs` reject a negative limit and one above
+10000 with `InvalidArgument`. Subscription filters, like metric filters, are
+not an OCI Logging operation and report `Unimplemented` — OCI delivers log
+entries to another service through a Service Connector.
 
 ---
 
