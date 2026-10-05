@@ -4,7 +4,9 @@ import (
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -272,4 +274,139 @@ func TestTopicIfMatch(t *testing.T) {
 	current, _ := decode(t, f.do(http.MethodGet, "/20181201/topics/"+id, nil))["etag"].(string)
 	freshDelete := f.doIfMatch(http.MethodDelete, "/20181201/topics/"+id, current, nil)
 	assert.Equal(t, http.StatusNoContent, freshDelete.Code, freshDelete.Body.String())
+}
+
+const bogusCompartment = "ocid1.compartment.oc1..bogus"
+
+// A create or move into a compartment that does not exist is 404, as for VCN.
+func TestTopicsRequireAnExistingCompartment(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	f.knownCompartments()
+
+	create := f.do(http.MethodPost, "/20181201/topics", map[string]any{
+		"name": "alerts", "compartmentId": bogusCompartment,
+	})
+	require.Equal(t, http.StatusNotFound, create.Code, create.Body.String())
+	assert.Contains(t, create.Body.String(), "NotAuthorizedOrNotFound")
+
+	id := f.newTopic("alerts", compartment)
+
+	move := f.do(http.MethodPost, "/20181201/topics/"+id+"/actions/changeCompartment",
+		map[string]any{"compartmentId": bogusCompartment})
+	require.Equal(t, http.StatusNotFound, move.Code, move.Body.String())
+
+	got := decode(t, f.do(http.MethodGet, "/20181201/topics/"+id, nil))
+	assert.Equal(t, compartment, got["compartmentId"], "a refused move leaves the topic where it was")
+}
+
+// Topic names are unique across the tenancy, not per compartment.
+func TestTopicNameIsUniqueAcrossTheTenancyOverTheWire(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	f.newTopic("t1", compartment)
+
+	w := f.do(http.MethodPost, "/20181201/topics", map[string]any{
+		"name": "t1", "compartmentId": otherCompartment,
+	})
+	assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+}
+
+// The SDK maps CreateTopic, GetTopic and UpdateTopic's Etag from the etag
+// response header, not the body.
+func TestTopicEtagHeader(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+
+	create := f.do(http.MethodPost, "/20181201/topics", map[string]any{
+		"name": "alerts", "compartmentId": compartment,
+	})
+	require.Equal(t, http.StatusCreated, create.Code)
+
+	body := decode(t, create)
+	id, _ := body["topicId"].(string)
+	assert.Equal(t, body["etag"], create.Header().Get("etag"))
+	assert.NotEmpty(t, create.Header().Get("etag"))
+
+	get := f.do(http.MethodGet, "/20181201/topics/"+id, nil)
+	assert.Equal(t, decode(t, get)["etag"], get.Header().Get("etag"))
+
+	update := f.do(http.MethodPut, "/20181201/topics/"+id, map[string]any{"description": "new"})
+	require.Equal(t, http.StatusOK, update.Code)
+	assert.Equal(t, decode(t, update)["etag"], update.Header().Get("etag"))
+	assert.NotEqual(t, get.Header().Get("etag"), update.Header().Get("etag"), "an update rotates the etag")
+}
+
+// Eight writers holding the same current etag: exactly one wins, the rest get
+// 412. The precondition and the write happen under one provider lock.
+func TestConcurrentTopicUpdatesWithOneEtagHaveOneWinner(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	id := f.newTopic("alerts", compartment)
+	etag, _ := decode(t, f.do(http.MethodGet, "/20181201/topics/"+id, nil))["etag"].(string)
+
+	const writers = 8
+
+	codes := make(chan int, writers)
+	header := http.Header{"If-Match": {etag}, "Content-Type": {"application/json"}}
+
+	var wg sync.WaitGroup
+
+	for i := range writers {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			body := []byte(`{"description":"writer ` + strconv.Itoa(i) + `"}`)
+			codes <- serve(f.handler, http.MethodPut, "/20181201/topics/"+id, header, body).Code
+		}()
+	}
+
+	wg.Wait()
+	close(codes)
+
+	count := map[int]int{}
+	for code := range codes {
+		count[code]++
+	}
+
+	assert.Equal(t, map[int]int{http.StatusOK: 1, http.StatusPreconditionFailed: writers - 1}, count)
+}
+
+// A stale etag on a compartment move is 412 too; ONS takes if-match there.
+func TestChangeTopicCompartmentIfMatch(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	id := f.newTopic("alerts", compartment)
+	target := "/20181201/topics/" + id + "/actions/changeCompartment"
+
+	stale := f.doIfMatch(http.MethodPost, target, "etag-stale", map[string]any{"compartmentId": otherCompartment})
+	require.Equal(t, http.StatusPreconditionFailed, stale.Code, stale.Body.String())
+
+	etag, _ := decode(t, f.do(http.MethodGet, "/20181201/topics/"+id, nil))["etag"].(string)
+	fresh := f.doIfMatch(http.MethodPost, target, etag, map[string]any{"compartmentId": otherCompartment})
+	assert.Equal(t, http.StatusAccepted, fresh.Code, fresh.Body.String())
+}
+
+// A page token this listing never issued is 400, not a silent restart from
+// page one.
+func TestListTopicsRejectsABadPageToken(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	f.newTopic("alerts", compartment)
+
+	base := "/20181201/topics?compartmentId=" + compartment + "&limit=1&page="
+
+	for _, token := range []string{"garbage", "-1"} {
+		w := f.do(http.MethodGet, base+token, nil)
+		assert.Equal(t, http.StatusBadRequest, w.Code, token)
+		assert.Contains(t, w.Body.String(), "InvalidParameter", token)
+	}
 }

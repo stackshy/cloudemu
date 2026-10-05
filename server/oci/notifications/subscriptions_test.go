@@ -99,7 +99,7 @@ func TestUpdateSubscriptionWithAnEmptyDeliveryPolicy(t *testing.T) {
 		"deliveryPolicy": map[string]any{},
 	})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	assert.NotNil(t, decode(t, w)["deliveryPolicy"])
+	assert.Equal(t, "{}", decode(t, w)["deliverPolicy"])
 }
 
 func TestTokenEndpointsRequireAToken(t *testing.T) {
@@ -223,4 +223,99 @@ func TestCreateSubscriptionRejectsAMalformedEndpoint(t *testing.T) {
 			assert.Contains(t, w.Body.String(), tc.want)
 		})
 	}
+}
+
+func TestCreateSubscriptionRequiresAnExistingCompartment(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	f.knownCompartments()
+	topicID := f.newTopic("alerts", compartment)
+
+	w := f.do(http.MethodPost, "/20181201/subscriptions", map[string]any{
+		"topicId": topicID, "compartmentId": "ocid1.compartment.oc1..bogus",
+		"protocol": "EMAIL", "endpoint": "ops@example.com",
+	})
+	require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "NotAuthorizedOrNotFound")
+}
+
+// ONS does not ask a function subscription to confirm: it is created ACTIVE,
+// carries no token, and receives the next publish.
+func TestOracleFunctionsSubscriptionIsActiveOverTheWire(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	topicID := f.newTopic("alerts", compartment)
+
+	w := f.do(http.MethodPost, "/20181201/subscriptions", map[string]any{
+		"topicId": topicID, "compartmentId": compartment,
+		"protocol": "ORACLE_FUNCTIONS", "endpoint": "ocid1.fnfunc.oc1..x",
+	})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	body := decode(t, w)
+	assert.Equal(t, "ACTIVE", body["lifecycleState"])
+	assert.NotContains(t, body, "confirmationToken")
+
+	id, _ := body["id"].(string)
+
+	publish := f.do(http.MethodPost, "/20181201/topics/"+topicID+"/messages", map[string]any{"body": "hello"})
+	require.Equal(t, http.StatusOK, publish.Code, publish.Body.String())
+	assert.Len(t, f.mock.Deliveries(id), 1)
+}
+
+// The SDK maps Create, Get and UpdateSubscription's Etag from the etag header.
+func TestSubscriptionEtagHeader(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	topicID := f.newTopic("alerts", compartment)
+
+	create := f.do(http.MethodPost, "/20181201/subscriptions", map[string]any{
+		"topicId": topicID, "compartmentId": compartment,
+		"protocol": "EMAIL", "endpoint": "ops@example.com",
+	})
+	require.Equal(t, http.StatusCreated, create.Code)
+
+	body := decode(t, create)
+	id, _ := body["id"].(string)
+	assert.NotEmpty(t, create.Header().Get("etag"))
+	assert.Equal(t, body["etag"], create.Header().Get("etag"))
+
+	get := f.do(http.MethodGet, "/20181201/subscriptions/"+id, nil)
+	assert.Equal(t, decode(t, get)["etag"], get.Header().Get("etag"))
+
+	update := f.do(http.MethodPut, "/20181201/subscriptions/"+id,
+		map[string]any{"freeformTags": map[string]string{"team": "ops"}})
+	require.Equal(t, http.StatusOK, update.Code)
+	assert.Equal(t, decode(t, update)["etag"], update.Header().Get("etag"))
+}
+
+// ONS marks protocol mandatory on both token endpoints.
+func TestTokenEndpointsRequireAProtocol(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	topicID := f.newTopic("alerts", compartment)
+	id, token := f.newSubscription(topicID, "ops@example.com")
+
+	for _, sub := range []string{"confirmation", "unsubscription"} {
+		w := f.do(http.MethodGet, "/20181201/subscriptions/"+id+"/"+sub+"?token="+token, nil)
+		require.Equal(t, http.StatusBadRequest, w.Code, sub)
+		assert.Contains(t, w.Body.String(), "protocol is required", sub)
+	}
+
+	// Neither refusal touched the subscription.
+	got := decode(t, f.do(http.MethodGet, "/20181201/subscriptions/"+id, nil))
+	assert.Equal(t, "PENDING", got["lifecycleState"])
+}
+
+func TestListSubscriptionsRejectsABadPageToken(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+
+	w := f.do(http.MethodGet, "/20181201/subscriptions?compartmentId="+compartment+"&page=garbage", nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 }

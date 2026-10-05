@@ -110,7 +110,17 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.Notifications != nil {
-		srv.Register(notifications.New(d.Notifications, d.WorkRequests))
+		notifHandler := notifications.New(d.Notifications, d.WorkRequests)
+
+		if comps, ok := d.Identity.(identity.Compartments); ok {
+			notifHandler.SetCompartmentChecker(func(id string) bool {
+				_, err := comps.GetCompartment(context.Background(), id)
+
+				return err == nil
+			})
+		}
+
+		srv.Register(notifHandler)
 	}
 
 	return srv

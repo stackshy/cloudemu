@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -100,4 +102,31 @@ func TestDriversFromProviderBuildsServer(t *testing.T) {
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// New wires the Notifications handler's compartment check from Identity, so a
+// topic create into a compartment that does not exist is 404 while the tenancy
+// root, which always exists, is accepted.
+func TestNotificationsCompartmentCheckIsWiredFromIdentity(t *testing.T) {
+	srv := ociserver.New(ociserver.DriversFrom(ociprovider.New()))
+
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	create := func(compartmentID string) int {
+		t.Helper()
+
+		body := strings.NewReader(`{"name":"wired-` + strconv.Itoa(len(compartmentID)) +
+			`","compartmentId":"` + compartmentID + `"}`)
+
+		resp, err := ts.Client().Post(ts.URL+"/20181201/topics", "application/json", body)
+		require.NoError(t, err)
+
+		defer resp.Body.Close()
+
+		return resp.StatusCode
+	}
+
+	assert.Equal(t, http.StatusNotFound, create("ocid1.compartment.oc1..bogus"))
+	assert.Equal(t, http.StatusCreated, create(config.DefaultTenancyOCID))
 }

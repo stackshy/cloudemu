@@ -24,7 +24,7 @@ func (h *Handler) publishMessage(w http.ResponseWriter, r *http.Request, topicID
 	msg, err := h.extras.PublishMessage(r.Context(), topicID, notifprovider.MessageSpec{
 		Title: req.Title,
 		Body:  req.Body,
-		Type:  r.URL.Query().Get("messageType"),
+		Type:  messageType(r),
 	})
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
@@ -32,4 +32,15 @@ func (h *Handler) publishMessage(w http.ResponseWriter, r *http.Request, topicID
 	}
 
 	ocirest.WriteJSON(w, r, http.StatusOK, publishResult{MessageID: msg.ID, TimeStamp: msg.Timestamp})
+}
+
+// messageType is the body encoding the caller declared. The SDK sends it as
+// the messageType header (canonically Messagetype); the query parameter is
+// accepted as a fallback.
+func messageType(r *http.Request) string {
+	if t := r.Header.Get("Messagetype"); t != "" {
+		return t
+	}
+
+	return r.URL.Query().Get("messageType")
 }

@@ -1493,7 +1493,7 @@ a source cluster and detach on promote; clone-on-read on every path.
 
 ### OCI Notifications (ONS)
 
-**Optional capability:** `server/oci/notifications.Extras` — ONS scopes topics
+**Optional capability:** `server/oci/notifications.Extras`. ONS scopes topics
 and subscriptions to a compartment, addresses both by OCID, and gates delivery
 behind a confirmation handshake, none of which the portable model carries. Its
 value types live in `providers/oci/notifications`; a driver that does not
@@ -1523,21 +1523,37 @@ Both list routes require `compartmentId` and paginate with `limit` / `page`,
 returning the cursor as `opc-next-page`. `ListTopics` also honours `sortBy`
 (`TIMECREATED`, `LIFECYCLESTATE`) with `sortOrder` `ASC` / `DESC`, plus `id`,
 `name` and `lifecycleState` filters; an unknown sort key is rejected rather
-than answered in an arbitrary order.
+than answered in an arbitrary order. A page token the listing never issued is
+a `400 InvalidParameter`, not a silent restart from page one.
 `definedTags` are rejected rather than echoed back empty;
 `freeformTags` round-trip.
 
-Both creates answer `201 Created`. Updating or deleting a topic or a
-subscription honours an `if-match` precondition against the stored etag, which
-rotates on every mutation: a stale etag is a `412` with code `NoEtagMatch` and
-the resource is left alone. An absent `if-match` is unconditional.
+Topic names are unique **across the tenancy**, not per compartment, so the same
+name in a second compartment is a `409`. When Identity is wired (as `serve`
+does), creating a topic or subscription, or moving either, into a compartment
+that does not exist is a `404 NotAuthorizedOrNotFound`, as for VCN.
+
+Both creates answer `201 Created`. Create, get and update of a topic or a
+subscription return the etag in the `etag` response header as well as the body,
+since that header is where the SDK reads `Etag` from. Update, delete and
+`ChangeTopicCompartment` honour an `if-match` precondition against the stored
+etag, which rotates on every mutation: a stale etag is a `412` with code
+`NoEtagMatch` and the resource is left alone. The comparison happens under the
+same lock as the write, so of several writers holding one etag exactly one
+wins. An absent `if-match` is unconditional.
+
+A single subscription (create, get, update) is ONS's `Subscription`, which
+carries the delivery policy as a JSON-encoded **string** in `deliverPolicy`. A
+list item is `SubscriptionSummary`, which carries it as an **object** in
+`deliveryPolicy`. Terraform's `oci_ons_subscription.delivery_policy` reads the
+former.
 
 Real ONS splits the control plane from the data plane **by host, not by API
 prefix**: `PublishMessage` goes to the topic's own `apiEndpoint` rather than to
 a differently-prefixed path. CloudEmu serves both on one listener, so every
 topic reports the origin the caller reached as its `apiEndpoint` and a publish
 posted there lands back on the same handler. A client that follows
-`apiEndpoint` — as the real SDKs do — needs no special casing.
+`apiEndpoint`, as the real SDKs do, needs no special casing.
 
 A subscription is created `PENDING` and receives nothing until it is confirmed.
 Real ONS mails the confirmation token to the endpoint; the emulator has no
@@ -1545,21 +1561,30 @@ channel to mail it on, so a `PENDING` subscription carries its token in the
 create response, and `GET .../confirmation?token=…&protocol=…` flips it to
 `ACTIVE`. Publishing to a topic whose subscriptions are all `PENDING`
 succeeds and delivers to nobody. `.../unsubscription` takes the same token pair
-and removes the subscription. Protocols are `EMAIL`, `SMS`, `CUSTOM_HTTPS`,
+and removes the subscription. Both `token` and `protocol` are mandatory on
+these two endpoints; either missing is a `400`. The exception is
+`ORACLE_FUNCTIONS`: ONS does not ask a function to confirm, so that
+subscription is created `ACTIVE` with no token. Protocols are `EMAIL`, `SMS`, `CUSTOM_HTTPS`,
 `SLACK`, `PAGERDUTY` and `ORACLE_FUNCTIONS` (`HTTP` / `HTTPS` alias onto
 `CUSTOM_HTTPS`); anything else is rejected rather than stored unused. The
 endpoint is checked against the protocol at create rather than at first
 delivery: an `EMAIL` endpoint must hold an `@`, and a `CUSTOM_HTTPS`, `SLACK`
 or `PAGERDUTY` endpoint must be an `https` URL. Message bodies are `RAW_TEXT`
-or `JSON` and are capped at ONS's 64 KB.
+or `JSON`, declared in the `messageType` **header** as the SDK sends it (a
+`messageType` query parameter is accepted as a fallback), and are capped at
+ONS's 64 KB.
 
-`DeleteTopic` is the one asynchronous mutation: it answers **`204` with an
-`opc-work-request-id`**, not the `202` the rest of OCI uses for async work, and
-the work request is resolvable through `server/oci/workrequest`.
-`ChangeTopicCompartment` records a work request too and answers `202`. Every
-subscription mutation is synchronous. Delivery is recorded in-memory and
-readable through `Deliveries`; nothing is sent over a real transport, so
-delivery policies (`backoffRetryPolicy`) round-trip but never retry.
+`DeleteTopic` answers `204` and `ChangeTopicCompartment` answers `202`. Real
+ONS returns only an `opc-request-id` for both; CloudEmu additionally records a
+work request for each, resolvable through `server/oci/workrequest`, and returns
+its `opc-work-request-id`, which SDK clients ignore. Every subscription
+mutation is synchronous.
+
+Delivery is recorded in-memory and readable through `Deliveries`, keeping the
+most recent 100 messages per subscription; nothing is sent over a real
+transport, so delivery policies (`backoffRetryPolicy`) round-trip but never
+retry. Each publish emits `PublishedMessages` and `DeliveredMessages` under
+`oci_notification` into the topic's own compartment, keyed by `resourceId`.
 
 ---
 

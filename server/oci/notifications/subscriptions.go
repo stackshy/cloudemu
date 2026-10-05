@@ -1,6 +1,7 @@
 package notifications
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 
@@ -63,8 +64,9 @@ func (h *Handler) serveSubscription(w http.ResponseWriter, r *http.Request, id s
 	}
 }
 
-// createSubscription creates a PENDING subscription. It stays PENDING, and
-// receives nothing, until it is confirmed with its token.
+// createSubscription creates a subscription. It stays PENDING, and receives
+// nothing, until it is confirmed with its token; an ORACLE_FUNCTIONS one is
+// created ACTIVE, as ONS does not ask a function to confirm.
 func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request) {
 	var req createSubscriptionRequest
 
@@ -86,6 +88,10 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
 	sub, err := h.extras.CreateSubscription(r.Context(), notifprovider.SubscriptionSpec{
 		TopicID:       req.TopicID,
 		CompartmentID: req.CompartmentID,
@@ -99,7 +105,7 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusCreated, subscriptionWire(sub))
+	writeSubscription(w, r, http.StatusCreated, sub)
 }
 
 func (h *Handler) getSubscription(w http.ResponseWriter, r *http.Request, id string) {
@@ -109,7 +115,14 @@ func (h *Handler) getSubscription(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusOK, subscriptionWire(sub))
+	writeSubscription(w, r, http.StatusOK, sub)
+}
+
+// writeSubscription renders a single subscription in ONS's Subscription shape,
+// with the etag header the SDK reads.
+func writeSubscription(w http.ResponseWriter, r *http.Request, status int, sub *notifprovider.Subscription) {
+	setEtag(w, sub.Etag)
+	ocirest.WriteJSON(w, r, status, subscriptionWire(sub))
 }
 
 // listSubscriptions returns the subscriptions in a compartment, narrowed to
@@ -126,12 +139,17 @@ func (h *Handler) listSubscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]subscriptionResponse, 0, len(subs))
+	out := make([]subscriptionSummary, 0, len(subs))
 	for i := range subs {
-		out = append(out, subscriptionWire(&subs[i]))
+		out = append(out, subscriptionSummaryWire(&subs[i]))
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusOK, paginate(w, r, out))
+	page, ok := paginate(w, r, out)
+	if !ok {
+		return
+	}
+
+	ocirest.WriteJSON(w, r, http.StatusOK, page)
 }
 
 // updateSubscription replaces a subscription's delivery policy and tags. The
@@ -148,29 +166,22 @@ func (h *Handler) updateSubscription(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 
-	if !h.subscriptionIfMatch(w, r, id) {
-		return
-	}
-
 	sub, err := h.extras.UpdateSubscription(r.Context(), id, notifprovider.SubscriptionPatch{
 		DeliveryPolicy: toDriverPolicy(req.DeliveryPolicy),
 		FreeformTags:   req.FreeformTags,
+		IfMatch:        ifMatch(r),
 	})
 	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
+		writeError(w, r, err)
 		return
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusOK, subscriptionWire(sub))
+	writeSubscription(w, r, http.StatusOK, sub)
 }
 
 func (h *Handler) deleteSubscription(w http.ResponseWriter, r *http.Request, id string) {
-	if !h.subscriptionIfMatch(w, r, id) {
-		return
-	}
-
-	if err := h.notif.Unsubscribe(r.Context(), id); err != nil {
-		ocirest.WriteDriverError(w, r, err)
+	if err := h.extras.DeleteSubscription(r.Context(), id, ifMatch(r)); err != nil {
+		writeError(w, r, err)
 		return
 	}
 
@@ -257,6 +268,10 @@ func (h *Handler) changeSubscriptionCompartment(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
 	if err := h.extras.ChangeSubscriptionCompartment(r.Context(), id, req.CompartmentID); err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
@@ -265,30 +280,23 @@ func (h *Handler) changeSubscriptionCompartment(w http.ResponseWriter, r *http.R
 	ocirest.WriteJSON(w, r, http.StatusNoContent, nil)
 }
 
-// subscriptionIfMatch enforces an if-match precondition against a
-// subscription's stored etag. An unknown subscription passes through to the
-// driver's own 404.
-func (h *Handler) subscriptionIfMatch(w http.ResponseWriter, r *http.Request, id string) bool {
-	sub, err := h.extras.GetSubscription(r.Context(), id)
-	if err != nil {
-		return true
-	}
-
-	return checkIfMatch(w, r, sub.Etag)
-}
-
 // tokenParams reads the token and protocol the confirmation endpoints
-// authenticate with, writing the 400 when the token is missing.
+// authenticate with. ONS marks both mandatory, so either missing is a 400.
 func tokenParams(w http.ResponseWriter, r *http.Request) (token, protocol string, ok bool) {
 	query := r.URL.Query()
 
-	token = query.Get("token")
-	if token == "" {
+	token, protocol = query.Get("token"), query.Get("protocol")
+
+	switch {
+	case token == "":
 		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter, "token is required")
+		return "", "", false
+	case protocol == "":
+		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter, "protocol is required")
 		return "", "", false
 	}
 
-	return token, query.Get("protocol"), true
+	return token, protocol, true
 }
 
 // unsubscribeURL is the link ONS hands back with a confirmation, pointing at
@@ -303,10 +311,33 @@ func unsubscribeURL(r *http.Request, id, token, protocol string) string {
 		url.PathEscape(id) + "/" + subUnsubscription + "?" + query.Encode()
 }
 
-// subscriptionWire renders an ONS subscription. The confirmation token rides
-// along only while it is still needed.
+// subscriptionWire renders ONS's Subscription, whose delivery policy is a
+// JSON-encoded string in deliverPolicy.
 func subscriptionWire(sub *notifprovider.Subscription) subscriptionResponse {
-	out := subscriptionResponse{
+	out := subscriptionResponse{subscriptionFields: subscriptionBase(sub)}
+
+	if p := toWirePolicy(sub.DeliveryPolicy); p != nil {
+		// A struct of ints and strings always marshals.
+		raw, _ := json.Marshal(p) //nolint:errchkjson // cannot fail for deliveryPolicy
+		out.DeliverPolicy = string(raw)
+	}
+
+	return out
+}
+
+// subscriptionSummaryWire renders ONS's SubscriptionSummary, whose delivery
+// policy is an object in deliveryPolicy.
+func subscriptionSummaryWire(sub *notifprovider.Subscription) subscriptionSummary {
+	return subscriptionSummary{
+		subscriptionFields: subscriptionBase(sub),
+		DeliveryPolicy:     toWirePolicy(sub.DeliveryPolicy),
+	}
+}
+
+// subscriptionBase fills the fields Subscription and SubscriptionSummary
+// share. The confirmation token rides along only while it is still needed.
+func subscriptionBase(sub *notifprovider.Subscription) subscriptionFields {
+	out := subscriptionFields{
 		ID:             sub.ID,
 		TopicID:        sub.TopicID,
 		CompartmentID:  sub.CompartmentID,
@@ -315,7 +346,6 @@ func subscriptionWire(sub *notifprovider.Subscription) subscriptionResponse {
 		LifecycleState: sub.LifecycleState,
 		CreatedTime:    sub.CreatedTime,
 		Metadata:       sub.Metadata,
-		DeliveryPolicy: toWirePolicy(sub.DeliveryPolicy),
 		Etag:           sub.Etag,
 		FreeformTags:   sub.FreeformTags,
 		DefinedTags:    definedTags{},

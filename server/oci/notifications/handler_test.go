@@ -89,6 +89,28 @@ func (f *fixture) doIfMatch(method, target, etag string, body any) *httptest.Res
 	return w
 }
 
+// serve sends a raw request through a handler. It never fails the test, so it
+// is safe to call from goroutines.
+func serve(h http.Handler, method, target string, header http.Header, body []byte) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, target, bytes.NewReader(body))
+	for k, v := range header {
+		r.Header[k] = v
+	}
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	return w
+}
+
+// knownCompartments wires a compartment checker that recognises only the two
+// test compartments.
+func (f *fixture) knownCompartments() {
+	f.handler.SetCompartmentChecker(func(id string) bool {
+		return id == compartment || id == otherCompartment
+	})
+}
+
 func decode(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 
@@ -513,7 +535,7 @@ func TestUnsubscribeEndpoints(t *testing.T) {
 	topicID := f.newTopic("alerts", compartment)
 
 	subID, token := f.newSubscription(topicID, "link@example.com")
-	w := f.do(http.MethodGet, "/20181201/subscriptions/"+subID+"/unsubscription?token="+token, nil)
+	w := f.do(http.MethodGet, "/20181201/subscriptions/"+subID+"/unsubscription?token="+token+"&protocol=EMAIL", nil)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 	w = f.do(http.MethodGet, "/20181201/subscriptions/"+subID, nil)
@@ -561,7 +583,24 @@ func TestUpdateAndMoveSubscription(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	policy, ok := decode(t, w)["deliveryPolicy"].(map[string]any)
+	// Update and Get return ONS's Subscription, which carries the policy as a
+	// JSON string in deliverPolicy; there is no deliveryPolicy object.
+	wantPolicy := `{"backoffRetryPolicy":{"maxRetryDuration":7200,"policyType":"EXPONENTIAL"}}`
+
+	updated := decode(t, w)
+	assert.JSONEq(t, wantPolicy, updated["deliverPolicy"].(string))
+	assert.NotContains(t, updated, "deliveryPolicy")
+
+	got := decode(t, f.do(http.MethodGet, "/20181201/subscriptions/"+subID, nil))
+	assert.JSONEq(t, wantPolicy, got["deliverPolicy"].(string))
+	assert.NotContains(t, got, "deliveryPolicy")
+
+	// List returns SubscriptionSummary, which carries it as an object.
+	items := decodeList(t, f.do(http.MethodGet, "/20181201/subscriptions?compartmentId="+compartment, nil))
+	require.Len(t, items, 1)
+	assert.NotContains(t, items[0], "deliverPolicy")
+
+	policy, ok := items[0]["deliveryPolicy"].(map[string]any)
 	require.True(t, ok)
 	backoff, ok := policy["backoffRetryPolicy"].(map[string]any)
 	require.True(t, ok)
