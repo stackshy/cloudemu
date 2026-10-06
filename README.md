@@ -193,7 +193,9 @@ cloudemu is free and MIT licensed, and it will stay that way. If it saves your t
 
 Thank you to our sponsors:
 
-<!-- sponsors --><!-- sponsors -->
+<a href="https://github.com/sponsors/NitinKumar004">
+  <img src="https://raw.githubusercontent.com/stackshy/cloudemu/sponsors/sponsors.svg" alt="cloudemu sponsors" />
+</a>
 
 ## License
 
