@@ -31,7 +31,7 @@ jobs:
         env:
           SPONSORKIT_GITHUB_TOKEN: ${{ secrets.SPONSORS_TOKEN }}
           SPONSORKIT_GITHUB_LOGIN: NitinKumar004
-        run: npx --yes sponsorkit@latest --outputDir out --name sponsors --width 800
+        run: npx --yes sponsorkit@18 --output-dir out --name sponsors --width 800
       - name: Publish to the sponsors branch
         if: env.SPONSORS_TOKEN != ''
         working-directory: out
