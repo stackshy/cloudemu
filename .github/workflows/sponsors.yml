@@ -1,0 +1,47 @@
+name: Sponsors
+
+# Keeps the sponsor list in README.md in sync with GitHub Sponsors. It fills
+# the space between the <!-- sponsors --> markers and opens a PR against
+# development when the list changes. Past sponsors stay listed.
+#
+# Needs a repo secret SPONSORS_TOKEN: a classic PAT owned by NitinKumar004
+# (the sponsored account) with the read:user, read:org and public_repo scopes.
+# Without it the job is skipped.
+on:
+  schedule:
+    - cron: "0 3 * * 1" # Mondays 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readme:
+    name: Update README sponsors
+    runs-on: ubuntu-latest
+    env:
+      SPONSORS_TOKEN: ${{ secrets.SPONSORS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.SPONSORS_TOKEN != ''
+        with:
+          ref: development
+      - uses: JamesIves/github-sponsors-readme-action@v1
+        if: env.SPONSORS_TOKEN != ''
+        with:
+          token: ${{ secrets.SPONSORS_TOKEN }}
+          file: README.md
+          active-only: false
+          template: >-
+            <a href="https://github.com/{{{ login }}}"><img src="https://github.com/{{{ login }}}.png" width="60px" alt="{{{ login }}}" title="{{{ login }}}" /></a>&nbsp;
+      - uses: peter-evans/create-pull-request@v7
+        if: env.SPONSORS_TOKEN != ''
+        with:
+          token: ${{ secrets.SPONSORS_TOKEN }}
+          base: development
+          branch: chore/readme-sponsors
+          commit-message: "docs: update README sponsors"
+          title: "docs: update README sponsors"
+          body: Updates the sponsor list in README.md from GitHub Sponsors.
+          add-paths: README.md
+          delete-branch: true
