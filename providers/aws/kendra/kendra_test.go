@@ -12,7 +12,10 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/kendra/driver"
 )
 
-const roleArn = "arn:aws:iam::123456789012:role/kendra"
+const (
+	roleArn        = "arn:aws:iam::123456789012:role/kendra"
+	missingIndexID = "00000000-0000-4000-8000-000000000000"
+)
 
 func newMock() *kendra.Mock {
 	return kendra.New(config.NewOptions())
@@ -102,7 +105,7 @@ func TestCreateIndexDefaultsEnterprise(t *testing.T) {
 func TestDescribeIndexMissing404(t *testing.T) {
 	m := newMock()
 
-	_, err := m.DescribeIndex(context.Background(), "missing")
+	_, err := m.DescribeIndex(context.Background(), missingIndexID)
 	requireError(t, err)
 
 	var apiErr *driver.APIError
@@ -133,7 +136,7 @@ func TestDataSourceRequiresIndex(t *testing.T) {
 	m := newMock()
 
 	_, err := m.CreateDataSource(context.Background(), &driver.CreateDataSourceInput{
-		IndexID: "missing", Name: "ds", Type: driver.DataSourceTypeCustom,
+		IndexID: missingIndexID, Name: "ds", Type: driver.DataSourceTypeCustom,
 	})
 	requireError(t, err)
 

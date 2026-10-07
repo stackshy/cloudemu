@@ -9,6 +9,8 @@ const (
 	ExConflict             = "ConflictException"
 	ExResourceAlreadyExist = "ResourceAlreadyExistException"
 	ExInternalServer       = "InternalServerException"
+	ExResourceInUse        = "ResourceInUseException"
+	ExFeaturedConflict     = "FeaturedResultsConflictException"
 )
 
 // APIError tags a canonical cloudemu error with the Kendra exception name it

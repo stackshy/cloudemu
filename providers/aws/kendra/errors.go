@@ -15,6 +15,32 @@ func notFound(format string, args ...any) error {
 	}
 }
 
+// conflict builds a ConflictException-tagged error for an operation on a
+// resource that is not in a state that allows it.
+func conflict(format string, args ...any) error {
+	return &driver.APIError{
+		Exception: driver.ExConflict,
+		Err:       errors.Newf(errors.FailedPrecondition, format, args...),
+	}
+}
+
+// conflictErr builds an error tagged with the named exception (a ConflictException
+// variant such as FeaturedResultsConflictException).
+func conflictErr(exception, format string, args ...any) error {
+	return &driver.APIError{
+		Exception: exception,
+		Err:       errors.Newf(errors.FailedPrecondition, format, args...),
+	}
+}
+
+// resourceInUse builds a ResourceInUseException-tagged error.
+func resourceInUse(format string, args ...any) error {
+	return &driver.APIError{
+		Exception: driver.ExResourceInUse,
+		Err:       errors.Newf(errors.FailedPrecondition, format, args...),
+	}
+}
+
 // validation builds a ValidationException-tagged error for invalid input.
 func validation(format string, args ...any) error {
 	return &driver.APIError{

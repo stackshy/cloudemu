@@ -37,9 +37,51 @@ func New(d kendradriver.Kendra) *Handler {
 	h.registerIndexRoutes()
 	h.registerDataSourceRoutes()
 	h.registerTagRoutes()
+	h.registerOptionalRoutes()
 
 	return h
 }
+
+// registerOptionalRoutes wires the operations of each optional capability the
+// driver implements, so a driver that models only indexes and data sources serves
+// just those.
+func (h *Handler) registerOptionalRoutes() {
+	registerIf(h, h.registerDocumentRoutes)
+	registerIf(h, h.registerSyncRoutes)
+	registerIf(h, h.registerFaqRoutes)
+	registerIf(h, h.registerThesaurusRoutes)
+	registerIf(h, h.registerBlockListRoutes)
+	registerIf(h, h.registerExperienceRoutes)
+	registerIf(h, h.registerAccessControlRoutes)
+	registerIf(h, h.registerFeaturedRoutes)
+	registerIf(h, h.registerPrincipalRoutes)
+	registerIf(h, h.registerSuggestionRoutes)
+}
+
+// registerIf calls register with the driver when it implements capability T.
+func registerIf[T any](h *Handler, register func(T)) {
+	if d, ok := h.kendra.(T); ok {
+		register(d)
+	}
+}
+
+// handle adapts a typed operation (decoded request in, response out) to an HTTP
+// handler: decode, call, map the error or write the JSON response.
+func handle[Req, Res any](h *Handler, call func(ctx context.Context, req *Req) (Res, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dispatch(h, w, r, func(_ *Handler, ctx context.Context, req *Req) (any, error) {
+			res, err := call(ctx, req)
+			if err != nil {
+				return nil, err
+			}
+
+			return res, nil
+		})
+	}
+}
+
+// ack is the result of an operation with an empty response body.
+func ack(err error) (struct{}, error) { return struct{}{}, err }
 
 // Matches returns true for Kendra requests (X-Amz-Target of
 // "AWSKendraFrontendService.<Operation>").

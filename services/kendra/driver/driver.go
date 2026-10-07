@@ -96,6 +96,23 @@ type Index struct {
 	CreatedAt                         time.Time
 	UpdatedAt                         time.Time
 	Tags                              []Tag
+
+	// ErrorMessage explains a FAILED status. The emulator never fails an index,
+	// so it is empty, but it is carried so DescribeIndex reports the field.
+	ErrorMessage string
+
+	// Statistics is computed at DescribeIndex time from the documents and FAQs
+	// the index holds; it is never stored.
+	Statistics *IndexStatistics
+}
+
+// IndexStatistics are the counters DescribeIndex reports.
+type IndexStatistics struct {
+	// IndexedQuestionAnswers is the number of question-answer pairs across the
+	// index's FAQs. The emulator does not read the FAQ files, so it is always 0.
+	IndexedQuestionAnswers int32
+	IndexedTextDocuments   int32
+	IndexedTextBytes       int64
 }
 
 // DataSource is a Kendra data source connector that belongs to an index. ID,
