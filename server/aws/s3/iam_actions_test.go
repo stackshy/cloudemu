@@ -243,20 +243,34 @@ func TestClassifyAddressing(t *testing.T) {
 	for _, tc := range []struct {
 		host, path, bucket, key string
 	}{
-		{"localhost:4566", "/data/a/b.txt", "data", "a/b.txt"},
-		{"127.0.0.1:4566", "/data/a/b.txt", "data", "a/b.txt"},
-		{"data.localhost:4566", "/a/b.txt", "data", "a/b.txt"},
-		{"DATA.LOCALHOST", "/a/b.txt", "data", "a/b.txt"},
+		// Virtual-hosted S3 endpoint forms.
+		{"data.s3.localhost:4566", "/a/b.txt", "data", "a/b.txt"},
+		{"DATA.S3.LOCALHOST", "/a/b.txt", "data", "a/b.txt"},
 		{"data.s3.amazonaws.com", "/a/b.txt", "data", "a/b.txt"},
 		{"data.s3.us-west-2.amazonaws.com", "/", "data", ""},
-		{"my.data.s3.localhost.localstack.cloud:4566", "/k", "my.data", "k"},
+		{"data.s3.dualstack.us-west-2.amazonaws.com", "/k", "data", "k"},
+		{"data.s3.cn-north-1.amazonaws.com.cn", "/k", "data", "k"},
 		{"data.s3-us-west-2.amazonaws.com", "/k", "data", "k"},
+		{"my.data.s3.localhost.localstack.cloud:4566", "/k", "my.data", "k"},
+		{"my.s3.data.s3.amazonaws.com", "/k", "my.s3.data", "k"},
+		// Path-style: S3 endpoints without a bucket label, and every other host.
+		{"localhost:4566", "/data/a/b.txt", "data", "a/b.txt"},
+		{"127.0.0.1:4566", "/data/a/b.txt", "data", "a/b.txt"},
 		{"s3.localhost:4566", "/data/k", "data", "k"},
 		{"s3.amazonaws.com", "/data/k", "data", "k"},
+		{"s3.us-east-1.amazonaws.com", "/data/k", "data", "k"},
 		{"s3.localhost.localstack.cloud:4566", "/data/k", "data", "k"},
 		{"localhost", "/", "", ""},
-		{"bad_name.localhost", "/data/k", "data", "k"},
-		{"ab.localhost", "/data/k", "data", "k"},
+		{"cloudemu.localhost:4566", "/mybkt/k", "mybkt", "k"},
+		{"aws.localhost:4566", "/mybkt/k", "mybkt", "k"},
+		{"data.localhost:4566", "/mybkt/k", "mybkt", "k"},
+		{"minio.s3.internal:9000", "/mybkt/k", "mybkt", "k"},
+		{"minio.s3-proxy.internal", "/mybkt/k", "mybkt", "k"},
+		{"cloudemu", "/mybkt/k", "mybkt", "k"},
+		{"host.docker.internal:4566", "/mybkt/k", "mybkt", "k"},
+		{"x.s3.amazonaws.com.evil.example", "/mybkt/k", "mybkt", "k"},
+		{"bad_name.s3.localhost", "/mybkt/k", "mybkt", "k"},
+		{"ab.s3.localhost", "/mybkt/k", "mybkt", "k"},
 	} {
 		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
 		req.Host = tc.host
@@ -273,7 +287,7 @@ func TestClassifyAddressing(t *testing.T) {
 // checked ARN is the bucket and key the handler writes to.
 func TestIAMChecksFollowTheDispatchedBucket(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/data/k", strings.NewReader("x"))
-	req.Host = "other.localhost:4566"
+	req.Host = "other.s3.localhost:4566"
 
 	checks, ok := New(nil).IAMChecks(req, testScope)
 	if !ok || len(checks) != 1 || checks[0].Resource != "arn:aws:s3:::other/data/k" {

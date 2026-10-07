@@ -17,7 +17,7 @@ const s3ReaderDoc = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Act
 	`"Resource":["arn:aws:s3:::data","arn:aws:s3:::data/*"]}]}`
 
 // s3Client returns a path-style S3 client, or a virtual-hosted one that sends
-// Host "<bucket>.localhost:<port>" and dials the server whatever the name.
+// Host "<bucket>.s3.localhost:<port>" and dials the server whatever the name.
 func s3Client(t *testing.T, endpoint string, c aws.Credentials, virtualHosted bool) *s3.Client {
 	t.Helper()
 
@@ -41,7 +41,7 @@ func s3Client(t *testing.T, endpoint string, c aws.Credentials, virtualHosted bo
 	}}
 
 	return s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String("http://localhost:" + u.Port())
+		o.BaseEndpoint = aws.String("http://s3.localhost:" + u.Port())
 		o.HTTPClient = &http.Client{Transport: vhostOnly{t: t, next: transport}}
 	})
 }
@@ -54,7 +54,7 @@ type vhostOnly struct {
 }
 
 func (v vhostOnly) RoundTrip(r *http.Request) (*http.Response, error) {
-	if !strings.Contains(r.URL.Host, ".localhost:") {
+	if !strings.Contains(r.URL.Host, ".s3.localhost:") {
 		v.t.Errorf("request to %s is not virtual-hosted", r.URL)
 	}
 

@@ -83,7 +83,7 @@ func TestAuthzMatrixS3(t *testing.T) {
 				rest = "/"
 			}
 
-			return sreq{path: rest, host: bucket + ".localhost:" + strings.Split(host, ":")[1], service: "s3"}
+			return sreq{path: rest, host: bucket + ".s3.localhost:" + strings.Split(host, ":")[1], service: "s3"}
 		}},
 	} {
 		t.Run(style.name, func(t *testing.T) {
@@ -130,7 +130,7 @@ func TestAuthzMatrixS3(t *testing.T) {
 
 	t.Run("a Host naming another bucket is checked against that bucket", func(t *testing.T) {
 		status, body := doSigned(t, ts, reader, sreq{method: http.MethodGet, path: "/data/obj", service: "s3",
-			host: "other.localhost:" + strings.Split(host, ":")[1]})
+			host: "other.s3.localhost:" + strings.Split(host, ":")[1]})
 		wantDenied(t, status, body, "s3:GetObject on resource: arn:aws:s3:::other/data/obj")
 	})
 
@@ -181,6 +181,27 @@ func TestAuthzMatrixS3Copy(t *testing.T) {
 	if objectExists(t, cloud, "data", "stolen") {
 		t.Fatal("a denied copy wrote the object")
 	}
+
+	// A tagged source copied with the default COPY tagging directive also
+	// needs s3:GetObjectTagging on the source and s3:PutObjectTagging on the
+	// destination; replacing the tags does not read them.
+	if err := cloud.S3.PutObjectTagging(context.Background(), "data", "tmp/a", map[string]string{"k": "v"}); err != nil {
+		t.Fatalf("PutObjectTagging: %v", err)
+	}
+
+	status, body = doSigned(t, ts, copier, sreq{method: http.MethodPut, path: "/data/tag-copy", service: "s3",
+		header: map[string]string{"X-Amz-Copy-Source": "/data/tmp/a"}})
+	wantDenied(t, status, body, "s3:GetObjectTagging on resource: arn:aws:s3:::data/tmp/a")
+
+	status, body = doSigned(t, ts, copier, sreq{method: http.MethodPut, path: "/data/tag-replace", service: "s3",
+		header: map[string]string{"X-Amz-Copy-Source": "/data/tmp/a", "X-Amz-Tagging-Directive": "REPLACE"}})
+	wantStatus(t, status, body, http.StatusOK)
+
+	tagger := userWithPolicy(t, cloud, "tagcopier", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow",`+
+		`"Action":["s3:GetObject","s3:PutObject","s3:GetObjectTagging","s3:PutObjectTagging"],"Resource":"arn:aws:s3:::data/*"}]}`)
+	status, body = doSigned(t, ts, tagger, sreq{method: http.MethodPut, path: "/data/tag-copy", service: "s3",
+		header: map[string]string{"X-Amz-Copy-Source": "/data/tmp/a"}})
+	wantStatus(t, status, body, http.StatusOK)
 }
 
 // TestAuthzMatrixS3Delete covers DeleteObjects per key, the version and
@@ -249,6 +270,55 @@ func TestAuthzMatrixS3Delete(t *testing.T) {
 			header: map[string]string{"X-Amz-Object-Attributes": "ETag"}})
 		wantDenied(t, status, body, "s3:GetObjectAttributes")
 	})
+}
+
+// TestAuthzMatrixS3MultipartKeyBinding is the reviewer's repro: a user
+// allowed only shared/public/* cannot use another user's upload ID through a
+// key it is allowed, to read, steal (complete into its own key) or abort an
+// upload of private/victim.
+func TestAuthzMatrixS3MultipartKeyBinding(t *testing.T) {
+	ts, cloud := matrixServer(t, nil)
+	ctx := context.Background()
+
+	if err := cloud.S3.CreateBucket(ctx, "data"); err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+
+	mp, err := cloud.S3.CreateMultipartUpload(ctx, "data", "private/victim", "text/plain")
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+
+	part, err := cloud.S3.UploadPart(ctx, "data", "private/victim", mp.UploadID, 1, []byte("victim-bytes"))
+	if err != nil {
+		t.Fatalf("UploadPart: %v", err)
+	}
+
+	u := userWithPolicy(t, cloud, "publicwriter", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:*",`+
+		`"Resource":"arn:aws:s3:::data/shared/public/*"}]}`)
+	at := "/data/shared/public/mine?uploadId=" + mp.UploadID
+
+	for _, rq := range []sreq{
+		{method: http.MethodGet, path: at, service: "s3"},
+		{method: http.MethodPut, path: at + "&partNumber=2", service: "s3", body: "x"},
+		{method: http.MethodPost, path: at, service: "s3", body: `<CompleteMultipartUpload><Part><PartNumber>1</PartNumber>` +
+			`<ETag>"` + part.ETag + `"</ETag></Part></CompleteMultipartUpload>`},
+		{method: http.MethodDelete, path: at, service: "s3"},
+	} {
+		status, body := doSigned(t, ts, u, rq)
+		if status != http.StatusNotFound || !strings.Contains(body, "NoSuchUpload") {
+			t.Fatalf("%s %s: %d %s, want 404 NoSuchUpload", rq.method, rq.path, status, body)
+		}
+	}
+
+	if objectExists(t, cloud, "data", "shared/public/mine") {
+		t.Fatal("the victim's upload was completed into the attacker's key")
+	}
+
+	parts, err := cloud.S3.ListParts(ctx, "data", "private/victim", mp.UploadID)
+	if err != nil || len(parts) != 1 {
+		t.Fatalf("victim upload changed: %v parts, err %v", len(parts), err)
+	}
 }
 
 // presigned sends a SigV4 query-string (presigned URL) request.

@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -151,40 +152,39 @@ func bucketAndKey(r *http.Request) (bucket, key string) {
 	return parsePath(r.URL.Path)
 }
 
+// vhostHost matches the S3 virtual-hosted endpoint forms. The bucket is
+// the leading part; what follows must be an S3 endpoint:
+//   - AWS: <bucket>.s3.amazonaws.com, <bucket>.s3.<region>.amazonaws.com,
+//     <bucket>.s3-<region>.amazonaws.com and the dualstack and .com.cn forms;
+//   - local: <bucket>.s3.localhost and <bucket>.s3.localhost.localstack.cloud,
+//     what an SDK sends in virtual-hosted style to an endpoint of
+//     http://s3.localhost:<port> or http://s3.localhost.localstack.cloud:<port>.
+//
+// Nothing else is virtual-hosted, so a path-style client on any other
+// hostname (cloudemu.localhost, aws.localhost, minio.s3.internal, an IP)
+// keeps working. The decision depends on the Host alone, never on which
+// buckets exist, so the gate and dispatch cannot resolve different buckets
+// for one request.
+var vhostHost = regexp.MustCompile(`^(.+)\.s3(?:` +
+	`\.amazonaws\.com` +
+	`|(?:\.dualstack)?[.-][a-z0-9-]+\.amazonaws\.com(?:\.cn)?` +
+	`|\.localhost` +
+	`|\.localhost\.localstack\.cloud` +
+	`)$`)
+
 // vhostBucket returns the bucket a virtual-hosted Host names, or "" for a
-// path-style request. It recognizes the S3 endpoint forms
-// "<bucket>.s3.<...>" and "<bucket>.s3-<...>" (AWS and LocalStack-style
-// hostnames) and "<bucket>.localhost", which is what SDKs send for a
-// virtual-hosted request to an endpoint of http://localhost:<port>. A Host
-// that is an IP address, a bare name, or anything else stays path-style.
+// path-style request.
 func vhostBucket(host string) string {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
 
-	host = strings.ToLower(host)
-
-	var bucket string
-
-	for _, marker := range []string{".s3.", ".s3-"} {
-		if i := strings.Index(host, marker); i > 0 {
-			bucket = host[:i]
-			break
-		}
-	}
-
-	if bucket == "" {
-		bucket = strings.TrimSuffix(host, ".localhost")
-		if bucket == host || bucket == serviceName {
-			return ""
-		}
-	}
-
-	if !validBucketName(bucket) {
+	m := vhostHost.FindStringSubmatch(strings.ToLower(host))
+	if len(m) < 2 || !validBucketName(m[1]) {
 		return ""
 	}
 
-	return bucket
+	return m[1]
 }
 
 // classifyBucket names a bucket-level operation.

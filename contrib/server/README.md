@@ -180,7 +180,12 @@ actually run the request, so neither the SigV4 signing scope nor a forged
   blocked only by an explicit `Deny`.
 - S3 is checked per operation on the bucket ARN (`arn:aws:s3:::bucket`) or
   object ARN (`arn:aws:s3:::bucket/key`), for path-style, virtual-hosted and
-  presigned requests. CopyObject and UploadPartCopy also need `s3:GetObject`
+  presigned requests. Virtual-hosted means a Host of `<bucket>.s3.localhost`,
+  `<bucket>.s3.localhost.localstack.cloud` or one of the AWS S3 endpoint forms
+  (`<bucket>.s3.amazonaws.com`, `<bucket>.s3.<region>.amazonaws.com`,
+  `<bucket>.s3-<region>.amazonaws.com`); every other Host is path-style. A
+  presigned URL needs `X-Amz-Expires` between 1 and 604800 seconds, and an S3
+  request carrying an `x-amz-*` header that is not signed is refused. CopyObject and UploadPartCopy also need `s3:GetObject`
   on the source. A DeleteObjects request is checked key by key, and one
   denied key denies the whole request (real S3 deletes the allowed keys and
   reports the others). Bucket policies are not evaluated yet.

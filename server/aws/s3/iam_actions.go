@@ -20,7 +20,7 @@ import (
 // for example DeleteBucketTagging needs s3:PutBucketTagging, HeadBucket
 // needs s3:ListBucket, and an operation on a specific version needs the
 // *Version action.
-func (*Handler) IAMChecks(r *http.Request, s awsauthz.Scope) ([]awsauthz.Check, bool) {
+func (h *Handler) IAMChecks(r *http.Request, s awsauthz.Scope) ([]awsauthz.Check, bool) {
 	op, a := classify(r)
 
 	rule, ok := iamRules[op]
@@ -33,7 +33,7 @@ func (*Handler) IAMChecks(r *http.Request, s awsauthz.Scope) ([]awsauthz.Check, 
 		partition = "aws"
 	}
 
-	c := &checkSet{arnPrefix: "arn:" + partition + ":s3:::"}
+	c := &checkSet{arnPrefix: "arn:" + partition + ":s3:::", sourceTagged: h.objectHasTags}
 	c.bucketARN = c.arnPrefix + a.bucket
 	c.objectARN = c.bucketARN + "/" + a.key
 
@@ -48,7 +48,9 @@ func (*Handler) IAMChecks(r *http.Request, s awsauthz.Scope) ([]awsauthz.Check, 
 type checkSet struct {
 	// arnPrefix is "arn:<partition>:s3:::", to which a bucket name or
 	// "<bucket>/<key>" is appended.
-	arnPrefix            string
+	arnPrefix string
+	// sourceTagged reports whether a copy source object carries tags.
+	sourceTagged         func(r *http.Request, bucket, key string) bool
 	bucketARN, objectARN string
 	checks               []awsauthz.Check
 	seen                 map[awsauthz.Check]bool
@@ -240,10 +242,36 @@ func uploadSettingChecks(r *http.Request, c *checkSet, tagged bool) {
 func copyObjectChecks(r *http.Request, _ *opArgs, c *checkSet) bool {
 	c.object("PutObject")
 
-	tagged := strings.EqualFold(r.Header.Get("X-Amz-Tagging-Directive"), "REPLACE") && r.Header.Get("X-Amz-Tagging") != ""
-	uploadSettingChecks(r, c, tagged)
+	replaceTags := strings.EqualFold(r.Header.Get("X-Amz-Tagging-Directive"), "REPLACE")
+	uploadSettingChecks(r, c, replaceTags && r.Header.Get("X-Amz-Tagging") != "")
 
-	return copySourceChecks(r, c)
+	if !copySourceChecks(r, c) {
+		return false
+	}
+
+	// With the default COPY tagging directive the source's tags are copied,
+	// which needs s3:GetObjectTagging on the source and s3:PutObjectTagging on
+	// the destination when the source has tags (CopyObject API reference).
+	if !replaceTags {
+		srcBucket, srcKey, _ := parseCopySource(r.Header.Get("X-Amz-Copy-Source"))
+		if c.sourceTagged(r, srcBucket, srcKey) {
+			c.add("GetObjectTagging", c.arnPrefix+srcBucket+"/"+srcKey)
+			c.object("PutObjectTagging")
+		}
+	}
+
+	return true
+}
+
+// objectHasTags reports whether bucket/key exists with a non-empty tag set.
+func (h *Handler) objectHasTags(r *http.Request, bucket, key string) bool {
+	if h.bucket == nil {
+		return false
+	}
+
+	tags, err := h.bucket.GetObjectTagging(r.Context(), bucket, key)
+
+	return err == nil && len(tags) > 0
 }
 
 // uploadPartCopyChecks: s3:PutObject on the destination and read access to
