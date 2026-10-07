@@ -170,7 +170,7 @@ func authorizerContext(route *resolvedRoute) map[string]any {
 		return nil
 	}
 
-	out := make(map[string]any, len(route.authContext)+1)
+	out := make(map[string]any, len(route.authContext))
 	for k, v := range route.authContext {
 		out[k] = v
 	}
