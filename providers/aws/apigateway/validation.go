@@ -17,6 +17,8 @@ const (
 	msgDeploymentNotFound  = "Invalid Deployment identifier specified"
 	msgInvalidHTTPMethod   = "Invalid HTTP method specified"
 	msgMethodExists        = "Method already exists for this resource"
+	msgMethodAuthorizer    = "Invalid authorizer ID specified. Setting the authorization type to CUSTOM or " +
+		"COGNITO_USER_POOLS requires a valid authorizer."
 	msgStageExists         = "Stage already exists"
 	msgStageName           = "Stage name only allows a-zA-Z0-9_-"
 	msgNoMethods           = "The REST API doesn't contain any methods"
@@ -27,6 +29,12 @@ const (
 	msgNoIntegration       = "No integration defined for method"
 	msgEmptyHTTPMethod     = "Enumeration value for HttpMethod must be non-empty"
 	msgInvalidHTTPEndpoint = "Invalid HTTP endpoint specified for URI"
+	authTypeCustom         = "CUSTOM"
+	authTypeCognito        = "COGNITO_USER_POOLS"
+	pathName               = "/name"
+	pathType               = "/type"
+	connectionInternet     = "INTERNET"
+	connectionVpcLink      = "VPC_LINK"
 	msgInvalidARN          = "Invalid ARN specified in the request"
 	msgARNPathOrAction     = "AWS ARN for integration must contain path or action"
 	msgAWSProxyTarget      = "Integrations of type 'AWS_PROXY' currently only supports " +
@@ -81,7 +89,7 @@ func validateStageVariables(vars map[string]string) error {
 // accepts: NONE, AWS_IAM, CUSTOM or COGNITO_USER_POOLS.
 func validAuthorizationType(t string) bool {
 	switch t {
-	case "NONE", "AWS_IAM", "CUSTOM", "COGNITO_USER_POOLS":
+	case "NONE", "AWS_IAM", authTypeCustom, authTypeCognito:
 		return true
 	default:
 		return false
@@ -143,7 +151,7 @@ func validateIntegration(in *driver.PutIntegrationInput) error {
 // placeholders are allowed anywhere, including the host.
 func validateHTTPEndpoint(uri string) error {
 	u, err := url.Parse(substituteStageVariables(uri, nil, "x"))
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	if err != nil || (u.Scheme != schemeHTTP && u.Scheme != schemeHTTPS) || u.Host == "" {
 		return cerrors.New(cerrors.InvalidArgument, msgInvalidHTTPEndpoint)
 	}
 

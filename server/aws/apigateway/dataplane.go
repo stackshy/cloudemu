@@ -43,7 +43,7 @@ func (h *Handler) servePathDataPlane(w http.ResponseWriter, r *http.Request) {
 // route builds the proxy request, invokes the integration, and writes the mapped
 // response.
 func (h *Handler) route(w http.ResponseWriter, r *http.Request, apiID, stage, resourcePath string) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	body, err := readBody(w, r)
 	if err != nil {
 		writeError(w, http.StatusRequestEntityTooLarge, "RequestEntityTooLargeException", err.Error())
 		return
@@ -58,7 +58,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request, apiID, stage, re
 		MultiValueHeaders: map[string][]string(r.Header),
 		Query:             firstValues(r.URL.Query()),
 		MultiValueQuery:   map[string][]string(r.URL.Query()),
-		Body:              string(body),
+		Body:              body,
 		SourceIP:          clientIP(r.RemoteAddr),
 		Host:              r.Host,
 		Protocol:          r.Proto,
@@ -71,6 +71,23 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request, apiID, stage, re
 	}
 
 	writeProxyResponse(w, resp)
+}
+
+// readBody reads the request body into a string with one allocation: the buffer
+// is sized from Content-Length (within the body cap) and strings.Builder hands
+// its bytes over without copying, so a large body is held once, not three times.
+func readBody(w http.ResponseWriter, r *http.Request) (string, error) {
+	var sb strings.Builder
+
+	if n := r.ContentLength; n > 0 && n <= maxBodyBytes {
+		sb.Grow(int(n))
+	}
+
+	if _, err := io.Copy(&sb, http.MaxBytesReader(w, r.Body, maxBodyBytes)); err != nil {
+		return "", err
+	}
+
+	return sb.String(), nil
 }
 
 // writeProxyResponse writes a ProxyResponse as the HTTP response.

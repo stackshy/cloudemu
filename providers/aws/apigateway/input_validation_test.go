@@ -50,8 +50,26 @@ func TestPutMethodRejectsUnknownAuthorizationType(t *testing.T) {
 	// The rejected calls stored nothing, and every real type is accepted.
 	methods := []string{"GET", "POST", "PUT", "DELETE"}
 
+	custom, err := m.CreateAuthorizer(ctx(), api.ID, &driver.CreateAuthorizerInput{
+		Name: "lambda-auth", Type: driver.AuthorizerToken, AuthorizerURI: "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:000000000000:function:auth/invocations",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pool, err := m.CreateAuthorizer(ctx(), api.ID, &driver.CreateAuthorizerInput{
+		Name: "pool-auth", Type: driver.AuthorizerCognito, ProviderARNs: []string{"arn:aws:cognito-idp:us-east-1:000000000000:userpool/us-east-1_abc"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	authorizers := map[string]string{"CUSTOM": custom.ID, "COGNITO_USER_POOLS": pool.ID}
+
 	for i, good := range []string{"NONE", "AWS_IAM", "CUSTOM", "COGNITO_USER_POOLS"} {
-		mth, err := m.PutMethod(ctx(), api.ID, api.RootResourceID, methods[i], driver.PutMethodInput{AuthorizationType: good})
+		mth, err := m.PutMethod(ctx(), api.ID, api.RootResourceID, methods[i], driver.PutMethodInput{
+			AuthorizationType: good, AuthorizerID: authorizers[good],
+		})
 		if err != nil || mth.AuthorizationType != good {
 			t.Fatalf("authorizationType %q: %v %+v", good, err, mth)
 		}

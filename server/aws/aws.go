@@ -619,6 +619,14 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 		return h
 	}
 
+	// API Gateway invocations (an execute-api Host, a /_user_request_/ path or a
+	// registered custom domain) go first: their request bodies are the caller's own
+	// (often application/x-www-form-urlencoded), which the query-protocol handlers
+	// below would otherwise claim by content type and reject as InvalidAction.
+	if d.APIGateway != nil {
+		srv.Register(apigatewaysrv.NewDataPlane(d.APIGateway))
+	}
+
 	if d.CloudWatch != nil {
 		// The VPC driver optionally supplies derived AWS/IPAM metrics; surface
 		// them through CloudWatch when it implements the capability.

@@ -1,6 +1,7 @@
 package apigateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
@@ -17,8 +18,12 @@ const (
 	statusBadGway   = 502
 )
 
+// noIntegration is the integration latency reported for a request that never
+// reached a backend.
+const noIntegration = -1
+
 // resolvedRoute is the small, lock-free snapshot InvokeRoute pulls out from
-// under the API lock so the (possibly slow, re-entrant) Lambda call runs
+// under the API lock so the (possibly slow, re-entrant) backend call runs
 // without holding it.
 type resolvedRoute struct {
 	resourceID     string
@@ -28,71 +33,131 @@ type resolvedRoute struct {
 	pathParameters map[string]string
 	stageVariables map[string]string
 	apiID          string
+
+	// Request-time context captured with the route.
+	apiName      string
+	apiKeySource string
+	stage        driver.Stage
+	authorizer   *driver.Authorizer
+	validator    *driver.RequestValidator
+	schemas      map[string]string // content type -> request model schema
+	models       map[string]string // model name -> schema, for $ref
+	overrides    map[string]driver.GatewayResponse
+	ad           *apiData
+
+	// Filled in by enforcement and passed to the backend.
+	principalID string
+	authContext map[string]any
+	apiKeyID    string
+	usageKey    string
 }
 
-// InvokeRoute resolves req against the deployed stage's resource tree and, for
-// an AWS_PROXY/AWS Lambda integration, invokes the target function and maps its
-// response. Data-plane failures (unknown API/stage/route, missing backend,
-// malformed function response) are returned as ordinary HTTP responses, the
-// shape real API Gateway returns, not as Go errors. Every request to a
-// deployed stage publishes the AWS/ApiGateway request metrics.
+// InvokeRoute resolves req against the deployed stage's resource tree and runs
+// the method: authorization, API key and throttling, request validation, then
+// the integration. Data-plane failures (unknown API/stage/route, denied or
+// throttled requests, a missing or failing backend) are returned as ordinary
+// HTTP responses, the shape real API Gateway returns, not as Go errors. Every
+// request to a deployed stage publishes the AWS/ApiGateway request metrics.
 func (m *Mock) InvokeRoute(ctx context.Context, req *driver.ProxyRequest) (*driver.ProxyResponse, error) {
 	start := m.opts.Clock.Now()
+	reqID := idgen.UUID()
 
-	resp, integration := m.serveRoute(ctx, req)
+	route, ok := m.resolve(req)
+	resp, integration := m.serveResolved(ctx, req, &route, ok, reqID)
 
-	if apiName, ok := m.stageAPIName(req); ok {
-		m.emitRequestMetrics(ctx, apiName, req.StageName, resp.StatusCode, m.opts.Clock.Since(start), integration)
+	if route.ad != nil {
+		latency := m.opts.Clock.Since(start)
+
+		m.emitRequestMetrics(ctx, route.apiName, req.StageName, resp.StatusCode, latency, integration)
+		m.emitMethodMetrics(ctx, req, &route, resp.StatusCode, latency, integration)
+		m.writeAccessLog(ctx, req, &route, resp, reqID, latency)
 	}
 
 	return resp, nil
 }
 
-// serveRoute produces the data-plane response for req, and the integration
-// (backend) latency when the request reached a backend, or -1 when it did not.
-func (m *Mock) serveRoute(ctx context.Context, req *driver.ProxyRequest) (*driver.ProxyResponse, time.Duration) {
-	const noIntegration = -1
-
-	route, ok := m.resolve(req)
+// serveResolved runs a resolved (or unresolved) request and returns the response
+// and the backend latency, or noIntegration when no backend was reached.
+func (m *Mock) serveResolved(
+	ctx context.Context, req *driver.ProxyRequest, route *resolvedRoute, ok bool, reqID string,
+) (*driver.ProxyResponse, time.Duration) {
 	if !ok {
-		return forbiddenMissingToken(), noIntegration
+		return m.gatewayResponse(route, req, reqID, respMissingToken, "Missing Authentication Token"), noIntegration
 	}
 
-	if route.integration.Type == driver.IntegrationMock {
-		return m.serveMock(ctx, req, &route), 0
+	lg := m.newExecLog(route, req, reqID)
+
+	if resp := m.enforce(ctx, req, route, reqID); resp != nil {
+		lg.finish(ctx, resp.StatusCode)
+
+		return resp, noIntegration
 	}
 
-	if !isLambdaProxy(route.integration.Type) {
-		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), noIntegration
-	}
+	resp, integration := m.runIntegration(ctx, req, route, reqID, lg)
+	lg.finish(ctx, resp.StatusCode)
 
+	return resp, integration
+}
+
+// runIntegration invokes the method's backend by integration type.
+func (m *Mock) runIntegration(
+	ctx context.Context, req *driver.ProxyRequest, route *resolvedRoute, reqID string, lg *execLog,
+) (*driver.ProxyResponse, time.Duration) {
+	switch route.integration.Type {
+	case driver.IntegrationMock:
+		return m.serveMock(ctx, req, route), 0
+	case driver.IntegrationHTTP, driver.IntegrationHTTPProxy:
+		return m.serveHTTP(ctx, req, route, reqID, lg)
+	case driver.IntegrationAWSProxy, driver.IntegrationAWS:
+		return m.serveLambda(ctx, req, route, reqID, lg)
+	default:
+		return m.gatewayResponse(route, req, reqID, respAPIConfigError, "Internal server error"), noIntegration
+	}
+}
+
+// serveLambda invokes a Lambda proxy integration and maps its response.
+func (m *Mock) serveLambda(
+	ctx context.Context, req *driver.ProxyRequest, route *resolvedRoute, reqID string, lg *execLog,
+) (*driver.ProxyResponse, time.Duration) {
 	if m.lambda == nil {
 		// Nil-safe: no Lambda backend wired (library-only construction). A Lambda
 		// integration whose backend is unreachable is a 502 in real API Gateway.
 		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), noIntegration
 	}
 
-	event, err := buildProxyEvent(req, &route, m.opts.AccountID)
+	uri, missing := expandStageVariables(route.integration.URI, route.stageVariables)
+	if missing != "" {
+		lg.errorf("Execution failed: stage variable %q is not defined", missing)
+
+		return m.gatewayResponse(route, req, reqID, respAPIConfigError, "Internal server error"), noIntegration
+	}
+
+	event, err := buildProxyEvent(req, route, m.opts.AccountID)
 	if err != nil {
 		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), noIntegration
 	}
 
-	target := extractLambdaTarget(substituteStageVariables(route.integration.URI, route.stageVariables, ""))
+	target := extractLambdaTarget(uri)
+	lg.infof("Endpoint request URI: %s", uri)
 
 	invokeStart := m.opts.Clock.Now()
 	out, fnErr, invErr := m.lambda.InvokeSync(ctx, target, event)
 	integration := m.opts.Clock.Since(invokeStart)
 
 	if invErr != nil || fnErr != "" {
+		lg.errorf("Execution failed due to configuration error: Lambda invocation failed")
+
 		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), integration
 	}
 
-	return mapLambdaResponse(out), integration
+	return mapLambdaResponse(out, event), integration
 }
 
 // resolve locks the API, resolves the stage and the route in the tree the
 // stage's deployment captured, and returns a snapshot. Live edits made since
-// that deployment are not visible here.
+// that deployment are not visible here. ok is false when no route matched; the
+// route still carries the API and stage context (when they exist) so the
+// failure can use the API's gateway responses.
 func (m *Mock) resolve(req *driver.ProxyRequest) (resolvedRoute, bool) {
 	ad, err := m.getAPI(req.RestAPIID)
 	if err != nil {
@@ -107,26 +172,73 @@ func (m *Mock) resolve(req *driver.ProxyRequest) (resolvedRoute, bool) {
 		return resolvedRoute{}, false
 	}
 
+	route := resolvedRoute{
+		apiID: req.RestAPIID, apiName: apiMetricName(&ad.api), apiKeySource: ad.api.APIKeySource,
+		stage: copyStage(st), stageVariables: copyStrMap(st.Variables), ad: ad,
+		overrides: copyGatewayOverrides(ad.gwResponses),
+	}
+
 	match, ok := matchRoute(ad.trees[st.DeploymentID], req.HTTPMethod, req.Path)
 	if !ok || match.method.Integration == nil {
-		return resolvedRoute{}, false
+		return route, false
 	}
 
 	method := copyMethod(match.method)
+	route.resourceID, route.resourcePath = match.resource.ID, match.resource.Path
+	route.method, route.integration = method, *method.Integration
+	route.pathParameters = match.pathParameters
+	m.attachMethodContext(ad, &route)
 
-	return resolvedRoute{
-		resourceID:     match.resource.ID,
-		resourcePath:   match.resource.Path,
-		method:         method,
-		integration:    *method.Integration,
-		pathParameters: match.pathParameters,
-		stageVariables: copyStrMap(st.Variables),
-		apiID:          req.RestAPIID,
-	}, true
+	return route, true
 }
 
-func isLambdaProxy(t string) bool {
-	return t == driver.IntegrationAWSProxy || t == driver.IntegrationAWS
+// apiMetricName is the ApiName metrics dimension: the name, or the id when the
+// name has no ASCII.
+func apiMetricName(api *driver.RestAPI) string {
+	if api.Name == "" {
+		return api.ID
+	}
+
+	return api.Name
+}
+
+// attachMethodContext copies the authorizer, request validator and models a
+// method references out from under the API lock.
+func (*Mock) attachMethodContext(ad *apiData, route *resolvedRoute) {
+	if az, ok := ad.authorizers[route.method.AuthorizerID]; ok {
+		cp := copyAuthorizer(az)
+		route.authorizer = &cp
+	}
+
+	if v, ok := ad.validators[route.method.RequestValidatorID]; ok {
+		cp := *v
+		route.validator = &cp
+	}
+
+	route.models = make(map[string]string, len(ad.models))
+	for name, mod := range ad.models {
+		route.models[name] = mod.Schema
+	}
+
+	route.schemas = make(map[string]string, len(route.method.RequestModels))
+	for ct, name := range route.method.RequestModels {
+		if schema, ok := route.models[name]; ok {
+			route.schemas[ct] = schema
+		}
+	}
+}
+
+func copyGatewayOverrides(in map[string]*driver.GatewayResponse) map[string]driver.GatewayResponse {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make(map[string]driver.GatewayResponse, len(in))
+	for k, v := range in {
+		out[k] = copyGatewayResponse(v)
+	}
+
+	return out
 }
 
 // extractLambdaTarget pulls the Lambda function ARN (or name) out of an
@@ -153,12 +265,6 @@ func extractLambdaTarget(uri string) string {
 	return rest
 }
 
-// forbiddenMissingToken is the response API Gateway returns for a request that
-// matches no route (or an unknown stage/API).
-func forbiddenMissingToken() *driver.ProxyResponse {
-	return jsonResponse(statusForbidden, `{"message":"Missing Authentication Token"}`)
-}
-
 func jsonResponse(status int, body string) *driver.ProxyResponse {
 	return &driver.ProxyResponse{
 		StatusCode: status,
@@ -171,13 +277,23 @@ func jsonResponse(status int, body string) *driver.ProxyResponse {
 // ({statusCode,headers,body,isBase64Encoded}) into a ProxyResponse. Output that
 // is not proxy-shaped (missing statusCode, invalid JSON) is a 502, matching real
 // API Gateway's "malformed Lambda proxy response" handling.
-func mapLambdaResponse(out []byte) *driver.ProxyResponse {
+func mapLambdaResponse(out, event []byte) *driver.ProxyResponse {
 	var lr struct {
 		StatusCode        int                 `json:"statusCode"`
 		Headers           map[string]string   `json:"headers"`
 		MultiValueHeaders map[string][]string `json:"multiValueHeaders"`
 		Body              string              `json:"body"`
 		IsBase64Encoded   bool                `json:"isBase64Encoded"`
+	}
+
+	// The Lambda mock cannot run an uploaded zip: it echoes the request payload.
+	// That echo is not a proxy response, so surface it as a 200 JSON body (the
+	// stub "ran" the function) rather than a malformed-response 502.
+	if bytes.Equal(out, event) {
+		return &driver.ProxyResponse{
+			StatusCode: statusOK, Headers: map[string]string{headerContentType: contentTypeJSON, headerLambdaStub: "true"},
+			Body: string(out),
+		}
 	}
 
 	if err := json.Unmarshal(out, &lr); err != nil || lr.StatusCode == 0 {
@@ -219,7 +335,8 @@ func buildProxyEvent(req *driver.ProxyRequest, route *resolvedRoute, accountID s
 			RequestID:    idgen.UUID(),
 			DomainName:   req.Host,
 			Protocol:     orDefault(req.Protocol, "HTTP/1.1"),
-			Identity:     proxyIdentity{SourceIP: req.SourceIP},
+			Identity:     proxyIdentity{SourceIP: req.SourceIP, APIKeyID: route.apiKeyID},
+			Authorizer:   authorizerContext(route),
 		},
 	}
 
@@ -252,19 +369,21 @@ type proxyEvent struct {
 }
 
 type proxyRequestContext struct {
-	ResourceID   string        `json:"resourceId"`
-	ResourcePath string        `json:"resourcePath"`
-	HTTPMethod   string        `json:"httpMethod"`
-	Path         string        `json:"path"`
-	AccountID    string        `json:"accountId"`
-	APIID        string        `json:"apiId"`
-	Stage        string        `json:"stage"`
-	RequestID    string        `json:"requestId"`
-	DomainName   string        `json:"domainName"`
-	Protocol     string        `json:"protocol"`
-	Identity     proxyIdentity `json:"identity"`
+	ResourceID   string         `json:"resourceId"`
+	ResourcePath string         `json:"resourcePath"`
+	HTTPMethod   string         `json:"httpMethod"`
+	Path         string         `json:"path"`
+	AccountID    string         `json:"accountId"`
+	APIID        string         `json:"apiId"`
+	Stage        string         `json:"stage"`
+	RequestID    string         `json:"requestId"`
+	DomainName   string         `json:"domainName"`
+	Protocol     string         `json:"protocol"`
+	Identity     proxyIdentity  `json:"identity"`
+	Authorizer   map[string]any `json:"authorizer,omitempty"`
 }
 
 type proxyIdentity struct {
 	SourceIP string `json:"sourceIp"`
+	APIKeyID string `json:"apiKeyId,omitempty"`
 }

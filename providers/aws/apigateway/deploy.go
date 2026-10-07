@@ -229,7 +229,8 @@ func (m *Mock) CreateStage(_ context.Context, restAPIID string, in driver.Create
 	st := &driver.Stage{
 		StageName: in.StageName, RestAPIID: restAPIID, DeploymentID: in.DeploymentID,
 		Description: in.Description, CreatedDate: m.now(), Variables: copyStrMap(in.Variables),
-		DocumentationVersion: in.DocumentationVersion,
+		DocumentationVersion: in.DocumentationVersion, Tags: copyStrMap(in.Tags),
+		TracingEnabled: in.TracingEnabled, CacheClusterEnabled: in.CacheClusterEnabled, CacheClusterSize: in.CacheClusterSize,
 	}
 	ad.stages[in.StageName] = st
 
@@ -303,6 +304,21 @@ func (m *Mock) GetStage(_ context.Context, restAPIID, stageName string) (*driver
 func copyStage(s *driver.Stage) driver.Stage {
 	out := *s
 	out.Variables = copyStrMap(s.Variables)
+	out.Tags = copyStrMap(s.Tags)
+
+	if s.AccessLogSettings != nil {
+		als := *s.AccessLogSettings
+		out.AccessLogSettings = &als
+	}
+
+	if s.MethodSettings != nil {
+		out.MethodSettings = make(map[string]*driver.MethodSetting, len(s.MethodSettings))
+
+		for k, v := range s.MethodSettings {
+			ms := *v
+			out.MethodSettings[k] = &ms
+		}
+	}
 
 	return out
 }

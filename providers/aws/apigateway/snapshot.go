@@ -19,6 +19,14 @@ type apigatewaySnapshot struct {
 	APIs    map[string]*apiSnapshot              `json:"apis,omitempty"`
 	Certs   map[string]*driver.ClientCertificate `json:"clientCertificates,omitempty"`
 	Account *driver.Account                      `json:"account,omitempty"`
+
+	APIKeys  map[string]*driver.APIKey                     `json:"apiKeys,omitempty"`
+	Plans    map[string]*driver.UsagePlan                  `json:"usagePlans,omitempty"`
+	PlanKeys map[string][]string                           `json:"usagePlanKeys,omitempty"`
+	Domains  map[string]*driver.DomainName                 `json:"domainNames,omitempty"`
+	Mappings map[string]map[string]*driver.BasePathMapping `json:"basePathMappings,omitempty"`
+	VpcLinks map[string]*driver.VpcLink                    `json:"vpcLinks,omitempty"`
+	Usage    map[string]map[string]int64                   `json:"usage,omitempty"`
 }
 
 // apiSnapshot is the exported form of apiData: the REST API plus its resource
@@ -32,6 +40,10 @@ type apiSnapshot struct {
 	Stages          map[string]*driver.Stage               `json:"stages,omitempty"`
 	DocParts        map[string]*driver.DocumentationPart   `json:"documentationParts,omitempty"`
 	DocVersions     map[string]*docVersion                 `json:"documentationVersions,omitempty"`
+	Authorizers     map[string]*driver.Authorizer          `json:"authorizers,omitempty"`
+	Models          map[string]*driver.Model               `json:"models,omitempty"`
+	Validators      map[string]*driver.RequestValidator    `json:"requestValidators,omitempty"`
+	GatewayResps    map[string]*driver.GatewayResponse     `json:"gatewayResponses,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused. API Gateway holds
@@ -61,9 +73,87 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 		}
 	}
 
+	m.snapshotRegionExt(&snap)
 	m.regionMu.RUnlock()
 
 	return json.Marshal(snap)
+}
+
+func (m *Mock) snapshotRegionExt(snap *apigatewaySnapshot) {
+	m.snapshotKeysAndPlans(snap)
+	m.snapshotDomainsAndLinks(snap)
+
+	m.usageMu.Lock()
+	defer m.usageMu.Unlock()
+
+	if len(m.usage) > 0 {
+		snap.Usage = make(map[string]map[string]int64, len(m.usage))
+
+		for k, days := range m.usage {
+			snap.Usage[k] = copyDayCounts(days)
+		}
+	}
+}
+
+func (m *Mock) snapshotKeysAndPlans(snap *apigatewaySnapshot) {
+	if len(m.keys) > 0 {
+		snap.APIKeys = make(map[string]*driver.APIKey, len(m.keys))
+
+		for id, k := range m.keys {
+			cp := copyAPIKey(k, true)
+			snap.APIKeys[id] = &cp
+		}
+	}
+
+	if len(m.plans) == 0 {
+		return
+	}
+
+	snap.Plans, snap.PlanKeys = make(map[string]*driver.UsagePlan, len(m.plans)), map[string][]string{}
+
+	for id, p := range m.plans {
+		cp := copyPlan(p)
+		snap.Plans[id] = &cp
+
+		for kid := range m.planKeys[id] {
+			snap.PlanKeys[id] = append(snap.PlanKeys[id], kid)
+		}
+	}
+}
+
+func (m *Mock) snapshotDomainsAndLinks(snap *apigatewaySnapshot) {
+	if len(m.domains) > 0 {
+		snap.Domains, snap.Mappings = make(map[string]*driver.DomainName, len(m.domains)), map[string]map[string]*driver.BasePathMapping{}
+
+		for name, d := range m.domains {
+			cp := copyDomain(d)
+			snap.Domains[name] = &cp
+			snap.Mappings[name] = map[string]*driver.BasePathMapping{}
+
+			for bp, mp := range m.mappings[name] {
+				c := *mp
+				snap.Mappings[name][bp] = &c
+			}
+		}
+	}
+
+	if len(m.vpcLinks) > 0 {
+		snap.VpcLinks = make(map[string]*driver.VpcLink, len(m.vpcLinks))
+
+		for id, l := range m.vpcLinks {
+			cp := copyVpcLink(l)
+			snap.VpcLinks[id] = &cp
+		}
+	}
+}
+
+func copyDayCounts(in map[string]int64) map[string]int64 {
+	out := make(map[string]int64, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+
+	return out
 }
 
 // snapshotAPI deep-copies one API's tree under its lock so the marshal that
@@ -107,6 +197,8 @@ func snapshotAPI(ad *apiData) *apiSnapshot {
 		as.DocParts[id] = &cp
 	}
 
+	snapshotAPIExt(as, ad)
+
 	as.DocVersions = make(map[string]*docVersion, len(ad.docVersions))
 
 	for v, dv := range ad.docVersions {
@@ -119,6 +211,38 @@ func snapshotAPI(ad *apiData) *apiSnapshot {
 	}
 
 	return as
+}
+
+// snapshotAPIExt copies the per-API authorizers, models, validators and gateway
+// response overrides. ad.mu is held for reading.
+func snapshotAPIExt(as *apiSnapshot, ad *apiData) {
+	as.Authorizers = make(map[string]*driver.Authorizer, len(ad.authorizers))
+
+	for id, az := range ad.authorizers {
+		cp := copyAuthorizer(az)
+		as.Authorizers[id] = &cp
+	}
+
+	as.Models = make(map[string]*driver.Model, len(ad.models))
+
+	for name, mod := range ad.models {
+		cp := *mod
+		as.Models[name] = &cp
+	}
+
+	as.Validators = make(map[string]*driver.RequestValidator, len(ad.validators))
+
+	for id, v := range ad.validators {
+		cp := *v
+		as.Validators[id] = &cp
+	}
+
+	as.GatewayResps = make(map[string]*driver.GatewayResponse, len(ad.gwResponses))
+
+	for t, gr := range ad.gwResponses {
+		cp := copyGatewayResponse(gr)
+		as.GatewayResps[t] = &cp
+	}
 }
 
 // Restore rebuilds the mock's state under the original identities: every REST
@@ -144,7 +268,65 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		m.account = *snap.Account
 	}
 
+	m.restoreRegionExt(&snap)
+
 	return nil
+}
+
+// restoreRegionExt rebuilds the account-level resources. regionMu is held.
+func (m *Mock) restoreRegionExt(snap *apigatewaySnapshot) {
+	for id, k := range snap.APIKeys {
+		m.keys[id] = k
+	}
+
+	for id, p := range snap.Plans {
+		m.plans[id] = p
+		m.planKeys[id] = map[string]bool{}
+
+		for _, kid := range snap.PlanKeys[id] {
+			m.planKeys[id][kid] = true
+		}
+	}
+
+	for name, d := range snap.Domains {
+		m.domains[name] = d
+		m.mappings[name] = snap.Mappings[name]
+
+		if m.mappings[name] == nil {
+			m.mappings[name] = map[string]*driver.BasePathMapping{}
+		}
+	}
+
+	for id, l := range snap.VpcLinks {
+		m.vpcLinks[id] = l
+	}
+
+	m.usageMu.Lock()
+	defer m.usageMu.Unlock()
+
+	for k, days := range snap.Usage {
+		m.usage[k] = days
+	}
+}
+
+// restoreAPIExt restores the per-API extension stores. A snapshot written before
+// they existed has none, so the default models stay.
+func restoreAPIExt(ad *apiData, as *apiSnapshot) {
+	for id, az := range as.Authorizers {
+		ad.authorizers[id] = az
+	}
+
+	for name, mod := range as.Models {
+		ad.models[name] = mod
+	}
+
+	for id, v := range as.Validators {
+		ad.validators[id] = v
+	}
+
+	for t, gr := range as.GatewayResps {
+		ad.gwResponses[t] = gr
+	}
 }
 
 // restoreAPI rebuilds an apiData from its exported snapshot form. A snapshot
@@ -159,6 +341,7 @@ func restoreAPI(as *apiSnapshot) *apiData {
 		stages:      make(map[string]*driver.Stage, len(as.Stages)),
 		docParts:    make(map[string]*driver.DocumentationPart, len(as.DocParts)),
 		docVersions: make(map[string]*docVersion, len(as.DocVersions)),
+		apiExt:      newAPIExt(),
 	}
 
 	for id, p := range as.DocParts {
@@ -186,6 +369,8 @@ func restoreAPI(as *apiSnapshot) *apiData {
 	for name, s := range as.Stages {
 		ad.stages[name] = s
 	}
+
+	restoreAPIExt(ad, as)
 
 	return ad
 }

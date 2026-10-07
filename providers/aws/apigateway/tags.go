@@ -13,6 +13,14 @@ const (
 	arnClientCertificates = "/clientcertificates/"
 )
 
+// Resource kinds of the account-level tag targets (the first ARN path segment).
+const (
+	kindAPIKeys    = "apikeys"
+	kindUsagePlans = "usageplans"
+	kindDomains    = "domainnames"
+	kindVpcLinks   = "vpclinks"
+)
+
 // arnScheme and arnService are the first and service fields of an API
 // Gateway ARN.
 const (
@@ -40,13 +48,108 @@ func (m *Mock) resolveTagTarget(arn string) (tagTarget, error) {
 	resource := parts[5]
 
 	switch {
-	case strings.HasPrefix(resource, arnRestAPIs) && !strings.Contains(strings.TrimPrefix(resource, arnRestAPIs), "/"):
-		return m.restAPITagTarget(strings.TrimPrefix(resource, arnRestAPIs))
+	case strings.HasPrefix(resource, arnRestAPIs):
+		return m.restAPIOrStageTagTarget(strings.TrimPrefix(resource, arnRestAPIs), arn)
 	case strings.HasPrefix(resource, arnClientCertificates):
 		return m.certTagTarget(strings.TrimPrefix(resource, arnClientCertificates))
-	default:
+	}
+
+	if t, ok := m.regionTagTarget(resource); ok {
+		return t, nil
+	}
+
+	return tagTarget{}, cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified in the ARN: %s", arn)
+}
+
+// restAPIOrStageTagTarget resolves "{apiId}" or "{apiId}/stages/{stage}".
+func (m *Mock) restAPIOrStageTagTarget(path, arn string) (tagTarget, error) {
+	apiID, rest, hasRest := strings.Cut(path, "/")
+	if !hasRest {
+		return m.restAPITagTarget(apiID)
+	}
+
+	stage, ok := strings.CutPrefix(rest, "stages/")
+	if !ok || stage == "" || strings.Contains(stage, "/") {
 		return tagTarget{}, cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified in the ARN: %s", arn)
 	}
+
+	ad, err := m.getAPI(apiID)
+	if err != nil {
+		return tagTarget{}, err
+	}
+
+	return tagTarget{apply: func(fn func(map[string]string) map[string]string) error {
+		ad.mu.Lock()
+		defer ad.mu.Unlock()
+
+		st, found := ad.stages[stage]
+		if !found {
+			return cerrors.Newf(cerrors.NotFound, "Invalid stage identifier specified %s", stage)
+		}
+
+		st.Tags = fn(st.Tags)
+
+		return nil
+	}}, nil
+}
+
+// regionTagTarget resolves the account-level resources that carry tags: API
+// keys, usage plans, custom domain names and VPC links.
+func (m *Mock) regionTagTarget(resource string) (tagTarget, bool) {
+	kind, id, ok := strings.Cut(strings.TrimPrefix(resource, "/"), "/")
+	if !ok || id == "" || strings.Contains(id, "/") {
+		return tagTarget{}, false
+	}
+
+	switch kind {
+	case kindAPIKeys, kindUsagePlans, kindDomains, kindVpcLinks:
+	default:
+		return tagTarget{}, false
+	}
+
+	return tagTarget{apply: func(fn func(map[string]string) map[string]string) error {
+		m.regionMu.Lock()
+		defer m.regionMu.Unlock()
+
+		if !m.applyRegionTags(kind, id, fn) {
+			return cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified: %s", resource)
+		}
+
+		return nil
+	}}, true
+}
+
+// applyRegionTags runs fn on the tag map of the named resource and stores the
+// result, reporting whether the resource exists. regionMu is held.
+func (m *Mock) applyRegionTags(kind, id string, fn func(map[string]string) map[string]string) bool {
+	switch kind {
+	case kindAPIKeys:
+		if r := m.keys[id]; r != nil {
+			r.Tags = fn(r.Tags)
+
+			return true
+		}
+	case kindUsagePlans:
+		if r := m.plans[id]; r != nil {
+			r.Tags = fn(r.Tags)
+
+			return true
+		}
+	case kindDomains:
+		if r := m.domains[id]; r != nil {
+			r.Tags = fn(r.Tags)
+
+			return true
+		}
+	case kindVpcLinks:
+		if r := m.vpcLinks[id]; r != nil {
+			r.Tags = fn(r.Tags)
+
+			return true
+		}
+	}
+
+	return false
 }
 
 func (m *Mock) restAPITagTarget(id string) (tagTarget, error) {

@@ -48,7 +48,7 @@ func (m *Mock) UpdateRestAPI(_ context.Context, id string, ops []driver.PatchOpe
 // does not track (matching how a client only patches fields it manages).
 func applyRestAPIPatch(api *driver.RestAPI, op driver.PatchOperation) {
 	switch op.Path {
-	case "/name":
+	case pathName:
 		api.Name = op.Value
 	case pathDescription:
 		api.Description = op.Value
@@ -244,19 +244,14 @@ func (m *Mock) UpdateIntegration(
 	return &out, nil
 }
 
-// applyIntegrationPatch applies one patch op to an Integration. The method is
-// patched at /httpMethod, the Integration resource's own member name;
-// /integrationHttpMethod, PutIntegration's parameter name, is accepted too.
 func applyIntegrationPatch(ig *driver.Integration, op driver.PatchOperation) error {
+	if field := integrationValueField(ig, op.Path); field != nil {
+		*field = op.Value
+
+		return nil
+	}
+
 	switch op.Path {
-	case "/uri":
-		ig.URI = op.Value
-	case "/type":
-		ig.Type = op.Value
-	case "/httpMethod", "/integrationHttpMethod":
-		ig.IntegrationHTTPMethod = op.Value
-	case "/passthroughBehavior":
-		ig.PassthroughBehavior = op.Value
 	case "/timeoutInMillis":
 		n, err := strconv.Atoi(op.Value)
 		if err != nil {
@@ -271,10 +266,44 @@ func applyIntegrationPatch(ig *driver.Integration, op driver.PatchOperation) err
 	case "/cacheNamespace":
 		ig.CacheNamespace = patchRef(op)
 	default:
-		applyIntegrationMapPatch(ig, op)
+		if !applyConnectionPatch(ig, op) {
+			applyIntegrationMapPatch(ig, op)
+		}
 	}
 
 	return nil
+}
+
+// integrationValueField returns the integration string member a replace op sets
+// to its value verbatim, or nil for any other path.
+func integrationValueField(ig *driver.Integration, path string) *string {
+	switch path {
+	case "/uri":
+		return &ig.URI
+	case pathType:
+		return &ig.Type
+	case "/httpMethod", "/integrationHttpMethod":
+		return &ig.IntegrationHTTPMethod
+	case "/passthroughBehavior":
+		return &ig.PassthroughBehavior
+	default:
+		return nil
+	}
+}
+
+// applyConnectionPatch handles /connectionType and /connectionId, reporting
+// whether the path was one of them.
+func applyConnectionPatch(ig *driver.Integration, op driver.PatchOperation) bool {
+	switch op.Path {
+	case "/connectionType":
+		ig.ConnectionType = orDefault(op.Value, connectionInternet)
+	case "/connectionId":
+		ig.ConnectionID = patchRef(op)
+	default:
+		return false
+	}
+
+	return true
 }
 
 // applyIntegrationMapPatch handles the map- and list-valued integration paths.
@@ -304,6 +333,12 @@ func applyMethodPatch(mth *driver.Method, op driver.PatchOperation) {
 		mth.APIKeyRequired = parseBool(op.Value)
 	case "/operationName":
 		mth.OperationName = patchRef(op)
+	case "/authorizerId":
+		mth.AuthorizerID = patchRef(op)
+	case "/requestValidatorId":
+		mth.RequestValidatorID = patchRef(op)
+	case "/authorizationScopes":
+		mth.AuthorizationScopes = patchStringSlice(mth.AuthorizationScopes, op.Op, op.Value)
 	default:
 		applyMapPatch(op, "/requestParameters/", func(k, v string, remove bool) {
 			mth.RequestParameters = patchBoolMap(mth.RequestParameters, k, v, remove)
@@ -373,6 +408,10 @@ func (m *Mock) UpdateStage(
 		}
 	}
 
+	if err := validateStageLogging(&next, m.account.CloudWatchRoleARN != ""); err != nil {
+		return nil, err
+	}
+
 	*st = next
 	out := copyStage(st)
 
@@ -411,6 +450,10 @@ func (m *Mock) applyStagePatch(ad *apiData, st *driver.Stage, op driver.PatchOpe
 		}
 
 		st.Variables[key] = op.Value
+	default:
+		_, err := applyStageSettingsPatch(st, op)
+
+		return err
 	}
 
 	return nil
