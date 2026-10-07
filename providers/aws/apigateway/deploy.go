@@ -32,6 +32,10 @@ func (m *Mock) CreateDeployment(
 		if err := validateStageName(in.StageName); err != nil {
 			return nil, err
 		}
+
+		if err := validateStageVariables(in.Variables); err != nil {
+			return nil, err
+		}
 	}
 
 	dep := &driver.Deployment{
@@ -196,6 +200,10 @@ func (m *Mock) CreateStage(_ context.Context, restAPIID string, in driver.Create
 
 	if in.DeploymentID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "deploymentId is required")
+	}
+
+	if err := validateStageVariables(in.Variables); err != nil {
+		return nil, err
 	}
 
 	ad, err := m.getAPI(restAPIID)

@@ -37,9 +37,14 @@ func (m *Mock) PutMethod(
 		return nil, cerrors.New(cerrors.AlreadyExists, msgMethodExists)
 	}
 
+	authType := orDefault(in.AuthorizationType, "NONE")
+	if !validAuthorizationType(authType) {
+		return nil, cerrors.New(cerrors.InvalidArgument, msgAuthorizationType)
+	}
+
 	mth := &driver.Method{
 		HTTPMethod:        method,
-		AuthorizationType: orDefault(in.AuthorizationType, "NONE"),
+		AuthorizationType: authType,
 		APIKeyRequired:    in.APIKeyRequired,
 		OperationName:     in.OperationName,
 		RequestParameters: copyBoolMap(in.RequestParameters),

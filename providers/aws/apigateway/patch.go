@@ -195,6 +195,10 @@ func (m *Mock) UpdateMethod(
 		return nil, err
 	}
 
+	if !validAuthorizationType(next.AuthorizationType) {
+		return nil, cerrors.New(cerrors.InvalidArgument, msgAuthorizationType)
+	}
+
 	*mth = next
 	out := copyMethod(mth)
 
@@ -225,7 +229,9 @@ func (m *Mock) UpdateIntegration(
 
 	next := copyIntegration(mth.Integration)
 	for _, op := range ops {
-		applyIntegrationPatch(&next, op)
+		if err := applyIntegrationPatch(&next, op); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := validateIntegrationSettings(&next, mth.RequestParameters); err != nil {
@@ -238,21 +244,26 @@ func (m *Mock) UpdateIntegration(
 	return &out, nil
 }
 
-// applyIntegrationPatch applies one patch op to an Integration.
-func applyIntegrationPatch(ig *driver.Integration, op driver.PatchOperation) {
+// applyIntegrationPatch applies one patch op to an Integration. The method is
+// patched at /httpMethod, the Integration resource's own member name;
+// /integrationHttpMethod, PutIntegration's parameter name, is accepted too.
+func applyIntegrationPatch(ig *driver.Integration, op driver.PatchOperation) error {
 	switch op.Path {
 	case "/uri":
 		ig.URI = op.Value
 	case "/type":
 		ig.Type = op.Value
-	case "/integrationHttpMethod":
+	case "/httpMethod", "/integrationHttpMethod":
 		ig.IntegrationHTTPMethod = op.Value
 	case "/passthroughBehavior":
 		ig.PassthroughBehavior = op.Value
 	case "/timeoutInMillis":
-		if n, err := strconv.Atoi(op.Value); err == nil {
-			ig.TimeoutInMillis = n
+		n, err := strconv.Atoi(op.Value)
+		if err != nil {
+			return cerrors.New(cerrors.InvalidArgument, msgIntegrationTimeout)
 		}
+
+		ig.TimeoutInMillis = n
 	case "/credentials":
 		ig.Credentials = patchRef(op)
 	case pathContentHandling:
@@ -262,6 +273,8 @@ func applyIntegrationPatch(ig *driver.Integration, op driver.PatchOperation) {
 	default:
 		applyIntegrationMapPatch(ig, op)
 	}
+
+	return nil
 }
 
 // applyIntegrationMapPatch handles the map- and list-valued integration paths.
@@ -387,6 +400,10 @@ func (m *Mock) applyStagePatch(ad *apiData, st *driver.Stage, op driver.PatchOpe
 			delete(st.Variables, key)
 
 			return nil
+		}
+
+		if err := validateStageVariable(key, op.Value); err != nil {
+			return err
 		}
 
 		if st.Variables == nil {

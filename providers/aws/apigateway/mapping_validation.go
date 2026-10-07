@@ -73,13 +73,17 @@ func validateContentHandling(v string) error {
 }
 
 // validateIntegrationSettings checks an integration's passthrough behavior,
-// content handling and request parameter mappings. A method.request source
+// timeout, content handling and request parameter mappings. A method.request source
 // must be declared on the method.
 func validateIntegrationSettings(ig *driver.Integration, methodParams map[string]bool) error {
 	switch ig.PassthroughBehavior {
 	case driver.PassthroughWhenNoMatch, driver.PassthroughWhenNoTemplates, driver.PassthroughNever:
 	default:
 		return cerrors.New(cerrors.InvalidArgument, msgBadThroughBehavior)
+	}
+
+	if ig.TimeoutInMillis < minIntegrationTimeoutMillis || ig.TimeoutInMillis > maxIntegrationTimeoutMillis {
+		return cerrors.New(cerrors.InvalidArgument, msgIntegrationTimeout)
 	}
 
 	if err := validateContentHandling(ig.ContentHandling); err != nil {
