@@ -13,13 +13,26 @@ import (
 	artypes "github.com/aws/aws-sdk-go-v2/service/apprunner/types"
 
 	"github.com/stackshy/cloudemu/v2"
+	cfgpkg "github.com/stackshy/cloudemu/v2/config"
+	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 func newClient(t *testing.T) *awsar.Client {
 	t.Helper()
 
-	cloud := cloudemu.NewAWS()
+	c, _ := newClientCloud(t)
+
+	return c
+}
+
+// newClientCloud also returns the provider, for tests that seed other services
+// (the VPC the connector subnets must exist in).
+func newClientCloud(t *testing.T, opts ...cfgpkg.Option) (*awsar.Client, *awsprovider.Provider) {
+	t.Helper()
+
+	cloud := cloudemu.NewAWS(opts...)
 	srv := awsserver.New(awsserver.Drivers{AppRunner: cloud.AppRunner})
 
 	ts := httptest.NewServer(srv)
@@ -35,7 +48,7 @@ func newClient(t *testing.T) *awsar.Client {
 
 	return awsar.NewFromConfig(cfg, func(o *awsar.Options) {
 		o.BaseEndpoint = aws.String(ts.URL)
-	})
+	}), cloud
 }
 
 func sampleSource() *artypes.SourceConfiguration {
@@ -289,17 +302,18 @@ func TestSDKDefaultAutoScalingConfigurationDescribableAndProtected(t *testing.T)
 
 func TestSDKDeleteSharedConfigsBlockedWhileUsedByService(t *testing.T) {
 	ctx := context.Background()
-	c := newClient(t)
+	c, cloud := newClientCloud(t)
+	subnet := seedSubnet(t, cloud)
 
 	asc, err := c.CreateAutoScalingConfiguration(ctx, &awsar.CreateAutoScalingConfigurationInput{
-		AutoScalingConfigurationName: aws.String("ha"),
+		AutoScalingConfigurationName: aws.String("high-ha"),
 	})
 	if err != nil {
 		t.Fatalf("CreateAutoScalingConfiguration: %v", err)
 	}
 
 	vpc, err := c.CreateVpcConnector(ctx, &awsar.CreateVpcConnectorInput{
-		VpcConnectorName: aws.String("vpc"), Subnets: []string{"subnet-1"},
+		VpcConnectorName: aws.String("vpc-conn"), Subnets: []string{subnet},
 	})
 	if err != nil {
 		t.Fatalf("CreateVpcConnector: %v", err)
@@ -358,4 +372,23 @@ func TestSDKDeleteSharedConfigsBlockedWhileUsedByService(t *testing.T) {
 	if _, err = c.DeleteObservabilityConfiguration(ctx, &awsar.DeleteObservabilityConfigurationInput{ObservabilityConfigurationArn: obsArn}); err != nil {
 		t.Fatalf("DeleteObservabilityConfiguration after service delete: %v", err)
 	}
+}
+
+// seedSubnet creates a VPC and a subnet in it and returns the subnet id.
+func seedSubnet(t *testing.T, cloud *awsprovider.Provider) string {
+	t.Helper()
+
+	vpc, err := cloud.VPC.CreateVPC(context.Background(), netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	if err != nil {
+		t.Fatalf("CreateVPC: %v", err)
+	}
+
+	sn, err := cloud.VPC.CreateSubnet(context.Background(), netdriver.SubnetConfig{
+		VPCID: vpc.ID, CIDRBlock: "10.0.1.0/24", AvailabilityZone: "us-east-1a",
+	})
+	if err != nil {
+		t.Fatalf("CreateSubnet: %v", err)
+	}
+
+	return sn.ID
 }

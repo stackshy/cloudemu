@@ -20,6 +20,8 @@ type apprunnerSnapshot struct {
 	Connections   map[string]driver.Connection                 `json:"connections,omitempty"`
 	VpcConnectors map[string]driver.VpcConnector               `json:"vpcConnectors,omitempty"`
 	Observability map[string]driver.ObservabilityConfiguration `json:"observability,omitempty"`
+	Ingress       map[string]driver.VpcIngressConnection       `json:"ingress,omitempty"`
+	Domains       map[string]domainRecord                      `json:"domains,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused. App Runner is
@@ -37,6 +39,14 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 
 	if m.connections.Len() > 0 {
 		snap.Connections = m.connections.All()
+	}
+
+	if m.ingress.Len() > 0 {
+		snap.Ingress = m.ingress.All()
+	}
+
+	if m.domains.Len() > 0 {
+		snap.Domains = m.domains.All()
 	}
 
 	if m.vpcConnectors.Len() > 0 {
@@ -82,6 +92,14 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 
 	for arn := range snap.Observability {
 		m.observability.Set(arn, snap.Observability[arn])
+	}
+
+	for arn := range snap.Ingress {
+		m.ingress.Set(arn, snap.Ingress[arn])
+	}
+
+	for key := range snap.Domains {
+		m.domains.Set(key, snap.Domains[key])
 	}
 
 	return nil

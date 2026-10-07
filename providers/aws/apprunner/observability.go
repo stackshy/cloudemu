@@ -12,9 +12,16 @@ import (
 func (m *Mock) CreateObservabilityConfiguration(
 	_ context.Context, in *driver.CreateObservabilityConfigurationInput,
 ) (*driver.ObservabilityConfiguration, error) {
-	if in.ObservabilityConfigurationName == "" {
-		return nil, invalidRequest("ObservabilityConfigurationName is required")
+	if err := validateConfigName("ObservabilityConfigurationName", in.ObservabilityConfigurationName); err != nil {
+		return nil, err
 	}
+
+	if t := in.TraceConfiguration; t != nil && t.Vendor != "AWSXRAY" {
+		return nil, invalidRequest("TraceConfiguration.Vendor must be AWSXRAY")
+	}
+
+	m.refMu.Lock()
+	defer m.refMu.Unlock()
 
 	revision := m.nextObservabilityRevision(in.ObservabilityConfigurationName)
 	m.demoteObservabilityLatest(in.ObservabilityConfigurationName)
@@ -136,6 +143,10 @@ func (m *Mock) DeleteObservabilityConfiguration(
 func (m *Mock) ListObservabilityConfigurations(
 	_ context.Context, name string, latestOnly bool, page driver.Page,
 ) ([]*driver.ObservabilityConfiguration, string, error) {
+	if err := validatePage(page); err != nil {
+		return nil, "", err
+	}
+
 	stored := m.observability.SortedValues()
 	matched := make([]driver.ObservabilityConfiguration, 0, len(stored))
 
@@ -149,23 +160,6 @@ func (m *Mock) ListObservabilityConfigurations(
 		}
 
 		matched = append(matched, stored[i])
-	}
-
-	return pageObservability(matched, page)
-}
-
-// ListObservabilityConfigurationRevisions returns every stored revision of a named
-// configuration.
-func (m *Mock) ListObservabilityConfigurationRevisions(
-	_ context.Context, name string, page driver.Page,
-) ([]*driver.ObservabilityConfiguration, string, error) {
-	stored := m.observability.SortedValues()
-	matched := make([]driver.ObservabilityConfiguration, 0, len(stored))
-
-	for i := range stored {
-		if name == "" || stored[i].ObservabilityConfigurationName == name {
-			matched = append(matched, stored[i])
-		}
 	}
 
 	return pageObservability(matched, page)

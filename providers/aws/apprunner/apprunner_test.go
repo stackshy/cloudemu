@@ -256,7 +256,7 @@ func TestAutoScalingConfigurationRevisions(t *testing.T) {
 		t.Fatalf("latestOnly should return only revision 2: %+v", latest)
 	}
 
-	all, _, err := m.ListAutoScalingConfigurationRevisions(ctx, "high-availability", driver.Page{})
+	all, _, err := m.ListAutoScalingConfigurations(ctx, "high-availability", false, driver.Page{})
 	requireNoError(t, err)
 
 	if len(all) != 2 {
@@ -279,7 +279,7 @@ func TestConnectionVpcConnectorObservabilityCRUD(t *testing.T) {
 	ctx := context.Background()
 
 	conn, err := m.CreateConnection(ctx, &driver.CreateConnectionInput{
-		ConnectionName: "gh", ProviderType: "GITHUB",
+		ConnectionName: "gh-connection", ProviderType: "GITHUB",
 	})
 	requireNoError(t, err)
 
@@ -408,7 +408,13 @@ func TestDefaultAutoScalingConfigurationIsStored(t *testing.T) {
 	}
 
 	// A second service shares the same default ARN, and the ARN is stable.
-	other := mustService(t, m)
+	secondIn := sampleService()
+	secondIn.ServiceName = "second-app"
+
+	res, err := m.CreateService(ctx, secondIn)
+	requireNoError(t, err)
+
+	other := res.Service
 	if other.AutoScalingConfigurationSummary.AutoScalingConfigurationArn != arn {
 		t.Fatalf("services must share the default config ARN")
 	}
@@ -439,7 +445,7 @@ func TestDeleteAutoScalingConfigurationBlockedWhileReferenced(t *testing.T) {
 	ctx := context.Background()
 
 	cfg, err := m.CreateAutoScalingConfiguration(ctx, &driver.CreateAutoScalingConfigurationInput{
-		AutoScalingConfigurationName: "ha",
+		AutoScalingConfigurationName: "high-ha",
 	})
 	requireNoError(t, err)
 
@@ -481,7 +487,7 @@ func TestUpdateServiceMovesAutoScalingAssociation(t *testing.T) {
 	ctx := context.Background()
 
 	cfg, err := m.CreateAutoScalingConfiguration(ctx, &driver.CreateAutoScalingConfigurationInput{
-		AutoScalingConfigurationName: "ha",
+		AutoScalingConfigurationName: "high-ha",
 	})
 	requireNoError(t, err)
 
@@ -501,7 +507,7 @@ func TestDeleteVpcConnectorBlockedWhileReferenced(t *testing.T) {
 	ctx := context.Background()
 
 	conn, err := m.CreateVpcConnector(ctx, &driver.CreateVpcConnectorInput{
-		VpcConnectorName: "vpc", Subnets: []string{"subnet-1"},
+		VpcConnectorName: "vpc-conn", Subnets: []string{"subnet-1"},
 	})
 	requireNoError(t, err)
 
@@ -553,54 +559,50 @@ func TestDeleteObservabilityConfigurationBlockedWhileReferenced(t *testing.T) {
 }
 
 func TestSharedConfigDeleteRacesServiceCreate(t *testing.T) {
-	m := newMock()
 	ctx := context.Background()
 
-	conn, err := m.CreateVpcConnector(ctx, &driver.CreateVpcConnectorInput{
-		VpcConnectorName: "vpc", Subnets: []string{"subnet-1"},
-	})
-	requireNoError(t, err)
+	for round := 0; round < 25; round++ {
+		m := newMock()
 
-	in := sampleService()
-	in.NetworkConfiguration = &driver.NetworkConfiguration{
-		EgressConfiguration: &driver.EgressConfiguration{EgressType: "VPC", VpcConnectorArn: conn.VpcConnectorArn},
-	}
+		conn, err := m.CreateVpcConnector(ctx, &driver.CreateVpcConnectorInput{
+			VpcConnectorName: "vpc-conn", Subnets: []string{"subnet-1"},
+		})
+		requireNoError(t, err)
 
-	var wg sync.WaitGroup
-
-	deleted := make(chan error, 1)
-
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-
-		_, cerr := m.CreateService(ctx, in)
-		if cerr != nil {
-			t.Errorf("CreateService: %v", cerr)
+		in := sampleService()
+		in.NetworkConfiguration = &driver.NetworkConfiguration{
+			EgressConfiguration: &driver.EgressConfiguration{EgressType: "VPC", VpcConnectorArn: conn.VpcConnectorArn},
 		}
-	}()
 
-	go func() {
-		defer wg.Done()
+		var wg sync.WaitGroup
 
-		_, derr := m.DeleteVpcConnector(ctx, conn.VpcConnectorArn)
-		deleted <- derr
-	}()
+		wg.Add(2)
 
-	wg.Wait()
+		go func() {
+			defer wg.Done()
 
-	// Either order is valid, but never a service pointing at a deleted connector
-	// while the delete reported success after the service existed.
-	derr := <-deleted
-	if derr == nil {
-		return
-	}
+			if _, cerr := m.CreateService(ctx, in); cerr != nil {
+				requireInvalidRequest(t, cerr)
+			}
+		}()
 
-	requireInvalidRequest(t, derr)
+		go func() {
+			defer wg.Done()
 
-	if _, err := m.DescribeVpcConnector(ctx, conn.VpcConnectorArn); err != nil {
-		t.Fatalf("rejected delete must leave the connector in place: %v", err)
+			if _, derr := m.DeleteVpcConnector(ctx, conn.VpcConnectorArn); derr != nil {
+				requireInvalidRequest(t, derr)
+			}
+		}()
+
+		wg.Wait()
+
+		// Whichever won, a service never points at a connector that is gone.
+		svcs, _, err := m.ListServices(ctx, driver.Page{})
+		requireNoError(t, err)
+
+		if _, derr := m.DescribeVpcConnector(ctx, conn.VpcConnectorArn); derr != nil && len(svcs) != 0 {
+			t.Fatalf("round %d: service references the deleted connector %s", round, conn.VpcConnectorArn)
+		}
 	}
 }
 

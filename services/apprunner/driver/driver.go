@@ -54,7 +54,8 @@ const (
 // Operation statuses. The emulator completes every operation synchronously, so a
 // recorded operation is SUCCEEDED at once.
 const (
-	OpStatusSucceeded = "SUCCEEDED"
+	OpStatusSucceeded  = "SUCCEEDED"
+	OpStatusInProgress = "IN_PROGRESS"
 )
 
 // Resource statuses for the VPC connector and observability configuration
@@ -393,8 +394,6 @@ type AppRunner interface {
 	DeleteAutoScalingConfiguration(ctx context.Context, arn string) (*AutoScalingConfiguration, error)
 	ListAutoScalingConfigurations(ctx context.Context, name string, latestOnly bool, page Page) (
 		configs []*AutoScalingConfiguration, nextToken string, err error)
-	ListAutoScalingConfigurationRevisions(ctx context.Context, name string, page Page) (
-		configs []*AutoScalingConfiguration, nextToken string, err error)
 
 	CreateConnection(ctx context.Context, in *CreateConnectionInput) (*Connection, error)
 	DeleteConnection(ctx context.Context, arn string) (*Connection, error)
@@ -410,8 +409,6 @@ type AppRunner interface {
 	DescribeObservabilityConfiguration(ctx context.Context, arn string) (*ObservabilityConfiguration, error)
 	DeleteObservabilityConfiguration(ctx context.Context, arn string) (*ObservabilityConfiguration, error)
 	ListObservabilityConfigurations(ctx context.Context, name string, latestOnly bool, page Page) (
-		configs []*ObservabilityConfiguration, nextToken string, err error)
-	ListObservabilityConfigurationRevisions(ctx context.Context, name string, page Page) (
 		configs []*ObservabilityConfiguration, nextToken string, err error)
 
 	TagResource(ctx context.Context, resourceArn string, tags []Tag) error

@@ -23,7 +23,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `appflow` | [AppFlow](./aws/appflow.md) | - | - | - | 14 |
 | `appinsights` | - | [Appinsights](./azure/appinsights.md) | - | - | 6 |
 | `applicationgateway` | - | [AppGateway](./azure/appgateway.md) | - | - | 4 |
-| `apprunner` | [AppRunner](./aws/apprunner.md) | - | - | - | 29 |
+| `apprunner` | [AppRunner](./aws/apprunner.md) | - | - | - | 27 |
 | `appsync` | [AppSync](./aws/appsync.md) | - | - | - | 17 |
 | `aps` | [APS](./aws/aps.md) | - | - | - | 21 |
 | `athena` | [Athena](./aws/athena.md) | - | - | - | 26 |

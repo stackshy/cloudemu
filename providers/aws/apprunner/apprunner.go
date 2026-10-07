@@ -15,6 +15,7 @@
 package apprunner
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -24,17 +25,32 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/apprunner/driver"
+	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
-// Compile-time check that Mock implements driver.AppRunner.
-var _ driver.AppRunner = (*Mock)(nil)
+// Compile-time checks that Mock implements driver.AppRunner and every optional
+// capability the wire handler serves.
+var (
+	_ driver.AppRunner             = (*Mock)(nil)
+	_ driver.VpcIngressConnections = (*Mock)(nil)
+	_ driver.CustomDomains         = (*Mock)(nil)
+	_ driver.DefaultAutoScaling    = (*Mock)(nil)
+)
+
+// NetworkResolver looks up the VPC networking a VPC connector refers to. The
+// networking mock satisfies it; without one, connector subnets and security
+// groups are accepted as given.
+type NetworkResolver interface {
+	DescribeSubnets(ctx context.Context, ids []string) ([]netdriver.SubnetInfo, error)
+	DescribeSecurityGroups(ctx context.Context, ids []string) ([]netdriver.SecurityGroupInfo, error)
+}
 
 // serviceName is the App Runner service marker used in every ARN.
 const serviceName = "apprunner"
-
-// defaultMaxResults caps a page when the caller requests none.
-const defaultMaxResults = 20
 
 // idBytes is the number of random bytes rendered into a 32-hex resource id.
 const idBytes = 16
@@ -62,8 +78,32 @@ type Mock struct {
 	connections   *memstore.Store[driver.Connection]
 	vpcConnectors *memstore.Store[driver.VpcConnector]
 	observability *memstore.Store[driver.ObservabilityConfiguration]
+	ingress       *memstore.Store[driver.VpcIngressConnection]
+	domains       *memstore.Store[domainRecord]
 	opts          *config.Options
+
+	// settling overlays a transient OPERATION_IN_PROGRESS / PENDING_* status on
+	// services, ingress connections and custom domains when the server runs with
+	// async settling; it is inactive (terminal status at once) by default so IaC
+	// waiters complete.
+	settling *settle.Set
+
+	monitoring mondriver.Monitoring
+	logs       logdriver.Logging
+	network    NetworkResolver
 }
+
+// SetMonitoring wires the CloudWatch backend that receives the AWS/AppRunner
+// metrics. Nil-safe: with no backend wired nothing is published.
+func (m *Mock) SetMonitoring(mon mondriver.Monitoring) { m.monitoring = mon }
+
+// SetLogSink wires CloudWatch Logs so a service's service and application log
+// groups are created with it and removed when it is deleted.
+func (m *Mock) SetLogSink(l logdriver.Logging) { m.logs = l }
+
+// SetNetworkResolver wires the networking mock so VPC connector subnets and
+// security groups are cross-checked.
+func (m *Mock) SetNetworkResolver(r NetworkResolver) { m.network = r }
 
 // New creates a new App Runner mock with the given options.
 func New(opts *config.Options) *Mock {
@@ -73,6 +113,9 @@ func New(opts *config.Options) *Mock {
 		connections:   memstore.New[driver.Connection](),
 		vpcConnectors: memstore.New[driver.VpcConnector](),
 		observability: memstore.New[driver.ObservabilityConfiguration](),
+		ingress:       memstore.New[driver.VpcIngressConnection](),
+		domains:       memstore.New[domainRecord](),
+		settling:      settle.NewSet(),
 		opts:          opts,
 	}
 
@@ -90,16 +133,30 @@ func (m *Mock) defaultAutoScalingID() string {
 	return hex.EncodeToString(sum[:idBytes])
 }
 
-// defaultAutoScalingARN is the ARN of the default auto scaling configuration.
-func (m *Mock) defaultAutoScalingARN() string {
+// seededDefaultAutoScalingARN is the ARN of the DefaultConfiguration the mock
+// starts with.
+func (m *Mock) seededDefaultAutoScalingARN() string {
 	return m.autoScalingARN(defaultConfigName, firstRevision, m.defaultAutoScalingID())
+}
+
+// defaultAutoScalingARN is the ARN of the configuration currently flagged as the
+// account's default, which UpdateDefaultAutoScalingConfiguration can move.
+func (m *Mock) defaultAutoScalingARN() string {
+	all := m.autoScaling.SortedValues()
+	for i := range all {
+		if all[i].IsDefault && all[i].Status == driver.AutoScalingStatusActive {
+			return all[i].AutoScalingConfigurationArn
+		}
+	}
+
+	return m.seededDefaultAutoScalingARN()
 }
 
 // seedDefaultAutoScaling stores the DefaultConfiguration auto scaling
 // configuration every real App Runner account starts with. A service created
 // without an auto scaling configuration is associated with it.
 func (m *Mock) seedDefaultAutoScaling() {
-	arn := m.defaultAutoScalingARN()
+	arn := m.seededDefaultAutoScalingARN()
 
 	m.autoScaling.Set(arn, driver.AutoScalingConfiguration{
 		AutoScalingConfigurationArn:      arn,
@@ -164,19 +221,19 @@ func (m *Mock) connectionARN(name, id string) string {
 }
 
 // paginate returns the offset window and next token for a slice of length n,
-// honoring an opaque numeric offset token.
+// honoring an opaque numeric offset token. With no MaxResults every remaining
+// result is returned in one page, as the API documents.
 func paginate(n int, page driver.Page) (start, end int, next string) {
 	start = decodeToken(page.NextToken)
 	if start > n {
 		start = n
 	}
 
-	limit := int(page.MaxResults)
-	if limit <= 0 {
-		limit = defaultMaxResults
+	if page.MaxResults <= 0 {
+		return start, n, ""
 	}
 
-	end = start + limit
+	end = start + int(page.MaxResults)
 	if end >= n {
 		return start, n, ""
 	}

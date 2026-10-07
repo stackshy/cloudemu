@@ -10,12 +10,12 @@ import (
 // connection is PENDING_HANDSHAKE, matching real App Runner, where the customer
 // completes the handshake out of band.
 func (m *Mock) CreateConnection(_ context.Context, in *driver.CreateConnectionInput) (*driver.Connection, error) {
-	if in.ConnectionName == "" {
-		return nil, invalidRequest("ConnectionName is required")
+	if err := validateConfigName("ConnectionName", in.ConnectionName); err != nil {
+		return nil, err
 	}
 
-	if in.ProviderType == "" {
-		return nil, invalidRequest("ProviderType is required")
+	if in.ProviderType != "GITHUB" && in.ProviderType != "BITBUCKET" {
+		return nil, invalidRequest("ProviderType must be GITHUB or BITBUCKET")
 	}
 
 	id := newID()
@@ -57,6 +57,10 @@ func (m *Mock) DeleteConnection(_ context.Context, arn string) (*driver.Connecti
 func (m *Mock) ListConnections(
 	_ context.Context, name string, page driver.Page,
 ) ([]*driver.Connection, string, error) {
+	if err := validatePage(page); err != nil {
+		return nil, "", err
+	}
+
 	stored := m.connections.SortedValues()
 	matched := make([]driver.Connection, 0, len(stored))
 

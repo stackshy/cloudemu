@@ -59,6 +59,10 @@ func (m *Mock) ListTagsForResource(_ context.Context, resourceArn string) ([]dri
 		return copyTags(c.Tags), nil
 	}
 
+	if c, ok := m.ingress.Get(resourceArn); ok {
+		return copyTags(c.Tags), nil
+	}
+
 	return nil, notFound("resource %q does not exist", resourceArn)
 }
 
@@ -103,6 +107,14 @@ func (m *Mock) mutateTagsRest(resourceArn string, mutate func([]driver.Tag) []dr
 	}
 
 	if m.observability.Update(resourceArn, func(c driver.ObservabilityConfiguration) driver.ObservabilityConfiguration {
+		c.Tags = mutate(copyTags(c.Tags))
+
+		return c
+	}) {
+		return nil
+	}
+
+	if m.ingress.Update(resourceArn, func(c driver.VpcIngressConnection) driver.VpcIngressConnection {
 		c.Tags = mutate(copyTags(c.Tags))
 
 		return c

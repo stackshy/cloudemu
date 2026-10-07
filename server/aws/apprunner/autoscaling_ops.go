@@ -13,7 +13,6 @@ func (h *Handler) registerAutoScalingRoutes() {
 	h.routes["DescribeAutoScalingConfiguration"] = h.describeAutoScalingConfiguration
 	h.routes["DeleteAutoScalingConfiguration"] = h.deleteAutoScalingConfiguration
 	h.routes["ListAutoScalingConfigurations"] = h.listAutoScalingConfigurations
-	h.routes["ListAutoScalingConfigurationRevisions"] = h.listAutoScalingConfigurationRevisions
 }
 
 // autoScalingConfigurationJSON is the wire shape of a full auto scaling
@@ -131,7 +130,7 @@ func (h *Handler) deleteAutoScalingConfiguration(w http.ResponseWriter, r *http.
 
 type listAutoScalingConfigurationsRequest struct {
 	AutoScalingConfigurationName string `json:"AutoScalingConfigurationName"`
-	LatestOnly                   bool   `json:"LatestOnly"`
+	LatestOnly                   *bool  `json:"LatestOnly"`
 	MaxResults                   int32  `json:"MaxResults"`
 	NextToken                    string `json:"NextToken"`
 }
@@ -144,25 +143,7 @@ type autoScalingSummaryListResponse struct {
 func (h *Handler) listAutoScalingConfigurations(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *listAutoScalingConfigurationsRequest) (any, error) {
 		configs, next, err := h.apprunner.ListAutoScalingConfigurations(
-			ctx, req.AutoScalingConfigurationName, req.LatestOnly, pageFromWire(req.MaxResults, req.NextToken))
-		if err != nil {
-			return nil, err
-		}
-
-		return autoScalingSummaryListPage(configs, next), nil
-	})
-}
-
-type listAutoScalingConfigurationRevisionsRequest struct {
-	AutoScalingConfigurationName string `json:"AutoScalingConfigurationName"`
-	MaxResults                   int32  `json:"MaxResults"`
-	NextToken                    string `json:"NextToken"`
-}
-
-func (h *Handler) listAutoScalingConfigurationRevisions(w http.ResponseWriter, r *http.Request) {
-	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *listAutoScalingConfigurationRevisionsRequest) (any, error) {
-		configs, next, err := h.apprunner.ListAutoScalingConfigurationRevisions(
-			ctx, req.AutoScalingConfigurationName, pageFromWire(req.MaxResults, req.NextToken))
+			ctx, req.AutoScalingConfigurationName, latestOnly(req.LatestOnly), pageFromWire(req.MaxResults, req.NextToken))
 		if err != nil {
 			return nil, err
 		}
@@ -181,3 +162,6 @@ func autoScalingSummaryListPage(
 		NextToken:                           next,
 	}
 }
+
+// latestOnly applies the documented default of LatestOnly: true when omitted.
+func latestOnly(p *bool) bool { return p == nil || *p }

@@ -11,7 +11,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [APIGatewayV2](./apigatewayv2.md) | `apigatewayv2` | 28 |
 | [APS](./aps.md) | `aps` | 21 |
 | [AppFlow](./appflow.md) | `appflow` | 14 |
-| [AppRunner](./apprunner.md) | `apprunner` | 29 |
+| [AppRunner](./apprunner.md) | `apprunner` | 27 |
 | [AppSync](./appsync.md) | `appsync` | 17 |
 | [Athena](./athena.md) | `athena` | 26 |
 | [Backup](./backup.md) | `backup` | 25 |

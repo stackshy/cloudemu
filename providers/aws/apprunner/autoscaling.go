@@ -8,19 +8,30 @@ import (
 
 // CreateAutoScalingConfiguration provisions a new revision of a named auto
 // scaling configuration. Reusing a name mints the next incremental revision and
-// demotes the previous latest revision, matching real App Runner.
+// demotes the previous latest revision, matching real App Runner. MaxConcurrency
+// is 1-200, MinSize 1-25 and MinSize may not exceed MaxSize.
 func (m *Mock) CreateAutoScalingConfiguration(
 	_ context.Context, in *driver.CreateAutoScalingConfigurationInput,
 ) (*driver.AutoScalingConfiguration, error) {
-	if in.AutoScalingConfigurationName == "" {
-		return nil, invalidRequest("AutoScalingConfigurationName is required")
+	if err := validateConfigName("AutoScalingConfigurationName", in.AutoScalingConfigurationName); err != nil {
+		return nil, err
 	}
+
+	maxConcurrency := int32Or(in.MaxConcurrency, defaultMaxConcurrency)
+	minSize := int32Or(in.MinSize, defaultMinSize)
+	maxSize := int32Or(in.MaxSize, defaultMaxSize)
+
+	if err := validateScaling(maxConcurrency, minSize, maxSize); err != nil {
+		return nil, err
+	}
+
+	m.refMu.Lock()
+	defer m.refMu.Unlock()
 
 	revision := m.nextAutoScalingRevision(in.AutoScalingConfigurationName)
 	m.demoteAutoScalingLatest(in.AutoScalingConfigurationName)
 
-	id := newID()
-	arn := m.autoScalingARN(in.AutoScalingConfigurationName, revision, id)
+	arn := m.autoScalingARN(in.AutoScalingConfigurationName, revision, newID())
 
 	cfg := driver.AutoScalingConfiguration{
 		AutoScalingConfigurationArn:      arn,
@@ -28,9 +39,9 @@ func (m *Mock) CreateAutoScalingConfiguration(
 		AutoScalingConfigurationRevision: revision,
 		Latest:                           true,
 		Status:                           driver.AutoScalingStatusActive,
-		MaxConcurrency:                   int32Or(in.MaxConcurrency, defaultMaxConcurrency),
-		MinSize:                          int32Or(in.MinSize, defaultMinSize),
-		MaxSize:                          int32Or(in.MaxSize, defaultMaxSize),
+		MaxConcurrency:                   maxConcurrency,
+		MinSize:                          minSize,
+		MaxSize:                          maxSize,
 		CreatedAt:                        m.now(),
 		Tags:                             copyTags(in.Tags),
 	}
@@ -40,6 +51,22 @@ func (m *Mock) CreateAutoScalingConfiguration(
 	out := m.autoScalingView(&cfg)
 
 	return &out, nil
+}
+
+// validateScaling applies the documented auto scaling ranges.
+func validateScaling(maxConcurrency, minSize, maxSize int32) error {
+	switch {
+	case maxConcurrency < minMaxConcurrency || maxConcurrency > maxMaxConcurrency:
+		return invalidRequest("MaxConcurrency must be between 1 and 200")
+	case minSize < 1 || minSize > maxMinSize:
+		return invalidRequest("MinSize must be between 1 and 25")
+	case maxSize < 1:
+		return invalidRequest("MaxSize must be at least 1")
+	case minSize > maxSize:
+		return invalidRequest("MinSize must not be greater than MaxSize")
+	}
+
+	return nil
 }
 
 // autoScalingView copies a stored configuration and fills HasAssociatedService,
@@ -102,11 +129,55 @@ func (m *Mock) demoteAutoScalingLatest(name string) {
 	}
 }
 
-// DescribeAutoScalingConfiguration returns the configuration by ARN.
+// resolveAutoScaling finds the configuration an ARN names. An empty ARN is the
+// account's default; an ARN may be full, or partial (".../name" for the latest
+// active revision, ".../name/revision"). An unknown or inactive configuration is
+// an InvalidRequestException.
+func (m *Mock) resolveAutoScaling(arn string) (driver.AutoScalingConfiguration, error) {
+	if arn == "" {
+		arn = m.defaultAutoScalingARN()
+	}
+
+	if cfg, ok := m.autoScaling.Get(arn); ok {
+		return cfg, nil
+	}
+
+	if c, ok := m.findActiveByPartialARN(arn); ok {
+		return c, nil
+	}
+
+	return driver.AutoScalingConfiguration{}, invalidRequest("auto scaling configuration " + arn + " does not exist")
+}
+
+// findActiveByPartialARN matches ".../name" (latest) or ".../name/revision" to an
+// active configuration.
+func (m *Mock) findActiveByPartialARN(arn string) (driver.AutoScalingConfiguration, bool) {
+	name, revision := autoScalingRefFromARN(arn)
+	if name == "" {
+		return driver.AutoScalingConfiguration{}, false
+	}
+
+	all := m.autoScaling.SortedValues()
+	for i := range all {
+		c := all[i]
+		if c.AutoScalingConfigurationName != name || c.Status != driver.AutoScalingStatusActive {
+			continue
+		}
+
+		if (revision == 0 && c.Latest) || (revision != 0 && c.AutoScalingConfigurationRevision == revision) {
+			return c, true
+		}
+	}
+
+	return driver.AutoScalingConfiguration{}, false
+}
+
+// DescribeAutoScalingConfiguration returns the configuration by ARN (full, or
+// partial name / name/revision).
 func (m *Mock) DescribeAutoScalingConfiguration(
 	_ context.Context, arn string,
 ) (*driver.AutoScalingConfiguration, error) {
-	cfg, ok := m.autoScaling.Get(arn)
+	cfg, ok := m.findAutoScaling(arn)
 	if !ok {
 		return nil, notFound("auto scaling configuration %q does not exist", arn)
 	}
@@ -116,17 +187,28 @@ func (m *Mock) DescribeAutoScalingConfiguration(
 	return &out, nil
 }
 
+// findAutoScaling resolves a full or partial ARN to a stored configuration; a
+// miss is not an error so each operation can word its own exception.
+func (m *Mock) findAutoScaling(arn string) (driver.AutoScalingConfiguration, bool) {
+	cfg, err := m.resolveAutoScaling(arn)
+	if err != nil || arn == "" {
+		return driver.AutoScalingConfiguration{}, false
+	}
+
+	return cfg, true
+}
+
 // DeleteAutoScalingConfiguration removes a configuration and returns it with an
-// INACTIVE status, so a subsequent describe 404s. The default configuration and
-// a configuration that a service uses are rejected with an
-// InvalidRequestException, as in real App Runner.
+// INACTIVE status, so a subsequent describe 404s. The default configuration and a
+// configuration that a service uses are rejected with an InvalidRequestException,
+// as in real App Runner.
 func (m *Mock) DeleteAutoScalingConfiguration(
 	_ context.Context, arn string,
 ) (*driver.AutoScalingConfiguration, error) {
 	m.refMu.Lock()
 	defer m.refMu.Unlock()
 
-	cfg, ok := m.autoScaling.Get(arn)
+	cfg, ok := m.findAutoScaling(arn)
 	if !ok {
 		return nil, notFound("auto scaling configuration %q does not exist", arn)
 	}
@@ -135,11 +217,11 @@ func (m *Mock) DeleteAutoScalingConfiguration(
 		return nil, invalidRequest("the default auto scaling configuration can't be deleted")
 	}
 
-	if m.autoScalingInUse(arn) {
+	if m.autoScalingInUse(cfg.AutoScalingConfigurationArn) {
 		return nil, invalidRequest("auto scaling configuration is used by one or more App Runner services")
 	}
 
-	m.autoScaling.Delete(arn)
+	m.autoScaling.Delete(cfg.AutoScalingConfigurationArn)
 
 	out := copyAutoScaling(&cfg)
 	out.Status = driver.AutoScalingStatusInactive
@@ -148,11 +230,15 @@ func (m *Mock) DeleteAutoScalingConfiguration(
 	return &out, nil
 }
 
-// ListAutoScalingConfigurations returns a page of configurations, optionally
-// narrowed to a name and to only the latest revision of each name.
+// ListAutoScalingConfigurations returns a page of active configurations,
+// optionally narrowed to a name and to only the latest revision of each name.
 func (m *Mock) ListAutoScalingConfigurations(
 	_ context.Context, name string, latestOnly bool, page driver.Page,
 ) ([]*driver.AutoScalingConfiguration, string, error) {
+	if err := validatePage(page); err != nil {
+		return nil, "", err
+	}
+
 	stored := m.autoScaling.SortedValues()
 	matched := make([]driver.AutoScalingConfiguration, 0, len(stored))
 
@@ -171,23 +257,6 @@ func (m *Mock) ListAutoScalingConfigurations(
 	return m.pageAutoScaling(matched, page)
 }
 
-// ListAutoScalingConfigurationRevisions returns every stored revision of a named
-// configuration.
-func (m *Mock) ListAutoScalingConfigurationRevisions(
-	_ context.Context, name string, page driver.Page,
-) ([]*driver.AutoScalingConfiguration, string, error) {
-	stored := m.autoScaling.SortedValues()
-	matched := make([]driver.AutoScalingConfiguration, 0, len(stored))
-
-	for i := range stored {
-		if name == "" || stored[i].AutoScalingConfigurationName == name {
-			matched = append(matched, stored[i])
-		}
-	}
-
-	return m.pageAutoScaling(matched, page)
-}
-
 // pageAutoScaling paginates a matched slice and returns alias-free copies.
 func (m *Mock) pageAutoScaling(
 	matched []driver.AutoScalingConfiguration, page driver.Page,
@@ -201,4 +270,64 @@ func (m *Mock) pageAutoScaling(
 	}
 
 	return out, next, nil
+}
+
+// UpdateDefaultAutoScalingConfiguration makes a configuration (full or partial
+// ARN) the account's default; the previous default stops being the default and
+// services created without an explicit configuration use the new one.
+func (m *Mock) UpdateDefaultAutoScalingConfiguration(
+	_ context.Context, arn string,
+) (*driver.AutoScalingConfiguration, error) {
+	if arn == "" {
+		return nil, invalidRequest("AutoScalingConfigurationArn is required")
+	}
+
+	m.refMu.Lock()
+	defer m.refMu.Unlock()
+
+	target, ok := m.findAutoScaling(arn)
+	if !ok {
+		return nil, notFound("auto scaling configuration %q does not exist", arn)
+	}
+
+	for _, key := range m.autoScaling.Keys() {
+		m.autoScaling.Update(key, func(c driver.AutoScalingConfiguration) driver.AutoScalingConfiguration {
+			c.IsDefault = c.AutoScalingConfigurationArn == target.AutoScalingConfigurationArn
+
+			return c
+		})
+	}
+
+	updated, _ := m.autoScaling.Get(target.AutoScalingConfigurationArn)
+	out := m.autoScalingView(&updated)
+
+	return &out, nil
+}
+
+// ListServicesForAutoScalingConfiguration returns the ARNs of the services that
+// use a configuration, ordered by ARN.
+func (m *Mock) ListServicesForAutoScalingConfiguration(
+	_ context.Context, arn string, page driver.Page,
+) (serviceArns []string, nextToken string, err error) {
+	if err := validatePage(page); err != nil {
+		return nil, "", err
+	}
+
+	cfg, ok := m.findAutoScaling(arn)
+	if !ok {
+		return nil, "", notFound("auto scaling configuration %q does not exist", arn)
+	}
+
+	matched := []string{}
+
+	svcs := m.services.SortedValues()
+	for i := range svcs {
+		if s := svcs[i].AutoScalingConfigurationSummary; s != nil && s.AutoScalingConfigurationArn == cfg.AutoScalingConfigurationArn {
+			matched = append(matched, svcs[i].ServiceArn)
+		}
+	}
+
+	start, end, next := paginate(len(matched), page)
+
+	return matched[start:end], next, nil
 }

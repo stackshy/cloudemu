@@ -906,16 +906,10 @@
         "name": "DescribeVpcConnector"
       },
       {
-        "name": "ListAutoScalingConfigurationRevisions"
-      },
-      {
         "name": "ListAutoScalingConfigurations"
       },
       {
         "name": "ListConnections"
-      },
-      {
-        "name": "ListObservabilityConfigurationRevisions"
       },
       {
         "name": "ListObservabilityConfigurations"
@@ -949,6 +943,56 @@
       },
       {
         "name": "UpdateService"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "CustomDomains",
+        "doc": "CustomDomains is the optional custom domain capability.",
+        "operations": [
+          {
+            "name": "AssociateCustomDomain"
+          },
+          {
+            "name": "DescribeCustomDomains"
+          },
+          {
+            "name": "DisassociateCustomDomain"
+          }
+        ]
+      },
+      {
+        "name": "DefaultAutoScaling",
+        "doc": "DefaultAutoScaling is the optional capability to move the account's default auto",
+        "operations": [
+          {
+            "name": "ListServicesForAutoScalingConfiguration"
+          },
+          {
+            "name": "UpdateDefaultAutoScalingConfiguration"
+          }
+        ]
+      },
+      {
+        "name": "VpcIngressConnections",
+        "doc": "VpcIngressConnections is the optional VPC ingress connection capability.",
+        "operations": [
+          {
+            "name": "CreateVpcIngressConnection"
+          },
+          {
+            "name": "DeleteVpcIngressConnection"
+          },
+          {
+            "name": "DescribeVpcIngressConnection"
+          },
+          {
+            "name": "ListVpcIngressConnections"
+          },
+          {
+            "name": "UpdateVpcIngressConnection"
+          }
+        ]
       }
     ],
     "providers": {
