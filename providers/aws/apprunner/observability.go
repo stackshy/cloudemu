@@ -78,6 +78,18 @@ func (m *Mock) demoteObservabilityLatest(name string) {
 	}
 }
 
+// observabilityInUse reports whether any service references the configuration.
+func (m *Mock) observabilityInUse(arn string) bool {
+	svcs := m.services.SortedValues()
+	for i := range svcs {
+		if o := svcs[i].ObservabilityConfiguration; o != nil && o.ObservabilityConfigurationArn == arn {
+			return true
+		}
+	}
+
+	return false
+}
+
 // DescribeObservabilityConfiguration returns the configuration by ARN.
 func (m *Mock) DescribeObservabilityConfiguration(
 	_ context.Context, arn string,
@@ -93,13 +105,21 @@ func (m *Mock) DescribeObservabilityConfiguration(
 }
 
 // DeleteObservabilityConfiguration removes a configuration and returns it with an
-// INACTIVE status, so a subsequent describe 404s.
+// INACTIVE status, so a subsequent describe 404s. A configuration that a service
+// uses is rejected with an InvalidRequestException, as in real App Runner.
 func (m *Mock) DeleteObservabilityConfiguration(
 	_ context.Context, arn string,
 ) (*driver.ObservabilityConfiguration, error) {
+	m.refMu.Lock()
+	defer m.refMu.Unlock()
+
 	cfg, ok := m.observability.Get(arn)
 	if !ok {
 		return nil, notFound("observability configuration %q does not exist", arn)
+	}
+
+	if m.observabilityInUse(arn) {
+		return nil, invalidRequest("observability configuration is used by one or more App Runner services")
 	}
 
 	m.observability.Delete(arn)

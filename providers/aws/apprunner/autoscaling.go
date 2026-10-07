@@ -37,9 +37,31 @@ func (m *Mock) CreateAutoScalingConfiguration(
 
 	m.autoScaling.Set(arn, cfg)
 
-	out := copyAutoScaling(&cfg)
+	out := m.autoScalingView(&cfg)
 
 	return &out, nil
+}
+
+// autoScalingView copies a stored configuration and fills HasAssociatedService,
+// which is derived from the services that currently reference it.
+func (m *Mock) autoScalingView(c *driver.AutoScalingConfiguration) driver.AutoScalingConfiguration {
+	out := copyAutoScaling(c)
+	out.HasAssociatedService = m.autoScalingInUse(c.AutoScalingConfigurationArn)
+
+	return out
+}
+
+// autoScalingInUse reports whether any service is associated with the
+// configuration.
+func (m *Mock) autoScalingInUse(arn string) bool {
+	svcs := m.services.SortedValues()
+	for i := range svcs {
+		if s := svcs[i].AutoScalingConfigurationSummary; s != nil && s.AutoScalingConfigurationArn == arn {
+			return true
+		}
+	}
+
+	return false
 }
 
 // int32Or returns *p when p is non-nil, else def.
@@ -89,19 +111,32 @@ func (m *Mock) DescribeAutoScalingConfiguration(
 		return nil, notFound("auto scaling configuration %q does not exist", arn)
 	}
 
-	out := copyAutoScaling(&cfg)
+	out := m.autoScalingView(&cfg)
 
 	return &out, nil
 }
 
 // DeleteAutoScalingConfiguration removes a configuration and returns it with an
-// INACTIVE status, so a subsequent describe 404s.
+// INACTIVE status, so a subsequent describe 404s. The default configuration and
+// a configuration that a service uses are rejected with an
+// InvalidRequestException, as in real App Runner.
 func (m *Mock) DeleteAutoScalingConfiguration(
 	_ context.Context, arn string,
 ) (*driver.AutoScalingConfiguration, error) {
+	m.refMu.Lock()
+	defer m.refMu.Unlock()
+
 	cfg, ok := m.autoScaling.Get(arn)
 	if !ok {
 		return nil, notFound("auto scaling configuration %q does not exist", arn)
+	}
+
+	if cfg.IsDefault {
+		return nil, invalidRequest("the default auto scaling configuration can't be deleted")
+	}
+
+	if m.autoScalingInUse(arn) {
+		return nil, invalidRequest("auto scaling configuration is used by one or more App Runner services")
 	}
 
 	m.autoScaling.Delete(arn)
@@ -133,7 +168,7 @@ func (m *Mock) ListAutoScalingConfigurations(
 		matched = append(matched, stored[i])
 	}
 
-	return pageAutoScaling(matched, page)
+	return m.pageAutoScaling(matched, page)
 }
 
 // ListAutoScalingConfigurationRevisions returns every stored revision of a named
@@ -150,18 +185,18 @@ func (m *Mock) ListAutoScalingConfigurationRevisions(
 		}
 	}
 
-	return pageAutoScaling(matched, page)
+	return m.pageAutoScaling(matched, page)
 }
 
 // pageAutoScaling paginates a matched slice and returns alias-free copies.
-func pageAutoScaling(
+func (m *Mock) pageAutoScaling(
 	matched []driver.AutoScalingConfiguration, page driver.Page,
 ) ([]*driver.AutoScalingConfiguration, string, error) {
 	start, end, next := paginate(len(matched), page)
 	out := make([]*driver.AutoScalingConfiguration, 0, end-start)
 
 	for i := start; i < end; i++ {
-		c := copyAutoScaling(&matched[i])
+		c := m.autoScalingView(&matched[i])
 		out = append(out, &c)
 	}
 

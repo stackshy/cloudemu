@@ -16,8 +16,10 @@ package apprunner
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"strconv"
+	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -51,6 +53,10 @@ const (
 // Mock is an in-memory implementation of the AWS App Runner control plane. Each
 // store is keyed by the resource's ARN.
 type Mock struct {
+	// refMu serializes every change to the set of references a service holds on a
+	// shared configuration (service create/update/delete) with the delete of
+	// that configuration, so an in-use check and its delete are one step.
+	refMu         sync.Mutex
 	services      *memstore.Store[driver.Service]
 	autoScaling   *memstore.Store[driver.AutoScalingConfiguration]
 	connections   *memstore.Store[driver.Connection]
@@ -61,7 +67,7 @@ type Mock struct {
 
 // New creates a new App Runner mock with the given options.
 func New(opts *config.Options) *Mock {
-	return &Mock{
+	m := &Mock{
 		services:      memstore.New[driver.Service](),
 		autoScaling:   memstore.New[driver.AutoScalingConfiguration](),
 		connections:   memstore.New[driver.Connection](),
@@ -69,6 +75,44 @@ func New(opts *config.Options) *Mock {
 		observability: memstore.New[driver.ObservabilityConfiguration](),
 		opts:          opts,
 	}
+
+	m.seedDefaultAutoScaling()
+
+	return m
+}
+
+// defaultAutoScalingID derives the stable id of the account's default auto
+// scaling configuration from its region and account, so a restored snapshot
+// lands on the same ARN the fresh mock seeded instead of adding a second default.
+func (m *Mock) defaultAutoScalingID() string {
+	sum := sha256.Sum256([]byte(defaultConfigName + "/" + m.opts.Region + "/" + m.opts.AccountID))
+
+	return hex.EncodeToString(sum[:idBytes])
+}
+
+// defaultAutoScalingARN is the ARN of the default auto scaling configuration.
+func (m *Mock) defaultAutoScalingARN() string {
+	return m.autoScalingARN(defaultConfigName, firstRevision, m.defaultAutoScalingID())
+}
+
+// seedDefaultAutoScaling stores the DefaultConfiguration auto scaling
+// configuration every real App Runner account starts with. A service created
+// without an auto scaling configuration is associated with it.
+func (m *Mock) seedDefaultAutoScaling() {
+	arn := m.defaultAutoScalingARN()
+
+	m.autoScaling.Set(arn, driver.AutoScalingConfiguration{
+		AutoScalingConfigurationArn:      arn,
+		AutoScalingConfigurationName:     defaultConfigName,
+		AutoScalingConfigurationRevision: firstRevision,
+		Latest:                           true,
+		IsDefault:                        true,
+		Status:                           driver.AutoScalingStatusActive,
+		MaxConcurrency:                   defaultMaxConcurrency,
+		MinSize:                          defaultMinSize,
+		MaxSize:                          defaultMaxSize,
+		CreatedAt:                        m.now(),
+	})
 }
 
 // newID mints a random 32-character lowercase hex resource id.

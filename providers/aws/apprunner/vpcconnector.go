@@ -55,6 +55,19 @@ func (m *Mock) nextVpcConnectorRevision(name string) int32 {
 	return highest + 1
 }
 
+// vpcConnectorInUse reports whether any service uses the connector for egress.
+func (m *Mock) vpcConnectorInUse(arn string) bool {
+	svcs := m.services.SortedValues()
+	for i := range svcs {
+		n := svcs[i].NetworkConfiguration
+		if n != nil && n.EgressConfiguration != nil && n.EgressConfiguration.VpcConnectorArn == arn {
+			return true
+		}
+	}
+
+	return false
+}
+
 // DescribeVpcConnector returns the VPC connector by ARN.
 func (m *Mock) DescribeVpcConnector(_ context.Context, arn string) (*driver.VpcConnector, error) {
 	conn, ok := m.vpcConnectors.Get(arn)
@@ -68,11 +81,19 @@ func (m *Mock) DescribeVpcConnector(_ context.Context, arn string) (*driver.VpcC
 }
 
 // DeleteVpcConnector removes a VPC connector and returns it with an INACTIVE
-// status, so a subsequent describe 404s.
+// status, so a subsequent describe 404s. A connector that a service uses for
+// egress is rejected with an InvalidRequestException, as in real App Runner.
 func (m *Mock) DeleteVpcConnector(_ context.Context, arn string) (*driver.VpcConnector, error) {
+	m.refMu.Lock()
+	defer m.refMu.Unlock()
+
 	conn, ok := m.vpcConnectors.Get(arn)
 	if !ok {
 		return nil, notFound("VPC connector %q does not exist", arn)
+	}
+
+	if m.vpcConnectorInUse(arn) {
+		return nil, invalidRequest("VPC connector is used by one or more App Runner services")
 	}
 
 	m.vpcConnectors.Delete(arn)

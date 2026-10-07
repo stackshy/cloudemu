@@ -54,7 +54,10 @@ func (m *Mock) CreateService(_ context.Context, in *driver.CreateServiceInput) (
 	}
 
 	appendOperation(&svc, driver.OpCreateService, now)
+
+	m.refMu.Lock()
 	m.services.Set(arn, svc)
+	m.refMu.Unlock()
 
 	return serviceResult(&svc), nil
 }
@@ -84,8 +87,8 @@ func resolveNetworkConfiguration(in *driver.NetworkConfiguration) *driver.Networ
 }
 
 // resolveAutoScalingSummary builds the auto scaling summary reported on a
-// service. A caller-supplied ARN is echoed; otherwise a stable default-config
-// summary is minted so reads never drift.
+// service. A caller-supplied ARN is echoed; otherwise the summary points at the
+// stored default configuration so reads never drift.
 func (m *Mock) resolveAutoScalingSummary(arn string) *driver.AutoScalingConfigurationSummary {
 	if arn != "" {
 		name, revision := autoScalingRefFromARN(arn)
@@ -97,10 +100,8 @@ func (m *Mock) resolveAutoScalingSummary(arn string) *driver.AutoScalingConfigur
 		}
 	}
 
-	id := newID()
-
 	return &driver.AutoScalingConfigurationSummary{
-		AutoScalingConfigurationArn:      m.autoScalingARN(defaultConfigName, firstRevision, id),
+		AutoScalingConfigurationArn:      m.defaultAutoScalingARN(),
 		AutoScalingConfigurationName:     defaultConfigName,
 		AutoScalingConfigurationRevision: firstRevision,
 	}
@@ -151,12 +152,15 @@ func (m *Mock) DescribeService(_ context.Context, serviceArn string) (*driver.Se
 // UpdateService replaces the members present in the request, advances UpdatedAt,
 // records an UPDATE_SERVICE operation and keeps the service RUNNING.
 func (m *Mock) UpdateService(_ context.Context, in *driver.UpdateServiceInput) (*driver.ServiceResult, error) {
+	m.refMu.Lock()
+	defer m.refMu.Unlock()
+
 	svc, ok := m.services.Get(in.ServiceArn)
 	if !ok {
 		return nil, notFound("service %q does not exist", in.ServiceArn)
 	}
 
-	applyServiceUpdate(&svc, in)
+	m.applyServiceUpdate(&svc, in)
 
 	now := m.now()
 	svc.UpdatedAt = now
@@ -167,7 +171,7 @@ func (m *Mock) UpdateService(_ context.Context, in *driver.UpdateServiceInput) (
 }
 
 // applyServiceUpdate overlays the non-nil members of an update onto a service.
-func applyServiceUpdate(svc *driver.Service, in *driver.UpdateServiceInput) {
+func (m *Mock) applyServiceUpdate(svc *driver.Service, in *driver.UpdateServiceInput) {
 	if in.SourceConfiguration != nil {
 		svc.SourceConfiguration = copySourceConfiguration(in.SourceConfiguration)
 	}
@@ -187,12 +191,19 @@ func applyServiceUpdate(svc *driver.Service, in *driver.UpdateServiceInput) {
 	if in.ObservabilityConfiguration != nil {
 		svc.ObservabilityConfiguration = copyObservabilityConfig(in.ObservabilityConfiguration)
 	}
+
+	if in.AutoScalingConfigurationArn != "" {
+		svc.AutoScalingConfigurationSummary = m.resolveAutoScalingSummary(in.AutoScalingConfigurationArn)
+	}
 }
 
 // DeleteService removes a service and returns its identity with a DELETED
 // status, so a subsequent describe returns ResourceNotFoundException and an IaC
 // delete-waiter completes.
 func (m *Mock) DeleteService(_ context.Context, serviceArn string) (*driver.ServiceResult, error) {
+	m.refMu.Lock()
+	defer m.refMu.Unlock()
+
 	svc, ok := m.services.Get(serviceArn)
 	if !ok {
 		return nil, notFound("service %q does not exist", serviceArn)
