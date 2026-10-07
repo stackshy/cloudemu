@@ -40,11 +40,27 @@ func (m *Mock) CreateDataSource(_ context.Context, in *driver.CreateDataSourceIn
 		return nil, err
 	}
 
+	if in.RoleArn != "" {
+		if err := validateRoleArn(in.RoleArn); err != nil {
+			return nil, err
+		}
+	}
+
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
+
+	if existing, ok := m.dataSourceByToken(in.IndexID, in.ClientToken); ok {
+		out := copyDataSource(&existing)
+
+		return &out, nil
+	}
+
 	id := newDataSourceID()
 	now := m.now()
 
 	ds := driver.DataSource{
 		ID:                                    id,
+		ClientToken:                           in.ClientToken,
 		IndexID:                               in.IndexID,
 		Name:                                  in.Name,
 		Type:                                  in.Type,
@@ -66,6 +82,23 @@ func (m *Mock) CreateDataSource(_ context.Context, in *driver.CreateDataSourceIn
 	out := copyDataSource(&ds)
 
 	return &out, nil
+}
+
+// dataSourceByToken returns the data source a previous create under the same
+// index made with the same client token; an empty token never matches.
+func (m *Mock) dataSourceByToken(indexID, token string) (driver.DataSource, bool) {
+	if token == "" {
+		return driver.DataSource{}, false
+	}
+
+	stored := m.dataSources.SortedValues()
+	for i := range stored {
+		if stored[i].IndexID == indexID && stored[i].ClientToken == token {
+			return stored[i], true
+		}
+	}
+
+	return driver.DataSource{}, false
 }
 
 // validateDataSourceType enforces the CUSTOM-vs-other constraints the real API
@@ -106,6 +139,12 @@ func (m *Mock) DescribeDataSource(_ context.Context, indexID, id string) (*drive
 // unchanged. The computed id, status and createdAt are preserved; updatedAt is
 // bumped.
 func (m *Mock) UpdateDataSource(_ context.Context, in *driver.UpdateDataSourceInput) error {
+	if in.RoleArn != nil && *in.RoleArn != "" {
+		if err := validateRoleArn(*in.RoleArn); err != nil {
+			return err
+		}
+	}
+
 	key := dataSourceKey(in.IndexID, in.ID)
 
 	ok := m.dataSources.Update(key, func(d driver.DataSource) driver.DataSource {
@@ -166,10 +205,15 @@ func (m *Mock) DeleteDataSource(_ context.Context, indexID, id string) error {
 }
 
 // ListDataSources returns a deterministic page of the data sources belonging to
-// an index, ordered by id.
+// an index, ordered by id. An index that does not exist is a
+// ResourceNotFoundException, as in real Kendra, not an empty page.
 func (m *Mock) ListDataSources(
 	_ context.Context, indexID string, page driver.Page,
 ) (dataSources []driver.DataSource, nextToken string, err error) {
+	if _, ok := m.indexes.Get(indexID); !ok {
+		return nil, "", notFound("index with id %q does not exist", indexID)
+	}
+
 	stored := m.dataSources.SortedValues()
 
 	filtered := make([]driver.DataSource, 0, len(stored))

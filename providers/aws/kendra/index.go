@@ -37,6 +37,10 @@ func (m *Mock) CreateIndex(_ context.Context, in *driver.CreateIndexInput) (*dri
 		return nil, validation("RoleArn is required")
 	}
 
+	if err := validateRoleArn(in.RoleArn); err != nil {
+		return nil, err
+	}
+
 	edition := in.Edition
 	if edition == "" {
 		edition = driver.EditionEnterprise
@@ -51,11 +55,21 @@ func (m *Mock) CreateIndex(_ context.Context, in *driver.CreateIndexInput) (*dri
 		userContext = driver.UserContextAttributeFilter
 	}
 
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
+
+	if existing, ok := m.indexByToken(in.ClientToken); ok {
+		out := copyIndex(&existing)
+
+		return &out, nil
+	}
+
 	id := newIndexID()
 	now := m.now()
 
 	idx := driver.Index{
 		ID:                                id,
+		ClientToken:                       in.ClientToken,
 		Name:                              in.Name,
 		Edition:                           edition,
 		RoleArn:                           in.RoleArn,
@@ -78,6 +92,24 @@ func (m *Mock) CreateIndex(_ context.Context, in *driver.CreateIndexInput) (*dri
 	return &out, nil
 }
 
+// indexByToken returns the index a previous create made with the same client
+// token. An empty token never matches, and a token whose index was deleted
+// starts a new create, as the first call's resource no longer exists.
+func (m *Mock) indexByToken(token string) (driver.Index, bool) {
+	if token == "" {
+		return driver.Index{}, false
+	}
+
+	stored := m.indexes.SortedValues()
+	for i := range stored {
+		if stored[i].ClientToken == token {
+			return stored[i], true
+		}
+	}
+
+	return driver.Index{}, false
+}
+
 // DescribeIndex returns the index by id, or a ResourceNotFoundException.
 func (m *Mock) DescribeIndex(_ context.Context, id string) (*driver.Index, error) {
 	idx, ok := m.indexes.Get(id)
@@ -93,6 +125,12 @@ func (m *Mock) DescribeIndex(_ context.Context, id string) (*driver.Index, error
 // UpdateIndex applies the supplied fields, leaving omitted parameters unchanged.
 // The computed id, status and createdAt are preserved; updatedAt is bumped.
 func (m *Mock) UpdateIndex(_ context.Context, in *driver.UpdateIndexInput) error {
+	if in.RoleArn != nil {
+		if err := validateRoleArn(*in.RoleArn); err != nil {
+			return err
+		}
+	}
+
 	ok := m.indexes.Update(in.ID, func(i driver.Index) driver.Index {
 		if in.Name != nil {
 			i.Name = *in.Name
@@ -138,8 +176,8 @@ func (m *Mock) UpdateIndex(_ context.Context, in *driver.UpdateIndexInput) error
 }
 
 // DeleteIndex removes an index and cascades to its data sources: real Kendra
-// deletes an index's data source connectors along with the index, so a client
-// that lists data sources after the index is gone sees none.
+// deletes an index's data source connectors along with the index, so no
+// orphan data source is left behind under a missing index.
 func (m *Mock) DeleteIndex(_ context.Context, id string) error {
 	if _, ok := m.indexes.Get(id); !ok {
 		return notFound("index with id %q does not exist", id)

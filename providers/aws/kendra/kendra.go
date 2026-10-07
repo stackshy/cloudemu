@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -37,6 +38,9 @@ const dataSourceIDBytes = 16
 
 // Mock is an in-memory implementation of the Amazon Kendra control plane.
 type Mock struct {
+	// createMu spans the client-token lookup and the insert of every create, so
+	// concurrent retries carrying the same token create exactly one resource.
+	createMu    sync.Mutex
 	indexes     *memstore.Store[driver.Index]
 	dataSources *memstore.Store[driver.DataSource]
 	opts        *config.Options

@@ -212,3 +212,91 @@ func TestSDKValidationExceptionOnCustomWithRole(t *testing.T) {
 		t.Fatalf("expected ValidationException, got %T: %v", err, err)
 	}
 }
+
+func TestSDKCreateIndexClientTokenIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	c := newClient(t)
+	in := &awskendra.CreateIndexInput{
+		ClientToken: aws.String("retry-token"), Name: aws.String("docs"),
+		Edition: kendratypes.IndexEditionDeveloperEdition, RoleArn: aws.String(roleArn),
+	}
+
+	first, err := c.CreateIndex(ctx, in)
+	if err != nil {
+		t.Fatalf("CreateIndex: %v", err)
+	}
+
+	second, err := c.CreateIndex(ctx, in)
+	if err != nil {
+		t.Fatalf("CreateIndex retry: %v", err)
+	}
+
+	if aws.ToString(first.Id) != aws.ToString(second.Id) {
+		t.Fatalf("retry created a second index: %s vs %s", aws.ToString(first.Id), aws.ToString(second.Id))
+	}
+
+	list, err := c.ListIndices(ctx, &awskendra.ListIndicesInput{})
+	if err != nil {
+		t.Fatalf("ListIndices: %v", err)
+	}
+
+	if len(list.IndexConfigurationSummaryItems) != 1 {
+		t.Fatalf("expected 1 index, got %d", len(list.IndexConfigurationSummaryItems))
+	}
+}
+
+func TestSDKCreateDataSourceClientTokenIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	c := newClient(t)
+
+	idx, err := c.CreateIndex(ctx, &awskendra.CreateIndexInput{
+		Name: aws.String("docs"), Edition: kendratypes.IndexEditionDeveloperEdition, RoleArn: aws.String(roleArn),
+	})
+	if err != nil {
+		t.Fatalf("CreateIndex: %v", err)
+	}
+
+	in := &awskendra.CreateDataSourceInput{
+		ClientToken: aws.String("ds-token"), IndexId: idx.Id, Name: aws.String("ds"), Type: kendratypes.DataSourceTypeCustom,
+	}
+
+	first, err := c.CreateDataSource(ctx, in)
+	if err != nil {
+		t.Fatalf("CreateDataSource: %v", err)
+	}
+
+	second, err := c.CreateDataSource(ctx, in)
+	if err != nil {
+		t.Fatalf("CreateDataSource retry: %v", err)
+	}
+
+	if aws.ToString(first.Id) != aws.ToString(second.Id) {
+		t.Fatalf("retry created a second data source")
+	}
+}
+
+func TestSDKListDataSourcesMissingIndex(t *testing.T) {
+	c := newClient(t)
+
+	_, err := c.ListDataSources(context.Background(), &awskendra.ListDataSourcesInput{
+		IndexId: aws.String("00000000-0000-4000-8000-000000000000"),
+	})
+
+	var nfe *kendratypes.ResourceNotFoundException
+	if !errors.As(err, &nfe) {
+		t.Fatalf("expected ResourceNotFoundException, got %T: %v", err, err)
+	}
+}
+
+func TestSDKCreateIndexInvalidRoleArn(t *testing.T) {
+	c := newClient(t)
+
+	_, err := c.CreateIndex(context.Background(), &awskendra.CreateIndexInput{
+		Name: aws.String("docs"), Edition: kendratypes.IndexEditionDeveloperEdition, RoleArn: aws.String("not-an-arn"),
+	})
+
+	var ve *kendratypes.ValidationException
+	if !errors.As(err, &ve) {
+		t.Fatalf("expected ValidationException, got %T: %v", err, err)
+	}
+}

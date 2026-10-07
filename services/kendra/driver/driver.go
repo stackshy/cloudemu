@@ -81,6 +81,7 @@ type Tag struct {
 // as raw JSON so they round-trip without re-marshal drift.
 type Index struct {
 	ID                                string
+	ClientToken                       string
 	Name                              string
 	Edition                           string
 	RoleArn                           string
@@ -103,6 +104,7 @@ type Index struct {
 // trip verbatim as raw JSON.
 type DataSource struct {
 	ID                                    string
+	ClientToken                           string
 	IndexID                               string
 	Name                                  string
 	Type                                  string
@@ -127,6 +129,9 @@ type Page struct {
 
 // CreateIndexInput is the input to CreateIndex.
 type CreateIndexInput struct {
+	// ClientToken makes the create idempotent: repeating a call with the same
+	// token returns the index the first call created.
+	ClientToken                       string
 	Name                              string
 	Edition                           string
 	RoleArn                           string
@@ -154,6 +159,9 @@ type UpdateIndexInput struct {
 
 // CreateDataSourceInput is the input to CreateDataSource.
 type CreateDataSourceInput struct {
+	// ClientToken makes the create idempotent within the index: repeating a call
+	// with the same token returns the data source the first call created.
+	ClientToken                           string
 	IndexID                               string
 	Name                                  string
 	Type                                  string
