@@ -437,6 +437,19 @@ func TestHTTPProxyIntegration(t *testing.T) {
 		Type: driver.IntegrationHTTPProxy, IntegrationHTTPMethod: "ANY", URI: backend.URL + "/v1/items",
 	})
 
+	// A greedy path parameter cannot climb out of the integration's path.
+	for _, bad := range []string{"..", "a/../b", "./x"} {
+		f2 := newDP(t)
+		f2.method(t, driver.PutMethodInput{RequestParameters: map[string]bool{"method.request.querystring.p": false}}, &driver.PutIntegrationInput{
+			Type: driver.IntegrationHTTPProxy, IntegrationHTTPMethod: "ANY", URI: backend.URL + "/v1/{p}",
+			RequestParameters: map[string]string{"integration.request.path.p": "method.request.querystring.p"},
+		})
+
+		if resp := f2.get(t, nil, map[string]string{"p": bad}); resp.StatusCode != 400 {
+			t.Fatalf("dot segment %q: %d %s", bad, resp.StatusCode, resp.Body)
+		}
+	}
+
 	resp := f.get(t, map[string]string{"X-Custom": "abc", "Host": "ignored"}, map[string]string{"a": "1"})
 	if resp.StatusCode != http.StatusTeapot || resp.Body != "short and stout" || resp.MultiValueHeaders["X-Backend"][0] != "yes" {
 		t.Fatalf("relay: %d %s %v", resp.StatusCode, resp.Body, resp.MultiValueHeaders)
@@ -692,4 +705,54 @@ func TestTestInvokeMethodAndAuthorizer(t *testing.T) {
 	if _, err = f.m.TestInvokeAuthorizer(ctx(), &driver.TestInvokeAuthorizerInput{RestAPIID: f.api.ID, AuthorizerID: az.ID}); err == nil {
 		t.Fatal("missing identity source must fail")
 	}
+}
+
+func TestCachedAuthorizerPolicyIsEvaluatedPerMethod(t *testing.T) {
+	f := newDP(t)
+
+	az, _ := f.m.CreateAuthorizer(ctx(), f.api.ID, &driver.CreateAuthorizerInput{
+		Name: "tok", Type: driver.AuthorizerToken, AuthorizerURI: strings.Replace(lambdaURI, "hello", "auth", 1),
+		AuthorizerResultTTLInSeconds: intPtr(300),
+	})
+
+	// GET /items is guarded; POST /items uses the same authorizer.
+	for _, method := range []string{"GET", "POST"} {
+		if _, err := f.m.PutMethod(ctx(), f.api.ID, f.resID, method, driver.PutMethodInput{AuthorizationType: "CUSTOM", AuthorizerID: az.ID}); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := f.m.PutIntegration(ctx(), f.api.ID, f.resID, method, driver.PutIntegrationInput{
+			Type: driver.IntegrationAWSProxy, IntegrationHTTPMethod: "POST", URI: lambdaURI,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	f.deploy(t, nil)
+
+	// The policy allows only GET /items.
+	auth := &fakeInvoker{output: []byte(`{"principalId":"u","policyDocument":{"Statement":[{"Action":"execute-api:Invoke","Effect":"Allow","Resource":"arn:aws:execute-api:us-east-1:000000000000:` + f.api.ID + `/prod/GET/items"}]}}`)}
+	f.m.SetLambdaInvoker(routeInvoker{"auth": auth, "hello": f.inv})
+
+	hdr := map[string]string{"Authorization": "same-token"}
+	status(t, f.get(t, hdr, nil), 200) // GET is allowed and its decision is cached
+
+	resp, err := f.m.InvokeRoute(ctx(), &driver.ProxyRequest{RestAPIID: f.api.ID, StageName: "prod", HTTPMethod: "POST", Path: "/items", Headers: hdr})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	status(t, resp, 403) // the cached policy does not cover POST /items
+}
+
+func TestCognitoTokenWithoutExpiryIsRejected(t *testing.T) {
+	f := newDP(t)
+
+	az, _ := f.m.CreateAuthorizer(ctx(), f.api.ID, &driver.CreateAuthorizerInput{
+		Name: "pool", Type: driver.AuthorizerCognito, ProviderARNs: []string{"arn:aws:cognito-idp:us-east-1:000000000000:userpool/us-east-1_abc"},
+	})
+	f.method(t, driver.PutMethodInput{AuthorizationType: "COGNITO_USER_POOLS", AuthorizerID: az.ID}, nil)
+
+	noExp := jwt(map[string]any{"iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_abc", "sub": "u"})
+	status(t, f.get(t, map[string]string{"Authorization": noExp}, nil), 401)
 }

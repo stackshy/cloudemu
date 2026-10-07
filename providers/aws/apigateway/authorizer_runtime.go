@@ -24,7 +24,7 @@ const (
 
 // authDecision is the outcome of one authorizer run, cached per identity.
 type authDecision struct {
-	allowed     bool
+	statements  []policyStatement
 	principalID string
 	context     map[string]any
 	usageKey    string
@@ -128,7 +128,10 @@ func (m *Mock) runLambdaAuthorizer(
 		return m.gatewayResponse(route, req, reqID, respAuthorizerFail, msgInternal)
 	}
 
-	if !dec.allowed {
+	// The cached policy is evaluated against this request's method ARN, not the
+	// ARN of the request that produced it, so a cached Allow for one method never
+	// authorizes another.
+	if !dec.allows(m.methodARN(req)) {
 		return m.gatewayResponse(route, req, reqID, respAccessDenied, msgForbiddenDeny)
 	}
 
@@ -226,7 +229,7 @@ func (m *Mock) callAuthorizer(
 		return authDecision{}, authFailure
 	}
 
-	dec, ok := parsePolicy(out, m.methodARN(req))
+	dec, ok := parsePolicy(out)
 	if !ok {
 		return authDecision{}, authConfig
 	}
@@ -338,37 +341,38 @@ func stringOrList(raw json.RawMessage) []string {
 	return many
 }
 
-// parsePolicy reads an authorizer output and evaluates its policy against the
-// method ARN: an explicit Deny wins, then an Allow, otherwise the request is
-// implicitly denied. ok is false when the output is not a policy at all.
-func parsePolicy(out []byte, methodARN string) (authDecision, bool) {
+func parsePolicy(out []byte) (authDecision, bool) {
 	var pr policyResponse
 	if err := json.Unmarshal(out, &pr); err != nil || pr.PolicyDocument == nil || pr.PrincipalID == "" {
 		return authDecision{}, false
 	}
 
-	dec := authDecision{
+	return authDecision{
 		principalID: pr.PrincipalID, context: pr.Context, usageKey: pr.UsageKey, policy: string(pr.PolicyDocument.Raw),
-	}
+		statements: pr.PolicyDocument.Statement,
+	}, true
+}
 
+// allows evaluates the policy against a method ARN: an explicit Deny wins, then
+// an Allow, otherwise the request is implicitly denied.
+func (d *authDecision) allows(methodARN string) bool {
 	allowed := false
 
-	for _, st := range pr.PolicyDocument.Statement {
-		if !statementMatches(&st, methodARN) {
+	for i := range d.statements {
+		st := &d.statements[i]
+		if !statementMatches(st, methodARN) {
 			continue
 		}
 
 		switch st.Effect {
 		case "Deny":
-			return dec, true
+			return false
 		case "Allow":
 			allowed = true
 		}
 	}
 
-	dec.allowed = allowed
-
-	return dec, true
+	return allowed
 }
 
 func statementMatches(st *policyStatement, arn string) bool {
@@ -454,7 +458,8 @@ func jwtClaims(token string) (map[string]any, bool) {
 
 // claimsValid checks expiry and that the issuer is one of the authorizer's pools.
 func claimsValid(claims map[string]any, route *resolvedRoute, now time.Time) bool {
-	if exp, ok := claims["exp"].(float64); ok && now.Unix() >= int64(exp) {
+	exp, ok := claims["exp"].(float64)
+	if !ok || now.Unix() >= int64(exp) {
 		return false
 	}
 

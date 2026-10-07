@@ -22,6 +22,22 @@ import (
 // or path mapping, or an unusable endpoint URL).
 var errBackendConfig = errors.New("integration configuration error")
 
+// errPathTraversal rejects a path parameter that would climb out of the
+// integration's path ("." or ".." segments), which would reach other paths on the
+// backend than the one the API configures.
+var errPathTraversal = errors.New("path parameter contains a dot segment")
+
+// hasDotSegment reports whether any "/"-separated segment of v is "." or "..".
+func hasDotSegment(v string) bool {
+	for _, seg := range strings.Split(v, "/") {
+		if seg == "." || seg == ".." {
+			return true
+		}
+	}
+
+	return false
+}
+
 // HTTPDoer is the outbound HTTP seam of HTTP and HTTP_PROXY integrations. The
 // default is a client that does not follow redirects; tests and callers can wire
 // their own with SetHTTPClient.
@@ -157,22 +173,32 @@ func buildBackendURL(route *resolvedRoute, req *driver.ProxyRequest, params inte
 // fillPathPlaceholders replaces each {name} of the integration URI with its mapped
 // (or, for HTTP_PROXY, the request's own) path parameter, escaped.
 func fillPathPlaceholders(uri string, route *resolvedRoute, params integrationParams, proxy bool) (string, error) {
-	unresolved := ""
+	unresolved, traversal := "", false
 
 	out := pathPlaceholder.ReplaceAllStringFunc(uri, func(ph string) string {
 		name := strings.TrimSuffix(strings.Trim(ph, "{}"), "+")
-		if v, ok := params.path[name]; ok {
-			return escapePathSegment(v)
+
+		v, ok := params.path[name]
+		if !ok && proxy {
+			v, ok = route.pathParameters[name]
 		}
 
-		if v, ok := route.pathParameters[name]; ok && proxy {
-			return escapePathSegment(v)
+		if !ok {
+			unresolved = name
+
+			return ph
 		}
 
-		unresolved = name
+		if hasDotSegment(v) {
+			traversal = true
+		}
 
-		return ph
+		return escapePathSegment(v)
 	})
+
+	if traversal {
+		return "", errPathTraversal
+	}
 
 	if unresolved != "" {
 		return "", fmt.Errorf("%w: path parameter %s is not mapped", errBackendConfig, unresolved)
@@ -219,6 +245,10 @@ func (m *Mock) serveHTTP(
 	params := mapIntegrationParams(req, route)
 
 	target, err := buildBackendURL(route, req, params)
+	if errors.Is(err, errPathTraversal) {
+		return m.gatewayResponse(route, req, reqID, respBadParameters, "Invalid path parameter"), noIntegration
+	}
+
 	if err != nil {
 		lg.errorf("Execution failed due to configuration error: %s", err.Error())
 
