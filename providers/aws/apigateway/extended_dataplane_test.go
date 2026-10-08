@@ -756,3 +756,91 @@ func TestCognitoTokenWithoutExpiryIsRejected(t *testing.T) {
 	noExp := jwt(map[string]any{"iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_abc", "sub": "u"})
 	status(t, f.get(t, map[string]string{"Authorization": noExp}, nil), 401)
 }
+
+func TestStageMethodThrottleUsesTheTerraformAndNestedPaths(t *testing.T) {
+	f := newDP(t)
+	f.method(t, driver.PutMethodInput{}, nil)
+
+	// Terraform's method_path "items/GET" and a nested path both parse from the right.
+	if _, err := f.m.UpdateStage(ctx(), f.api.ID, "prod", []driver.PatchOperation{
+		{Op: "replace", Path: "/items/GET/throttling/burstLimit", Value: "1"},
+		{Op: "replace", Path: "/items/GET/throttling/rateLimit", Value: "1"},
+		{Op: "replace", Path: "/a~1b/GET/metrics/enabled", Value: "true"},
+		{Op: "replace", Path: "/pets/child/GET/metrics/enabled", Value: "true"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	status(t, f.get(t, nil, nil), 200)
+	status(t, f.get(t, nil, nil), 429)
+
+	st, err := f.m.GetStage(ctx(), f.api.ID, "prod")
+	if err != nil || st.MethodSettings["a/b/GET"] == nil || st.MethodSettings["pets/child/GET"] == nil {
+		t.Fatalf("both spellings of a nested path store one canonical key: %v %+v", err, st.MethodSettings)
+	}
+}
+
+func TestPlanThrottleIsOneBucketPerKey(t *testing.T) {
+	f := newDP(t)
+	f.method(t, driver.PutMethodInput{APIKeyRequired: true}, nil)
+
+	other, err := f.m.CreateResource(ctx(), f.api.ID, f.api.RootResourceID, "other")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = f.m.PutMethod(ctx(), f.api.ID, other.ID, "GET", driver.PutMethodInput{APIKeyRequired: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = f.m.PutIntegration(ctx(), f.api.ID, other.ID, "GET", driver.PutIntegrationInput{
+		Type: driver.IntegrationAWSProxy, IntegrationHTTPMethod: "POST", URI: lambdaURI,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	f.deploy(t, nil)
+
+	key, _ := f.m.CreateAPIKey(ctx(), &driver.CreateAPIKeyInput{Name: "k", Enabled: true})
+	plan, _ := f.m.CreateUsagePlan(ctx(), &driver.CreateUsagePlanInput{
+		Name: "p", APIStages: []driver.UsagePlanStage{{RestAPIID: f.api.ID, Stage: "prod"}},
+		Throttle: &driver.ThrottleSettings{BurstLimit: 1, RateLimit: 1},
+	})
+	_, _ = f.m.CreateUsagePlanKey(ctx(), plan.ID, key.ID, "API_KEY")
+
+	hdr := map[string]string{"x-api-key": key.Value}
+
+	status(t, f.get(t, hdr, nil), 200)
+
+	resp, err := f.m.InvokeRoute(ctx(), &driver.ProxyRequest{
+		RestAPIID: f.api.ID, StageName: "prod", HTTPMethod: "GET", Path: "/other", Headers: hdr, SourceIP: "1.2.3.4",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	status(t, resp, 429) // the burst of 1 is shared by every method of the key
+}
+
+func TestRequestAuthorizerWithoutIdentitySourceIsInvoked(t *testing.T) {
+	f := newDP(t)
+
+	az, err := f.m.CreateAuthorizer(ctx(), f.api.ID, &driver.CreateAuthorizerInput{
+		Name: "req", Type: driver.AuthorizerRequest, AuthorizerURI: strings.Replace(lambdaURI, "hello", "auth", 1),
+		AuthorizerResultTTLInSeconds: intPtr(0),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f.method(t, driver.PutMethodInput{AuthorizationType: "CUSTOM", AuthorizerID: az.ID}, nil)
+
+	auth := &fakeInvoker{output: []byte(`{"principalId":"u","policyDocument":{"Version":"2012-10-17","Statement":[{"Action":"execute-api:Invoke","Effect":"Allow","Resource":"*"}]}}`)}
+	f.m.SetLambdaInvoker(routeInvoker{"auth": auth, "hello": f.inv})
+
+	status(t, f.get(t, nil, nil), 200)
+
+	if auth.lastPayload == nil {
+		t.Fatal("the authorizer Lambda must be invoked")
+	}
+}

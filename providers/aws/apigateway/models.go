@@ -200,6 +200,10 @@ func (m *Mock) DeleteModel(_ context.Context, restAPIID, name string) error {
 		return cerrors.New(cerrors.InvalidArgument, msgModelReserved)
 	}
 
+	if methodUsing(ad, func(mth *driver.Method) bool { return modelReferenced(mth, name) }) {
+		return cerrors.New(cerrors.InvalidArgument, "Model is still referenced by a method; remove the reference first")
+	}
+
 	delete(ad.models, name)
 
 	return nil
@@ -354,4 +358,24 @@ func (m *Mock) DeleteRequestValidator(_ context.Context, restAPIID, id string) e
 	}
 
 	return nil
+}
+
+// modelReferenced reports whether a method names the model in its request models
+// or in any of its method responses.
+func modelReferenced(mth *driver.Method, name string) bool {
+	for _, v := range mth.RequestModels {
+		if v == name {
+			return true
+		}
+	}
+
+	for _, mr := range mth.MethodResponses {
+		for _, v := range mr.ResponseModels {
+			if v == name {
+				return true
+			}
+		}
+	}
+
+	return false
 }

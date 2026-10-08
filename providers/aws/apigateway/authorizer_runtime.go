@@ -99,6 +99,24 @@ func identityValue(src string, req *driver.ProxyRequest, route *resolvedRoute) s
 	}
 }
 
+// authorizerIdentity collects the identity values the authorizer needs and
+// reports false when the request must be rejected before the Lambda runs: a
+// missing identity value or a TOKEN that fails its validation expression. A
+// REQUEST authorizer with no identity source and caching off (the only
+// combination CreateAuthorizer accepts) has nothing to check: it is always invoked.
+func authorizerIdentity(az *driver.Authorizer, req *driver.ProxyRequest, route *resolvedRoute) ([]string, bool) {
+	idents, ok := identityValues(az.IdentitySource, req, route)
+	if !ok {
+		return nil, az.Type == driver.AuthorizerRequest && az.IdentitySource == "" && authorizerTTL(az) == 0
+	}
+
+	if az.Type == driver.AuthorizerToken && !tokenMatches(az.IdentityValidationExpression, idents[0]) {
+		return nil, false
+	}
+
+	return idents, true
+}
+
 // runLambdaAuthorizer evaluates a TOKEN or REQUEST authorizer, reusing a cached
 // decision for the same identity while its TTL lasts.
 func (m *Mock) runLambdaAuthorizer(
@@ -106,12 +124,8 @@ func (m *Mock) runLambdaAuthorizer(
 ) *driver.ProxyResponse {
 	az := route.authorizer
 
-	idents, ok := identityValues(az.IdentitySource, req, route)
+	idents, ok := authorizerIdentity(az, req, route)
 	if !ok {
-		return m.gatewayResponse(route, req, reqID, respUnauthorized, msgUnauthorized)
-	}
-
-	if az.Type == driver.AuthorizerToken && !tokenMatches(az.IdentityValidationExpression, idents[0]) {
 		return m.gatewayResponse(route, req, reqID, respUnauthorized, msgUnauthorized)
 	}
 

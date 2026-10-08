@@ -119,8 +119,15 @@ func (m *Mock) applyPlanLimits(
 	scope := plan.ID + "|" + keyID
 	now := m.opts.Clock.Now().UTC()
 
-	if th := planThrottle(plan, route); th != nil && (th.RateLimit > 0 || th.BurstLimit > 0) {
-		b := m.bucket(scope + "|" + route.resourcePath + "|" + route.method.HTTPMethod)
+	if th, perMethod := planThrottle(plan, route); th != nil && (th.RateLimit > 0 || th.BurstLimit > 0) {
+		// The plan's own throttle is one bucket per key; only a per-method
+		// override is counted separately per resource path and method.
+		bucketKey := scope
+		if perMethod {
+			bucketKey += "|" + route.resourcePath + "|" + route.method.HTTPMethod
+		}
+
+		b := m.bucket(bucketKey)
 		if !b.take(now, th.RateLimit, th.BurstLimit) {
 			return m.gatewayResponse(route, req, reqID, respThrottled, "Too Many Requests")
 		}
@@ -147,19 +154,19 @@ func (m *Mock) applyPlanLimits(
 }
 
 // planThrottle is the throttle in force for the method: the plan stage's
-// per-method override, else the plan's own.
-func planThrottle(plan *driver.UsagePlan, route *resolvedRoute) *driver.ThrottleSettings {
+// per-method override (perMethod true), else the plan's own.
+func planThrottle(plan *driver.UsagePlan, route *resolvedRoute) (th *driver.ThrottleSettings, perMethod bool) {
 	for _, s := range plan.APIStages {
 		if s.RestAPIID != route.apiID || s.Stage != route.stage.StageName {
 			continue
 		}
 
-		if th, ok := s.Throttle[route.resourcePath+"/"+route.method.HTTPMethod]; ok {
-			return &th
+		if override, ok := s.Throttle[route.resourcePath+"/"+route.method.HTTPMethod]; ok {
+			return &override, true
 		}
 	}
 
-	return plan.Throttle
+	return plan.Throttle, false
 }
 
 func (m *Mock) bucket(key string) *tokenBucket {
@@ -193,7 +200,7 @@ func (m *Mock) checkStageThrottle(req *driver.ProxyRequest, route *resolvedRoute
 // methodSetting returns the stage setting for the route's method, falling back to
 // the "*/*" setting.
 func methodSetting(st *driver.Stage, route *resolvedRoute) *driver.MethodSetting {
-	if ms, ok := st.MethodSettings[route.resourcePath+"/"+route.method.HTTPMethod]; ok {
+	if ms, ok := st.MethodSettings[methodSettingKey(route.resourcePath, route.method.HTTPMethod)]; ok {
 		return ms
 	}
 

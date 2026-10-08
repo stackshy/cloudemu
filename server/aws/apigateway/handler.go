@@ -136,9 +136,22 @@ func isHostDataPlane(r *http.Request) bool {
 }
 
 // isPathDataPlane reports a /restapis/{apiId}/{stage}/_user_request_/ invoke.
+// Only that exact shape counts: an S3 key such as logs/_user_request_/a.txt must
+// still reach S3.
 func isPathDataPlane(r *http.Request) bool {
-	return strings.Contains(r.URL.Path, "/"+userRequestMark)
+	rest, ok := strings.CutPrefix(r.URL.Path, controlPrefix)
+	if !ok {
+		return false
+	}
+
+	// {apiId}/{stage}/_user_request_[/...]
+	segs := strings.SplitN(strings.TrimPrefix(rest, "/"), "/", pathDataPlaneSegs)
+
+	return len(segs) >= pathDataPlaneSegs-1 && segs[0] != "" && segs[1] != "" && segs[2] == userRequestMark
 }
+
+// pathDataPlaneSegs is how many leading segments identify a path-style invoke.
+const pathDataPlaneSegs = 4
 
 // serveControlPlane routes the restJson1 management API under /restapis.
 func (h *Handler) serveControlPlane(w http.ResponseWriter, r *http.Request) {

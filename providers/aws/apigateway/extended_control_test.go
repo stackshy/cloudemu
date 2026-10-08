@@ -508,7 +508,7 @@ func TestStageLoggingSettingsValidation(t *testing.T) {
 		driver.PatchOperation{Op: "replace", Path: "/tracingEnabled", Value: "true"},
 	))
 	if err != nil || st.MethodSettings["*/*"].LoggingLevel != "INFO" || !st.MethodSettings["*/*"].MetricsEnabled ||
-		st.MethodSettings["/pets/GET"].ThrottlingRateLimit != 5 || !st.TracingEnabled {
+		st.MethodSettings["pets/GET"].ThrottlingRateLimit != 5 || !st.TracingEnabled {
 		t.Fatalf("settings: %v %+v", err, st)
 	}
 

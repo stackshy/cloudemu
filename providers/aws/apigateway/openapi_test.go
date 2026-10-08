@@ -284,3 +284,22 @@ func TestGetExportSwaggerOAS30AndYAMLRoundTrip(t *testing.T) {
 		t.Fatalf("re-imported methods = %d, want 3", methods)
 	}
 }
+
+func TestImportRecognisesAnyXAPIKeyScheme(t *testing.T) {
+	m := newMock(t)
+
+	res, err := m.ImportRestAPI(ctx(), &driver.ImportRestAPIInput{Body: []byte(`{
+"openapi":"3.0.1","info":{"title":"k","version":"1"},
+"components":{"securitySchemes":{"ApiKeyAuth":{"type":"apiKey","name":"x-api-key","in":"header"}}},
+"paths":{"/k":{"get":{"security":[{"ApiKeyAuth":[]}],"responses":{"200":{"description":"ok"}}}}}}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resources, _ := m.GetResources(ctx(), res.API.ID)
+	for i := range resources {
+		if resources[i].Path == "/k" && !resources[i].Methods["GET"].APIKeyRequired {
+			t.Fatal("a scheme of type apiKey on x-api-key must require the key whatever its name")
+		}
+	}
+}

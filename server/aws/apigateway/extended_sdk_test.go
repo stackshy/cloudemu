@@ -341,7 +341,7 @@ func TestSDKStageSettingsAndTags(t *testing.T) {
 		{Op: agtypes.OpReplace, Path: aws.String("/~1pets/GET/throttling/rateLimit"), Value: aws.String("7")},
 	}})
 	if err != nil || aws.ToString(upd.MethodSettings["*/*"].LoggingLevel) != "INFO" ||
-		upd.MethodSettings["/pets/GET"].ThrottlingRateLimit != 7 {
+		upd.MethodSettings["pets/GET"].ThrottlingRateLimit != 7 {
 		t.Fatalf("method settings: %v %+v", err, upd.MethodSettings)
 	}
 

@@ -63,12 +63,15 @@ func applyAccessLogPatch(st *driver.Stage, op driver.PatchOperation) {
 }
 
 func applyMethodSettingPatch(st *driver.Stage, op driver.PatchOperation) error {
+	// Parse from the right: field, section, method, and whatever remains is the
+	// resource path (a nested "pets/child" keeps its slashes, "~1" escapes them).
 	toks := strings.Split(strings.TrimPrefix(op.Path, "/"), "/")
-	if len(toks) != methodSettingDepth {
+	if len(toks) < methodSettingDepth {
 		return cerrors.New(cerrors.InvalidArgument, msgMethodSetting)
 	}
 
-	key := unescapePointer(toks[0]) + "/" + toks[1]
+	n := len(toks)
+	key := methodSettingKey(unescapePointer(strings.Join(toks[:n-3], "/")), toks[n-3])
 
 	if st.MethodSettings == nil {
 		st.MethodSettings = map[string]*driver.MethodSetting{}
@@ -80,7 +83,14 @@ func applyMethodSettingPatch(st *driver.Stage, op driver.PatchOperation) error {
 		st.MethodSettings[key] = ms
 	}
 
-	return setMethodSettingField(ms, toks[2]+"/"+toks[3], op.Value)
+	return setMethodSettingField(ms, toks[n-2]+"/"+toks[n-1], op.Value)
+}
+
+// methodSettingKey is the one canonical key of a method setting, used on write
+// and on read: the resource path without its leading slash, then the method
+// ("mock/GET", "pets/child/GET", "*/*").
+func methodSettingKey(resourcePath, method string) string {
+	return strings.TrimPrefix(resourcePath, "/") + "/" + method
 }
 
 func setMethodSettingField(ms *driver.MethodSetting, field, value string) error {

@@ -95,18 +95,14 @@ func checkModelRefs(ad *apiData, models map[string]string) error {
 }
 
 // checkConnection validates an integration's connection: INTERNET (the default)
-// or a VPC_LINK that exists. Lock order: ad.mu is held by the caller, so the VPC
-// link lookup takes regionMu without a nested API lock.
+// or a VPC_LINK that exists. Lock order: the caller holds regionMu (read) and then
+// ad.mu, the same order every region-scoped writer uses, so this takes no lock.
 func (m *Mock) checkConnection(ig *driver.Integration) error {
 	switch ig.ConnectionType {
 	case connectionInternet:
 		return nil
 	case connectionVpcLink:
-		m.regionMu.RLock()
-		_, ok := m.vpcLinks[ig.ConnectionID]
-		m.regionMu.RUnlock()
-
-		if !ok {
+		if _, ok := m.vpcLinks[ig.ConnectionID]; !ok {
 			return cerrors.New(cerrors.InvalidArgument, "Invalid VPC link identifier specified for the integration")
 		}
 
@@ -165,6 +161,10 @@ func (m *Mock) PutIntegration(
 	if err != nil {
 		return nil, err
 	}
+
+	// regionMu before ad.mu: the VPC link lookup below reads region state.
+	m.regionMu.RLock()
+	defer m.regionMu.RUnlock()
 
 	ad.mu.Lock()
 	defer ad.mu.Unlock()
@@ -281,4 +281,18 @@ func (m *Mock) lookupMethod(restAPIID, resourceID, httpMethod string) (*driver.M
 	out := copyMethod(mth)
 
 	return &out, nil
+}
+
+// methodUsing reports whether any method of the API satisfies pred. The caller
+// holds ad.mu.
+func methodUsing(ad *apiData, pred func(*driver.Method) bool) bool {
+	for _, res := range ad.resources {
+		for _, mth := range res.Methods {
+			if pred(mth) {
+				return true
+			}
+		}
+	}
+
+	return false
 }

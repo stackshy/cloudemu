@@ -133,9 +133,13 @@ func (m *Mock) PutRestAPI(ctx context.Context, restAPIID string, in *driver.PutR
 		return nil, err
 	}
 
-	if _, getErr := m.getAPI(restAPIID); getErr != nil {
+	ad, getErr := m.getAPI(restAPIID)
+	if getErr != nil {
 		return nil, getErr
 	}
+
+	// A failed import leaves the API unchanged, as on AWS: keep a copy to restore.
+	before := snapshotAPI(ad)
 
 	if mode == driver.ImportOverwrite {
 		m.clearAPIContent(restAPIID)
@@ -147,10 +151,14 @@ func (m *Mock) PutRestAPI(ctx context.Context, restAPIID string, in *driver.PutR
 	}
 
 	if runErr := imp.run(); runErr != nil {
+		restoreAPIContent(ad, before)
+
 		return nil, runErr
 	}
 
 	if in.FailOnWarnings && len(imp.warnings) > 0 {
+		restoreAPIContent(ad, before)
+
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "Warnings found during import: %s", strings.Join(imp.warnings, "; "))
 	}
 
@@ -160,6 +168,22 @@ func (m *Mock) PutRestAPI(ctx context.Context, restAPIID string, in *driver.PutR
 	}
 
 	return &driver.ImportResult{API: api, Warnings: imp.warnings}, nil
+}
+
+// restoreAPIContent puts back the content an import replaces (the API record,
+// resources, documentation, authorizers, models, validators and gateway
+// responses). Deployments and stages are never touched by an import.
+func restoreAPIContent(ad *apiData, as *apiSnapshot) {
+	restored := restoreAPI(as)
+
+	ad.mu.Lock()
+	defer ad.mu.Unlock()
+
+	ad.api = restored.api
+	ad.resources = restored.resources
+	ad.docParts = restored.docParts
+	ad.docVersions = restored.docVersions
+	ad.apiExt = restored.apiExt
 }
 
 // clearAPIContent removes everything an overwrite import replaces, keeping the
@@ -262,13 +286,36 @@ func (i *importer) importValidators() {
 	}
 }
 
+// securitySchemes returns the document's security schemes: OpenAPI 3
+// components.securitySchemes or Swagger 2 securityDefinitions.
+func securitySchemes(doc map[string]any) map[string]any {
+	schemes, _ := doc["securityDefinitions"].(map[string]any)
+	if comps, ok := doc["components"].(map[string]any); ok {
+		schemes, _ = comps["securitySchemes"].(map[string]any)
+	}
+
+	return schemes
+}
+
+// isAPIKeyScheme reports whether the named security scheme is the API key: type
+// apiKey in the x-api-key header, whatever the scheme is called. A scheme that
+// carries an authorizer (a Lambda authorizer is also type apiKey) is not.
+func (i *importer) isAPIKeyScheme(name string) bool {
+	scheme, _ := securitySchemes(i.doc)[name].(map[string]any)
+	if scheme == nil {
+		return name == "api_key"
+	}
+
+	_, isAuthorizer := scheme[extAuthorizer]
+	header, _ := scheme["name"].(string)
+
+	return !isAuthorizer && scheme["type"] == "apiKey" && scheme["in"] == locHeader && strings.EqualFold(header, "x-api-key")
+}
+
 // importAuthorizers creates the authorizers declared as security schemes with
 // the x-amazon-apigateway-authorizer extension.
 func (i *importer) importAuthorizers() {
-	schemes, _ := i.doc["securityDefinitions"].(map[string]any)
-	if comps, ok := i.doc["components"].(map[string]any); ok {
-		schemes, _ = comps["securitySchemes"].(map[string]any)
-	}
+	schemes := securitySchemes(i.doc)
 
 	for _, name := range sortedAnyKeys(schemes) {
 		scheme, _ := schemes[name].(map[string]any)
@@ -450,7 +497,7 @@ func (i *importer) applySecurity(in *driver.PutMethodInput, op map[string]any) {
 		reqMap, _ := req.(map[string]any)
 
 		for _, name := range sortedAnyKeys(reqMap) {
-			if name == "api_key" {
+			if i.isAPIKeyScheme(name) {
 				in.APIKeyRequired = true
 
 				continue

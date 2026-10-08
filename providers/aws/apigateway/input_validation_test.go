@@ -1,7 +1,10 @@
 package apigateway_test
 
 import (
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/aws/apigateway"
@@ -321,5 +324,172 @@ func TestStageVariableLengthAndCountLimits(t *testing.T) {
 	st, _ := m.GetStage(ctx(), apiID, "hundred")
 	if len(st.Variables) != 100 {
 		t.Fatalf("rejected updates must leave the stage alone, has %d variables", len(st.Variables))
+	}
+}
+
+func newAuthorizer(t *testing.T, m *apigateway.Mock, apiID string) *driver.Authorizer {
+	t.Helper()
+
+	az, err := m.CreateAuthorizer(ctx(), apiID, &driver.CreateAuthorizerInput{
+		Name: "auth", Type: driver.AuthorizerToken, AuthorizerURI: strings.Replace(lambdaURI, "hello", "auth", 1),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return az
+}
+
+func TestDeleteAuthorizerAndModelAreRefusedWhileInUse(t *testing.T) {
+	m := newMock(t)
+
+	api, err := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	az := newAuthorizer(t, m, api.ID)
+
+	if _, err = m.CreateModel(ctx(), api.ID, &driver.CreateModelInput{Name: "Pet", Schema: `{"type":"object"}`}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = m.PutMethod(ctx(), api.ID, api.RootResourceID, "GET", driver.PutMethodInput{
+		AuthorizationType: "CUSTOM", AuthorizerID: az.ID, RequestModels: map[string]string{"application/json": "Pet"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = m.DeleteAuthorizer(ctx(), api.ID, az.ID); !errors.IsInvalidArgument(err) {
+		t.Fatalf("delete of a used authorizer: want InvalidArgument, got %v", err)
+	}
+
+	if err = m.DeleteModel(ctx(), api.ID, "Pet"); !errors.IsInvalidArgument(err) {
+		t.Fatalf("delete of a used model: want InvalidArgument, got %v", err)
+	}
+
+	// Once the method is gone both deletes succeed.
+	if err = m.DeleteMethod(ctx(), api.ID, api.RootResourceID, "GET"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = m.DeleteAuthorizer(ctx(), api.ID, az.ID); err != nil {
+		t.Fatalf("delete of an unused authorizer: %v", err)
+	}
+
+	if err = m.DeleteModel(ctx(), api.ID, "Pet"); err != nil {
+		t.Fatalf("delete of an unused model: %v", err)
+	}
+}
+
+func TestUpdateMethodChecksReferences(t *testing.T) {
+	m := newMock(t)
+	api := apiWithGetMethod(t, m)
+
+	for _, ops := range [][]driver.PatchOperation{
+		{{Op: "replace", Path: "/authorizationType", Value: "CUSTOM"}, {Op: "replace", Path: "/authorizerId", Value: "nope"}},
+		{{Op: "replace", Path: "/requestValidatorId", Value: "nope"}},
+		{{Op: "add", Path: "/requestModels/application~1json", Value: "Missing"}},
+	} {
+		if _, err := m.UpdateMethod(ctx(), api.ID, api.RootResourceID, "GET", ops); err == nil {
+			t.Fatalf("patch %+v must be rejected", ops)
+		}
+	}
+}
+
+func TestUpdateIntegrationChecksTheConnection(t *testing.T) {
+	m := newMock(t)
+	api := apiWithGetMethod(t, m)
+
+	if err := putHTTPIntegration(m, api, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := m.UpdateIntegration(ctx(), api.ID, api.RootResourceID, "GET", []driver.PatchOperation{
+		{Op: "replace", Path: "/connectionType", Value: "VPC_LINK"}, {Op: "replace", Path: "/connectionId", Value: "nope"},
+	})
+	if !errors.IsInvalidArgument(err) {
+		t.Fatalf("unknown VPC link: want InvalidArgument, got %v", err)
+	}
+}
+
+// TestPutIntegrationVpcLinkDoesNotDeadlock loops PutIntegration(VPC_LINK) against
+// link create/delete, which lock regionMu before the API lock.
+func TestPutIntegrationVpcLinkDoesNotDeadlock(t *testing.T) {
+	m := newMock(t)
+	api := apiWithGetMethod(t, m)
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		var wg sync.WaitGroup
+
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+
+			for i := 0; i < 200; i++ {
+				link, err := m.CreateVpcLink(ctx(), &driver.CreateVpcLinkInput{Name: "l", TargetARNs: []string{"arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/net/n/1"}})
+				if err == nil {
+					_ = m.DeleteVpcLink(ctx(), link.ID)
+				}
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			for i := 0; i < 200; i++ {
+				_, _ = m.PutIntegration(ctx(), api.ID, api.RootResourceID, "GET", driver.PutIntegrationInput{
+					Type: driver.IntegrationHTTP, IntegrationHTTPMethod: "GET", URI: "https://example.com",
+					ConnectionType: "VPC_LINK", ConnectionID: "missing",
+				})
+			}
+		}()
+
+		wg.Wait()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("PutIntegration against VPC link create/delete deadlocked")
+	}
+}
+
+func TestPutRestAPILeavesTheAPIUnchangedOnFailure(t *testing.T) {
+	m := newMock(t)
+
+	res, err := m.ImportRestAPI(ctx(), &driver.ImportRestAPIInput{Body: []byte(`{"swagger":"2.0","info":{"title":"t","version":"1"},
+"paths":{"/pets":{"get":{"responses":{"200":{"description":"ok"}}}}}}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The new document declares an authorizer scheme with a bad extension, which only warns, so
+	// FailOnWarnings fails the call after everything was applied.
+	_, err = m.PutRestAPI(ctx(), res.API.ID, &driver.PutRestAPIInput{Mode: driver.ImportOverwrite, FailOnWarnings: true, Body: []byte(`{
+"swagger":"2.0","info":{"title":"t","version":"2"},
+"paths":{"/other":{"get":{"responses":{"200":{"description":"ok"}}}}},
+"definitions":{"bad name":{"type":"object"}}}`)})
+	if err == nil {
+		t.Fatal("failOnWarnings with a warning must fail")
+	}
+
+	resources, err := m.GetResources(ctx(), res.API.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	paths := map[string]bool{}
+	for i := range resources {
+		paths[resources[i].Path] = true
+	}
+
+	if !paths["/pets"] || paths["/other"] {
+		t.Fatalf("a failed overwrite must leave the API as it was, got %v", paths)
 	}
 }

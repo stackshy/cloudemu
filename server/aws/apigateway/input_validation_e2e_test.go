@@ -2,7 +2,12 @@ package apigateway_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/providers/aws/apigateway"
+	awsgw "github.com/stackshy/cloudemu/v2/server/aws/apigateway"
 )
 
 // TestE2E_InputValidationErrors checks the wire shape of the authorization-type,
@@ -75,4 +80,24 @@ func TestE2E_InputValidationErrors(t *testing.T) {
 		`{"patchOperations":[{"op":"add","path":"/variables/x","value":"a b"}]}`,
 		http.StatusBadRequest, "BadRequestException",
 		"Stage variable values must match the regular expression [A-Za-z0-9-._~:/?#&=,]+")
+}
+
+// TestDataPlaneMatchesOnlyTheInvokeShape keeps an S3 key that merely contains
+// _user_request_ out of the API Gateway data plane.
+func TestDataPlaneMatchesOnlyTheInvokeShape(t *testing.T) {
+	h := awsgw.NewDataPlane(apigateway.New(config.NewOptions()))
+
+	for path, want := range map[string]bool{
+		"/restapis/abc123/prod/_user_request_/pets": true,
+		"/restapis/abc123/prod/_user_request_":      true,
+		"/bucket/logs/_user_request_/a.txt":         false,
+		"/logs/_user_request_/a.txt":                false,
+		"/restapis/abc123/_user_request_/a":         false,
+		"/restapis/abc123/prod/x/_user_request_/a":  false,
+	} {
+		req := httptest.NewRequest(http.MethodPut, path, nil)
+		if got := h.Matches(req); got != want {
+			t.Errorf("Matches(%s) = %v, want %v", path, got, want)
+		}
+	}
 }

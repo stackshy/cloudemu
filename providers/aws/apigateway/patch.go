@@ -199,6 +199,14 @@ func (m *Mock) UpdateMethod(
 		return nil, cerrors.New(cerrors.InvalidArgument, msgAuthorizationType)
 	}
 
+	// The patched method must reference what PutMethod requires to exist.
+	refs := &driver.PutMethodInput{
+		AuthorizerID: next.AuthorizerID, RequestValidatorID: next.RequestValidatorID, RequestModels: next.RequestModels,
+	}
+	if err := checkMethodRefs(ad, next.AuthorizationType, refs); err != nil {
+		return nil, err
+	}
+
 	*mth = next
 	out := copyMethod(mth)
 
@@ -213,6 +221,10 @@ func (m *Mock) UpdateIntegration(
 	if err != nil {
 		return nil, err
 	}
+
+	// regionMu before ad.mu: checkConnection reads the region's VPC links.
+	m.regionMu.RLock()
+	defer m.regionMu.RUnlock()
 
 	ad.mu.Lock()
 	defer ad.mu.Unlock()
@@ -235,7 +247,11 @@ func (m *Mock) UpdateIntegration(
 	}
 
 	// The patched integration must pass the rules PutIntegration applies.
-	if err := validateIntegrationTarget(next.Type, next.IntegrationHTTPMethod, next.URI); err != nil && next.Type != driver.IntegrationMock {
+	if err := validateIntegrationTarget(next.Type, next.IntegrationHTTPMethod, next.URI); err != nil {
+		return nil, err
+	}
+
+	if err := m.checkConnection(&next); err != nil {
 		return nil, err
 	}
 

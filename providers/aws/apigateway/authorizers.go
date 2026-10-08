@@ -249,8 +249,8 @@ func authorizerStringField(az *driver.Authorizer, path string) *string {
 	}
 }
 
-// DeleteAuthorizer removes an authorizer. A method that still names it keeps a
-// dangling id and is rejected at invoke, as with real API Gateway.
+// DeleteAuthorizer removes an authorizer. As with real API Gateway the delete is
+// refused (BadRequestException) while a method still uses it.
 func (m *Mock) DeleteAuthorizer(_ context.Context, restAPIID, id string) error {
 	ad, err := m.getAPI(restAPIID)
 	if err != nil {
@@ -262,6 +262,10 @@ func (m *Mock) DeleteAuthorizer(_ context.Context, restAPIID, id string) error {
 
 	if _, ok := ad.authorizers[id]; !ok {
 		return cerrors.New(cerrors.NotFound, msgAuthorizerNotFound)
+	}
+
+	if methodUsing(ad, func(mth *driver.Method) bool { return mth.AuthorizerID == id }) {
+		return cerrors.New(cerrors.InvalidArgument, "Authorizer is still in use by a method; remove it from the method first")
 	}
 
 	delete(ad.authorizers, id)
