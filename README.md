@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="https://zop.dev/zopday/app/deploy?image=ghcr.io/stackshy/cloudemu:2.5&amp;port=8000"><img src="https://zop.dev/deploytozopday-inkhard.svg" alt="Deploy to Zopday"></a>
+  <a href="https://zop.dev/zopday/app/deploy?image=ghcr.io/stackshy/cloudemu:latest&amp;port=8000"><img src="https://zop.dev/deploytozopday-inkhard.svg" alt="Deploy to Zopday"></a>
 </p>
 
 ---
