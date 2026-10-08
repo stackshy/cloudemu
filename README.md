@@ -181,9 +181,21 @@ Named states can also be rewound and forked: `POST /_cloudemu/snapshot/{name}/re
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup and the branch-from-`development` flow, and the [Code of Conduct](CODE_OF_CONDUCT.md). Report bugs or ask questions in [GitHub issues](https://github.com/stackshy/cloudemu/issues). For security issues, follow [SECURITY.md](SECURITY.md).
 
+Thanks to everyone who has contributed code, docs and bug reports:
+
+<a href="https://github.com/stackshy/cloudemu/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=stackshy/cloudemu" alt="cloudemu contributors" />
+</a>
+
 ## Sponsor
 
 cloudemu is free and MIT licensed, and it will stay that way. If it saves your team a cloud bill, a flaky CI run or an afternoon of setup, you can [sponsor the project](https://github.com/sponsors/NitinKumar004). It pays for the time spent fixing the gaps people hit and keeping up with new cloud features.
+
+Thank you to our sponsors:
+
+<a href="https://github.com/sponsors/NitinKumar004">
+  <img src="https://raw.githubusercontent.com/stackshy/cloudemu/sponsors/sponsors.svg" alt="cloudemu sponsors" />
+</a>
 
 ## License
 
