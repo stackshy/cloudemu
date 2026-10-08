@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/services/kendra/driver"
 )
@@ -15,12 +16,23 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // hold exported driver types, so they serialize directly, keyed by index id and
 // data source "indexId/dataSourceId". The wired opts are not serialized.
 type kendraSnapshot struct {
-	Indexes     map[string]driver.Index      `json:"indexes,omitempty"`
-	DataSources map[string]driver.DataSource `json:"dataSources,omitempty"`
+	Indexes        map[string]driver.Index                      `json:"indexes,omitempty"`
+	DataSources    map[string]driver.DataSource                 `json:"dataSources,omitempty"`
+	Documents      map[string]storedDocument                    `json:"documents,omitempty"`
+	SyncJobs       map[string]syncJobRecord                     `json:"syncJobs,omitempty"`
+	Faqs           map[string]driver.Faq                        `json:"faqs,omitempty"`
+	Thesauri       map[string]driver.Thesaurus                  `json:"thesauri,omitempty"`
+	BlockLists     map[string]driver.BlockList                  `json:"blockLists,omitempty"`
+	Experiences    map[string]driver.Experience                 `json:"experiences,omitempty"`
+	AccessControls map[string]driver.AccessControlConfiguration `json:"accessControls,omitempty"`
+	Featured       map[string]driver.FeaturedResultsSet         `json:"featured,omitempty"`
+	Mappings       map[string]principalMapping                  `json:"mappings,omitempty"`
+	Suggestions    map[string]driver.SuggestionsConfig          `json:"suggestions,omitempty"`
+	QueryLog       map[string]map[string]int                    `json:"queryLog,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Kendra is
-// control-plane only and holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON, including the indexed document
+// text and the query counts suggestions are learned from. includeAssets is unused.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := kendraSnapshot{}
 
@@ -31,6 +43,18 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	if m.dataSources.Len() > 0 {
 		snap.DataSources = m.dataSources.All()
 	}
+
+	snap.Documents = allOrNil(m.documents)
+	snap.SyncJobs = allOrNil(m.syncJobs)
+	snap.Faqs = allOrNil(m.faqs)
+	snap.Thesauri = allOrNil(m.thesauri)
+	snap.BlockLists = allOrNil(m.blockLists)
+	snap.Experiences = allOrNil(m.experiences)
+	snap.AccessControls = allOrNil(m.accessControls)
+	snap.Featured = allOrNil(m.featured)
+	snap.Mappings = allOrNil(m.mappings)
+	snap.Suggestions = allOrNil(m.suggestions)
+	snap.QueryLog = m.queryLog.all()
 
 	b, err := json.Marshal(snap)
 	if err != nil {
@@ -57,5 +81,44 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		m.dataSources.Set(key, snap.DataSources[key])
 	}
 
+	restoreInto(m.documents, snap.Documents)
+	restoreInto(m.syncJobs, snap.SyncJobs)
+	restoreInto(m.faqs, snap.Faqs)
+	restoreInto(m.thesauri, snap.Thesauri)
+	restoreInto(m.blockLists, snap.BlockLists)
+	restoreInto(m.experiences, snap.Experiences)
+	restoreInto(m.accessControls, snap.AccessControls)
+	restoreInto(m.featured, snap.Featured)
+	restoreInto(m.mappings, snap.Mappings)
+	restoreInto(m.suggestions, snap.Suggestions)
+	m.queryLog.restore(snap.QueryLog)
+
+	// New sync jobs must sort after every restored one.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for k := range snap.SyncJobs {
+		if seq := snap.SyncJobs[k].Seq; seq > m.syncSeq {
+			m.syncSeq = seq
+		}
+	}
+
 	return nil
+}
+
+// allOrNil returns a store's entries, or nil when it is empty so the snapshot
+// omits it.
+func allOrNil[V any](s *memstore.Store[V]) map[string]V {
+	if s.Len() == 0 {
+		return nil
+	}
+
+	return s.All()
+}
+
+// restoreInto loads snapshot entries into a store under their original keys.
+func restoreInto[V any](s *memstore.Store[V], entries map[string]V) {
+	for k, v := range entries {
+		s.Set(k, v)
+	}
 }

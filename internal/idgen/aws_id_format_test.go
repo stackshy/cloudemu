@@ -28,6 +28,7 @@ func TestAWSIDFormats(t *testing.T) {
 	}{
 		{"AccessKeyID", must(idgen.AccessKeyID()), regexp.MustCompile(`^AKIA[A-Z2-7]{16}$`)},
 		{"TempAccessKeyID", must(idgen.TempAccessKeyID()), regexp.MustCompile(`^ASIA[A-Z2-7]{16}$`)},
+		{"IAMUniqueID", must(idgen.IAMUniqueID("AIDA")), regexp.MustCompile(`^AIDA[A-Z2-7]{17}$`)},
 		{"AppSyncAPIID", must(idgen.AppSyncAPIID()), regexp.MustCompile(`^[a-z0-9]{26}$`)},
 		{"BedrockInferenceProfileID", must(idgen.BedrockInferenceProfileID()), regexp.MustCompile(`^[a-z0-9]{12}$`)},
 		{"BedrockAgentResourceID", must(idgen.BedrockAgentResourceID()), regexp.MustCompile(`^[0-9A-Z]{10}$`)},

@@ -178,16 +178,46 @@ actually run the request, so neither the SigV4 signing scope nor a forged
   `UnauthorizedOperation`, and other query services return `AccessDenied`.
   `sts:GetCallerIdentity` needs no permission, and `sts:GetSessionToken` is
   blocked only by an explicit `Deny`.
-- REST services (S3, Lambda, API Gateway, EKS, Route 53, CloudFront and the
-  rest) are checked at service level for now. A request passes only when the
-  caller's policies allow every action of that service on every resource,
-  such as `s3:*` on `*` or `AdministratorAccess`. **A fine-grained or
-  resource-scoped REST policy (for example `s3:GetObject` on one bucket) is
-  denied until that service gets per-operation checks.** A `Deny` that touches
-  the service also denies the request.
+- S3 is checked per operation on the bucket ARN (`arn:aws:s3:::bucket`) or
+  object ARN (`arn:aws:s3:::bucket/key`), for path-style, virtual-hosted and
+  presigned requests. Virtual-hosted means a Host of `<bucket>.s3.localhost`,
+  `<bucket>.s3.localhost.localstack.cloud` or one of the AWS S3 endpoint forms
+  (`<bucket>.s3.amazonaws.com`, `<bucket>.s3.<region>.amazonaws.com`,
+  `<bucket>.s3-<region>.amazonaws.com`); every other Host is path-style. A
+  presigned URL needs `X-Amz-Expires` between 1 and 604800 seconds, and an S3
+  request carrying an `x-amz-*` header that is not signed is refused. CopyObject and UploadPartCopy also need `s3:GetObject`
+  on the source. A DeleteObjects request is checked key by key, and one
+  denied key denies the whole request (real S3 deletes the allowed keys and
+  reports the others). Bucket policies are not evaluated yet.
+- The other REST services (Lambda, API Gateway, EKS, Route 53, CloudFront and
+  the rest) are checked at service level for now. A request passes only when
+  the caller's policies allow every action of that service on every resource,
+  such as `lambda:*` on `*` or `AdministratorAccess`. **A fine-grained or
+  resource-scoped policy on one of these services (for example
+  `lambda:InvokeFunction` on one function) is denied until that service gets
+  per-operation checks.** A `Deny` that touches the service also denies the
+  request.
 - The account root and IAM users with no policies are unrestricted, so a
   freshly created user can bootstrap others. Role sessions are always
   evaluated on the role's policies.
+- `sts:AssumeRole` is decided by the role's trust policy for the real caller.
+  A trust that names the caller's user, role session or federated user ARN is
+  enough on its own; one that names the caller's role ARN still needs the
+  role's permissions boundary to allow `sts:AssumeRole`; one that names the
+  account (`arn:aws:iam::ACCOUNT:root`) also needs an identity policy that
+  allows it. A user or role named in a trust policy is bound to that entity:
+  deleting it and creating another with the same name does not inherit the
+  trust. Trust conditions such as `sts:ExternalId` are
+  checked, passing tags needs `sts:TagSession` and passing a source identity
+  needs `sts:SetSourceIdentity`. The `RoleArn` must match the role's ARN,
+  including its account and path.
+- Temporary credentials are limited like in AWS: `GetFederationToken`
+  credentials cannot call IAM or STS (except `GetCallerIdentity`),
+  `GetSessionToken` credentials cannot call IAM or STS (except `AssumeRole`
+  and `GetCallerIdentity`), and role sessions cannot call `GetSessionToken` or
+  `GetFederationToken`.
+- Signed `AssumeRoleWithWebIdentity` and `AssumeRoleWithSAML` calls are
+  refused, because the token or assertion is not validated yet.
 - Operations AWS serves without credentials (Cognito sign-in, API Gateway
   invoke) and the Kubernetes data plane are not IAM-authorized. The
   `/_cloudemu/*` admin endpoints use the admin token instead (next section).

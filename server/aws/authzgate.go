@@ -1,13 +1,13 @@
 package aws
 
 import (
-	"encoding/json"
 	"net/http"
 	"regexp"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/authctx"
+	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsauthz"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
@@ -106,7 +106,7 @@ type authzPlan struct {
 
 // resolvePlan picks the plan from the handler dispatch will run (h, found on
 // probe by probeRoute). probed=false means the request did not parse.
-func (g *gateConfig) resolvePlan(probe *http.Request, h server.Handler, probed bool, body []byte) authzPlan {
+func (g *gateConfig) resolvePlan(probe *http.Request, h server.Handler, probed bool) authzPlan {
 	if !probed {
 		return authzPlan{kind: planUnmapped}
 	}
@@ -125,7 +125,7 @@ func (g *gateConfig) resolvePlan(probe *http.Request, h server.Handler, probed b
 	}
 
 	if g.jsonRPC[h] {
-		return g.jsonRPCPlan(probe, h, body)
+		return g.jsonRPCPlan(probe, h)
 	}
 
 	if svc := iamService(h); servicePrefix.MatchString(svc) {
@@ -141,14 +141,35 @@ func (g *gateConfig) resolvePlan(probe *http.Request, h server.Handler, probed b
 
 // jsonRPCPlan binds a JSON-RPC request to its action through the target
 // table. The service the header names must be the handler's own, or the
-// request fails closed.
-func (g *gateConfig) jsonRPCPlan(probe *http.Request, h server.Handler, body []byte) authzPlan {
+// request fails closed. The resource is unknown: a JSON-RPC handler that can
+// name its resources does so as a Resolver.
+func (*gateConfig) jsonRPCPlan(probe *http.Request, h server.Handler) authzPlan {
 	service, op, ok := jsonRPCTarget(probe)
 	if !ok || service != iamService(h) {
 		return authzPlan{kind: planJSONDeny, req: probe, action: service + ":" + op}
 	}
 
-	return authzPlan{kind: planChecks, req: probe, checks: awsauthz.Single(service+":"+op, deriveResource(service, body, g.scope))}
+	return authzPlan{kind: planChecks, req: probe, checks: awsauthz.Single(service+":"+op, "")}
+}
+
+// forbiddenFor returns the first action of the plan that a credential of kind
+// may never perform, or "".
+func (p authzPlan) forbiddenFor(kind stssrv.SessionKind) string {
+	if kind == stssrv.KindNone {
+		return ""
+	}
+
+	for _, c := range p.checks {
+		if kind.Forbids(c.Action) {
+			return c.Action
+		}
+	}
+
+	if p.action != "" && kind.Forbids(p.action) {
+		return p.action
+	}
+
+	return ""
 }
 
 // denyTarget is the request a deny is rendered from: the probe when there is
@@ -170,13 +191,19 @@ func iamService(h server.Handler) string {
 	return ""
 }
 
-// rawOperation is the form Action of a request, for the deny message of an
-// operation the handler cannot name.
+// rawOperation names, for the deny message only, an operation the handler
+// cannot name: the form Action of a query request, else the operation in
+// X-Amz-Target of a JSON-RPC one. It never decides the authorization.
 func rawOperation(probe *http.Request) string {
 	if probe.Form != nil {
 		if a := probe.Form.Get("Action"); a != "" {
 			return a
 		}
+	}
+
+	target := probe.Header.Get("X-Amz-Target")
+	if op := target[strings.LastIndexByte(target, '.')+1:]; op != "" {
+		return op
 	}
 
 	return "UnknownOperation"
@@ -186,11 +213,14 @@ func rawOperation(probe *http.Request) string {
 // the request carrying the principal and the gate's evaluation; on deny it
 // has written the 403.
 //
-// strict is set for an STS role session. Its principal is the role, which is
-// evaluated on its policies alone: the root and no-policies bootstrap
-// shortcuts that apply to IAM users do not apply.
+// kind is the STS session kind of a temporary credential. A role session is
+// strict: its principal is the role, which is evaluated on its policies
+// alone, so the root and no-policies bootstrap shortcuts that apply to IAM
+// users do not apply. Every session kind is also barred from the STS and IAM
+// operations AWS never lets it call (stssrv.SessionKind.Forbids), whatever
+// its policies say.
 func (g *gateConfig) authorize(
-	w http.ResponseWriter, r *http.Request, h server.Handler, plan authzPlan, p *authctx.Principal, strict bool,
+	w http.ResponseWriter, r *http.Request, h server.Handler, plan authzPlan, p *authctx.Principal, kind stssrv.SessionKind,
 ) (*http.Request, bool) {
 	if plan.kind == planNoHandler || plan.kind == planAuthnOnly {
 		return withPrincipal(r, *p), true
@@ -201,7 +231,14 @@ func (g *gateConfig) authorize(
 		return r, false
 	}
 
+	if action := plan.forbiddenFor(kind); action != "" {
+		writeAccessDenied(w, plan.denyTarget(r), h, "User: "+principalARN(p)+" is not authorized to perform: "+action)
+
+		return r, false
+	}
+
 	ev := awsauthz.Evaluation{Principal: *p, CondCtx: awsauthz.ConditionContext(r, p, g.scope)}
+	strict := kind == stssrv.KindRole
 	shortcut := !strict && (isAdminPrincipal(*p) || !principalHasPolicies(r, *p, g.iam))
 
 	if msg := g.decide(r, p, plan, &ev, shortcut); msg != "" {
@@ -329,36 +366,6 @@ func checkPermission(
 	allowed, err := iamDriver.CheckPermission(r.Context(), p.UserName, action, resource)
 
 	return err == nil && allowed
-}
-
-// deriveResource names the target resource of a JSON-RPC request for the
-// services whose body carries one primary resource. Elsewhere it returns ""
-// (unknown), which is evaluated conservatively so a resource-scoped Deny
-// still applies.
-func deriveResource(service string, body []byte, s awsauthz.Scope) string {
-	if service == "dynamodb" {
-		if name := jsonField(body, "TableName"); name != "" {
-			return "arn:" + s.Partition + ":dynamodb:" + s.Region + ":" + s.AccountID + ":table/" + name
-		}
-	}
-
-	return ""
-}
-
-// jsonField extracts a single top-level string field from a JSON-RPC request
-// body without fully modeling the operation. It returns "" when the body is not
-// an object or the field is absent or non-string.
-func jsonField(body []byte, field string) string {
-	var m map[string]any
-	if err := json.Unmarshal(body, &m); err != nil {
-		return ""
-	}
-
-	if v, ok := m[field].(string); ok {
-		return v
-	}
-
-	return ""
 }
 
 // jsonRPCTarget splits X-Amz-Target into the IAM service (through

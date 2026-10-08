@@ -1143,16 +1143,10 @@
         "name": "DescribeVpcConnector"
       },
       {
-        "name": "ListAutoScalingConfigurationRevisions"
-      },
-      {
         "name": "ListAutoScalingConfigurations"
       },
       {
         "name": "ListConnections"
-      },
-      {
-        "name": "ListObservabilityConfigurationRevisions"
       },
       {
         "name": "ListObservabilityConfigurations"
@@ -1186,6 +1180,56 @@
       },
       {
         "name": "UpdateService"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "CustomDomains",
+        "doc": "CustomDomains is the optional custom domain capability.",
+        "operations": [
+          {
+            "name": "AssociateCustomDomain"
+          },
+          {
+            "name": "DescribeCustomDomains"
+          },
+          {
+            "name": "DisassociateCustomDomain"
+          }
+        ]
+      },
+      {
+        "name": "DefaultAutoScaling",
+        "doc": "DefaultAutoScaling is the optional capability to move the account's default auto",
+        "operations": [
+          {
+            "name": "ListServicesForAutoScalingConfiguration"
+          },
+          {
+            "name": "UpdateDefaultAutoScalingConfiguration"
+          }
+        ]
+      },
+      {
+        "name": "VpcIngressConnections",
+        "doc": "VpcIngressConnections is the optional VPC ingress connection capability.",
+        "operations": [
+          {
+            "name": "CreateVpcIngressConnection"
+          },
+          {
+            "name": "DeleteVpcIngressConnection"
+          },
+          {
+            "name": "DescribeVpcIngressConnection"
+          },
+          {
+            "name": "ListVpcIngressConnections"
+          },
+          {
+            "name": "UpdateVpcIngressConnection"
+          }
+        ]
       }
     ],
     "providers": {
@@ -9365,6 +9409,24 @@
             "name": "PrincipalHasPolicies"
           }
         ]
+      },
+      {
+        "name": "RoleBoundaryEvaluator",
+        "doc": "RoleBoundaryEvaluator is an optional capability: an IAM implementation",
+        "operations": [
+          {
+            "name": "EvaluateRoleBoundary"
+          }
+        ]
+      },
+      {
+        "name": "TrustEvaluator",
+        "doc": "TrustEvaluator is an optional capability: an IAM implementation that",
+        "operations": [
+          {
+            "name": "EvaluateTrust"
+          }
+        ]
       }
     ],
     "providers": {
@@ -9692,6 +9754,203 @@
       },
       {
         "name": "UpdateIndex"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "AccessControls",
+        "doc": "AccessControls is the optional access control configuration capability.",
+        "operations": [
+          {
+            "name": "CreateAccessControlConfiguration"
+          },
+          {
+            "name": "DeleteAccessControlConfiguration"
+          },
+          {
+            "name": "DescribeAccessControlConfiguration"
+          },
+          {
+            "name": "ListAccessControlConfigurations"
+          },
+          {
+            "name": "UpdateAccessControlConfiguration"
+          }
+        ]
+      },
+      {
+        "name": "BlockLists",
+        "doc": "BlockLists is the optional query suggestions block list capability.",
+        "operations": [
+          {
+            "name": "CreateQuerySuggestionsBlockList"
+          },
+          {
+            "name": "DeleteQuerySuggestionsBlockList"
+          },
+          {
+            "name": "DescribeQuerySuggestionsBlockList"
+          },
+          {
+            "name": "ListQuerySuggestionsBlockLists"
+          },
+          {
+            "name": "UpdateQuerySuggestionsBlockList"
+          }
+        ]
+      },
+      {
+        "name": "Documents",
+        "doc": "Documents is the optional document-ingestion and search capability: documents",
+        "operations": [
+          {
+            "name": "BatchDeleteDocument"
+          },
+          {
+            "name": "BatchGetDocumentStatus"
+          },
+          {
+            "name": "BatchPutDocument"
+          },
+          {
+            "name": "Query"
+          },
+          {
+            "name": "Retrieve"
+          }
+        ]
+      },
+      {
+        "name": "Experiences",
+        "doc": "Experiences is the optional search experience capability.",
+        "operations": [
+          {
+            "name": "CreateExperience"
+          },
+          {
+            "name": "DeleteExperience"
+          },
+          {
+            "name": "DescribeExperience"
+          },
+          {
+            "name": "ListExperiences"
+          },
+          {
+            "name": "UpdateExperience"
+          }
+        ]
+      },
+      {
+        "name": "Faqs",
+        "doc": "Faqs is the optional FAQ capability (Kendra has no UpdateFaq operation).",
+        "operations": [
+          {
+            "name": "CreateFaq"
+          },
+          {
+            "name": "DeleteFaq"
+          },
+          {
+            "name": "DescribeFaq"
+          },
+          {
+            "name": "ListFaqs"
+          }
+        ]
+      },
+      {
+        "name": "FeaturedResults",
+        "doc": "FeaturedResults is the optional featured results capability.",
+        "operations": [
+          {
+            "name": "BatchDeleteFeaturedResultsSet"
+          },
+          {
+            "name": "CreateFeaturedResultsSet"
+          },
+          {
+            "name": "DescribeFeaturedResultsSet"
+          },
+          {
+            "name": "ListFeaturedResultsSets"
+          },
+          {
+            "name": "UpdateFeaturedResultsSet"
+          }
+        ]
+      },
+      {
+        "name": "PrincipalMappings",
+        "doc": "PrincipalMappings is the optional user-to-group principal mapping capability.",
+        "operations": [
+          {
+            "name": "DeletePrincipalMapping"
+          },
+          {
+            "name": "DescribePrincipalMapping"
+          },
+          {
+            "name": "ListGroupsOlderThanOrderingID"
+          },
+          {
+            "name": "PutPrincipalMapping"
+          }
+        ]
+      },
+      {
+        "name": "QuerySuggestions",
+        "doc": "QuerySuggestions is the optional query suggestions capability.",
+        "operations": [
+          {
+            "name": "ClearQuerySuggestions"
+          },
+          {
+            "name": "DescribeQuerySuggestionsConfig"
+          },
+          {
+            "name": "GetQuerySuggestions"
+          },
+          {
+            "name": "UpdateQuerySuggestionsConfig"
+          }
+        ]
+      },
+      {
+        "name": "SyncJobs",
+        "doc": "SyncJobs is the optional data source synchronization capability.",
+        "operations": [
+          {
+            "name": "ListDataSourceSyncJobs"
+          },
+          {
+            "name": "StartDataSourceSyncJob"
+          },
+          {
+            "name": "StopDataSourceSyncJob"
+          }
+        ]
+      },
+      {
+        "name": "Thesauri",
+        "doc": "Thesauri is the optional thesaurus capability.",
+        "operations": [
+          {
+            "name": "CreateThesaurus"
+          },
+          {
+            "name": "DeleteThesaurus"
+          },
+          {
+            "name": "DescribeThesaurus"
+          },
+          {
+            "name": "ListThesauri"
+          },
+          {
+            "name": "UpdateThesaurus"
+          }
+        ]
       }
     ],
     "providers": {

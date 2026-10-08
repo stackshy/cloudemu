@@ -20,11 +20,14 @@ type roleGetter interface {
 //   - GetSessionToken needs no permission, but an explicit Deny on
 //     sts:GetSessionToken still blocks it (DenyOnly).
 //   - The AssumeRole family needs sts:<Action> on the role that will be
-//     assumed. The role is resolved the way the operation resolves it (by the
-//     last path segment of RoleArn), and its stored ARN is the resource, so a
-//     RoleArn with a different path or account cannot borrow another role's
-//     grant. An unknown role leaves the resource unknown. A deny names the
-//     RoleArn as sent, like AWS, so it does not reveal whether the role exists.
+//     assumed. The resource is the role's ARN when RoleArn names an existing
+//     role exactly; otherwise it is unknown (the operation refuses such a
+//     RoleArn anyway). A deny names the RoleArn as sent, like AWS, so it does
+//     not reveal whether the role exists.
+//   - AssumeRole's checks are ResourcePolicy checks: the handler finishes the
+//     decision with the role's trust policy, which can grant the call on its
+//     own when it names the caller. Passing session tags adds sts:TagSession,
+//     and passing a source identity adds sts:SetSourceIdentity, on the role.
 //   - GetFederationToken needs sts:GetFederationToken on the federated user.
 //   - GetAccessKeyInfo and DecodeAuthorizationMessage take no resource.
 func (h *Handler) IAMChecks(r *http.Request, _ awsauthz.Scope) ([]awsauthz.Check, bool) {
@@ -40,7 +43,9 @@ func (h *Handler) IAMChecks(r *http.Request, _ awsauthz.Scope) ([]awsauthz.Check
 		return []awsauthz.Check{}, true
 	case actionGetSessionToken:
 		return []awsauthz.Check{{Action: action, Resource: "*", Mode: awsauthz.DenyOnly}}, true
-	case actionAssumeRole, actionAssumeRoleWithWebIdentity, actionAssumeRoleWithSAML:
+	case actionAssumeRole:
+		return h.assumeRoleChecks(r), true
+	case actionAssumeRoleWithWebIdentity, actionAssumeRoleWithSAML:
 		return []awsauthz.Check{{Action: action, Resource: h.assumedRoleARN(r), MessageResource: r.Form.Get("RoleArn")}}, true
 	case actionGetFederationToken:
 		return awsauthz.Single(action, "arn:aws:sts::"+h.accountID+":federated-user/"+r.Form.Get("Name")), true
@@ -63,15 +68,29 @@ const (
 	actionDecodeAuthorizationMessage = "DecodeAuthorizationMessage"
 )
 
-// assumedRoleARN is the stored ARN of the role named by the request's
-// RoleArn, or "" when that role does not exist.
-func (h *Handler) assumedRoleARN(r *http.Request) string {
-	if h.roles == nil {
-		return ""
+// assumeRoleChecks are the ResourcePolicy checks of an AssumeRole request,
+// one per trust action it needs.
+func (h *Handler) assumeRoleChecks(r *http.Request) []awsauthz.Check {
+	resource, roleArn := h.assumedRoleARN(r), r.Form.Get("RoleArn")
+	actions := trustActions(r)
+	checks := make([]awsauthz.Check, 0, len(actions))
+
+	for _, action := range actions {
+		checks = append(checks, awsauthz.Check{
+			Action: action, Resource: resource, Mode: awsauthz.ResourcePolicy, MessageResource: roleArn,
+		})
 	}
 
-	role, err := h.roles.GetRole(r.Context(), roleNameFromArn(r.Form.Get("RoleArn")))
-	if err != nil || role == nil {
+	return checks
+}
+
+// assumedRoleARN is the ARN of the role the request's RoleArn names, or ""
+// when no role has exactly that ARN.
+func (h *Handler) assumedRoleARN(r *http.Request) string {
+	roleArn := r.Form.Get("RoleArn")
+
+	role, ok := h.requestedRole(r, roleArn, roleNameFromArn(roleArn))
+	if !ok {
 		return ""
 	}
 

@@ -93,6 +93,22 @@ PolicyInspector is an optional capability: an IAM implementation that can
 | --- | --- |
 | `PrincipalHasPolicies` |  |
 
+### RoleBoundaryEvaluator
+
+RoleBoundaryEvaluator is an optional capability: an IAM implementation
+
+| Operation | Description |
+| --- | --- |
+| `EvaluateRoleBoundary` |  |
+
+### TrustEvaluator
+
+TrustEvaluator is an optional capability: an IAM implementation that
+
+| Operation | Description |
+| --- | --- |
+| `EvaluateTrust` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

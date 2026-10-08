@@ -82,6 +82,8 @@ func allow(actions ...string) string {
 const (
 	allowAllDenyBucket = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"},` +
 		`{"Effect":"Deny","Action":"s3:DeleteBucket","Resource":"arn:aws:s3:::prod"}]}`
+	allowAllDenyFunction = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"},` +
+		`{"Effect":"Deny","Action":"lambda:DeleteFunction","Resource":"arn:aws:lambda:us-east-1:123456789012:function:prod"}]}`
 	xmlAccessDenied = "<Code>AccessDenied</Code>"
 	createEvilUser  = "Action=CreateUser&Version=2010-05-08&UserName=evil"
 	lambdaCreate    = `{"FunctionName":"f1","Runtime":"python3.12","Role":"arn:aws:iam::123456789012:role/r",` +
@@ -373,8 +375,8 @@ func TestAuthzMatrixJSONRPCPrefixes(t *testing.T) {
 	}
 }
 
-// TestAuthzMatrixREST covers REST services, which stay service-level until
-// each moves to op-level checks.
+// TestAuthzMatrixREST covers REST services. S3 is authorized per operation;
+// the others stay service-level until each moves to op-level checks.
 func TestAuthzMatrixREST(t *testing.T) {
 	ts, cloud := matrixServer(t, nil)
 	dyn := userWithPolicy(t, cloud, "dynonly", allowDynamo)
@@ -421,10 +423,28 @@ func TestAuthzMatrixREST(t *testing.T) {
 		}
 	})
 
-	t.Run("allow-all with one deny on the service", func(t *testing.T) {
-		u := userWithPolicy(t, cloud, "denyone", allowAllDenyBucket)
+	t.Run("allow-all with one deny on a service-level service", func(t *testing.T) {
+		u := userWithPolicy(t, cloud, "denyone", allowAllDenyFunction)
+		status, body := doSigned(t, ts, u, sreq{path: lambdaPath, ctype: "application/json",
+			body: strings.Replace(lambdaCreate, "f1", "denyone-fn", 1), service: "lambda"})
+		wantDenied(t, status, body, accessDeny)
+	})
+
+	t.Run("allow-all with one deny on s3 denies only that operation", func(t *testing.T) {
+		if err := cloud.S3.CreateBucket(context.Background(), "prod"); err != nil {
+			t.Fatalf("CreateBucket: %v", err)
+		}
+
+		u := userWithPolicy(t, cloud, "denybucket", allowAllDenyBucket)
 		status, body := doSigned(t, ts, u, sreq{method: http.MethodPut, path: "/denyone-bucket", service: "s3"})
-		wantDenied(t, status, body, xmlAccessDenied)
+		wantNotDenied(t, status, body)
+
+		status, body = doSigned(t, ts, u, sreq{method: http.MethodDelete, path: "/prod", service: "s3"})
+		wantDenied(t, status, body, "s3:DeleteBucket on resource: arn:aws:s3:::prod with an explicit deny")
+
+		if !bucketExists(t, cloud, "prod") {
+			t.Fatal("a denied DeleteBucket removed the bucket")
+		}
 	})
 
 	t.Run("unknown REST path is 501", func(t *testing.T) {
@@ -488,7 +508,7 @@ func TestAuthzMatrixSTS(t *testing.T) {
 			t.Fatalf("messages differ:\n existing: %s\n missing:  %s", existing, missing)
 		}
 
-		if !strings.Contains(existing, "on resource: arn:aws:iam::"+defaultTestAccount+":role/pathed because") {
+		if !strings.HasSuffix(existing, "on resource: arn:aws:iam::"+defaultTestAccount+":role/pathed") {
 			t.Fatalf("the message must name the RoleArn as sent: %s", existing)
 		}
 	})
@@ -511,6 +531,156 @@ func TestAuthzMatrixSTS(t *testing.T) {
 		status, body = doSigned(t, ts, denied, form("sts", "Action=GetSessionToken&Version=2011-06-15"))
 		wantDenied(t, status, body, xmlAccessDenied)
 	})
+}
+
+// TestAuthzMatrixSTSTrust covers the AssumeRole trust rows: the trust policy
+// is evaluated for the signed caller, and each kind of temporary credential
+// is limited to the STS and IAM calls AWS allows it.
+func TestAuthzMatrixSTSTrust(t *testing.T) {
+	ts, cloud := matrixServer(t, nil)
+	ctx := context.Background()
+	acct := "arn:aws:iam::" + defaultTestAccount
+	assumer := userWithPolicy(t, cloud, "assumer", allow("sts:AssumeRole"))
+	dyn := userWithPolicy(t, cloud, "dyn", allowDynamo)
+	boot := userWithPolicy(t, cloud, "boot", "")
+
+	roles := map[string]string{
+		"rootonly": `{"AWS":"` + acct + `:root"}`,
+		"dynnamed": `{"AWS":"` + acct + `:user/dyn"}`,
+		"otheruser": `{"AWS":"` + acct + `:user/someone"}`,
+		"federated": `{"Federated":"*"}`,
+	}
+	for name, principal := range roles {
+		trust := `{"Statement":[{"Effect":"Allow","Principal":` + principal + `,"Action":"sts:AssumeRole"}]}`
+		if _, err := cloud.IAM.CreateRole(ctx, iamdriver.RoleConfig{Name: name, AssumeRolePolicyDoc: trust}); err != nil {
+			t.Fatalf("CreateRole: %v", err)
+		}
+	}
+
+	ext := `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"` + acct + `:user/dyn"},"Action":"sts:AssumeRole",` +
+		`"Condition":{"StringEquals":{"sts:ExternalId":"e1"}}}]}`
+	if _, err := cloud.IAM.CreateRole(ctx, iamdriver.RoleConfig{Name: "external", AssumeRolePolicyDoc: ext}); err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+
+	assume := func(creds aws.Credentials, role, extra string) (int, string) {
+		return doSigned(t, ts, creds, form("sts", "Action=AssumeRole&Version=2011-06-15&RoleSessionName=s&RoleArn="+
+			acct+":role/"+role+extra))
+	}
+
+	cases := []struct {
+		name    string
+		creds   aws.Credentials
+		role    string
+		extra   string
+		allowed bool
+	}{
+		{"permission but trust mismatch", assumer, "otheruser", "", false},
+		{"trust names the user, no identity policy", dyn, "dynnamed", "", true},
+		{"trust names root, no identity policy", dyn, "rootonly", "", false},
+		{"trust names root, identity allow", assumer, "rootonly", "", true},
+		{"ExternalId matches", dyn, "external", "&ExternalId=e1", true},
+		{"ExternalId differs", dyn, "external", "&ExternalId=e2", false},
+		{"Federated star does not match an IAM user", assumer, "federated", "", false},
+		{"unrestricted caller, trust names root", boot, "rootonly", "", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, body := assume(tc.creds, tc.role, tc.extra)
+			if tc.allowed {
+				if status != http.StatusOK {
+					t.Fatalf("AssumeRole: %d %s", status, body)
+				}
+
+				return
+			}
+
+			wantDenied(t, status, body, xmlAccessDenied)
+		})
+	}
+
+	t.Run("foreign account and wrong path are refused", func(t *testing.T) {
+		for _, arn := range []string{"arn:aws:iam::999999999999:role/rootonly", acct + ":role/x/rootonly"} {
+			status, body := doSigned(t, ts, boot, form("sts", "Action=AssumeRole&Version=2011-06-15&RoleSessionName=s&RoleArn="+arn))
+			wantDenied(t, status, body, xmlAccessDenied)
+		}
+	})
+
+	session := func(action string) aws.Credentials {
+		status, body := doSigned(t, ts, boot, form("sts", "Action="+action+"&Version=2011-06-15&Name=fed"))
+		if status != http.StatusOK {
+			t.Fatalf("%s: %d %s", action, status, body)
+		}
+
+		return aws.Credentials{
+			AccessKeyID:     between(body, "<AccessKeyId>", "</AccessKeyId>"),
+			SecretAccessKey: between(body, "<SecretAccessKey>", "</SecretAccessKey>"),
+			SessionToken:    between(body, "<SessionToken>", "</SessionToken>"),
+		}
+	}
+
+	federation, sessionToken := session("GetFederationToken"), session("GetSessionToken")
+
+	t.Run("federation credentials cannot AssumeRole", func(t *testing.T) {
+		status, body := assume(federation, "rootonly", "")
+		wantDenied(t, status, body, xmlAccessDenied)
+	})
+
+	t.Run("session-token credentials cannot call IAM", func(t *testing.T) {
+		status, body := doSigned(t, ts, sessionToken, form("iam", "Action=ListUsers&Version=2010-05-08"))
+		wantDenied(t, status, body, xmlAccessDenied)
+	})
+
+	t.Run("role chaining when the trust allows it", func(t *testing.T) {
+		status, body := assume(boot, "rootonly", "")
+		if status != http.StatusOK {
+			t.Fatalf("AssumeRole: %d %s", status, body)
+		}
+
+		chain := `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"` + acct + `:role/rootonly"},"Action":"sts:AssumeRole"}]}`
+		if _, err := cloud.IAM.CreateRole(ctx, iamdriver.RoleConfig{Name: "next", AssumeRolePolicyDoc: chain}); err != nil {
+			t.Fatalf("CreateRole: %v", err)
+		}
+
+		roleCreds := aws.Credentials{
+			AccessKeyID:     between(body, "<AccessKeyId>", "</AccessKeyId>"),
+			SecretAccessKey: between(body, "<SecretAccessKey>", "</SecretAccessKey>"),
+			SessionToken:    between(body, "<SessionToken>", "</SessionToken>"),
+		}
+
+		if status, body := assume(roleCreds, "next", ""); status != http.StatusOK {
+			t.Fatalf("chained AssumeRole: %d %s", status, body)
+		}
+	})
+
+	t.Run("signed web identity and SAML are refused", func(t *testing.T) {
+		for _, q := range []string{
+			"Action=AssumeRoleWithWebIdentity&Version=2011-06-15&RoleSessionName=s&WebIdentityToken=junk&RoleArn=" + acct + ":role/federated",
+			"Action=AssumeRoleWithSAML&Version=2011-06-15&PrincipalArn=p&SAMLAssertion=eA%3D%3D&RoleArn=" + acct + ":role/federated",
+		} {
+			status, body := doSigned(t, ts, boot, form("sts", q))
+			wantDenied(t, status, body, "not available under --enforce-auth")
+		}
+	})
+
+	t.Run("GetCallerIdentity works for every principal", func(t *testing.T) {
+		for name, creds := range map[string]aws.Credentials{
+			"user": dyn, "boot": boot, "federation": federation, "session token": sessionToken,
+		} {
+			if status, body := doSigned(t, ts, creds, form("sts", "Action=GetCallerIdentity&Version=2011-06-15")); status != http.StatusOK {
+				t.Fatalf("%s: %d %s", name, status, body)
+			}
+		}
+	})
+}
+
+// between returns the text of s between the first open and the next close.
+func between(s, open, closing string) string {
+	_, rest, _ := strings.Cut(s, open)
+	v, _, _ := strings.Cut(rest, closing)
+
+	return v
 }
 
 // TestAuthzMatrixBootstrap checks the shortcut principals are unrestricted on

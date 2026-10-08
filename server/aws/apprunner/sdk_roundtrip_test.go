@@ -13,13 +13,26 @@ import (
 	artypes "github.com/aws/aws-sdk-go-v2/service/apprunner/types"
 
 	"github.com/stackshy/cloudemu/v2"
+	cfgpkg "github.com/stackshy/cloudemu/v2/config"
+	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
 func newClient(t *testing.T) *awsar.Client {
 	t.Helper()
 
-	cloud := cloudemu.NewAWS()
+	c, _ := newClientCloud(t)
+
+	return c
+}
+
+// newClientCloud also returns the provider, for tests that seed other services
+// (the VPC the connector subnets must exist in).
+func newClientCloud(t *testing.T, opts ...cfgpkg.Option) (*awsar.Client, *awsprovider.Provider) {
+	t.Helper()
+
+	cloud := cloudemu.NewAWS(opts...)
 	srv := awsserver.New(awsserver.Drivers{AppRunner: cloud.AppRunner})
 
 	ts := httptest.NewServer(srv)
@@ -35,7 +48,7 @@ func newClient(t *testing.T) *awsar.Client {
 
 	return awsar.NewFromConfig(cfg, func(o *awsar.Options) {
 		o.BaseEndpoint = aws.String(ts.URL)
-	})
+	}), cloud
 }
 
 func sampleSource() *artypes.SourceConfiguration {
@@ -239,4 +252,143 @@ func TestSDKAutoScalingAndTags(t *testing.T) {
 	if len(tags.Tags) != 1 || aws.ToString(tags.Tags[0].Key) != "team" {
 		t.Fatalf("tags = %+v, want team=platform", tags.Tags)
 	}
+}
+
+func requireInvalidRequest(t *testing.T, err error) {
+	t.Helper()
+
+	var ire *artypes.InvalidRequestException
+	if !errors.As(err, &ire) {
+		t.Fatalf("expected InvalidRequestException, got %T: %v", err, err)
+	}
+}
+
+func TestSDKDefaultAutoScalingConfigurationDescribableAndProtected(t *testing.T) {
+	ctx := context.Background()
+	c := newClient(t)
+	svc := mustCreate(t, c)
+
+	arn := aws.ToString(svc.AutoScalingConfigurationSummary.AutoScalingConfigurationArn)
+
+	desc, err := c.DescribeAutoScalingConfiguration(ctx, &awsar.DescribeAutoScalingConfigurationInput{
+		AutoScalingConfigurationArn: aws.String(arn),
+	})
+	if err != nil {
+		t.Fatalf("DescribeAutoScalingConfiguration(default): %v", err)
+	}
+
+	got := desc.AutoScalingConfiguration
+	if aws.ToString(got.AutoScalingConfigurationName) != "DefaultConfiguration" || !aws.ToBool(got.IsDefault) ||
+		!aws.ToBool(got.HasAssociatedService) {
+		t.Fatalf("unexpected default config: %+v", got)
+	}
+
+	list, err := c.ListAutoScalingConfigurations(ctx, &awsar.ListAutoScalingConfigurationsInput{
+		AutoScalingConfigurationName: aws.String("DefaultConfiguration"),
+	})
+	if err != nil {
+		t.Fatalf("ListAutoScalingConfigurations: %v", err)
+	}
+
+	if len(list.AutoScalingConfigurationSummaryList) != 1 {
+		t.Fatalf("default config must be listable, got %d", len(list.AutoScalingConfigurationSummaryList))
+	}
+
+	_, err = c.DeleteAutoScalingConfiguration(ctx, &awsar.DeleteAutoScalingConfigurationInput{
+		AutoScalingConfigurationArn: aws.String(arn),
+	})
+	requireInvalidRequest(t, err)
+}
+
+func TestSDKDeleteSharedConfigsBlockedWhileUsedByService(t *testing.T) {
+	ctx := context.Background()
+	c, cloud := newClientCloud(t)
+	subnet := seedSubnet(t, cloud)
+
+	asc, err := c.CreateAutoScalingConfiguration(ctx, &awsar.CreateAutoScalingConfigurationInput{
+		AutoScalingConfigurationName: aws.String("high-ha"),
+	})
+	if err != nil {
+		t.Fatalf("CreateAutoScalingConfiguration: %v", err)
+	}
+
+	vpc, err := c.CreateVpcConnector(ctx, &awsar.CreateVpcConnectorInput{
+		VpcConnectorName: aws.String("vpc-conn"), Subnets: []string{subnet},
+	})
+	if err != nil {
+		t.Fatalf("CreateVpcConnector: %v", err)
+	}
+
+	obs, err := c.CreateObservabilityConfiguration(ctx, &awsar.CreateObservabilityConfigurationInput{
+		ObservabilityConfigurationName: aws.String("xray"),
+		TraceConfiguration:             &artypes.TraceConfiguration{Vendor: artypes.TracingVendorAwsxray},
+	})
+	if err != nil {
+		t.Fatalf("CreateObservabilityConfiguration: %v", err)
+	}
+
+	ascArn := asc.AutoScalingConfiguration.AutoScalingConfigurationArn
+	vpcArn := vpc.VpcConnector.VpcConnectorArn
+	obsArn := obs.ObservabilityConfiguration.ObservabilityConfigurationArn
+
+	created, err := c.CreateService(ctx, &awsar.CreateServiceInput{
+		ServiceName:                 aws.String("my-app"),
+		SourceConfiguration:         sampleSource(),
+		AutoScalingConfigurationArn: ascArn,
+		NetworkConfiguration: &artypes.NetworkConfiguration{
+			EgressConfiguration: &artypes.EgressConfiguration{
+				EgressType: artypes.EgressTypeVpc, VpcConnectorArn: vpcArn,
+			},
+		},
+		ObservabilityConfiguration: &artypes.ServiceObservabilityConfiguration{
+			ObservabilityEnabled: true, ObservabilityConfigurationArn: obsArn,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateService: %v", err)
+	}
+
+	_, err = c.DeleteAutoScalingConfiguration(ctx, &awsar.DeleteAutoScalingConfigurationInput{AutoScalingConfigurationArn: ascArn})
+	requireInvalidRequest(t, err)
+
+	_, err = c.DeleteVpcConnector(ctx, &awsar.DeleteVpcConnectorInput{VpcConnectorArn: vpcArn})
+	requireInvalidRequest(t, err)
+
+	_, err = c.DeleteObservabilityConfiguration(ctx, &awsar.DeleteObservabilityConfigurationInput{ObservabilityConfigurationArn: obsArn})
+	requireInvalidRequest(t, err)
+
+	if _, err = c.DeleteService(ctx, &awsar.DeleteServiceInput{ServiceArn: created.Service.ServiceArn}); err != nil {
+		t.Fatalf("DeleteService: %v", err)
+	}
+
+	if _, err = c.DeleteAutoScalingConfiguration(ctx, &awsar.DeleteAutoScalingConfigurationInput{AutoScalingConfigurationArn: ascArn}); err != nil {
+		t.Fatalf("DeleteAutoScalingConfiguration after service delete: %v", err)
+	}
+
+	if _, err = c.DeleteVpcConnector(ctx, &awsar.DeleteVpcConnectorInput{VpcConnectorArn: vpcArn}); err != nil {
+		t.Fatalf("DeleteVpcConnector after service delete: %v", err)
+	}
+
+	if _, err = c.DeleteObservabilityConfiguration(ctx, &awsar.DeleteObservabilityConfigurationInput{ObservabilityConfigurationArn: obsArn}); err != nil {
+		t.Fatalf("DeleteObservabilityConfiguration after service delete: %v", err)
+	}
+}
+
+// seedSubnet creates a VPC and a subnet in it and returns the subnet id.
+func seedSubnet(t *testing.T, cloud *awsprovider.Provider) string {
+	t.Helper()
+
+	vpc, err := cloud.VPC.CreateVPC(context.Background(), netdriver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	if err != nil {
+		t.Fatalf("CreateVPC: %v", err)
+	}
+
+	sn, err := cloud.VPC.CreateSubnet(context.Background(), netdriver.SubnetConfig{
+		VPCID: vpc.ID, CIDRBlock: "10.0.1.0/24", AvailabilityZone: "us-east-1a",
+	})
+	if err != nil {
+		t.Fatalf("CreateSubnet: %v", err)
+	}
+
+	return sn.ID
 }

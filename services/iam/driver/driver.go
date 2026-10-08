@@ -287,6 +287,53 @@ type PermissionEvaluator interface {
 	EvaluateServiceWide(ctx context.Context, principal, service string, condCtx map[string]string) Decision
 }
 
+// ConditionValueSeparator joins the values of a multivalued condition key
+// (aws:TagKeys, sts:TransitiveTagKeys) in a condition context. Tag keys
+// cannot contain it.
+const ConditionValueSeparator = "\x1f"
+
+// TrustRequest asks whether a role's trust policy lets a caller perform
+// Action (sts:AssumeRole, sts:TagSession, sts:SetSourceIdentity) on it.
+// CallerARNs are every ARN the caller is known by: an IAM user's ARN, or a
+// role session's role ARN and assumed-role ARN. CallerAccount is the
+// caller's account, matched by a trust that names the account.
+type TrustRequest struct {
+	RoleName      string
+	Action        string
+	CallerARNs    []string
+	CallerAccount string
+	Context       map[string]string
+}
+
+// TrustResult is the trust policy's answer. NamedDirectly is set when an
+// allowing statement names the caller's IAM user, role session or federated
+// user ARN exactly. NamedRole is set when it names the IAM role ARN of a role
+// session caller. Naming the caller's account or "*" sets neither.
+type TrustResult struct {
+	RoleExists    bool
+	Allow         bool
+	ExplicitDeny  bool
+	NamedDirectly bool
+	NamedRole     bool
+}
+
+// TrustEvaluator is an optional capability: an IAM implementation that
+// evaluates a role trust policy for a real caller, with principal types,
+// NotPrincipal and conditions. The STS handler type-asserts for it. AWS-only.
+type TrustEvaluator interface {
+	EvaluateTrust(ctx context.Context, req *TrustRequest) TrustResult
+}
+
+// RoleBoundaryEvaluator is an optional capability: an IAM implementation
+// that evaluates a role's permissions boundary on its own, with
+// EvalRequest.Principal naming the role. A role with no boundary is allowed.
+// A resource policy that grants an IAM role ARN is still limited by the
+// role's boundary, so the STS handler needs the boundary decision apart from
+// the identity decision. AWS-only.
+type RoleBoundaryEvaluator interface {
+	EvaluateRoleBoundary(ctx context.Context, req EvalRequest) Decision
+}
+
 // IAM is the interface that IAM provider implementations must satisfy.
 type IAM interface {
 	CreateUser(ctx context.Context, config UserConfig) (*UserInfo, error)
