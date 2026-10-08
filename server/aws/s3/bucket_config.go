@@ -12,6 +12,14 @@ import (
 // subLocation is the ?location sub-resource key (GetBucketLocation).
 const subLocation = "location"
 
+// Sub-resource keys answered with a default document when not configured.
+const (
+	subRequestPayment = "requestPayment"
+	subAccelerate     = "accelerate"
+	subLogging        = "logging"
+	subPolicyStatus   = "policyStatus"
+)
+
 // subLifecycle is the ?lifecycle sub-resource key (Put/GetBucketLifecycleConfiguration).
 const subLifecycle = "lifecycle"
 
@@ -60,47 +68,59 @@ var notConfiguredErr = map[string]string{
 // subEncryption is the ?encryption sub-resource key (Get/PutBucketEncryption).
 const subEncryption = "encryption"
 
-// configSubresources are the read-only bucket configuration sub-resource query
-// keys the handler answers (order is irrelevant; at most one is present).
+// configSubresource is a bucket configuration sub-resource query key and the
+// IAM actions that read, write and delete it. An empty del means the delete
+// operation is authorized by the put action, as S3 does for DeleteBucketCors,
+// DeleteBucketLifecycle, DeletePublicAccessBlock and others.
 //
-//nolint:gochecknoglobals // static set
-var configSubresources = []string{
-	"policy", "cors", "website", subLifecycle, "replication", "encryption",
-	"object-lock", "publicAccessBlock", "ownershipControls",
-	"requestPayment", "accelerate", "logging", subLocation, "policyStatus",
+// location and policyStatus have no write operation in S3. The handler still
+// accepts a write to them, so it is authorized as an action that only s3:*
+// (or a matching wildcard) grants.
+type configSubresource struct {
+	key, get, put, del string
 }
 
-// configSubresourceKey returns the read-only config sub-resource query key
-// present on the request, or "" if none.
+// configSubresources are the bucket configuration sub-resources the handler
+// answers. When a request names more than one, the first in this order wins.
+//
+//nolint:gochecknoglobals // static lookup table
+var configSubresources = []configSubresource{
+	{"policy", "GetBucketPolicy", "PutBucketPolicy", "DeleteBucketPolicy"},
+	{"cors", "GetBucketCORS", "PutBucketCORS", ""},
+	{"website", "GetBucketWebsite", "PutBucketWebsite", "DeleteBucketWebsite"},
+	{subLifecycle, "GetLifecycleConfiguration", "PutLifecycleConfiguration", ""},
+	{"replication", "GetReplicationConfiguration", "PutReplicationConfiguration", ""},
+	{subEncryption, "GetEncryptionConfiguration", "PutEncryptionConfiguration", ""},
+	{"object-lock", "GetBucketObjectLockConfiguration", "PutBucketObjectLockConfiguration", ""},
+	{"publicAccessBlock", "GetBucketPublicAccessBlock", "PutBucketPublicAccessBlock", ""},
+	{"ownershipControls", "GetBucketOwnershipControls", "PutBucketOwnershipControls", ""},
+	{subRequestPayment, "GetBucketRequestPayment", "PutBucketRequestPayment", ""},
+	{subAccelerate, "GetAccelerateConfiguration", "PutAccelerateConfiguration", ""},
+	{subLogging, "GetBucketLogging", "PutBucketLogging", ""},
+	{subLocation, "GetBucketLocation", "PutBucketLocation", ""},
+	{subPolicyStatus, "GetBucketPolicyStatus", "PutBucketPolicyStatus", ""},
+}
+
+// configSubresourceKey returns the config sub-resource query key present on
+// the request, or "" if none.
 func configSubresourceKey(q url.Values) string {
-	for _, k := range configSubresources {
-		if q.Has(k) {
-			return k
-		}
+	if c, ok := findConfigSubresource(func(c *configSubresource) bool { return q.Has(c.key) }); ok {
+		return c.key
 	}
 
 	return ""
 }
 
-// bucketConfigOp answers a bucket configuration sub-resource. When the driver
-// implements RawBucketConfig (real S3 semantics), PUT persists the document,
-// GET echoes it back, and DELETE removes it. That way aws_s3_bucket_policy,
-// _cors_configuration, _server_side_encryption_configuration, _lifecycle_* and
-// _website read back what was written instead of a perpetual "not configured"
-// diff. GET on an unconfigured sub-resource still returns the AWS-correct
-// "not configured"/default response.
-//
-// Without the RawBucketConfig capability a write is accepted as a no-op (so it
-// does not fall through to create/delete the bucket) and reads return defaults.
-func (h *Handler) bucketConfigOp(w http.ResponseWriter, r *http.Request, bucket, sub string) {
-	switch r.Method {
-	case http.MethodPut:
-		h.putBucketConfig(w, r, bucket, sub)
-	case http.MethodDelete:
-		h.deleteBucketConfig(w, r, bucket, sub)
-	default:
-		h.getBucketConfig(w, r, bucket, sub)
+// findConfigSubresource returns the first configuration sub-resource match
+// accepts.
+func findConfigSubresource(match func(*configSubresource) bool) (configSubresource, bool) {
+	for i := range configSubresources {
+		if match(&configSubresources[i]) {
+			return configSubresources[i], true
+		}
 	}
+
+	return configSubresource{}, false
 }
 
 // putBucketConfig persists a configuration document when the driver supports it,
@@ -239,16 +259,16 @@ func writeConfigDefault(w http.ResponseWriter, sub string) {
 	}
 
 	switch sub {
-	case "requestPayment":
+	case subRequestPayment:
 		wire.WriteXML(w, http.StatusOK, requestPaymentXML{Xmlns: xmlns, Payer: "BucketOwner"})
-	case "accelerate":
+	case subAccelerate:
 		wire.WriteXML(w, http.StatusOK, accelerateXML{Xmlns: xmlns})
-	case "logging":
+	case subLogging:
 		wire.WriteXML(w, http.StatusOK, loggingXML{Xmlns: xmlns})
 	case subLocation:
 		// An empty LocationConstraint denotes us-east-1.
 		wire.WriteXML(w, http.StatusOK, locationXML{Xmlns: xmlns})
-	case "policyStatus":
+	case subPolicyStatus:
 		wire.WriteXML(w, http.StatusOK, policyStatusXML{Xmlns: xmlns, IsPublic: false})
 	default:
 		w.WriteHeader(http.StatusOK)
