@@ -421,6 +421,7 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	p.RDS.SetMonitoring(p.CloudWatch)
 	p.Kinesis.SetMonitoring(p.CloudWatch)
 	p.SFN.SetMonitoring(p.CloudWatch)
+	p.Kendra.SetMonitoring(p.CloudWatch)
 	p.APIGateway.SetMonitoring(p.CloudWatch)
 	p.Athena.SetMonitoring(p.CloudWatch)
 	p.Athena.SetCatalog(p.Glue)
