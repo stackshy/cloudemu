@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
@@ -288,6 +290,17 @@ func (m *Mock) resolveTrustPrincipals(doc string) map[string]string {
 	}
 
 	return ids
+}
+
+// uniqueID returns a new random IAM unique id with prefix. It fails closed
+// when the random source fails rather than handing out a guessable id.
+func uniqueID(prefix string) (string, error) {
+	id, err := idgen.IAMUniqueID(prefix)
+	if err != nil {
+		return "", errors.Newf(errors.Internal, "generate unique id: %v", err)
+	}
+
+	return id, nil
 }
 
 // entityIDForARN returns the unique id of the IAM user or role whose ARN is

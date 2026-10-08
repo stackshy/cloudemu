@@ -324,13 +324,14 @@ type TrustEvaluator interface {
 	EvaluateTrust(ctx context.Context, req *TrustRequest) TrustResult
 }
 
-// BoundaryEvaluator is an optional capability: an IAM implementation that
-// evaluates a principal's permissions boundary on its own. A principal with
-// no boundary is allowed. A resource policy that grants an IAM role ARN is
-// still limited by the role's boundary, so the STS handler needs the boundary
-// decision apart from the identity decision. AWS-only.
-type BoundaryEvaluator interface {
-	EvaluateBoundary(ctx context.Context, req EvalRequest) Decision
+// RoleBoundaryEvaluator is an optional capability: an IAM implementation
+// that evaluates a role's permissions boundary on its own, with
+// EvalRequest.Principal naming the role. A role with no boundary is allowed.
+// A resource policy that grants an IAM role ARN is still limited by the
+// role's boundary, so the STS handler needs the boundary decision apart from
+// the identity decision. AWS-only.
+type RoleBoundaryEvaluator interface {
+	EvaluateRoleBoundary(ctx context.Context, req EvalRequest) Decision
 }
 
 // IAM is the interface that IAM provider implementations must satisfy.

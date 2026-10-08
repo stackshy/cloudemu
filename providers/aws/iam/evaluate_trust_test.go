@@ -201,8 +201,8 @@ func TestEvaluateTrustRecreatedUser(t *testing.T) {
 	assertEqual(t, true, m.EvaluateTrust(ctx, req).ExplicitDeny)
 }
 
-// TestEvaluateBoundary checks the boundary is evaluated on its own.
-func TestEvaluateBoundary(t *testing.T) {
+// TestEvaluateRoleBoundary checks a role's boundary is evaluated on its own.
+func TestEvaluateRoleBoundary(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
@@ -210,12 +210,20 @@ func TestEvaluateBoundary(t *testing.T) {
 	requireNoError(t, err)
 
 	req := driver.EvalRequest{Principal: "bnded", Action: "sts:AssumeRole", Resource: trustRoleARN, ResourceKnown: true}
-	assertEqual(t, driver.DecisionAllowed, m.EvaluateBoundary(ctx, req))
+	assertEqual(t, driver.DecisionAllowed, m.EvaluateRoleBoundary(ctx, req))
 
 	pol, err := m.CreatePolicy(ctx, driver.PolicyConfig{Name: "s3only", PolicyDocument: trustDoc(
 		`{"Effect":"Allow","Action":"s3:*","Resource":"*"}`)})
 	requireNoError(t, err)
 	requireNoError(t, m.PutRolePermissionsBoundary(ctx, "bnded", pol.ARN))
 
-	assertEqual(t, driver.DecisionImplicitDeny, m.EvaluateBoundary(ctx, req))
+	assertEqual(t, driver.DecisionImplicitDeny, m.EvaluateRoleBoundary(ctx, req))
+
+	// A user with the same name and no boundary must not stand in for the role.
+	_, err = m.CreateUser(ctx, driver.UserConfig{Name: "bnded"})
+	requireNoError(t, err)
+	assertEqual(t, driver.DecisionImplicitDeny, m.EvaluateRoleBoundary(ctx, req))
+
+	req.Principal = "ghost"
+	assertEqual(t, driver.DecisionImplicitDeny, m.EvaluateRoleBoundary(ctx, req))
 }

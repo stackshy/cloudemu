@@ -309,11 +309,17 @@ func (m *Mock) EvaluatePermission(_ context.Context, req driver.EvalRequest) dri
 	return driver.Decision(m.evaluatePrincipal(req.Principal, q, mode))
 }
 
-// EvaluateBoundary reports the decision of req.Principal's permissions
-// boundary alone, allowed when it has none. It implements
-// driver.BoundaryEvaluator.
-func (m *Mock) EvaluateBoundary(_ context.Context, req driver.EvalRequest) driver.Decision {
-	doc, ok := m.permissionsBoundaryDoc(m.principalEntityType(req.Principal), req.Principal)
+// EvaluateRoleBoundary reports the decision of the permissions boundary of
+// the role named req.Principal alone, allowed when it has none. The name is
+// looked up as a role only, never as a user or group of the same name. A
+// role that no longer exists is an implicit deny. It implements
+// driver.RoleBoundaryEvaluator.
+func (m *Mock) EvaluateRoleBoundary(_ context.Context, req driver.EvalRequest) driver.Decision {
+	if !m.roles.Has(req.Principal) {
+		return driver.DecisionImplicitDeny
+	}
+
+	doc, ok := m.permissionsBoundaryDoc(entityRole, req.Principal)
 	if !ok {
 		return driver.DecisionAllowed
 	}

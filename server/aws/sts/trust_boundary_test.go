@@ -53,6 +53,39 @@ func TestEnforcedTrustRoleARNIsLimitedByBoundary(t *testing.T) {
 	wantAssume(t, err, true)
 }
 
+// TestEnforcedTrustBoundaryUserNameClash checks a user that shares the role's
+// name, and has no boundary, does not stand in for the role's boundary.
+func TestEnforcedTrustBoundaryUserNameClash(t *testing.T) {
+	e := newEnforcedSTS(t)
+	ctx := context.Background()
+	boot := e.user("boot", "")
+	s3Only := e.policy("s3only", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]}`)
+
+	r1 := e.role("R1", "", trustOf(trustStmt(`"sts:AssumeRole"`, awsPrincipal(acctRoot), "")), allowStsAR)
+	if _, err := e.iam(boot).PutRolePermissionsBoundary(ctx, &awsiam.PutRolePermissionsBoundaryInput{
+		RoleName: aws.String("R1"), PermissionsBoundary: aws.String(s3Only),
+	}); err != nil {
+		t.Fatalf("PutRolePermissionsBoundary: %v", err)
+	}
+
+	t3 := e.role("T3", "", trustOf(trustStmt(`"sts:AssumeRole"`, awsPrincipal(r1), "")), "")
+
+	session, err := e.assume(boot, &awssts.AssumeRoleInput{RoleArn: aws.String(r1)})
+	if err != nil {
+		t.Fatalf("AssumeRole R1: %v", err)
+	}
+
+	_, err = e.assume(session, &awssts.AssumeRoleInput{RoleArn: aws.String(t3)})
+	wantAssume(t, err, false)
+
+	if _, err := e.iam(boot).CreateUser(ctx, &awsiam.CreateUserInput{UserName: aws.String("R1")}); err != nil {
+		t.Fatalf("CreateUser R1: %v", err)
+	}
+
+	_, err = e.assume(session, &awssts.AssumeRoleInput{RoleArn: aws.String(t3)})
+	wantAssume(t, err, false)
+}
+
 // TestEnforcedTrustRoleARNWithinBoundary checks a trust naming the caller's
 // role ARN grants without an identity allow when the boundary allows it.
 func TestEnforcedTrustRoleARNWithinBoundary(t *testing.T) {

@@ -84,7 +84,7 @@ func (h *Handler) boundaryAllows(r *http.Request, ev *awsauthz.Evaluation, actio
 		return false
 	}
 
-	d := h.boundaries.EvaluateBoundary(r.Context(), iamdriver.EvalRequest{
+	d := h.boundaries.EvaluateRoleBoundary(r.Context(), iamdriver.EvalRequest{
 		Principal: ev.Principal.UserName, Action: action, Resource: resource, ResourceKnown: true, Context: ev.CondCtx,
 	})
 

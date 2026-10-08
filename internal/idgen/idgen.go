@@ -156,6 +156,18 @@ func AccessKeyID() (string, error) { return prefixed("AKIA", accessKeyRandLen, b
 // prefix), used for assumed-role / session credentials.
 func TempAccessKeyID() (string, error) { return prefixed("ASIA", accessKeyRandLen, base32Upper) }
 
+// iamUniqueIDRandLen is the number of characters after the 4-letter prefix of
+// an IAM unique id (AIDA..., AROA...), 21 characters in all.
+const iamUniqueIDRandLen = 17
+
+// IAMUniqueID returns an IAM unique id: prefix (AIDA for a user, AROA for a
+// role, AGPA for a group, AIPA for an instance profile) followed by 17 random
+// uppercase base32 characters, like AIDAJQABLZS4A3QDU576Q. The id must never
+// repeat, even across a restart, because a policy that names a user or role
+// is bound to its unique id: a later entity with the same name must not
+// inherit what the policy granted the old one.
+func IAMUniqueID(prefix string) (string, error) { return prefixed(prefix, iamUniqueIDRandLen, base32Upper) }
+
 // Signing secrets. These authenticate callers, so unlike the ids above they
 // never fall back to a predictable value: a crypto/rand failure is returned.
 const (
