@@ -442,7 +442,8 @@ type Drivers struct {
 	// policies, bound to the handler that dispatch will run. Query services
 	// (IAM, STS, EC2 and Auto Scaling, RDS, Redshift, ElastiCache, ELBv2, SNS,
 	// CloudFormation, CloudWatch) and SageMaker are checked per operation.
-	// JSON-RPC services are checked per operation through X-Amz-Target. REST
+	// JSON-RPC services are checked per operation through X-Amz-Target. S3 is
+	// checked per operation on the bucket and object ARNs. The other REST
 	// services are checked at service level for now: only a grant covering
 	// every action of the service (such as s3:* or AdministratorAccess) lets a
 	// request through, so a fine-grained or resource-scoped REST policy fails

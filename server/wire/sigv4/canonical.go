@@ -35,7 +35,7 @@ func canonicalURI(r *http.Request, service string) string {
 		path = "/"
 	}
 
-	if service == "s3" {
+	if service == s3Service {
 		return path
 	}
 

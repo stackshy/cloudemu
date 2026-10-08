@@ -82,6 +82,8 @@ func allow(actions ...string) string {
 const (
 	allowAllDenyBucket = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"},` +
 		`{"Effect":"Deny","Action":"s3:DeleteBucket","Resource":"arn:aws:s3:::prod"}]}`
+	allowAllDenyFunction = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"},` +
+		`{"Effect":"Deny","Action":"lambda:DeleteFunction","Resource":"arn:aws:lambda:us-east-1:123456789012:function:prod"}]}`
 	xmlAccessDenied = "<Code>AccessDenied</Code>"
 	createEvilUser  = "Action=CreateUser&Version=2010-05-08&UserName=evil"
 	lambdaCreate    = `{"FunctionName":"f1","Runtime":"python3.12","Role":"arn:aws:iam::123456789012:role/r",` +
@@ -373,8 +375,8 @@ func TestAuthzMatrixJSONRPCPrefixes(t *testing.T) {
 	}
 }
 
-// TestAuthzMatrixREST covers REST services, which stay service-level until
-// each moves to op-level checks.
+// TestAuthzMatrixREST covers REST services. S3 is authorized per operation;
+// the others stay service-level until each moves to op-level checks.
 func TestAuthzMatrixREST(t *testing.T) {
 	ts, cloud := matrixServer(t, nil)
 	dyn := userWithPolicy(t, cloud, "dynonly", allowDynamo)
@@ -421,10 +423,28 @@ func TestAuthzMatrixREST(t *testing.T) {
 		}
 	})
 
-	t.Run("allow-all with one deny on the service", func(t *testing.T) {
-		u := userWithPolicy(t, cloud, "denyone", allowAllDenyBucket)
+	t.Run("allow-all with one deny on a service-level service", func(t *testing.T) {
+		u := userWithPolicy(t, cloud, "denyone", allowAllDenyFunction)
+		status, body := doSigned(t, ts, u, sreq{path: lambdaPath, ctype: "application/json",
+			body: strings.Replace(lambdaCreate, "f1", "denyone-fn", 1), service: "lambda"})
+		wantDenied(t, status, body, accessDeny)
+	})
+
+	t.Run("allow-all with one deny on s3 denies only that operation", func(t *testing.T) {
+		if err := cloud.S3.CreateBucket(context.Background(), "prod"); err != nil {
+			t.Fatalf("CreateBucket: %v", err)
+		}
+
+		u := userWithPolicy(t, cloud, "denybucket", allowAllDenyBucket)
 		status, body := doSigned(t, ts, u, sreq{method: http.MethodPut, path: "/denyone-bucket", service: "s3"})
-		wantDenied(t, status, body, xmlAccessDenied)
+		wantNotDenied(t, status, body)
+
+		status, body = doSigned(t, ts, u, sreq{method: http.MethodDelete, path: "/prod", service: "s3"})
+		wantDenied(t, status, body, "s3:DeleteBucket on resource: arn:aws:s3:::prod with an explicit deny")
+
+		if !bucketExists(t, cloud, "prod") {
+			t.Fatal("a denied DeleteBucket removed the bucket")
+		}
 	})
 
 	t.Run("unknown REST path is 501", func(t *testing.T) {
