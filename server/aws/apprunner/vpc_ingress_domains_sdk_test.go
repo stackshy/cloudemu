@@ -336,10 +336,17 @@ func TestSDKDeleteAllRevisions(t *testing.T) {
 	parts := strings.Split(aws.ToString(arn), "/")
 	base := strings.Join(parts[:2], "/")
 
-	if _, err := c.DeleteAutoScalingConfiguration(ctx, &awsar.DeleteAutoScalingConfigurationInput{
+	del, err := c.DeleteAutoScalingConfiguration(ctx, &awsar.DeleteAutoScalingConfigurationInput{
 		AutoScalingConfigurationArn: aws.String(base), DeleteAllRevisions: true,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("DeleteAutoScalingConfiguration(all revisions): %v", err)
+	}
+
+	// Only the name-only ARN, the name and the inactive status come back.
+	if got := del.AutoScalingConfiguration; aws.ToString(got.AutoScalingConfigurationArn) != base || got.Status != "inactive" ||
+		got.AutoScalingConfigurationRevision != nil || got.MaxConcurrency != nil || got.Latest != nil && *got.Latest {
+		t.Fatalf("DeleteAllRevisions response: %+v", got)
 	}
 
 	list, err := c.ListAutoScalingConfigurations(ctx, &awsar.ListAutoScalingConfigurationsInput{AutoScalingConfigurationName: aws.String("bigmax"), LatestOnly: false})

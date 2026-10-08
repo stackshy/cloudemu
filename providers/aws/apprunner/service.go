@@ -198,12 +198,14 @@ func (m *Mock) checkEgress(e *driver.EgressConfiguration) error {
 	}
 }
 
-// resolveObservability validates the observability block, defaulting it to
-// disabled, and requires a referenced configuration to exist.
+// resolveObservability validates the observability block and requires a
+// referenced configuration to exist. An omitted block stays nil (the Terraform
+// provider's block is not Computed, so a default would plan a diff forever);
+// inside a block that was sent, ObservabilityEnabled defaults to false.
 func (m *Mock) resolveObservability(in *driver.ServiceObservabilityConfiguration) (*driver.ServiceObservabilityConfiguration, error) {
 	out := copyObservabilityConfig(in)
 	if out == nil {
-		out = &driver.ServiceObservabilityConfiguration{}
+		return nil, nil //nolint:nilnil // an omitted block is stored as absent
 	}
 
 	if out.ObservabilityEnabled == nil {

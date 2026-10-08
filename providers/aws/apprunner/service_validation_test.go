@@ -132,8 +132,20 @@ func TestServiceDefaultsArePopulated(t *testing.T) {
 		t.Fatalf("health defaults: %+v", h)
 	}
 
-	if o := svc.ObservabilityConfiguration; o == nil || o.ObservabilityEnabled == nil || *o.ObservabilityEnabled {
-		t.Fatalf("observability default must be enabled=false, got %+v", o)
+	// An omitted block stays absent (Terraform's block is not Computed); a block
+	// that was sent defaults ObservabilityEnabled to false.
+	if svc.ObservabilityConfiguration != nil {
+		t.Fatalf("an omitted observability block must stay nil, got %+v", svc.ObservabilityConfiguration)
+	}
+
+	sent := namedService("obs-sent")
+	sent.ObservabilityConfiguration = &driver.ServiceObservabilityConfiguration{}
+
+	resSent, err := m.CreateService(bg, sent)
+	requireNoError(t, err)
+
+	if o := resSent.Service.ObservabilityConfiguration; o == nil || o.ObservabilityEnabled == nil || *o.ObservabilityEnabled {
+		t.Fatalf("a sent block defaults to enabled=false, got %+v", o)
 	}
 
 	// Supplied values are kept, unset ones default.

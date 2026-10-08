@@ -236,8 +236,20 @@ func (m *Mock) DeleteAutoScalingConfiguration(
 	m.promoteAutoScalingLatest(cfg.AutoScalingConfigurationName)
 
 	out := copyAutoScaling(&cfg)
+	out.Latest = false
 	out.Status = driver.AutoScalingStatusInactive
 	out.DeletedAt = m.now()
+
+	if deleteAllRevisions {
+		// DeleteAllRevisions answers with only the name-only ARN, the name and the
+		// inactive status, not the latest revision's configuration.
+		out = driver.AutoScalingConfiguration{
+			AutoScalingConfigurationArn:  arn,
+			AutoScalingConfigurationName: cfg.AutoScalingConfigurationName,
+			Status:                       driver.AutoScalingStatusInactive,
+			DeletedAt:                    out.DeletedAt,
+		}
+	}
 
 	return &out, nil
 }

@@ -48,8 +48,14 @@ func TestDeleteAllRevisionsAndLatestPromotion(t *testing.T) {
 	_, err = m.DeleteAutoScalingConfiguration(bg, r3.AutoScalingConfigurationArn, true)
 	requireInvalidRequest(t, err)
 
-	_, err = m.DeleteAutoScalingConfiguration(bg, base, true)
+	deleted, err := m.DeleteAutoScalingConfiguration(bg, base, true)
 	requireNoError(t, err)
+
+	// The response is only the name-only ARN, the name and the inactive status.
+	if deleted.AutoScalingConfigurationArn != base || deleted.AutoScalingConfigurationName != "revtest" ||
+		deleted.Status != driver.AutoScalingStatusInactive || deleted.Latest || deleted.AutoScalingConfigurationRevision != 0 {
+		t.Fatalf("DeleteAllRevisions response: %+v", deleted)
+	}
 
 	all, _, _ := m.ListAutoScalingConfigurations(bg, "revtest", false, driver.Page{})
 	assertStr(t, itoa(int32(len(all))), "0")
@@ -185,7 +191,7 @@ func TestConcurrentTagsAreNotLostToServiceUpdates(t *testing.T) {
 func TestInstanceCpuMemoryPairs(t *testing.T) {
 	m := newMock()
 
-	for _, ok := range [][2]string{{"256", "512"}, {"0.5 vCPU", "1 GB"}, {"1024", "3072"}, {"2 vCPU", "6 GB"}, {"4096", "12288"}} {
+	for _, ok := range [][2]string{{"256", "512"}, {"0.25 vCPU", "1 GB"}, {"0.5 vCPU", "1 GB"}, {"1024", "3072"}, {"2 vCPU", "6 GB"}, {"4096", "12288"}} {
 		in := namedService("pair-ok")
 		in.InstanceConfiguration = &driver.InstanceConfiguration{CPU: ok[0], Memory: ok[1]}
 
@@ -196,7 +202,7 @@ func TestInstanceCpuMemoryPairs(t *testing.T) {
 		requireNoError(t, err)
 	}
 
-	for _, bad := range [][2]string{{"256", "12 GB"}, {"4096", "512"}, {"1024", "6144"}, {"0.25 vCPU", "1 GB"}} {
+	for _, bad := range [][2]string{{"256", "12 GB"}, {"4096", "512"}, {"1024", "6144"}, {"0.25 vCPU", "2 GB"}} {
 		in := namedService("pair-bad")
 		in.InstanceConfiguration = &driver.InstanceConfiguration{CPU: bad[0], Memory: bad[1]}
 
@@ -228,5 +234,19 @@ func TestOperationInProgressHasNoEndedAt(t *testing.T) {
 	ops, _, _ = m.ListOperations(bg, res.Service.ServiceArn, driver.Page{})
 	if ops[0].EndedAt.IsZero() {
 		t.Fatal("a finished operation has an EndedAt")
+	}
+}
+
+func TestDeletedRevisionIsNotReportedAsLatest(t *testing.T) {
+	m := newMock()
+
+	cfg, err := m.CreateAutoScalingConfiguration(bg, &driver.CreateAutoScalingConfigurationInput{AutoScalingConfigurationName: "latestcheck"})
+	requireNoError(t, err)
+
+	deleted, err := m.DeleteAutoScalingConfiguration(bg, cfg.AutoScalingConfigurationArn, false)
+	requireNoError(t, err)
+
+	if deleted.Latest || deleted.Status != driver.AutoScalingStatusInactive {
+		t.Fatalf("a deleted revision is inactive and not latest: %+v", deleted)
 	}
 }

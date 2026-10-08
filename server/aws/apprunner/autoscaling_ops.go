@@ -20,12 +20,12 @@ func (h *Handler) registerAutoScalingRoutes() {
 type autoScalingConfigurationJSON struct {
 	AutoScalingConfigurationArn      string `json:"AutoScalingConfigurationArn"`
 	AutoScalingConfigurationName     string `json:"AutoScalingConfigurationName"`
-	AutoScalingConfigurationRevision int32  `json:"AutoScalingConfigurationRevision"`
+	AutoScalingConfigurationRevision int32  `json:"AutoScalingConfigurationRevision,omitempty"`
 	Latest                           bool   `json:"Latest"`
 	Status                           string `json:"Status"`
-	MaxConcurrency                   int32  `json:"MaxConcurrency"`
-	MinSize                          int32  `json:"MinSize"`
-	MaxSize                          int32  `json:"MaxSize"`
+	MaxConcurrency                   int32  `json:"MaxConcurrency,omitempty"`
+	MinSize                          int32  `json:"MinSize,omitempty"`
+	MaxSize                          int32  `json:"MaxSize,omitempty"`
 	HasAssociatedService             bool   `json:"HasAssociatedService"`
 	IsDefault                        bool   `json:"IsDefault"`
 	CreatedAt                        any    `json:"CreatedAt,omitempty"`

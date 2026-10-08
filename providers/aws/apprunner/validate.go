@@ -203,7 +203,7 @@ func validateDomainName(name string) error {
 //
 //nolint:gochecknoglobals // immutable lookup table of the documented CPU/memory pairs
 var instancePairs = map[int][]int{
-	256: {512}, 512: {1024}, 1024: {2048, 3072, 4096}, 2048: {4096, 6144}, 4096: {8192, 10240, 12288},
+	256: {512, 1024}, 512: {1024}, 1024: {2048, 3072, 4096}, 2048: {4096, 6144}, 4096: {8192, 10240, 12288},
 }
 
 // cpuUnits converts a Cpu value ("1024" or "1 vCPU") to CPU units; 0 when unknown.
