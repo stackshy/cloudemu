@@ -143,6 +143,12 @@ func (m *Mock) BatchPutDocument(_ context.Context, in *driver.PutDocumentsInput)
 			continue
 		}
 
+		if len(d.Blob) == 0 && d.S3Path == nil {
+			failed = append(failed, failedDoc(d.ID, "a document needs either Blob or S3Path"))
+
+			continue
+		}
+
 		text := extractText(d.ContentType, d.Blob)
 		if len(text) > maxExtractedBytes {
 			failed = append(failed, failedDoc(d.ID, "the document has more than 5 MB of extracted text"))
@@ -167,7 +173,7 @@ func (m *Mock) BatchPutDocument(_ context.Context, in *driver.PutDocumentsInput)
 			HierarchicalAccessControlList: copyRaw(d.HierarchicalAccessControlList),
 			CreatedAt:                     created, UpdatedAt: now, Replaced: replaced,
 		})
-		m.beginSettle(key, driver.DocStatusProcessing)
+		m.beginSettle(docSettleKey(key), driver.DocStatusProcessing)
 	}
 
 	m.recordIndexedMetrics(in.IndexID, len(in.Documents)-len(failed), len(failed))
@@ -207,7 +213,7 @@ func (m *Mock) BatchDeleteDocument(_ context.Context, in *driver.DeleteDocuments
 		if m.documents.Delete(key) {
 			deleted++
 
-			m.settling.Clear(key)
+			m.settling.Clear(docSettleKey(key))
 		}
 	}
 
@@ -281,8 +287,12 @@ func (m *Mock) documentStatus(indexID, id string) string {
 		final = driver.DocStatusUpdated
 	}
 
-	return m.settleStatus(key, final)
+	return m.settleStatus(docSettleKey(key), final)
 }
+
+// docSettleKey namespaces a document's settle window so a document id equal to a
+// data source, child or "suggestions" id cannot touch that resource's window.
+func docSettleKey(key string) string { return "document:" + key }
 
 func copyS3Path(p *driver.S3Path) *driver.S3Path {
 	if p == nil {

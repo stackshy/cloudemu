@@ -75,7 +75,7 @@ func (m *Mock) CreateFaq(_ context.Context, in *driver.CreateFaqInput) (*driver.
 }
 
 // validateCreateFaq applies CreateFaq's input rules and returns the file format
-// to store (CSV when omitted).
+// to store (empty when omitted).
 func validateCreateFaq(in *driver.CreateFaqInput) (string, error) {
 	if err := validateIndexID(in.IndexID); err != nil {
 		return "", err
@@ -93,16 +93,13 @@ func validateCreateFaq(in *driver.CreateFaqInput) (string, error) {
 		return "", err
 	}
 
-	format := in.FileFormat
-	if format == "" {
-		format = "CSV"
-	}
-
-	if !validFaqFormats[format] {
+	// The format is stored as given (and validated only when sent): real Kendra
+	// echoes FileFormat only when the caller supplied it.
+	if in.FileFormat != "" && !validFaqFormats[in.FileFormat] {
 		return "", validation("invalid FileFormat: %q", in.FileFormat)
 	}
 
-	return format, validateCommon(in.ClientToken, in.Description, in.Tags)
+	return in.FileFormat, validateCommon(in.ClientToken, in.Description, in.Tags)
 }
 
 // DescribeFaq returns a FAQ by index and id.

@@ -160,20 +160,7 @@ func (m *Mock) ListDataSourceSyncJobs(
 	}
 
 	dsKey := dataSourceKey(in.IndexID, in.DataSourceID)
-	records := []syncJobRecord{}
-
-	for _, k := range m.syncJobs.Keys() {
-		rec, ok := m.syncJobs.Get(k)
-		if !ok || syncKeyPrefix(k) != dsKey {
-			continue
-		}
-
-		rec.Job.Status = m.jobStatus(k, &rec.Job)
-
-		if syncJobMatches(&rec.Job, in) {
-			records = append(records, rec)
-		}
-	}
+	records := m.matchingSyncJobs(dsKey, in)
 
 	sort.Slice(records, func(i, j int) bool { return records[i].Seq > records[j].Seq })
 
@@ -188,6 +175,30 @@ func (m *Mock) ListDataSourceSyncJobs(
 	}
 
 	return matched[start:end], next, nil
+}
+
+// matchingSyncJobs returns the data source's jobs as observed now (a running job
+// has no end time yet) that pass the list filters.
+func (m *Mock) matchingSyncJobs(dsKey string, in *driver.ListSyncJobsInput) []syncJobRecord {
+	records := []syncJobRecord{}
+
+	for _, k := range m.syncJobs.Keys() {
+		rec, ok := m.syncJobs.Get(k)
+		if !ok || syncKeyPrefix(k) != dsKey {
+			continue
+		}
+
+		rec.Job.Status = m.jobStatus(k, &rec.Job)
+		if rec.Job.Status == driver.SyncStatusSyncing {
+			rec.Job.EndTime = time.Time{}
+		}
+
+		if syncJobMatches(&rec.Job, in) {
+			records = append(records, rec)
+		}
+	}
+
+	return records
 }
 
 // validSyncStatus is the StatusFilter value set.

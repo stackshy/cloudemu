@@ -19,6 +19,16 @@ const (
 type APIError struct {
 	Exception string
 	Err       error
+	// ConflictingItems is set on FeaturedResultsConflictException: the query texts
+	// that already belong to another featured results set.
+	ConflictingItems []ConflictingItem
+}
+
+// ConflictingItem names a query text and the featured results set that owns it.
+type ConflictingItem struct {
+	QueryText string
+	SetName   string
+	SetID     string
 }
 
 func (e *APIError) Error() string { return e.Err.Error() }

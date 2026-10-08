@@ -56,37 +56,8 @@ func validateCommon(token, description string, tags []driver.Tag) error {
 // to ENTERPRISE_EDITION and UserContextPolicy to ATTRIBUTE_FILTER, matching the
 // real API. A repeated ClientToken returns the index the first call created.
 func (m *Mock) CreateIndex(_ context.Context, in *driver.CreateIndexInput) (*driver.Index, error) {
-	if err := validateName(in.Name, maxIndexNameLen); err != nil {
-		return nil, err
-	}
-
-	if in.RoleArn == "" {
-		return nil, validation("RoleArn is required")
-	}
-
-	if err := validateRoleArn(in.RoleArn); err != nil {
-		return nil, err
-	}
-
-	edition := in.Edition
-	if edition == "" {
-		edition = driver.EditionEnterprise
-	}
-
-	if !validEditions[edition] {
-		return nil, validation("invalid Edition: %q", in.Edition)
-	}
-
-	userContext := in.UserContextPolicy
-	if userContext == "" {
-		userContext = driver.UserContextAttributeFilter
-	}
-
-	if userContext != driver.UserContextAttributeFilter && userContext != driver.UserContextUserToken {
-		return nil, validation("invalid UserContextPolicy: %q", in.UserContextPolicy)
-	}
-
-	if err := validateCommon(in.ClientToken, in.Description, in.Tags); err != nil {
+	edition, userContext, err := validateCreateIndex(in)
+	if err != nil {
 		return nil, err
 	}
 
@@ -212,10 +183,71 @@ func (m *Mock) indexStatistics(indexID string) *driver.IndexStatistics {
 	return stats
 }
 
+// validateCreateIndex applies CreateIndex's input rules and returns the edition and
+// user context policy to store, with their defaults filled in.
+func validateCreateIndex(in *driver.CreateIndexInput) (edition, userContext string, err error) {
+	if err := validateName(in.Name, maxIndexNameLen); err != nil {
+		return "", "", err
+	}
+
+	if in.RoleArn == "" {
+		return "", "", validation("RoleArn is required")
+	}
+
+	if err := validateRoleArn(in.RoleArn); err != nil {
+		return "", "", err
+	}
+
+	edition = in.Edition
+	if edition == "" {
+		edition = driver.EditionEnterprise
+	}
+
+	if !validEditions[edition] {
+		return "", "", validation("invalid Edition: %q", in.Edition)
+	}
+
+	userContext = in.UserContextPolicy
+	if userContext == "" {
+		userContext = driver.UserContextAttributeFilter
+	}
+
+	if userContext != driver.UserContextAttributeFilter && userContext != driver.UserContextUserToken {
+		return "", "", validation("invalid UserContextPolicy: %q", in.UserContextPolicy)
+	}
+
+	return edition, userContext, validateCommon(in.ClientToken, in.Description, in.Tags)
+}
+
 // UpdateIndex applies the supplied fields, leaving omitted parameters unchanged.
 // The computed id, status and createdAt are preserved; updatedAt is bumped. An
 // index that is not ACTIVE cannot be updated (ConflictException).
 func (m *Mock) UpdateIndex(_ context.Context, in *driver.UpdateIndexInput) error {
+	if err := validateUpdateIndex(in); err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err := m.requireActiveIndex(in.ID); err != nil {
+		return err
+	}
+
+	m.indexes.Update(in.ID, func(i driver.Index) driver.Index {
+		applyIndexUpdate(&i, in)
+		i.UpdatedAt = m.now()
+
+		return i
+	})
+
+	m.beginSettle(in.ID, driver.IndexStatusUpdating)
+
+	return nil
+}
+
+// validateUpdateIndex applies UpdateIndex's input rules.
+func validateUpdateIndex(in *driver.UpdateIndexInput) error {
 	if in.Name != nil {
 		if err := validateName(*in.Name, maxIndexNameLen); err != nil {
 			return err
@@ -237,54 +269,33 @@ func (m *Mock) UpdateIndex(_ context.Context, in *driver.UpdateIndexInput) error
 		return validation("Description must have length between 0 and %d", maxDescriptionLen)
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if err := m.requireActiveIndex(in.ID); err != nil {
-		return err
-	}
-
-	m.indexes.Update(in.ID, func(i driver.Index) driver.Index {
-		if in.Name != nil {
-			i.Name = *in.Name
-		}
-
-		if in.RoleArn != nil {
-			i.RoleArn = *in.RoleArn
-		}
-
-		if in.Description != nil {
-			i.Description = *in.Description
-		}
-
-		if in.UserContextPolicy != nil {
-			i.UserContextPolicy = *in.UserContextPolicy
-		}
-
-		if in.CapacityUnits != nil {
-			i.CapacityUnits = copyRaw(in.CapacityUnits)
-		}
-
-		if in.DocumentMetadataConfigurationUpdates != nil {
-			i.DocumentMetadataConfigurations = copyRaw(in.DocumentMetadataConfigurationUpdates)
-		}
-
-		if in.UserGroupResolutionConfiguration != nil {
-			i.UserGroupResolutionConfiguration = copyRaw(in.UserGroupResolutionConfiguration)
-		}
-
-		if in.UserTokenConfigurations != nil {
-			i.UserTokenConfigurations = copyRaw(in.UserTokenConfigurations)
-		}
-
-		i.UpdatedAt = m.now()
-
-		return i
-	})
-
-	m.beginSettle(in.ID, driver.IndexStatusUpdating)
-
 	return nil
+}
+
+// applyIndexUpdate overlays the supplied members of an update onto an index.
+func applyIndexUpdate(i *driver.Index, in *driver.UpdateIndexInput) {
+	setIfSet(&i.Name, in.Name)
+	setIfSet(&i.RoleArn, in.RoleArn)
+	setIfSet(&i.Description, in.Description)
+	setIfSet(&i.UserContextPolicy, in.UserContextPolicy)
+	setRawIfSet(&i.CapacityUnits, in.CapacityUnits)
+	setRawIfSet(&i.DocumentMetadataConfigurations, in.DocumentMetadataConfigurationUpdates)
+	setRawIfSet(&i.UserGroupResolutionConfiguration, in.UserGroupResolutionConfiguration)
+	setRawIfSet(&i.UserTokenConfigurations, in.UserTokenConfigurations)
+}
+
+// setIfSet assigns *src to dst when src is non-nil.
+func setIfSet(dst, src *string) {
+	if src != nil {
+		*dst = *src
+	}
+}
+
+// setRawIfSet copies a raw JSON member when it was supplied.
+func setRawIfSet(dst *json.RawMessage, src json.RawMessage) {
+	if src != nil {
+		*dst = copyRaw(src)
+	}
 }
 
 // DeleteIndex removes an index and cascades to everything it owns: data sources
@@ -319,16 +330,20 @@ func (m *Mock) cascadeIndex(id string) {
 		}
 	}
 
-	deleteWithPrefix(m.documents, prefix)
-	deleteWithPrefix(m.syncJobs, prefix)
-	deleteWithPrefix(m.faqs, prefix)
-	deleteWithPrefix(m.thesauri, prefix)
-	deleteWithPrefix(m.blockLists, prefix)
-	deleteWithPrefix(m.experiences, prefix)
-	deleteWithPrefix(m.accessControls, prefix)
-	deleteWithPrefix(m.featured, prefix)
-	deleteWithPrefix(m.mappings, prefix)
+	drop := m.settling.Clear
+
+	deleteWithPrefix(m.documents, prefix, func(k string) { m.settling.Clear(docSettleKey(k)) })
+	deleteWithPrefix(m.syncJobs, prefix, drop)
+	deleteWithPrefix(m.faqs, prefix, drop)
+	deleteWithPrefix(m.thesauri, prefix, drop)
+	deleteWithPrefix(m.blockLists, prefix, drop)
+	deleteWithPrefix(m.experiences, prefix, drop)
+	deleteWithPrefix(m.accessControls, prefix, drop)
+	deleteWithPrefix(m.featured, prefix, drop)
+	deleteWithPrefix(m.mappings, prefix, drop)
 	m.suggestions.Delete(id)
+	m.settling.Clear(suggestionsKey(id))
+	m.queryLog.clear(id)
 }
 
 // ListIndices returns a deterministic page of indexes ordered by id.

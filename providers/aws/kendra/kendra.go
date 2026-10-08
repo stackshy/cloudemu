@@ -1,10 +1,12 @@
-// Package kendra provides an in-memory mock of the Amazon Kendra control plane:
-// indexes and the data source connectors that belong to them, plus resource
-// tags. An index (and a data source) is created immediately in the ACTIVE state
-// with a stable id, status and createdAt/updatedAt; running a search engine and
-// indexing documents are out of scope. Real Kendra index creation takes ~30
-// minutes, so returning ACTIVE synchronously is what lets an IaC waiter complete
-// instead of hanging.
+// Package kendra provides an in-memory mock of Amazon Kendra: indexes, data
+// sources and their child resources (FAQs, thesauri, experiences, block lists,
+// access controls, featured results, principal mappings, query suggestions), plus
+// a small data plane. Documents added with BatchPutDocument are held in the index
+// and searched by Query and Retrieve with a term-matching engine (no semantic
+// ranking). An index and a data source are created immediately in the ACTIVE state
+// with a stable id, status and createdAt/updatedAt (CREATING first under async
+// settling); real Kendra index creation takes ~30 minutes, so returning ACTIVE
+// synchronously is what lets an IaC waiter complete instead of hanging.
 package kendra
 
 import (
@@ -202,11 +204,13 @@ func copyDataSource(d *driver.DataSource) driver.DataSource {
 	return out
 }
 
-// deleteWithPrefix removes every entry of a store whose key starts with prefix.
-func deleteWithPrefix[V any](s *memstore.Store[V], prefix string) {
+// deleteWithPrefix removes every entry of a store whose key starts with prefix and
+// calls drop with each removed key (to drop its settle window).
+func deleteWithPrefix[V any](s *memstore.Store[V], prefix string, drop func(key string)) {
 	for _, k := range s.Keys() {
 		if strings.HasPrefix(k, prefix) {
 			s.Delete(k)
+			drop(k)
 		}
 	}
 }

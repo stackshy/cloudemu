@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/stackshy/cloudemu/v2/services/kendra/driver"
 )
@@ -175,6 +176,12 @@ func scoreConfidence(fraction float64) string {
 // search returns the documents of an index that pass the filter and match the
 // query terms, best first (matched fraction, occurrences, then id).
 func (m *Mock) search(indexID, queryText string, filter *driver.AttributeFilter) ([]match, []string, error) {
+	// A malformed filter is a ValidationException even when the index has no
+	// documents to evaluate it against.
+	if _, err := evalFilter(filter, nil); err != nil {
+		return nil, nil, err
+	}
+
 	terms := queryTerms(queryText)
 	out := []match{}
 
@@ -252,20 +259,23 @@ func wordBoundary(runes []rune, start, end int) bool {
 	return end >= len(runes) || (!unicode.IsLetter(runes[end]) && !unicode.IsDigit(runes[end]))
 }
 
-// excerpt returns up to 200 characters of text around its first term match, with
-// the matched terms highlighted. Text with no match returns its beginning.
 func excerpt(text string, terms []string) driver.TextWithHighlights {
-	runes := []rune(text)
-	if len(runes) == 0 {
+	if text == "" {
 		return driver.TextWithHighlights{Highlights: []driver.Highlight{}}
 	}
 
-	first := -1
+	lower := strings.ToLower(text)
+	if len(lower) != len(text) {
+		// A few characters change byte length when lower-cased; keep offsets
+		// consistent by cutting the snippet from the lower-cased text.
+		text = lower
+	}
 
-	for _, h := range highlightsIn(text, terms) {
-		first = int(h.BeginOffset)
-
-		break
+	// Find the first whole-word match with strings.Index (no per-position work)
+	// and cut the window around it; only the snippet is highlighted.
+	first := 0
+	if at := firstWordMatch(lower, terms); at > 0 {
+		first = utf8.RuneCountInString(lower[:at])
 	}
 
 	start := 0
@@ -273,10 +283,76 @@ func excerpt(text string, terms []string) driver.TextWithHighlights {
 		start = first - excerptLeadRunes
 	}
 
-	end := min(start+excerptRunes, len(runes))
-	snippet := string(runes[start:end])
+	snippet := strings.TrimSpace(runeWindow(text, start, excerptRunes))
 
-	return driver.TextWithHighlights{Text: strings.TrimSpace(snippet), Highlights: highlightsIn(strings.TrimSpace(snippet), terms)}
+	return driver.TextWithHighlights{Text: snippet, Highlights: highlightsIn(snippet, terms)}
+}
+
+// firstWordMatch returns the byte offset of the earliest whole-word occurrence of
+// any term in the lower-cased text, or -1.
+func firstWordMatch(lower string, terms []string) int {
+	best := -1
+
+	for _, term := range terms {
+		for from := 0; from < len(lower); {
+			i := strings.Index(lower[from:], term)
+			if i < 0 {
+				break
+			}
+
+			at := from + i
+			if wordBoundaryBytes(lower, at, at+len(term)) {
+				if best < 0 || at < best {
+					best = at
+				}
+
+				break
+			}
+
+			from = at + 1
+		}
+	}
+
+	return best
+}
+
+// wordBoundaryBytes is wordBoundary over byte offsets of a string.
+func wordBoundaryBytes(s string, start, end int) bool {
+	if start > 0 {
+		if r, _ := utf8.DecodeLastRuneInString(s[:start]); unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return false
+		}
+	}
+
+	if end >= len(s) {
+		return true
+	}
+
+	r, _ := utf8.DecodeRuneInString(s[end:])
+
+	return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+}
+
+// runeWindow returns up to count runes of s starting at rune index start,
+// without converting the whole string.
+func runeWindow(s string, start, count int) string {
+	from, n := 0, 0
+
+	for from < len(s) && n < start {
+		_, size := utf8.DecodeRuneInString(s[from:])
+		from += size
+		n++
+	}
+
+	to, taken := from, 0
+
+	for to < len(s) && taken < count {
+		_, size := utf8.DecodeRuneInString(s[to:])
+		to += size
+		taken++
+	}
+
+	return s[from:to]
 }
 
 func filterRequested(attrs []driver.DocumentAttribute, requested []string) []driver.DocumentAttribute {
@@ -380,10 +456,57 @@ func (m *Mock) Query(_ context.Context, in *driver.QueryInput) (*driver.QueryOut
 		out.Items = append(out.Items, queryItem(queryID, &matches[i], terms, in.RequestedAttributes))
 	}
 
+	if in.PageNumber <= 1 {
+		out.FeaturedResultsItems = m.featuredItems(in.IndexID, in.QueryText, queryID, in.RequestedAttributes)
+	}
+
 	m.recordQueryMetrics(in.IndexID)
 	m.logQuery(in.IndexID, in.QueryText, len(matches))
 
 	return out, nil
+}
+
+// featuredItems returns the documents of the ACTIVE featured results set whose
+// query text equals the query (case-insensitive). Featured documents that are not
+// in the index are skipped, and the attribute filter does not apply to them.
+func (m *Mock) featuredItems(indexID, queryText, queryID string, requested []string) []driver.QueryResultItem {
+	text := strings.TrimSpace(queryText)
+	if text == "" {
+		return nil
+	}
+
+	sets := m.featured.SortedValues()
+	out := []driver.QueryResultItem{}
+
+	for i := range sets {
+		set := &sets[i]
+		if set.IndexID != indexID || set.Status != driver.FeaturedActive || !hasQueryText(set.QueryTexts, text) {
+			continue
+		}
+
+		for _, id := range set.FeaturedDocuments {
+			doc, ok := m.documents.Get(documentKey(indexID, id))
+			if !ok {
+				continue
+			}
+
+			item := queryItem(queryID, &match{doc: doc}, nil, requested)
+			item.ID = queryID + "-featured-" + doc.ID
+			out = append(out, item)
+		}
+	}
+
+	return out
+}
+
+func hasQueryText(texts []string, want string) bool {
+	for _, t := range texts {
+		if strings.EqualFold(strings.TrimSpace(t), want) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // validateQuery applies Query's request-level constraints.
@@ -574,8 +697,8 @@ func buildFacet(matches []match, f driver.Facet) driver.FacetResult {
 
 // Retrieve returns the passages of an index's documents that best match the
 // query: each document's text is cut into passages of up to 200 tokens and each
-// passage that contains a query term is returned, best first. QueryText is
-// required.
+// passage that contains a query term is returned. Documents come best first
+// and a document's passages follow in text order. QueryText is required.
 func (m *Mock) Retrieve(_ context.Context, in *driver.RetrieveInput) (*driver.RetrieveOutput, error) {
 	if err := validateIndexID(in.IndexID); err != nil {
 		return nil, err

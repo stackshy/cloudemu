@@ -518,7 +518,7 @@ func TestFaqLifecycleAndValidation(t *testing.T) {
 
 	f, err := m.CreateFaq(bg, in())
 	requireNoError(t, err)
-	assertEqual(t, f.FileFormat, "CSV")
+	assertEqual(t, f.FileFormat, "") // echoed only when it was sent
 	assertEqual(t, f.LanguageCode, "en")
 	assertEqual(t, f.Status, driver.ChildStatusActive)
 

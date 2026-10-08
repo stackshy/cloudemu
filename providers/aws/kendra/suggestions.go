@@ -60,6 +60,49 @@ func (q *queryLog) get(indexID string) map[string]int {
 	return out
 }
 
+// all returns a deep copy of every index's counts, or nil when there are none.
+func (q *queryLog) all() map[string]map[string]int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if len(q.counts) == 0 {
+		return nil
+	}
+
+	out := make(map[string]map[string]int, len(q.counts))
+
+	for idx, counts := range q.counts {
+		cp := make(map[string]int, len(counts))
+		for k, v := range counts {
+			cp[k] = v
+		}
+
+		out[idx] = cp
+	}
+
+	return out
+}
+
+// restore loads counts saved by all.
+func (q *queryLog) restore(in map[string]map[string]int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if q.counts == nil {
+		q.counts = map[string]map[string]int{}
+	}
+
+	for idx, counts := range in {
+		if q.counts[idx] == nil {
+			q.counts[idx] = map[string]int{}
+		}
+
+		for k, v := range counts {
+			q.counts[idx][k] = v
+		}
+	}
+}
+
 func (q *queryLog) clear(indexID string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -294,6 +337,10 @@ func (m *Mock) GetQuerySuggestions(_ context.Context, in *driver.GetSuggestionsI
 func validateGetSuggestions(in *driver.GetSuggestionsInput) error {
 	if err := validateIndexID(in.IndexID); err != nil {
 		return err
+	}
+
+	if strings.TrimSpace(in.QueryText) == "" {
+		return validation("QueryText is required")
 	}
 
 	for _, t := range in.SuggestionTypes {

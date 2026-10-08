@@ -28,10 +28,11 @@ type kendraSnapshot struct {
 	Featured       map[string]driver.FeaturedResultsSet         `json:"featured,omitempty"`
 	Mappings       map[string]principalMapping                  `json:"mappings,omitempty"`
 	Suggestions    map[string]driver.SuggestionsConfig          `json:"suggestions,omitempty"`
+	QueryLog       map[string]map[string]int                    `json:"queryLog,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Kendra is
-// control-plane only and holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON, including the indexed document
+// text and the query counts suggestions are learned from. includeAssets is unused.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := kendraSnapshot{}
 
@@ -53,6 +54,7 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap.Featured = allOrNil(m.featured)
 	snap.Mappings = allOrNil(m.mappings)
 	snap.Suggestions = allOrNil(m.suggestions)
+	snap.QueryLog = m.queryLog.all()
 
 	b, err := json.Marshal(snap)
 	if err != nil {
@@ -89,6 +91,17 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	restoreInto(m.featured, snap.Featured)
 	restoreInto(m.mappings, snap.Mappings)
 	restoreInto(m.suggestions, snap.Suggestions)
+	m.queryLog.restore(snap.QueryLog)
+
+	// New sync jobs must sort after every restored one.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for k := range snap.SyncJobs {
+		if seq := snap.SyncJobs[k].Seq; seq > m.syncSeq {
+			m.syncSeq = seq
+		}
+	}
 
 	return nil
 }

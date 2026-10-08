@@ -120,7 +120,7 @@ func (m *Mock) UpdateExperience(_ context.Context, in *driver.UpdateExperienceIn
 
 		return e
 	})
-	m.beginSettle(key, driver.ChildStatusUpdating)
+	// No settle window: ExperienceStatus has no UPDATING value.
 
 	return nil
 }

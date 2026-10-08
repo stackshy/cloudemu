@@ -213,6 +213,9 @@ type QueryOutput struct {
 	Total   int32
 	Items   []QueryResultItem
 	Facets  []FacetResult
+	// FeaturedResultsItems are the documents of the ACTIVE featured results set
+	// whose query text matches the query; they come with the first page only.
+	FeaturedResultsItems []QueryResultItem
 }
 
 // RetrieveInput is the input to Retrieve.

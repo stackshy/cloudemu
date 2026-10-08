@@ -2,6 +2,7 @@ package kendra
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/services/kendra/driver"
@@ -94,8 +95,15 @@ func (m *Mock) conflictingQuery(indexID, skipID string, texts []string) (driver.
 // featuredConflict builds the FeaturedResultsConflictException for a query text
 // that another set of the index already uses.
 func featuredConflict(set *driver.FeaturedResultsSet, query string) error {
-	return conflictErr(driver.ExFeaturedConflict,
+	err := conflictErr(driver.ExFeaturedConflict,
 		"the query %q is already used by the featured results set %q (%s)", query, set.Name, set.ID)
+
+	var apiErr *driver.APIError
+	if errors.As(err, &apiErr) {
+		apiErr.ConflictingItems = []driver.ConflictingItem{{QueryText: query, SetName: set.Name, SetID: set.ID}}
+	}
+
+	return err
 }
 
 // CreateFeaturedResultsSet creates a set of featured documents for query texts.

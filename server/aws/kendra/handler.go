@@ -134,6 +134,17 @@ func writeErr(w http.ResponseWriter, err error) {
 
 	var apiErr *kendradriver.APIError
 	if errors.As(err, &apiErr) {
+		if len(apiErr.ConflictingItems) > 0 {
+			items := make([]map[string]string, len(apiErr.ConflictingItems))
+			for i, c := range apiErr.ConflictingItems {
+				items[i] = map[string]string{"QueryText": c.QueryText, "SetName": c.SetName, "SetId": c.SetID}
+			}
+
+			wire.WriteJSONErrorFields(w, statusFor(apiErr.Exception), apiErr.Exception, msg, map[string]any{"ConflictingItems": items})
+
+			return
+		}
+
 		wire.WriteJSONError(w, statusFor(apiErr.Exception), apiErr.Exception, msg)
 
 		return

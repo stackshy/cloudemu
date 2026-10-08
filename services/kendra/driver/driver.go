@@ -3,13 +3,15 @@
 // "AWSKendraFrontendService."). It models Kendra indexes and the data source
 // connectors that belong to them, plus resource tags.
 //
-// This is a control-plane-only surface: the emulator never runs a search
-// engine and never indexes documents. An index and a data source are created
-// directly in the ACTIVE state so an IaC waiter that blocks on status
-// (Terraform's aws_kendra_index / aws_kendra_data_source poll DescribeIndex /
-// DescribeDataSource for ACTIVE) does not hang: real Kendra index creation
-// takes ~30 minutes, so returning ACTIVE synchronously is what keeps the
-// emulator usable. The computed fields clients and IaC read back (the index id,
+// Besides the control plane it models a small data plane: documents added with
+// BatchPutDocument are held in the index and searched by Query and Retrieve with
+// a term-matching engine (no semantic ranking; see docs/coverage/nongoals/kendra.md).
+// An index and a data source are created directly in the ACTIVE state so an IaC
+// waiter that blocks on status (Terraform's aws_kendra_index /
+// aws_kendra_data_source poll DescribeIndex / DescribeDataSource for ACTIVE) does
+// not hang: real Kendra index creation takes ~30 minutes, so returning ACTIVE
+// synchronously is what keeps the emulator usable (under async settling they report
+// CREATING first). The computed fields clients and IaC read back (the index id,
 // a 36-character UUID, the data source id, the status and the createdAt/
 // updatedAt timestamps) are minted once at create and stored, so repeated
 // Describe/List reads and a later Update never drift. Kendra's API does not
@@ -97,8 +99,8 @@ type Index struct {
 	UpdatedAt                         time.Time
 	Tags                              []Tag
 
-	// ErrorMessage explains a FAILED status. The emulator never fails an index,
-	// so it is empty, but it is carried so DescribeIndex reports the field.
+	// ErrorMessage explains a FAILED status. The emulator never fails an index, so
+	// DescribeIndex reports it empty; it is carried so the field is present.
 	ErrorMessage string
 
 	// Statistics is computed at DescribeIndex time from the documents and FAQs

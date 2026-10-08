@@ -268,13 +268,33 @@ type queryResponse struct {
 	TotalNumberOfResults int32                 `json:"TotalNumberOfResults"`
 	ResultItems          []queryResultItemJSON `json:"ResultItems"`
 	FacetResults         []facetResultJSON     `json:"FacetResults"`
+	FeaturedResultsItems []featuredItemJSON    `json:"FeaturedResultsItems"`
+}
+
+type featuredItemJSON struct {
+	ID                 string                 `json:"Id"`
+	Type               string                 `json:"Type"`
+	DocumentID         string                 `json:"DocumentId"`
+	DocumentTitle      textWithHighlightsJSON `json:"DocumentTitle"`
+	DocumentExcerpt    textWithHighlightsJSON `json:"DocumentExcerpt"`
+	DocumentURI        string                 `json:"DocumentURI,omitempty"`
+	DocumentAttributes []docAttrJSON          `json:"DocumentAttributes"`
 }
 
 func queryToWire(res *driver.QueryOutput) queryResponse {
 	out := queryResponse{
 		QueryID: res.QueryID, TotalNumberOfResults: res.Total,
-		ResultItems:  make([]queryResultItemJSON, len(res.Items)),
-		FacetResults: make([]facetResultJSON, len(res.Facets)),
+		ResultItems:          make([]queryResultItemJSON, len(res.Items)),
+		FacetResults:         make([]facetResultJSON, len(res.Facets)),
+		FeaturedResultsItems: make([]featuredItemJSON, len(res.FeaturedResultsItems)),
+	}
+
+	for i := range res.FeaturedResultsItems {
+		it := &res.FeaturedResultsItems[i]
+		out.FeaturedResultsItems[i] = featuredItemJSON{
+			ID: it.ID, Type: it.Type, DocumentID: it.DocumentID, DocumentTitle: textToWire(it.Title),
+			DocumentExcerpt: textToWire(it.Excerpt), DocumentURI: it.URI, DocumentAttributes: attrsToWire(it.Attributes),
+		}
 	}
 
 	for i := range res.Items {

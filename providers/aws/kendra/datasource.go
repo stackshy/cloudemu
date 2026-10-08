@@ -198,6 +198,33 @@ func (m *Mock) DescribeDataSource(_ context.Context, indexID, id string) (*drive
 // unchanged. The computed id, status and createdAt are preserved; updatedAt is
 // bumped. A data source that is not ACTIVE cannot be updated (ConflictException).
 func (m *Mock) UpdateDataSource(_ context.Context, in *driver.UpdateDataSourceInput) error {
+	if err := validateUpdateDataSource(in); err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err := m.requireActiveDataSource(in.IndexID, in.ID); err != nil {
+		return err
+	}
+
+	key := dataSourceKey(in.IndexID, in.ID)
+
+	m.dataSources.Update(key, func(d driver.DataSource) driver.DataSource {
+		applyDataSourceUpdate(&d, in)
+		d.UpdatedAt = m.now()
+
+		return d
+	})
+
+	m.beginSettle(key, driver.DataSourceStatusUpdating)
+
+	return nil
+}
+
+// validateUpdateDataSource applies UpdateDataSource's input rules.
+func validateUpdateDataSource(in *driver.UpdateDataSourceInput) error {
 	if in.Name != nil {
 		if err := validateName(*in.Name, maxIndexNameLen); err != nil {
 			return err
@@ -214,56 +241,19 @@ func (m *Mock) UpdateDataSource(_ context.Context, in *driver.UpdateDataSourceIn
 		return validation("Description must have length between 0 and %d", maxDescriptionLen)
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if err := m.requireActiveDataSource(in.IndexID, in.ID); err != nil {
-		return err
-	}
-
-	key := dataSourceKey(in.IndexID, in.ID)
-
-	m.dataSources.Update(key, func(d driver.DataSource) driver.DataSource {
-		if in.Name != nil {
-			d.Name = *in.Name
-		}
-
-		if in.RoleArn != nil {
-			d.RoleArn = *in.RoleArn
-		}
-
-		if in.Description != nil {
-			d.Description = *in.Description
-		}
-
-		if in.Schedule != nil {
-			d.Schedule = *in.Schedule
-		}
-
-		if in.LanguageCode != nil {
-			d.LanguageCode = *in.LanguageCode
-		}
-
-		if in.Configuration != nil {
-			d.Configuration = copyRaw(in.Configuration)
-		}
-
-		if in.VpcConfiguration != nil {
-			d.VpcConfiguration = copyRaw(in.VpcConfiguration)
-		}
-
-		if in.CustomDocumentEnrichmentConfiguration != nil {
-			d.CustomDocumentEnrichmentConfiguration = copyRaw(in.CustomDocumentEnrichmentConfiguration)
-		}
-
-		d.UpdatedAt = m.now()
-
-		return d
-	})
-
-	m.beginSettle(key, driver.DataSourceStatusUpdating)
-
 	return nil
+}
+
+// applyDataSourceUpdate overlays the supplied members of an update onto a data source.
+func applyDataSourceUpdate(d *driver.DataSource, in *driver.UpdateDataSourceInput) {
+	setIfSet(&d.Name, in.Name)
+	setIfSet(&d.RoleArn, in.RoleArn)
+	setIfSet(&d.Description, in.Description)
+	setIfSet(&d.Schedule, in.Schedule)
+	setIfSet(&d.LanguageCode, in.LanguageCode)
+	setRawIfSet(&d.Configuration, in.Configuration)
+	setRawIfSet(&d.VpcConfiguration, in.VpcConfiguration)
+	setRawIfSet(&d.CustomDocumentEnrichmentConfiguration, in.CustomDocumentEnrichmentConfiguration)
 }
 
 // DeleteDataSource removes a data source from its index together with its sync
@@ -285,7 +275,8 @@ func (m *Mock) DeleteDataSource(_ context.Context, indexID, id string) error {
 
 	m.dataSources.Delete(key)
 	m.settling.Clear(key)
-	deleteWithPrefix(m.syncJobs, key+"/")
+	deleteWithPrefix(m.syncJobs, key+"/", m.settling.Clear)
+	deleteWithPrefix(m.mappings, key+"/", m.settling.Clear)
 
 	return nil
 }

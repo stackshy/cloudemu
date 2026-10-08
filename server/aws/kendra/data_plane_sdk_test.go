@@ -256,7 +256,7 @@ func TestSDKFaqThesaurusBlockListLifecycle(t *testing.T) {
 	df, err := c.DescribeFaq(ctx, &awskendra.DescribeFaqInput{IndexId: idx, Id: faq.Id})
 	requireNoErr(t, "DescribeFaq", err)
 
-	if df.Status != kendratypes.FaqStatusActive || df.FileFormat != kendratypes.FaqFileFormatCsv || aws.ToString(df.S3Path.Bucket) != "my-bucket" {
+	if df.Status != kendratypes.FaqStatusActive || df.FileFormat != "" || aws.ToString(df.S3Path.Bucket) != "my-bucket" {
 		t.Fatalf("unexpected faq: %+v", df)
 	}
 
@@ -499,5 +499,38 @@ func TestSDKQuerySuggestions(t *testing.T) {
 	s, _ = c.GetQuerySuggestions(ctx, &awskendra.GetQuerySuggestionsInput{IndexId: idx, QueryText: aws.String("vac")})
 	if len(s.Suggestions) != 0 {
 		t.Fatalf("suggestions survived a clear: %+v", s.Suggestions)
+	}
+}
+
+func TestSDKFeaturedResultsInQueryAndConflictingItems(t *testing.T) {
+	c := clientFor(t)
+	idx := newIndex(t, c)
+
+	_, err := c.BatchPutDocument(ctx, &awskendra.BatchPutDocumentInput{IndexId: idx, Documents: []kendratypes.Document{{
+		Id: aws.String("home"), Title: aws.String("Home page"), Blob: []byte("welcome"), ContentType: kendratypes.ContentTypePlainText,
+	}}})
+	requireNoErr(t, "BatchPutDocument", err)
+
+	_, err = c.CreateFeaturedResultsSet(ctx, &awskendra.CreateFeaturedResultsSetInput{
+		IndexId: idx, FeaturedResultsSetName: aws.String("Vacation"), QueryTexts: []string{"vacation"},
+		FeaturedDocuments: []kendratypes.FeaturedDocument{{Id: aws.String("home")}},
+	})
+	requireNoErr(t, "CreateFeaturedResultsSet", err)
+
+	q, err := c.Query(ctx, &awskendra.QueryInput{IndexId: idx, QueryText: aws.String("VACATION")})
+	requireNoErr(t, "Query", err)
+
+	if len(q.FeaturedResultsItems) != 1 || aws.ToString(q.FeaturedResultsItems[0].DocumentId) != "home" {
+		t.Fatalf("FeaturedResultsItems = %+v", q.FeaturedResultsItems)
+	}
+
+	_, err = c.CreateFeaturedResultsSet(ctx, &awskendra.CreateFeaturedResultsSetInput{
+		IndexId: idx, FeaturedResultsSetName: aws.String("Second"), QueryTexts: []string{"Vacation"},
+	})
+
+	var conflict *kendratypes.FeaturedResultsConflictException
+	if !errors.As(err, &conflict) || len(conflict.ConflictingItems) != 1 ||
+		aws.ToString(conflict.ConflictingItems[0].SetName) != "Vacation" || aws.ToString(conflict.ConflictingItems[0].QueryText) != "Vacation" {
+		t.Fatalf("want FeaturedResultsConflictException with ConflictingItems, got %v (%+v)", err, conflict)
 	}
 }
