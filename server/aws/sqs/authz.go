@@ -64,7 +64,7 @@ var queueName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}(\.fifo)?$`)
 // needs on its source (dead-letter) queue, from "Configuring queue
 // permissions for dead-letter queue redrive" in the SQS Developer Guide.
 //
-//nolint:gochecknoglobals,goconst // static lookup table of operation names
+//nolint:gochecknoglobals // static lookup table
 var moveTaskActions = map[string][]string{
 	"StartMessageMoveTask":  {"ReceiveMessage", "DeleteMessage", "GetQueueAttributes"},
 	"CancelMessageMoveTask": {"ReceiveMessage", "DeleteMessage", "GetQueueAttributes"},
