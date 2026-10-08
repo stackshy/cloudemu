@@ -2,6 +2,9 @@ package apprunner
 
 import (
 	"regexp"
+	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/services/apprunner/driver"
 )
@@ -130,6 +133,11 @@ func resolveInstanceConfiguration(in *driver.InstanceConfiguration) (*driver.Ins
 		return nil, invalidRequest("InstanceConfiguration.Memory must be 512 MB to 12 GB in the documented steps")
 	}
 
+	if !validInstancePair(out.CPU, out.Memory) {
+		return nil, invalidRequest("InstanceConfiguration.Cpu " + out.CPU + " does not support Memory " + out.Memory +
+			": the documented pairs are 0.25 vCPU with 0.5 GB, 0.5 with 1, 1 with 2/3/4, 2 with 4/6 and 4 with 8/10/12")
+	}
+
 	return out, nil
 }
 
@@ -189,4 +197,53 @@ func validateDomainName(name string) error {
 	}
 
 	return nil
+}
+
+// instancePairs lists the memory sizes (MB) each CPU size (units) supports.
+//
+//nolint:gochecknoglobals // immutable lookup table of the documented CPU/memory pairs
+var instancePairs = map[int][]int{
+	256: {512}, 512: {1024}, 1024: {2048, 3072, 4096}, 2048: {4096, 6144}, 4096: {8192, 10240, 12288},
+}
+
+// cpuUnits converts a Cpu value ("1024" or "1 vCPU") to CPU units; 0 when unknown.
+func cpuUnits(cpu string) int {
+	if v, ok := strings.CutSuffix(cpu, " vCPU"); ok {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return 0
+		}
+
+		return int(f * cpuUnitsPerVCPU)
+	}
+
+	n, _ := strconv.Atoi(cpu)
+
+	return n
+}
+
+// memoryMB converts a Memory value ("2048" or "2 GB") to megabytes; 0 when unknown.
+func memoryMB(mem string) int {
+	if v, ok := strings.CutSuffix(mem, " GB"); ok {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return 0
+		}
+
+		return int(f * mbPerGB)
+	}
+
+	n, _ := strconv.Atoi(mem)
+
+	return n
+}
+
+const (
+	cpuUnitsPerVCPU = 1024
+	mbPerGB         = 1024
+)
+
+// validInstancePair reports whether the memory size is one the CPU size supports.
+func validInstancePair(cpu, mem string) bool {
+	return slices.Contains(instancePairs[cpuUnits(cpu)], memoryMB(mem))
 }

@@ -69,7 +69,7 @@ func (m *Mock) nextObservabilityRevision(name string) int32 {
 		}
 	}
 
-	return highest + 1
+	return m.nextRevision("observability", name, highest)
 }
 
 // demoteObservabilityLatest clears the Latest flag on every stored revision of name.
@@ -97,11 +97,10 @@ func (m *Mock) observabilityInUse(arn string) bool {
 	return false
 }
 
-// DescribeObservabilityConfiguration returns the configuration by ARN.
 func (m *Mock) DescribeObservabilityConfiguration(
 	_ context.Context, arn string,
 ) (*driver.ObservabilityConfiguration, error) {
-	cfg, ok := m.observability.Get(arn)
+	cfg, ok := m.findObservability(arn)
 	if !ok {
 		return nil, notFound("observability configuration %q does not exist", arn)
 	}
@@ -111,31 +110,79 @@ func (m *Mock) DescribeObservabilityConfiguration(
 	return &out, nil
 }
 
-// DeleteObservabilityConfiguration removes a configuration and returns it with an
-// INACTIVE status, so a subsequent describe 404s. A configuration that a service
-// uses is rejected with an InvalidRequestException, as in real App Runner.
+// findObservability resolves a full ARN, or a partial one: ".../name" is the
+// latest revision and ".../name/revision" pins one.
+func (m *Mock) findObservability(arn string) (driver.ObservabilityConfiguration, bool) {
+	if cfg, ok := m.observability.Get(arn); ok {
+		return cfg, true
+	}
+
+	name, revision := autoScalingRefFromARN(arn)
+	if name == "" {
+		return driver.ObservabilityConfiguration{}, false
+	}
+
+	all := m.observability.SortedValues()
+	for i := range all {
+		c := &all[i]
+		if c.ObservabilityConfigurationName != name {
+			continue
+		}
+
+		if (revision == 0 && c.Latest) || (revision != 0 && c.ObservabilityConfigurationRevision == revision) {
+			return *c, true
+		}
+	}
+
+	return driver.ObservabilityConfiguration{}, false
+}
+
 func (m *Mock) DeleteObservabilityConfiguration(
 	_ context.Context, arn string,
 ) (*driver.ObservabilityConfiguration, error) {
 	m.refMu.Lock()
 	defer m.refMu.Unlock()
 
-	cfg, ok := m.observability.Get(arn)
+	cfg, ok := m.findObservability(arn)
 	if !ok {
 		return nil, notFound("observability configuration %q does not exist", arn)
 	}
 
-	if m.observabilityInUse(arn) {
+	if m.observabilityInUse(cfg.ObservabilityConfigurationArn) {
 		return nil, invalidRequest("observability configuration is used by one or more App Runner services")
 	}
 
-	m.observability.Delete(arn)
+	m.observability.Delete(cfg.ObservabilityConfigurationArn)
+	m.promoteObservabilityLatest(cfg.ObservabilityConfigurationName)
 
 	out := copyObservability(&cfg)
 	out.Status = driver.ResourceStatusInactive
 	out.DeletedAt = m.now()
 
 	return &out, nil
+}
+
+// promoteObservabilityLatest makes the highest remaining revision of a name the
+// latest one again after a delete.
+func (m *Mock) promoteObservabilityLatest(name string) {
+	var best *driver.ObservabilityConfiguration
+
+	all := m.observability.SortedValues()
+	for i := range all {
+		if all[i].ObservabilityConfigurationName != name {
+			continue
+		}
+
+		if best == nil || all[i].ObservabilityConfigurationRevision > best.ObservabilityConfigurationRevision {
+			best = &all[i]
+		}
+	}
+
+	if best != nil {
+		cp := *best
+		cp.Latest = true
+		m.observability.Set(cp.ObservabilityConfigurationArn, cp)
+	}
 }
 
 // ListObservabilityConfigurations returns a page of configurations, optionally

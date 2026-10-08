@@ -391,7 +391,7 @@ type AppRunner interface {
 
 	CreateAutoScalingConfiguration(ctx context.Context, in *CreateAutoScalingConfigurationInput) (*AutoScalingConfiguration, error)
 	DescribeAutoScalingConfiguration(ctx context.Context, arn string) (*AutoScalingConfiguration, error)
-	DeleteAutoScalingConfiguration(ctx context.Context, arn string) (*AutoScalingConfiguration, error)
+	DeleteAutoScalingConfiguration(ctx context.Context, arn string, deleteAllRevisions bool) (*AutoScalingConfiguration, error)
 	ListAutoScalingConfigurations(ctx context.Context, name string, latestOnly bool, page Page) (
 		configs []*AutoScalingConfiguration, nextToken string, err error)
 

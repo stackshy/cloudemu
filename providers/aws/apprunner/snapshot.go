@@ -22,6 +22,7 @@ type apprunnerSnapshot struct {
 	Observability map[string]driver.ObservabilityConfiguration `json:"observability,omitempty"`
 	Ingress       map[string]driver.VpcIngressConnection       `json:"ingress,omitempty"`
 	Domains       map[string]domainRecord                      `json:"domains,omitempty"`
+	RevisionMarks map[string]int32                             `json:"revisionMarks,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused. App Runner is
@@ -56,6 +57,8 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	if m.observability.Len() > 0 {
 		snap.Observability = m.observability.All()
 	}
+
+	snap.RevisionMarks = m.copyRevisionMarks()
 
 	b, err := json.Marshal(snap)
 	if err != nil {
@@ -102,5 +105,29 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		m.domains.Set(key, snap.Domains[key])
 	}
 
+	m.revMu.Lock()
+	defer m.revMu.Unlock()
+
+	for k, v := range snap.RevisionMarks {
+		m.revMarks[k] = max(m.revMarks[k], v)
+	}
+
 	return nil
+}
+
+// copyRevisionMarks returns the revision high-water marks, or nil when there are none.
+func (m *Mock) copyRevisionMarks() map[string]int32 {
+	m.revMu.Lock()
+	defer m.revMu.Unlock()
+
+	if len(m.revMarks) == 0 {
+		return nil
+	}
+
+	out := make(map[string]int32, len(m.revMarks))
+	for k, v := range m.revMarks {
+		out[k] = v
+	}
+
+	return out
 }

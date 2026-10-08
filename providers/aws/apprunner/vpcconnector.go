@@ -10,7 +10,7 @@ import (
 // CreateVpcConnector provisions a VPC connector. Reusing a name mints the next
 // incremental revision, matching real App Runner (VPC connectors are immutable
 // and versioned by name).
-func (m *Mock) CreateVpcConnector(_ context.Context, in *driver.CreateVpcConnectorInput) (*driver.VpcConnector, error) {
+func (m *Mock) CreateVpcConnector(ctx context.Context, in *driver.CreateVpcConnectorInput) (*driver.VpcConnector, error) {
 	if err := validateResourceName("VpcConnectorName", in.VpcConnectorName); err != nil {
 		return nil, err
 	}
@@ -19,7 +19,7 @@ func (m *Mock) CreateVpcConnector(_ context.Context, in *driver.CreateVpcConnect
 		return nil, invalidRequest("at least one subnet is required")
 	}
 
-	if err := m.checkConnectorNetwork(context.Background(), in.Subnets, in.SecurityGroups); err != nil {
+	if err := m.checkConnectorNetwork(ctx, in.Subnets, in.SecurityGroups); err != nil {
 		return nil, err
 	}
 
@@ -104,7 +104,7 @@ func (m *Mock) nextVpcConnectorRevision(name string) int32 {
 		}
 	}
 
-	return highest + 1
+	return m.nextRevision("vpcconnector", name, highest)
 }
 
 // vpcConnectorInUse reports whether any service uses the connector for egress.

@@ -263,7 +263,7 @@ func TestAutoScalingConfigurationRevisions(t *testing.T) {
 		t.Fatalf("revisions should list 2, got %d", len(all))
 	}
 
-	del, err := m.DeleteAutoScalingConfiguration(ctx, c2.AutoScalingConfigurationArn)
+	del, err := m.DeleteAutoScalingConfiguration(ctx, c2.AutoScalingConfigurationArn, false)
 	requireNoError(t, err)
 
 	if del.Status != driver.AutoScalingStatusInactive {
@@ -424,7 +424,7 @@ func TestDeleteDefaultAutoScalingConfigurationRejected(t *testing.T) {
 	m := newMock()
 	arn := mustService(t, m).AutoScalingConfigurationSummary.AutoScalingConfigurationArn
 
-	_, err := m.DeleteAutoScalingConfiguration(context.Background(), arn)
+	_, err := m.DeleteAutoScalingConfiguration(context.Background(), arn, false)
 	requireInvalidRequest(t, err)
 
 	// Even with no service using it.
@@ -436,7 +436,7 @@ func TestDeleteDefaultAutoScalingConfigurationRejected(t *testing.T) {
 		t.Fatalf("fresh mock must list the default config, got %+v", list)
 	}
 
-	_, err = m2.DeleteAutoScalingConfiguration(context.Background(), list[0].AutoScalingConfigurationArn)
+	_, err = m2.DeleteAutoScalingConfiguration(context.Background(), list[0].AutoScalingConfigurationArn, false)
 	requireInvalidRequest(t, err)
 }
 
@@ -461,7 +461,7 @@ func TestDeleteAutoScalingConfigurationBlockedWhileReferenced(t *testing.T) {
 		t.Fatalf("HasAssociatedService must be true while a service uses the configuration")
 	}
 
-	_, err = m.DeleteAutoScalingConfiguration(ctx, cfg.AutoScalingConfigurationArn)
+	_, err = m.DeleteAutoScalingConfiguration(ctx, cfg.AutoScalingConfigurationArn, false)
 	requireInvalidRequest(t, err)
 
 	// Still there after the rejected delete.
@@ -478,7 +478,7 @@ func TestDeleteAutoScalingConfigurationBlockedWhileReferenced(t *testing.T) {
 		t.Fatalf("HasAssociatedService must clear once the service is deleted")
 	}
 
-	_, err = m.DeleteAutoScalingConfiguration(ctx, cfg.AutoScalingConfigurationArn)
+	_, err = m.DeleteAutoScalingConfiguration(ctx, cfg.AutoScalingConfigurationArn, false)
 	requireNoError(t, err)
 }
 
@@ -498,7 +498,7 @@ func TestUpdateServiceMovesAutoScalingAssociation(t *testing.T) {
 	})
 	requireNoError(t, err)
 
-	_, err = m.DeleteAutoScalingConfiguration(ctx, cfg.AutoScalingConfigurationArn)
+	_, err = m.DeleteAutoScalingConfiguration(ctx, cfg.AutoScalingConfigurationArn, false)
 	requireInvalidRequest(t, err)
 }
 

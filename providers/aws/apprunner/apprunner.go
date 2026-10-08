@@ -91,6 +91,11 @@ type Mock struct {
 	monitoring mondriver.Monitoring
 	logs       logdriver.Logging
 	network    NetworkResolver
+
+	// revMarks remembers the highest revision ever minted per configuration name
+	// ("kind/name"), so a deleted revision's number is never handed out again.
+	revMu    sync.Mutex
+	revMarks map[string]int32
 }
 
 // SetMonitoring wires the CloudWatch backend that receives the AWS/AppRunner
@@ -116,6 +121,7 @@ func New(opts *config.Options) *Mock {
 		ingress:       memstore.New[driver.VpcIngressConnection](),
 		domains:       memstore.New[domainRecord](),
 		settling:      settle.NewSet(),
+		revMarks:      map[string]int32{},
 		opts:          opts,
 	}
 
@@ -257,3 +263,20 @@ func decodeToken(token string) int {
 
 	return n
 }
+
+// nextRevision returns the next revision number of a named configuration: one past
+// the highest of the stored revisions and every revision ever minted for the name.
+func (m *Mock) nextRevision(kind, name string, storedHighest int32) int32 {
+	m.revMu.Lock()
+	defer m.revMu.Unlock()
+
+	key := kind + "/" + name
+	next := max(storedHighest, m.revMarks[key]) + 1
+	m.revMarks[key] = next
+
+	return next
+}
+
+// settleWindow is how long a resource reports a transient status under async
+// settling.
+const settleWindow = settle.DefaultClusterSettle

@@ -13,7 +13,6 @@ import (
 type domainRecord struct {
 	ServiceArn string
 	Domain     driver.CustomDomain
-	CreatedSeq uint64
 }
 
 func domainKey(serviceArn, domain string) string { return serviceArn + "|" + domain }

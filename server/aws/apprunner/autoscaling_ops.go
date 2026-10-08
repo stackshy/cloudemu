@@ -104,6 +104,8 @@ func (h *Handler) createAutoScalingConfiguration(w http.ResponseWriter, r *http.
 
 type autoScalingArnRequest struct {
 	AutoScalingConfigurationArn string `json:"AutoScalingConfigurationArn"`
+	// DeleteAllRevisions is read by DeleteAutoScalingConfiguration only.
+	DeleteAllRevisions bool `json:"DeleteAllRevisions"`
 }
 
 func (h *Handler) describeAutoScalingConfiguration(w http.ResponseWriter, r *http.Request) {
@@ -119,7 +121,7 @@ func (h *Handler) describeAutoScalingConfiguration(w http.ResponseWriter, r *htt
 
 func (h *Handler) deleteAutoScalingConfiguration(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *autoScalingArnRequest) (any, error) {
-		cfg, err := h.apprunner.DeleteAutoScalingConfiguration(ctx, req.AutoScalingConfigurationArn)
+		cfg, err := h.apprunner.DeleteAutoScalingConfiguration(ctx, req.AutoScalingConfigurationArn, req.DeleteAllRevisions)
 		if err != nil {
 			return nil, err
 		}

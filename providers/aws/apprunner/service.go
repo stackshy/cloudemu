@@ -157,12 +157,16 @@ func (m *Mock) resolveNetworkConfiguration(in *driver.NetworkConfiguration) (*dr
 		return nil, err
 	}
 
+	// A service is public unless it says otherwise. A present IngressConfiguration
+	// whose IsPubliclyAccessible is unset means false: the SDKs drop a false bool
+	// from the request, so an empty block is how a private service arrives.
+	public := out.IngressConfiguration == nil
+
 	if out.IngressConfiguration == nil {
 		out.IngressConfiguration = &driver.IngressConfiguration{}
 	}
 
 	if out.IngressConfiguration.IsPubliclyAccessible == nil {
-		public := true
 		out.IngressConfiguration.IsPubliclyAccessible = &public
 	}
 
@@ -266,6 +270,7 @@ func (m *Mock) viewService(svc *driver.Service) driver.Service {
 
 		if n := len(out.Operations); n > 0 {
 			out.Operations[n-1].Status = driver.OpStatusInProgress
+			out.Operations[n-1].EndedAt = time.Time{} // an operation in progress has not ended
 		}
 	}
 
@@ -437,7 +442,7 @@ func applyServiceUpdate(svc *driver.Service, in *driver.UpdateServiceInput, upd 
 // connections attached to it) and returns its identity with a DELETED status, so
 // a subsequent describe returns ResourceNotFoundException and an IaC
 // delete-waiter completes.
-func (m *Mock) DeleteService(ctx context.Context, serviceArn string) (*driver.ServiceResult, error) {
+func (m *Mock) DeleteService(_ context.Context, serviceArn string) (*driver.ServiceResult, error) {
 	m.refMu.Lock()
 	defer m.refMu.Unlock()
 
@@ -458,7 +463,6 @@ func (m *Mock) DeleteService(ctx context.Context, serviceArn string) (*driver.Se
 	m.services.Delete(serviceArn)
 	m.settling.Clear(serviceArn)
 	m.cascadeService(serviceArn)
-	m.deleteLogGroups(ctx, &svc)
 
 	return m.serviceResult(&svc), nil
 }

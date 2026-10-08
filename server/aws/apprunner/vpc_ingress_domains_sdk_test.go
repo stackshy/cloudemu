@@ -122,7 +122,7 @@ func TestSDKCustomDomains(t *testing.T) {
 		t.Fatalf("AssociateCustomDomain: %v", err)
 	}
 
-	if assoc.CustomDomain.Status != artypes.CustomDomainAssociationStatusPendingCertificateDnsValidation ||
+	if assoc.CustomDomain.Status != "pending_certificate_dns_validation" ||
 		len(assoc.CustomDomain.CertificateValidationRecords) == 0 || aws.ToString(assoc.DNSTarget) == "" {
 		t.Fatalf("unexpected association: %+v", assoc)
 	}
@@ -279,4 +279,75 @@ func newClientURL(t *testing.T) (*awsar.Client, string) {
 	}
 
 	return awsar.NewFromConfig(cfg, func(o *awsar.Options) { o.BaseEndpoint = aws.String(ts.URL) }), ts.URL
+}
+
+// TestSDKPrivateServiceFromAnEmptyIngressBlock creates a private service the way
+// aws-sdk-go-v2 (and so Terraform) sends it: IsPubliclyAccessible=false is dropped
+// from the request, leaving an empty IngressConfiguration block.
+func TestSDKPrivateServiceFromAnEmptyIngressBlock(t *testing.T) {
+	ctx := context.Background()
+	c := newClient(t)
+
+	out, err := c.CreateService(ctx, &awsar.CreateServiceInput{
+		ServiceName:          aws.String("sdk-private"),
+		SourceConfiguration:  sampleSource(),
+		NetworkConfiguration: &artypes.NetworkConfiguration{IngressConfiguration: &artypes.IngressConfiguration{IsPubliclyAccessible: false}},
+	})
+	if err != nil {
+		t.Fatalf("CreateService: %v", err)
+	}
+
+	got, err := c.DescribeService(ctx, &awsar.DescribeServiceInput{ServiceArn: out.Service.ServiceArn})
+	if err != nil || got.Service.NetworkConfiguration.IngressConfiguration.IsPubliclyAccessible {
+		t.Fatalf("a private service must read back private: %v %+v", err, got.Service.NetworkConfiguration)
+	}
+
+	ing, err := c.CreateVpcIngressConnection(ctx, &awsar.CreateVpcIngressConnectionInput{
+		VpcIngressConnectionName: aws.String("sdk-ing"), ServiceArn: out.Service.ServiceArn,
+		IngressVpcConfiguration: &artypes.IngressVpcConfiguration{VpcId: aws.String("vpc-1"), VpcEndpointId: aws.String("vpce-1")},
+	})
+	if err != nil || ing.VpcIngressConnection.Status != artypes.VpcIngressConnectionStatusAvailable {
+		t.Fatalf("VPC ingress on an SDK-created private service: %v %+v", err, ing)
+	}
+
+	// No NetworkConfiguration at all (and no ingress block) stays public.
+	pub := mustCreate(t, c)
+	if !pub.NetworkConfiguration.IngressConfiguration.IsPubliclyAccessible {
+		t.Fatalf("a service with no ingress block is public: %+v", pub.NetworkConfiguration)
+	}
+}
+
+// TestSDKDeleteAllRevisions drives DeleteAllRevisions over the wire.
+func TestSDKDeleteAllRevisions(t *testing.T) {
+	ctx := context.Background()
+	c := newClient(t)
+
+	var arn *string
+
+	for i := 0; i < 2; i++ {
+		out, err := c.CreateAutoScalingConfiguration(ctx, &awsar.CreateAutoScalingConfigurationInput{AutoScalingConfigurationName: aws.String("bigmax")})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		arn = out.AutoScalingConfiguration.AutoScalingConfigurationArn
+	}
+
+	parts := strings.Split(aws.ToString(arn), "/")
+	base := strings.Join(parts[:2], "/")
+
+	if _, err := c.DeleteAutoScalingConfiguration(ctx, &awsar.DeleteAutoScalingConfigurationInput{
+		AutoScalingConfigurationArn: aws.String(base), DeleteAllRevisions: true,
+	}); err != nil {
+		t.Fatalf("DeleteAutoScalingConfiguration(all revisions): %v", err)
+	}
+
+	list, err := c.ListAutoScalingConfigurations(ctx, &awsar.ListAutoScalingConfigurationsInput{AutoScalingConfigurationName: aws.String("bigmax"), LatestOnly: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(list.AutoScalingConfigurationSummaryList) != 0 {
+		t.Fatalf("every revision must be gone: %+v", list.AutoScalingConfigurationSummaryList)
+	}
 }

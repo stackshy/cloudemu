@@ -113,7 +113,7 @@ func (m *Mock) nextAutoScalingRevision(name string) int32 {
 		}
 	}
 
-	return highest + 1
+	return m.nextRevision("autoscaling", name, highest)
 }
 
 // demoteAutoScalingLatest clears the Latest flag on every stored revision of name.
@@ -198,12 +198,8 @@ func (m *Mock) findAutoScaling(arn string) (driver.AutoScalingConfiguration, boo
 	return cfg, true
 }
 
-// DeleteAutoScalingConfiguration removes a configuration and returns it with an
-// INACTIVE status, so a subsequent describe 404s. The default configuration and a
-// configuration that a service uses are rejected with an InvalidRequestException,
-// as in real App Runner.
 func (m *Mock) DeleteAutoScalingConfiguration(
-	_ context.Context, arn string,
+	_ context.Context, arn string, deleteAllRevisions bool,
 ) (*driver.AutoScalingConfiguration, error) {
 	m.refMu.Lock()
 	defer m.refMu.Unlock()
@@ -213,21 +209,72 @@ func (m *Mock) DeleteAutoScalingConfiguration(
 		return nil, notFound("auto scaling configuration %q does not exist", arn)
 	}
 
-	if cfg.IsDefault {
-		return nil, invalidRequest("the default auto scaling configuration can't be deleted")
+	targets := []driver.AutoScalingConfiguration{cfg}
+
+	if deleteAllRevisions {
+		if _, revision := autoScalingRefFromARN(arn); revision != 0 {
+			return nil, invalidRequest("DeleteAllRevisions needs an ARN without a revision (.../name)")
+		}
+
+		targets = m.activeRevisionsOf(cfg.AutoScalingConfigurationName)
 	}
 
-	if m.autoScalingInUse(cfg.AutoScalingConfigurationArn) {
-		return nil, invalidRequest("auto scaling configuration is used by one or more App Runner services")
+	for i := range targets {
+		if targets[i].IsDefault {
+			return nil, invalidRequest("the default auto scaling configuration can't be deleted")
+		}
+
+		if m.autoScalingInUse(targets[i].AutoScalingConfigurationArn) {
+			return nil, invalidRequest("auto scaling configuration is used by one or more App Runner services")
+		}
 	}
 
-	m.autoScaling.Delete(cfg.AutoScalingConfigurationArn)
+	for i := range targets {
+		m.autoScaling.Delete(targets[i].AutoScalingConfigurationArn)
+	}
+
+	m.promoteAutoScalingLatest(cfg.AutoScalingConfigurationName)
 
 	out := copyAutoScaling(&cfg)
 	out.Status = driver.AutoScalingStatusInactive
 	out.DeletedAt = m.now()
 
 	return &out, nil
+}
+
+// activeRevisionsOf returns every stored revision of a configuration name.
+func (m *Mock) activeRevisionsOf(name string) []driver.AutoScalingConfiguration {
+	var out []driver.AutoScalingConfiguration
+
+	all := m.autoScaling.SortedValues()
+	for i := range all {
+		if all[i].AutoScalingConfigurationName == name {
+			out = append(out, all[i])
+		}
+	}
+
+	return out
+}
+
+// promoteAutoScalingLatest makes the highest remaining revision of a name the
+// latest one again after a delete (a name-only ARN means the latest active revision).
+func (m *Mock) promoteAutoScalingLatest(name string) {
+	var best *driver.AutoScalingConfiguration
+
+	revs := m.activeRevisionsOf(name)
+	for i := range revs {
+		if best == nil || revs[i].AutoScalingConfigurationRevision > best.AutoScalingConfigurationRevision {
+			best = &revs[i]
+		}
+	}
+
+	if best == nil {
+		return
+	}
+
+	cp := *best
+	cp.Latest = true
+	m.autoScaling.Set(cp.AutoScalingConfigurationArn, cp)
 }
 
 // ListAutoScalingConfigurations returns a page of active configurations,

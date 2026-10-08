@@ -68,6 +68,11 @@ func (m *Mock) ListTagsForResource(_ context.Context, resourceArn string) ([]dri
 
 // mutateTags applies mutate to the tags of whichever store holds resourceArn.
 func (m *Mock) mutateTags(resourceArn string, mutate func([]driver.Tag) []driver.Tag) error {
+	// refMu is the service write lock: the service mutators read-modify-write the
+	// whole record under it, so a tag change must not interleave with them.
+	m.refMu.Lock()
+	defer m.refMu.Unlock()
+
 	if m.services.Update(resourceArn, func(s driver.Service) driver.Service {
 		s.Tags = mutate(copyTags(s.Tags))
 
