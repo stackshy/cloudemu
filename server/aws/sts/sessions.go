@@ -2,6 +2,8 @@ package sts
 
 import (
 	"errors"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,10 +34,62 @@ type SessionOwner struct {
 	// the session: the assumed role, or the user that called GetSessionToken or
 	// GetFederationToken.
 	PolicyEntity string
-	// Role marks a role session. Its role's policies are evaluated strictly: a
-	// role with no allowing policy (or no such role) is denied, with none of the
-	// no-policy bootstrap leniency a long-term user key gets.
-	Role bool
+	// Kind is the kind of credential. A role session's role policies are
+	// evaluated strictly: a role with no allowing policy (or no such role) is
+	// denied, with none of the no-policy bootstrap leniency a long-term user key
+	// gets.
+	Kind SessionKind
+}
+
+// SessionKind is the STS operation a temporary credential came from. It
+// decides which STS and IAM operations the credential may call.
+type SessionKind int
+
+const (
+	// KindNone is not a session: a long-term access key.
+	KindNone SessionKind = iota
+	// KindRole is an AssumeRole-family session.
+	KindRole
+	// KindSessionToken is a GetSessionToken session.
+	KindSessionToken
+	// KindFederation is a GetFederationToken session.
+	KindFederation
+)
+
+// Forbids reports whether a credential of kind k may never perform action,
+// whatever its policies say. From the IAM User Guide, "Compare AWS STS
+// credentials":
+//
+//   - AssumeRole-family credentials cannot call GetFederationToken or
+//     GetSessionToken.
+//   - GetSessionToken credentials cannot call IAM (cloudemu does not verify
+//     MFA, so the MFA exception never applies) and cannot call STS except
+//     AssumeRole and GetCallerIdentity.
+//   - GetFederationToken credentials cannot call IAM, nor STS except
+//     GetCallerIdentity.
+//
+// sts:TagSession and sts:SetSourceIdentity are permissions of an AssumeRole
+// call, not operations, so they follow AssumeRole.
+func (k SessionKind) Forbids(action string) bool {
+	svc, op, _ := strings.Cut(action, ":")
+
+	isOp := func(names ...string) bool {
+		return slices.ContainsFunc(names, func(n string) bool { return strings.EqualFold(op, n) })
+	}
+
+	iam, sts := strings.EqualFold(svc, "iam"), strings.EqualFold(svc, "sts")
+
+	switch k {
+	case KindRole:
+		return sts && isOp(actionGetSessionToken, actionGetFederationToken)
+	case KindSessionToken:
+		return iam || sts && !isOp(actionAssumeRole, actionGetCallerIdentity, "TagSession", "SetSourceIdentity")
+	case KindFederation:
+		return iam || sts && !isOp(actionGetCallerIdentity)
+	case KindNone:
+	}
+
+	return false
 }
 
 // SessionStore records the temporary credentials STS issues so their signatures

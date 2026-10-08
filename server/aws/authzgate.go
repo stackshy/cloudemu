@@ -7,6 +7,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/authctx"
+	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsauthz"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
@@ -151,6 +152,26 @@ func (*gateConfig) jsonRPCPlan(probe *http.Request, h server.Handler) authzPlan 
 	return authzPlan{kind: planChecks, req: probe, checks: awsauthz.Single(service+":"+op, "")}
 }
 
+// forbiddenFor returns the first action of the plan that a credential of kind
+// may never perform, or "".
+func (p authzPlan) forbiddenFor(kind stssrv.SessionKind) string {
+	if kind == stssrv.KindNone {
+		return ""
+	}
+
+	for _, c := range p.checks {
+		if kind.Forbids(c.Action) {
+			return c.Action
+		}
+	}
+
+	if p.action != "" && kind.Forbids(p.action) {
+		return p.action
+	}
+
+	return ""
+}
+
 // denyTarget is the request a deny is rendered from: the probe when there is
 // one, else the original request.
 func (p authzPlan) denyTarget(r *http.Request) *http.Request {
@@ -192,11 +213,14 @@ func rawOperation(probe *http.Request) string {
 // the request carrying the principal and the gate's evaluation; on deny it
 // has written the 403.
 //
-// strict is set for an STS role session. Its principal is the role, which is
-// evaluated on its policies alone: the root and no-policies bootstrap
-// shortcuts that apply to IAM users do not apply.
+// kind is the STS session kind of a temporary credential. A role session is
+// strict: its principal is the role, which is evaluated on its policies
+// alone, so the root and no-policies bootstrap shortcuts that apply to IAM
+// users do not apply. Every session kind is also barred from the STS and IAM
+// operations AWS never lets it call (stssrv.SessionKind.Forbids), whatever
+// its policies say.
 func (g *gateConfig) authorize(
-	w http.ResponseWriter, r *http.Request, h server.Handler, plan authzPlan, p *authctx.Principal, strict bool,
+	w http.ResponseWriter, r *http.Request, h server.Handler, plan authzPlan, p *authctx.Principal, kind stssrv.SessionKind,
 ) (*http.Request, bool) {
 	if plan.kind == planNoHandler || plan.kind == planAuthnOnly {
 		return withPrincipal(r, *p), true
@@ -207,7 +231,14 @@ func (g *gateConfig) authorize(
 		return r, false
 	}
 
+	if action := plan.forbiddenFor(kind); action != "" {
+		writeAccessDenied(w, plan.denyTarget(r), h, "User: "+principalARN(p)+" is not authorized to perform: "+action)
+
+		return r, false
+	}
+
 	ev := awsauthz.Evaluation{Principal: *p, CondCtx: awsauthz.ConditionContext(r, p, g.scope)}
+	strict := kind == stssrv.KindRole
 	shortcut := !strict && (isAdminPrincipal(*p) || !principalHasPolicies(r, *p, g.iam))
 
 	if msg := g.decide(r, p, plan, &ev, shortcut); msg != "" {

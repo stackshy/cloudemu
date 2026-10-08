@@ -93,12 +93,12 @@ func newAuthGate(g *gateConfig) func(http.ResponseWriter, *http.Request) (*http.
 		// role's policies, a GetSessionToken session as the user that minted it.
 		var (
 			principal   authctx.Principal
-			roleSession bool
+			kind        stssrv.SessionKind
 			aerr        *sigv4.AuthError
 		)
 
 		if strings.HasPrefix(akid, tempCredentialPrefix) {
-			principal, roleSession, aerr = verifyTempCredential(r, body, akid, g.scope.AccountID, g.sessions, g.clock)
+			principal, kind, aerr = verifyTempCredential(r, body, akid, g.scope.AccountID, g.sessions, g.clock)
 		} else {
 			principal, aerr = sigv4.Verify(r, body, resolverLookup(r, resolver), g.clock)
 		}
@@ -112,7 +112,7 @@ func newAuthGate(g *gateConfig) func(http.ResponseWriter, *http.Request) (*http.
 
 		plan := g.resolvePlan(probe, h, probed)
 
-		return g.authorize(w, r, h, plan, &principal, roleSession)
+		return g.authorize(w, r, h, plan, &principal, kind)
 	}
 }
 
@@ -122,11 +122,11 @@ func newAuthGate(g *gateConfig) func(http.ResponseWriter, *http.Request) (*http.
 // expired session (ExpiredToken), then
 // SigV4-verifies the signature against that secret. When no session store is
 // wired the credential is unverifiable, so it fails closed. The principal is
-// the session's owner (see stssrv.SessionOwner), and roleSession reports
-// whether it is a role session.
+// the session's owner (see stssrv.SessionOwner), and kind is the
+// kind of session.
 func verifyTempCredential(
 	r *http.Request, body []byte, akid, accountID string, sessions *stssrv.SessionStore, clock config.Clock,
-) (principal authctx.Principal, roleSession bool, aerr *sigv4.AuthError) {
+) (principal authctx.Principal, kind stssrv.SessionKind, aerr *sigv4.AuthError) {
 	invalid := &sigv4.AuthError{
 		Code:       "InvalidClientTokenId",
 		Message:    "The security token included in the request is invalid.",
@@ -134,16 +134,16 @@ func verifyTempCredential(
 	}
 
 	if sessions == nil {
-		return authctx.Principal{}, false, invalid
+		return authctx.Principal{}, stssrv.KindNone, invalid
 	}
 
 	sess, ok := sessions.Lookup(akid)
 	if !ok || !sessionTokenMatches(r, sess.SessionToken) {
-		return authctx.Principal{}, false, invalid
+		return authctx.Principal{}, stssrv.KindNone, invalid
 	}
 
 	if clock.Now().UTC().After(sess.Expiration) {
-		return authctx.Principal{}, false, &sigv4.AuthError{
+		return authctx.Principal{}, stssrv.KindNone, &sigv4.AuthError{
 			Code:       "ExpiredToken",
 			Message:    "The security token included in the request is expired.",
 			HTTPStatus: http.StatusForbidden,
@@ -162,7 +162,7 @@ func verifyTempCredential(
 
 	principal, aerr = sigv4.Verify(r, body, lookup, clock)
 
-	return principal, sess.Owner.Role, aerr
+	return principal, sess.Owner.Kind, aerr
 }
 
 // sessionTokenMatches reports whether the request carries the session token
