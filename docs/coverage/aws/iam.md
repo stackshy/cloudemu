@@ -68,6 +68,14 @@ AccessKeyResolver is an optional capability: an IAM implementation that can
 | --- | --- |
 | `AccessKeyByID` |  |
 
+### BoundaryEvaluator
+
+BoundaryEvaluator is an optional capability: an IAM implementation that
+
+| Operation | Description |
+| --- | --- |
+| `EvaluateBoundary` |  |
+
 ### ContextualAuthorizer
 
 ContextualAuthorizer is an optional capability: an IAM implementation that can

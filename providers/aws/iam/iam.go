@@ -77,6 +77,9 @@ type roleData struct {
 	Path                string
 	Description         string
 	AssumeRolePolicyDoc string
+	// TrustPrincipalIDs maps each user or role ARN the trust policy names to
+	// the unique id it resolved to when the policy was saved.
+	TrustPrincipalIDs   map[string]string
 	MaxSessionDuration  int
 	CreatedAt           string
 	Tags                map[string]string
@@ -283,6 +286,7 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 		Path:                path,
 		Description:         cfg.Description,
 		AssumeRolePolicyDoc: cfg.AssumeRolePolicyDoc,
+		TrustPrincipalIDs:   m.resolveTrustPrincipals(cfg.AssumeRolePolicyDoc),
 		MaxSessionDuration:  maxSession,
 		CreatedAt:           m.opts.Clock.Now().UTC().Format(timeFormat),
 		Tags:                tags,

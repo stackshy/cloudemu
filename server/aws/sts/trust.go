@@ -63,12 +63,32 @@ func (h *Handler) callerTrusted(r *http.Request, ev *awsauthz.Evaluation, roleAr
 		switch {
 		case !res.RoleExists, !res.Allow, res.ExplicitDeny, identity == awsauthz.ExplicitDeny:
 			return false
-		case identity != awsauthz.Allowed && !res.NamedDirectly:
+		case identity == awsauthz.Allowed, res.NamedDirectly:
+		case res.NamedRole && h.boundaryAllows(r, ev, action, role.ARN):
+		default:
 			return false
 		}
 	}
 
 	return true
+}
+
+// boundaryAllows reports whether the caller's permissions boundary allows
+// action on the role. A trust policy that names the caller's IAM role ARN
+// grants past an implicit deny in the role's identity policies, but not past
+// one in its permissions boundary (IAM User Guide, "Permissions boundaries for
+// IAM entities", resource-based policies). Grants that name a user, role
+// session or federated user ARN directly are not limited by it.
+func (h *Handler) boundaryAllows(r *http.Request, ev *awsauthz.Evaluation, action, resource string) bool {
+	if h.boundaries == nil {
+		return false
+	}
+
+	d := h.boundaries.EvaluateBoundary(r.Context(), iamdriver.EvalRequest{
+		Principal: ev.Principal.UserName, Action: action, Resource: resource, ResourceKnown: true, Context: ev.CondCtx,
+	})
+
+	return d == iamdriver.DecisionAllowed
 }
 
 // requestedRole returns the role RoleArn names. It must be a role of this

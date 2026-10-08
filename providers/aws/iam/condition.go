@@ -102,9 +102,12 @@ func evaluateConditionKey(rawOp, key string, values []string, cctx ConditionCont
 			return set == setForAll
 		}
 
-		// A missing key never matches a plain condition; the ...IfExists variant
-		// passes so the statement is gated only when the key is actually supplied.
-		return ifExists
+		// A missing key fails a positive condition; the ...IfExists variant
+		// passes so the statement is gated only when the key is actually
+		// supplied. A negated operator (StringNotEquals, ArnNotLike, ...) is true
+		// when the key is missing: nothing in the request equals the value (IAM
+		// User Guide, "IAM JSON policy elements: Condition operators").
+		return ifExists || negatedOperator(base)
 	}
 
 	if set != "" {
@@ -112,6 +115,22 @@ func evaluateConditionKey(rawOp, key string, values []string, cctx ConditionCont
 	}
 
 	return evalPresentOperator(base, ctxVal, values)
+}
+
+// negatedOperator reports whether op is a negated condition operator, which
+// matches when the request carries no value equal to (or like) the policy's.
+func negatedOperator(op string) bool {
+	if _, negate, ok := comparatorFor(op); ok {
+		return negate
+	}
+
+	if _, negate, ok := numericRelation(op); ok {
+		return negate
+	}
+
+	_, negate, ok := dateRelation(op)
+
+	return ok && negate
 }
 
 // The set-operator qualifiers for multivalued condition keys.

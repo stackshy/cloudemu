@@ -9100,6 +9100,15 @@
         ]
       },
       {
+        "name": "BoundaryEvaluator",
+        "doc": "BoundaryEvaluator is an optional capability: an IAM implementation that",
+        "operations": [
+          {
+            "name": "EvaluateBoundary"
+          }
+        ]
+      },
+      {
         "name": "ContextualAuthorizer",
         "doc": "ContextualAuthorizer is an optional capability: an IAM implementation that can",
         "operations": [

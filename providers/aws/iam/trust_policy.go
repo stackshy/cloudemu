@@ -36,15 +36,16 @@ type trustStatement struct {
 // with SigV4; "Service", "Federated" and "CanonicalUser" never do. Within
 // "AWS", "*" matches anyone, the account root ARN or a bare account id
 // matches any caller in that account, and an exact caller ARN names the
-// caller directly. ARNs are not wildcard-matched. A Deny with NotPrincipal
-// applies to every caller it does not list (see notPrincipalExcludes).
-// Conditions are evaluated against req.Context plus the role's tags as
+// caller. ARNs are not wildcard-matched. A user or role ARN only matches the
+// entity the policy was saved against: IAM resolves it to the entity's unique
+// id, so a user deleted and created again under the same name is no longer
+// trusted (see resolveTrustPrincipals). A Deny with NotPrincipal applies to
+// every caller it does not list (see notPrincipalExcludes). Conditions are
+// evaluated against req.Context plus the role's tags as
 // aws:ResourceTag/<key>.
 //
 // The decision between trust and identity policies is left to the caller,
-// which needs NamedDirectly for it: within one account a trust policy that
-// names the caller's ARN is enough on its own, while one that names the
-// account still needs an identity-based allow.
+// which needs NamedDirectly and NamedRole for it (see driver.TrustResult).
 func (m *Mock) EvaluateTrust(_ context.Context, req *driver.TrustRequest) driver.TrustResult {
 	r, ok := m.roles.Get(req.RoleName)
 	if !ok {
@@ -58,28 +59,11 @@ func (m *Mock) EvaluateTrust(_ context.Context, req *driver.TrustRequest) driver
 		return res
 	}
 
+	tm := trustMatcher{req: req, ids: r.TrustPrincipalIDs, currentID: m.entityIDForARN}
 	cctx := trustConditionContext(req.Context, r.Tags)
 
 	for i := range pd.Statement {
-		stmt := &pd.Statement[i]
-		if !matchesAction(toStringSlice(stmt.Action), req.Action) {
-			continue
-		}
-
-		deny := strings.EqualFold(stmt.Effect, "Deny")
-
-		matched, named := stmt.callerMatches(req, deny)
-		if !matched || !evaluateConditions(stmt.Condition, cctx) {
-			continue
-		}
-
-		switch {
-		case deny:
-			res.ExplicitDeny = true
-		case strings.EqualFold(stmt.Effect, "Allow"):
-			res.Allow = true
-			res.NamedDirectly = res.NamedDirectly || named
-		}
+		tm.apply(&pd.Statement[i], cctx, &res)
 	}
 
 	return res
@@ -100,38 +84,116 @@ func trustConditionContext(reqCtx, roleTags map[string]string) ConditionContext 
 	return cctx
 }
 
-// callerMatches reports whether the statement applies to the caller, and
-// whether it names one of the caller's ARNs exactly. NotPrincipal is only
-// honored on a Deny; an Allow with NotPrincipal grants nothing.
-func (s *trustStatement) callerMatches(req *driver.TrustRequest, deny bool) (matched, named bool) {
+// The IAM entity types parsePrincipalARN reports for users and roles.
+const (
+	entityUser = "user"
+	entityRole = "role"
+)
+
+// naming is how a matching principal entry names the caller.
+type naming int
+
+const (
+	// namedNone: the entry matched the caller's account or "*".
+	namedNone naming = iota
+	// namedRoleARN: the entry is the IAM role ARN of a role session caller.
+	// A grant to it is still limited by the role's permissions boundary.
+	namedRoleARN
+	// namedPrincipal: the entry is the caller's own IAM user, role session or
+	// federated user ARN.
+	namedPrincipal
+)
+
+// trustMatcher matches trust policy principals against one caller.
+type trustMatcher struct {
+	req *driver.TrustRequest
+	// ids holds the unique id each user or role ARN in the policy resolved
+	// to when the policy was saved.
+	ids map[string]string
+	// currentID resolves a user or role ARN to its entity's unique id now.
+	currentID func(arn string) string
+}
+
+// apply folds one trust statement into res when it applies to the request.
+func (tm *trustMatcher) apply(stmt *trustStatement, cctx ConditionContext, res *driver.TrustResult) {
+	if !matchesAction(toStringSlice(stmt.Action), tm.req.Action) {
+		return
+	}
+
+	deny := strings.EqualFold(stmt.Effect, "Deny")
+
+	matched, named := tm.statementMatches(stmt, deny)
+	if !matched || !evaluateConditions(stmt.Condition, cctx) {
+		return
+	}
+
+	switch {
+	case deny:
+		res.ExplicitDeny = true
+	case strings.EqualFold(stmt.Effect, "Allow"):
+		res.Allow = true
+		res.NamedDirectly = res.NamedDirectly || named == namedPrincipal
+		res.NamedRole = res.NamedRole || named == namedRoleARN
+	}
+}
+
+// statementMatches reports whether the statement applies to the caller, and
+// how it names the caller. NotPrincipal is only honored on a Deny; an Allow
+// with NotPrincipal grants nothing.
+func (tm *trustMatcher) statementMatches(s *trustStatement, deny bool) (matched bool, named naming) {
 	if s.Principal != nil {
-		return awsPrincipalMatches(s.Principal, req)
+		return tm.principalMatches(s.Principal)
 	}
 
 	if deny && s.NotPrincipal != nil {
-		return !notPrincipalExcludes(s.NotPrincipal, req), false
+		return !tm.notPrincipalExcludes(s.NotPrincipal), namedNone
 	}
 
-	return false, false
+	return false, namedNone
 }
 
-// awsPrincipalMatches matches a Principal element against a SigV4 caller.
-func awsPrincipalMatches(principal any, req *driver.TrustRequest) (matched, named bool) {
+// principalMatches matches a Principal element against a SigV4 caller.
+func (tm *trustMatcher) principalMatches(principal any) (matched bool, named naming) {
 	switch p := principal.(type) {
 	case string:
-		return p == "*", false
+		return p == "*", namedNone
 	case map[string]any:
 		for _, entry := range toStringSlice(p["AWS"]) {
 			switch {
-			case slices.Contains(req.CallerARNs, entry):
-				return true, true
-			case entry == "*" || namesAccount(entry, req.CallerAccount):
+			case tm.isCaller(entry):
+				if n := callerNaming(entry); n > named {
+					named = n
+				}
+
+				matched = true
+			case entry == "*" || namesAccount(entry, tm.req.CallerAccount):
 				matched = true
 			}
 		}
 	}
 
-	return matched, false
+	return matched, named
+}
+
+// isCaller reports whether entry is one of the caller's ARNs, and still names
+// the same entity it named when the policy was saved.
+func (tm *trustMatcher) isCaller(entry string) bool {
+	if !slices.Contains(tm.req.CallerARNs, entry) {
+		return false
+	}
+
+	saved, ok := tm.ids[entry]
+
+	return !ok || tm.currentID(entry) == saved
+}
+
+// callerNaming classifies a caller ARN named by a trust policy.
+func callerNaming(arn string) naming {
+	if t, _ := parsePrincipalARN(arn); t == entityRole && strings.Contains(arn, ":iam::") {
+		return namedRoleARN
+	}
+
+	return namedPrincipal
 }
 
 // namesAccount reports whether entry is account, or its root ARN in any
@@ -159,7 +221,7 @@ func namesAccount(entry, account string) bool {
 // caller. As in AWS, it must list every principal in the caller's chain: each
 // of the caller's ARNs (a role session's role and session) and the account.
 // Listing only some of them leaves the caller subject to the Deny.
-func notPrincipalExcludes(notPrincipal any, req *driver.TrustRequest) bool {
+func (tm *trustMatcher) notPrincipalExcludes(notPrincipal any) bool {
 	var listed []string
 
 	switch p := notPrincipal.(type) {
@@ -173,18 +235,76 @@ func notPrincipalExcludes(notPrincipal any, req *driver.TrustRequest) bool {
 		return true
 	}
 
-	accountListed := slices.ContainsFunc(listed, func(e string) bool { return namesAccount(e, req.CallerAccount) })
-	if !accountListed || len(req.CallerARNs) == 0 {
+	account := tm.req.CallerAccount
+
+	accountListed := slices.ContainsFunc(listed, func(e string) bool { return namesAccount(e, account) })
+	if !accountListed || len(tm.req.CallerARNs) == 0 {
 		return false
 	}
 
-	for _, arn := range req.CallerARNs {
-		if !slices.Contains(listed, arn) && !namesAccount(arn, req.CallerAccount) {
+	for _, arn := range tm.req.CallerARNs {
+		if namesAccount(arn, account) {
+			continue
+		}
+
+		if !slices.Contains(listed, arn) || !tm.isCaller(arn) {
 			return false
 		}
 	}
 
 	return true
+}
+
+// resolveTrustPrincipals maps each IAM user or role ARN that a trust policy
+// names in an "AWS" principal (or NotPrincipal) to the unique id of the
+// entity it names now. IAM does this when the policy is saved, so the policy
+// keeps naming that entity and not a later one with the same name. ARNs that
+// name no existing entity are left out and match by ARN.
+func (m *Mock) resolveTrustPrincipals(doc string) map[string]string {
+	var pd trustPolicyDoc
+	if err := json.Unmarshal([]byte(doc), &pd); err != nil {
+		return nil
+	}
+
+	ids := map[string]string{}
+
+	for i := range pd.Statement {
+		for _, p := range []any{pd.Statement[i].Principal, pd.Statement[i].NotPrincipal} {
+			pm, ok := p.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			for _, entry := range toStringSlice(pm["AWS"]) {
+				if id := m.entityIDForARN(entry); id != "" {
+					ids[entry] = id
+				}
+			}
+		}
+	}
+
+	if len(ids) == 0 {
+		return nil
+	}
+
+	return ids
+}
+
+// entityIDForARN returns the unique id of the IAM user or role whose ARN is
+// exactly arn, or "".
+func (m *Mock) entityIDForARN(arn string) string {
+	switch t, name := parsePrincipalARN(arn); t {
+	case entityUser:
+		if u, ok := m.users.Get(name); ok && u.ARN == arn {
+			return u.ID
+		}
+	case entityRole:
+		if r, ok := m.roles.Get(name); ok && r.ARN == arn {
+			return r.ID
+		}
+	}
+
+	return ""
 }
 
 // EvaluateAssumeRoleTrust reports whether callerPrincipal may assume the role

@@ -309,6 +309,25 @@ func (m *Mock) EvaluatePermission(_ context.Context, req driver.EvalRequest) dri
 	return driver.Decision(m.evaluatePrincipal(req.Principal, q, mode))
 }
 
+// EvaluateBoundary reports the decision of req.Principal's permissions
+// boundary alone, allowed when it has none. It implements
+// driver.BoundaryEvaluator.
+func (m *Mock) EvaluateBoundary(_ context.Context, req driver.EvalRequest) driver.Decision {
+	doc, ok := m.permissionsBoundaryDoc(m.principalEntityType(req.Principal), req.Principal)
+	if !ok {
+		return driver.DecisionAllowed
+	}
+
+	mode := evalUnknownResource
+	if req.ResourceKnown {
+		mode = evalKnownResource
+	}
+
+	q := evalRequest{action: req.Action, resource: req.Resource, cctx: ConditionContext(req.Context)}
+
+	return driver.Decision(decideWith([]string{doc}, q, mode))
+}
+
 // EvaluateServiceWide reports whether principal may perform every action of
 // service on every resource. It implements driver.PermissionEvaluator.
 func (m *Mock) EvaluateServiceWide(

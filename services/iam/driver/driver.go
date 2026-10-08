@@ -306,13 +306,15 @@ type TrustRequest struct {
 }
 
 // TrustResult is the trust policy's answer. NamedDirectly is set when an
-// allowing statement names one of the caller's ARNs exactly, rather than the
-// caller's account or "*".
+// allowing statement names the caller's IAM user, role session or federated
+// user ARN exactly. NamedRole is set when it names the IAM role ARN of a role
+// session caller. Naming the caller's account or "*" sets neither.
 type TrustResult struct {
 	RoleExists    bool
 	Allow         bool
 	ExplicitDeny  bool
 	NamedDirectly bool
+	NamedRole     bool
 }
 
 // TrustEvaluator is an optional capability: an IAM implementation that
@@ -320,6 +322,15 @@ type TrustResult struct {
 // NotPrincipal and conditions. The STS handler type-asserts for it. AWS-only.
 type TrustEvaluator interface {
 	EvaluateTrust(ctx context.Context, req *TrustRequest) TrustResult
+}
+
+// BoundaryEvaluator is an optional capability: an IAM implementation that
+// evaluates a principal's permissions boundary on its own. A principal with
+// no boundary is allowed. A resource policy that grants an IAM role ARN is
+// still limited by the role's boundary, so the STS handler needs the boundary
+// decision apart from the identity decision. AWS-only.
+type BoundaryEvaluator interface {
+	EvaluateBoundary(ctx context.Context, req EvalRequest) Decision
 }
 
 // IAM is the interface that IAM provider implementations must satisfy.

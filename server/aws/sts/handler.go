@@ -68,6 +68,9 @@ type Handler struct {
 	// trustEval evaluates trust policies for the real caller under
 	// EnforceAuth. Without it an enforced AssumeRole is refused.
 	trustEval iamdriver.TrustEvaluator
+	// boundaries evaluates a caller role's permissions boundary on its own,
+	// for a trust policy that names the role's ARN.
+	boundaries iamdriver.BoundaryEvaluator
 	// roles resolves the role an AssumeRole-family call will assume, so its
 	// stored ARN is the resource the gate authorizes. Nil without IAM.
 	roles roleGetter
@@ -112,6 +115,10 @@ func New(accountID, region string, iam iamdriver.IAM) *Handler {
 
 	if te, ok := iam.(iamdriver.TrustEvaluator); ok {
 		h.trustEval = te
+	}
+
+	if be, ok := iam.(iamdriver.BoundaryEvaluator); ok {
+		h.boundaries = be
 	}
 
 	if iam != nil {

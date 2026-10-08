@@ -12,6 +12,7 @@ const (
 	trustUserARN = "arn:aws:iam::" + trustAcct + ":user/alice"
 	trustRoleARN = "arn:aws:iam::" + trustAcct + ":role/team/chain"
 	trustSessARN = "arn:aws:sts::" + trustAcct + ":assumed-role/chain/s1"
+	trustFedARN  = "arn:aws:sts::" + trustAcct + ":federated-user/fed"
 )
 
 func trustDoc(statements string) string {
@@ -57,8 +58,23 @@ func TestEvaluateTrust(t *testing.T) {
 			user, trustAcct, "", nil, driver.TrustResult{RoleExists: true}},
 		{"CanonicalUser never matches", trustDoc(allowStmt(`{"CanonicalUser":"*"}`)),
 			user, trustAcct, "", nil, driver.TrustResult{RoleExists: true}},
-		{"role ARN names a role session", trustDoc(allowStmt(`{"AWS":"` + trustRoleARN + `"}`)),
+		{"role ARN names a role session's role", trustDoc(allowStmt(`{"AWS":"` + trustRoleARN + `"}`)),
+			session, trustAcct, "", nil, driver.TrustResult{RoleExists: true, Allow: true, NamedRole: true}},
+		{"session ARN names the role session directly", trustDoc(allowStmt(`{"AWS":"` + trustSessARN + `"}`)),
 			session, trustAcct, "", nil, driver.TrustResult{RoleExists: true, Allow: true, NamedDirectly: true}},
+		{"federated user ARN is named directly", trustDoc(allowStmt(`{"AWS":"` + trustFedARN + `"}`)),
+			[]string{trustFedARN}, trustAcct, "", nil, driver.TrustResult{RoleExists: true, Allow: true, NamedDirectly: true}},
+		{"session and role ARN together name the session directly",
+			trustDoc(allowStmt(`{"AWS":["` + trustRoleARN + `","` + trustSessARN + `"]}`)), session, trustAcct, "", nil,
+			driver.TrustResult{RoleExists: true, Allow: true, NamedDirectly: true}},
+		{"Deny StringNotEquals ExternalId applies without the key", trustDoc(allowStmt(`{"AWS":"`+trustUserARN+`"}`) +
+			`,{"Effect":"Deny","Principal":{"AWS":"*"},"Action":"sts:AssumeRole",` +
+			`"Condition":{"StringNotEquals":{"sts:ExternalId":"x1"}}}`), user, trustAcct, "", nil,
+			driver.TrustResult{RoleExists: true, Allow: true, ExplicitDeny: true, NamedDirectly: true}},
+		{"Deny StringNotEquals ExternalId spares the right key", trustDoc(allowStmt(`{"AWS":"`+trustUserARN+`"}`) +
+			`,{"Effect":"Deny","Principal":{"AWS":"*"},"Action":"sts:AssumeRole",` +
+			`"Condition":{"StringNotEquals":{"sts:ExternalId":"x1"}}}`), user, trustAcct, "",
+			map[string]string{"sts:ExternalId": "x1"}, driver.TrustResult{RoleExists: true, Allow: true, NamedDirectly: true}},
 		{"explicit deny", trustDoc(allowStmt(`"*"`) + `,{"Effect":"Deny","Principal":{"AWS":"` + trustUserARN +
 			`"},"Action":"sts:AssumeRole"}`), user, trustAcct, "", nil,
 			driver.TrustResult{RoleExists: true, Allow: true, ExplicitDeny: true}},
@@ -145,4 +161,61 @@ func TestEvaluateAssumeRoleTrustLegacyUnchanged(t *testing.T) {
 
 	_, allowed := m.EvaluateAssumeRoleTrust(ctx, "legacy", rootCaller)
 	assertEqual(t, true, allowed)
+}
+
+// TestEvaluateTrustRecreatedUser checks a trust policy keeps naming the user it
+// was saved against: after the user is deleted and created again under the
+// same name, the new user is not trusted until the policy is saved again.
+func TestEvaluateTrustRecreatedUser(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	requireNoError(t, err)
+
+	doc := trustDoc(allowStmt(`{"AWS":"` + trustUserARN + `"}`))
+	_, err = m.CreateRole(ctx, driver.RoleConfig{Name: "target", AssumeRolePolicyDoc: doc})
+	requireNoError(t, err)
+
+	req := &driver.TrustRequest{RoleName: "target", Action: "sts:AssumeRole", CallerARNs: []string{trustUserARN}, CallerAccount: trustAcct}
+	assertEqual(t, true, m.EvaluateTrust(ctx, req).Allow)
+
+	requireNoError(t, m.DeleteUser(ctx, "alice"))
+	_, err = m.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	requireNoError(t, err)
+
+	assertEqual(t, false, m.EvaluateTrust(ctx, req).Allow)
+
+	notPrincipal := trustDoc(allowStmt(`"*"`) + `,{"Effect":"Deny","NotPrincipal":{"AWS":["` + trustUserARN + `","` +
+		trustAcct + `"]},"Action":"sts:AssumeRole"}`)
+	requireNoError(t, m.UpdateAssumeRolePolicy(ctx, "target", doc))
+	assertEqual(t, true, m.EvaluateTrust(ctx, req).Allow)
+
+	_, err = m.CreateRole(ctx, driver.RoleConfig{Name: "guarded", AssumeRolePolicyDoc: notPrincipal})
+	requireNoError(t, err)
+	requireNoError(t, m.DeleteUser(ctx, "alice"))
+	_, err = m.CreateUser(ctx, driver.UserConfig{Name: "alice"})
+	requireNoError(t, err)
+
+	req.RoleName = "guarded"
+	assertEqual(t, true, m.EvaluateTrust(ctx, req).ExplicitDeny)
+}
+
+// TestEvaluateBoundary checks the boundary is evaluated on its own.
+func TestEvaluateBoundary(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateRole(ctx, driver.RoleConfig{Name: "bnded", AssumeRolePolicyDoc: "{}"})
+	requireNoError(t, err)
+
+	req := driver.EvalRequest{Principal: "bnded", Action: "sts:AssumeRole", Resource: trustRoleARN, ResourceKnown: true}
+	assertEqual(t, driver.DecisionAllowed, m.EvaluateBoundary(ctx, req))
+
+	pol, err := m.CreatePolicy(ctx, driver.PolicyConfig{Name: "s3only", PolicyDocument: trustDoc(
+		`{"Effect":"Allow","Action":"s3:*","Resource":"*"}`)})
+	requireNoError(t, err)
+	requireNoError(t, m.PutRolePermissionsBoundary(ctx, "bnded", pol.ARN))
+
+	assertEqual(t, driver.DecisionImplicitDeny, m.EvaluateBoundary(ctx, req))
 }

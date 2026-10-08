@@ -189,9 +189,13 @@ actually run the request, so neither the SigV4 signing scope nor a forged
   freshly created user can bootstrap others. Role sessions are always
   evaluated on the role's policies.
 - `sts:AssumeRole` is decided by the role's trust policy for the real caller.
-  A trust that names the caller's ARN is enough on its own; a trust that names
-  the account (`arn:aws:iam::ACCOUNT:root`) also needs an identity policy that
-  allows `sts:AssumeRole`. Trust conditions such as `sts:ExternalId` are
+  A trust that names the caller's user, role session or federated user ARN is
+  enough on its own; one that names the caller's role ARN still needs the
+  role's permissions boundary to allow `sts:AssumeRole`; one that names the
+  account (`arn:aws:iam::ACCOUNT:root`) also needs an identity policy that
+  allows it. A user or role named in a trust policy is bound to that entity:
+  deleting it and creating another with the same name does not inherit the
+  trust. Trust conditions such as `sts:ExternalId` are
   checked, passing tags needs `sts:TagSession` and passing a source identity
   needs `sts:SetSourceIdentity`. The `RoleArn` must match the role's ARN,
   including its account and path.
