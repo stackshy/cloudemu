@@ -9128,6 +9128,24 @@
             "name": "PrincipalHasPolicies"
           }
         ]
+      },
+      {
+        "name": "RoleBoundaryEvaluator",
+        "doc": "RoleBoundaryEvaluator is an optional capability: an IAM implementation",
+        "operations": [
+          {
+            "name": "EvaluateRoleBoundary"
+          }
+        ]
+      },
+      {
+        "name": "TrustEvaluator",
+        "doc": "TrustEvaluator is an optional capability: an IAM implementation that",
+        "operations": [
+          {
+            "name": "EvaluateTrust"
+          }
+        ]
       }
     ],
     "providers": {

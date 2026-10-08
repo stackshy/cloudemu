@@ -60,6 +60,7 @@ type roleSnapshot struct {
 	Path                string            `json:"path,omitempty"`
 	Description         string            `json:"description,omitempty"`
 	AssumeRolePolicyDoc string            `json:"assumeRolePolicyDoc,omitempty"`
+	TrustPrincipalIDs   map[string]string `json:"trustPrincipalIds,omitempty"`
 	MaxSessionDuration  int               `json:"maxSessionDuration,omitempty"`
 	CreatedAt           string            `json:"createdAt,omitempty"`
 	Tags                map[string]string `json:"tags,omitempty"`
@@ -126,8 +127,9 @@ func (m *Mock) snapshotRoles() map[string]*roleSnapshot {
 	for name, r := range m.roles.All() {
 		out[name] = &roleSnapshot{
 			Name: r.Name, ID: r.ID, ARN: r.ARN, Path: r.Path, Description: r.Description,
-			AssumeRolePolicyDoc: r.AssumeRolePolicyDoc, MaxSessionDuration: r.MaxSessionDuration,
-			CreatedAt: r.CreatedAt, Tags: r.Tags, InlinePolicies: r.inlinePolicies,
+			AssumeRolePolicyDoc: r.AssumeRolePolicyDoc, TrustPrincipalIDs: r.TrustPrincipalIDs,
+			MaxSessionDuration: r.MaxSessionDuration,
+			CreatedAt:          r.CreatedAt, Tags: r.Tags, InlinePolicies: r.inlinePolicies,
 			PermissionsBoundary: r.permissionsBoundary,
 		}
 	}
@@ -235,8 +237,9 @@ func (m *Mock) restoreRoles(roles map[string]*roleSnapshot) {
 	for name, r := range roles {
 		m.roles.Set(name, &roleData{
 			Name: r.Name, ID: r.ID, ARN: r.ARN, Path: r.Path, Description: r.Description,
-			AssumeRolePolicyDoc: r.AssumeRolePolicyDoc, MaxSessionDuration: r.MaxSessionDuration,
-			CreatedAt: r.CreatedAt, Tags: r.Tags, inlinePolicies: r.InlinePolicies,
+			AssumeRolePolicyDoc: r.AssumeRolePolicyDoc, TrustPrincipalIDs: r.TrustPrincipalIDs,
+			MaxSessionDuration: r.MaxSessionDuration,
+			CreatedAt:          r.CreatedAt, Tags: r.Tags, inlinePolicies: r.InlinePolicies,
 			permissionsBoundary: r.PermissionsBoundary,
 		})
 	}

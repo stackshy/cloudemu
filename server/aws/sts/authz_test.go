@@ -29,6 +29,15 @@ func TestIAMChecks(t *testing.T) {
 		return []awsauthz.Check{{Action: action, Resource: resource, MessageResource: requested}}
 	}
 
+	trusted := func(resource, requested string, actions ...string) []awsauthz.Check {
+		checks := make([]awsauthz.Check, 0, len(actions))
+		for _, a := range actions {
+			checks = append(checks, awsauthz.Check{Action: a, Resource: resource, Mode: awsauthz.ResourcePolicy, MessageResource: requested})
+		}
+
+		return checks
+	}
+
 	cases := []struct {
 		body  string
 		want  []awsauthz.Check
@@ -36,12 +45,13 @@ func TestIAMChecks(t *testing.T) {
 	}{
 		{"Action=GetCallerIdentity", []awsauthz.Check{}, true},
 		{"Action=GetSessionToken", []awsauthz.Check{{Action: "sts:GetSessionToken", Resource: "*", Mode: awsauthz.DenyOnly}}, true},
-		{"Action=AssumeRole&RoleArn=" + role, assume("sts:AssumeRole", role, role), true},
-		// The operation assumes the role by its last path segment, so the
-		// resource is the stored ARN, whatever path or account was sent.
-		// A deny still names the RoleArn as sent.
-		{"Action=AssumeRole&RoleArn=" + other, assume("sts:AssumeRole", role, other), true},
-		{"Action=AssumeRole&RoleArn=" + missing, assume("sts:AssumeRole", "", missing), true},
+		{"Action=AssumeRole&RoleArn=" + role, trusted(role, role, "sts:AssumeRole"), true},
+		// A RoleArn with another account or path names no role here, so the
+		// resource is unknown. A deny still names the RoleArn as sent.
+		{"Action=AssumeRole&RoleArn=" + other, trusted("", other, "sts:AssumeRole"), true},
+		{"Action=AssumeRole&RoleArn=" + missing, trusted("", missing, "sts:AssumeRole"), true},
+		{"Action=AssumeRole&Tags.member.1.Key=k&Tags.member.1.Value=v&SourceIdentity=me&RoleArn=" + role,
+			trusted(role, role, "sts:AssumeRole", "sts:TagSession", "sts:SetSourceIdentity"), true},
 		{"Action=AssumeRoleWithWebIdentity&RoleArn=" + role, assume("sts:AssumeRoleWithWebIdentity", role, role), true},
 		{"Action=AssumeRoleWithSAML&RoleArn=" + role, assume("sts:AssumeRoleWithSAML", role, role), true},
 		{"Action=GetFederationToken&Name=bob", awsauthz.Single("sts:GetFederationToken",

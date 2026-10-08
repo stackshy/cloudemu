@@ -451,6 +451,12 @@ type Drivers struct {
 	// IAM users with no policies are unrestricted (bootstrap); role sessions are
 	// always evaluated on the role's policies. Operations AWS serves without
 	// credentials, and the Kubernetes data plane, are not IAM-authorized.
+	//
+	// AssumeRole is decided by the role's trust policy for the real caller,
+	// together with the caller's identity policies, and STS temporary
+	// credentials are limited to the STS and IAM calls AWS allows each kind.
+	// Signed AssumeRoleWithWebIdentity and AssumeRoleWithSAML are refused,
+	// since their token or assertion is not validated.
 	EnforceAuth bool
 	// Clock drives SigV4 timestamp-expiry evaluation and STS temporary-credential
 	// expiry when EnforceAuth is on. Nil uses the real clock; tests inject a
