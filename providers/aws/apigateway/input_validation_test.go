@@ -227,3 +227,99 @@ func TestStageVariableRules(t *testing.T) {
 		t.Fatalf("remove: %v %+v", err, st)
 	}
 }
+
+func TestUpdateIntegrationRevalidatesTheResult(t *testing.T) {
+	m := newMock(t)
+	api := apiWithGetMethod(t, m)
+
+	if err := putHTTPIntegration(m, api, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, ops := range map[string][]driver.PatchOperation{
+		"empty httpMethod":   {{Op: "replace", Path: "/httpMethod", Value: ""}},
+		"unknown httpMethod": {{Op: "replace", Path: "/httpMethod", Value: "BOGUS"}},
+		"non-http uri":       {{Op: "replace", Path: "/uri", Value: "ftp://example.com"}},
+		"unknown type":       {{Op: "replace", Path: "/type", Value: "SOAP"}},
+	} {
+		if _, err := m.UpdateIntegration(ctx(), api.ID, api.RootResourceID, "GET", ops); !errors.IsInvalidArgument(err) {
+			t.Fatalf("%s: expected InvalidArgument, got %v", name, err)
+		}
+	}
+
+	got, err := m.GetIntegration(ctx(), api.ID, api.RootResourceID, "GET")
+	if err != nil || got.IntegrationHTTPMethod != "GET" || got.Type != driver.IntegrationHTTP {
+		t.Fatalf("rejected patches must leave the integration untouched: %v %+v", err, got)
+	}
+}
+
+func TestStageVariableLengthAndCountLimits(t *testing.T) {
+	m := newMock(t)
+	apiID, _, _ := deployProxyAPI(t, m, "hello", "GET", lambdaURI)
+
+	repeat := func(n int) string {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = 'a'
+		}
+
+		return string(b)
+	}
+
+	many := func(n int) map[string]string {
+		out := make(map[string]string, n)
+		for i := 0; i < n; i++ {
+			out["v"+string(rune('a'+i%26))+string(rune('a'+i/26))] = "x"
+		}
+
+		return out
+	}
+
+	deps, _ := m.GetDeployments(ctx(), apiID)
+
+	for name, vars := range map[string]map[string]string{
+		"65-char name": {repeat(65): "v"}, "513-char value": {"n": repeat(513)}, "101 variables": many(101),
+	} {
+		_, err := m.CreateStage(ctx(), apiID, driver.CreateStageInput{StageName: "lim", DeploymentID: deps[0].ID, Variables: vars})
+		if !errors.IsInvalidArgument(err) {
+			t.Fatalf("CreateStage %s: expected InvalidArgument, got %v", name, err)
+		}
+
+		if _, err = m.CreateDeployment(ctx(), apiID, driver.CreateDeploymentInput{StageName: "lim2", Variables: vars}); !errors.IsInvalidArgument(err) {
+			t.Fatalf("CreateDeployment %s: expected InvalidArgument, got %v", name, err)
+		}
+	}
+
+	// The boundary values are accepted.
+	if _, err := m.CreateStage(ctx(), apiID, driver.CreateStageInput{
+		StageName: "edge", DeploymentID: deps[0].ID, Variables: map[string]string{repeat(64): repeat(512)},
+	}); err != nil {
+		t.Fatalf("64/512 must be accepted: %v", err)
+	}
+
+	if _, err := m.CreateStage(ctx(), apiID, driver.CreateStageInput{StageName: "hundred", DeploymentID: deps[0].ID, Variables: many(100)}); err != nil {
+		t.Fatalf("100 variables must be accepted: %v", err)
+	}
+
+	// An update past the limit is rejected after the patches apply, and an update
+	// of a value past 512 characters too; the stage keeps its 100 variables.
+	_, err := m.UpdateStage(ctx(), apiID, "hundred", []driver.PatchOperation{{Op: "add", Path: "/variables/extra", Value: "x"}})
+	if !errors.IsInvalidArgument(err) {
+		t.Fatalf("101st variable via update: %v", err)
+	}
+
+	_, err = m.UpdateStage(ctx(), apiID, "hundred", []driver.PatchOperation{{Op: "replace", Path: "/variables/vaa", Value: repeat(600)}})
+	if !errors.IsInvalidArgument(err) {
+		t.Fatalf("600-char value via update: %v", err)
+	}
+
+	// A deployment's variables merge into the stage: past the limit is rejected.
+	if _, err = m.CreateDeployment(ctx(), apiID, driver.CreateDeploymentInput{StageName: "hundred", Variables: map[string]string{"another": "x"}}); !errors.IsInvalidArgument(err) {
+		t.Fatalf("deployment merging past the limit: %v", err)
+	}
+
+	st, _ := m.GetStage(ctx(), apiID, "hundred")
+	if len(st.Variables) != 100 {
+		t.Fatalf("rejected updates must leave the stage alone, has %d variables", len(st.Variables))
+	}
+}

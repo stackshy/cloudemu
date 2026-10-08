@@ -24,6 +24,7 @@ const (
 	msgNoMethods           = "The REST API doesn't contain any methods"
 	msgAuthorizationType   = "Invalid authorization type specified"
 	msgStageVariableName   = "Stage variable names may only contain alphanumeric characters and underscores"
+	msgStageVariableLimits = "Stage variable names may be at most 64 characters, values at most 512, and a stage holds at most 100"
 	msgStageVariableValue  = "Stage variable values must match the regular expression [A-Za-z0-9-._~:/?#&=,]+"
 	msgIntegrationTimeout  = "Timeout should be between 50 ms and 29000 ms"
 	msgNoIntegration       = "No integration defined for method"
@@ -47,7 +48,9 @@ const (
 const maxStageNameLen = 128
 
 // Integration timeout bounds in milliseconds, as documented for
-// PutIntegration's timeoutInMillis.
+// PutIntegration's timeoutInMillis. The upper bound is the default quota: Regional
+// and private APIs can raise it (the Terraform provider accepts up to 300000), so a
+// config that relies on a raised quota is rejected here.
 const (
 	minIntegrationTimeoutMillis = 50
 	maxIntegrationTimeoutMillis = 29000
@@ -61,8 +64,20 @@ var (
 	stageVariableValue = regexp.MustCompile(`^[A-Za-z0-9\-._~:/?#&=,]+$`)
 )
 
+// Stage variable quotas, which cannot be raised: key length, value length and the
+// number of variables per stage.
+const (
+	maxStageVariableName  = 64
+	maxStageVariableValue = 512
+	maxStageVariables     = 100
+)
+
 // validateStageVariable checks one stage variable against the documented rules.
 func validateStageVariable(name, value string) error {
+	if len(name) > maxStageVariableName || len(value) > maxStageVariableValue {
+		return cerrors.New(cerrors.InvalidArgument, msgStageVariableLimits)
+	}
+
 	if !stageVariableName.MatchString(name) {
 		return cerrors.New(cerrors.InvalidArgument, msgStageVariableName)
 	}
@@ -76,6 +91,10 @@ func validateStageVariable(name, value string) error {
 
 // validateStageVariables checks every stage variable in vars.
 func validateStageVariables(vars map[string]string) error {
+	if len(vars) > maxStageVariables {
+		return cerrors.New(cerrors.InvalidArgument, msgStageVariableLimits)
+	}
+
 	for _, k := range sortedKeys(vars) {
 		if err := validateStageVariable(k, vars[k]); err != nil {
 			return err
@@ -128,23 +147,33 @@ func isStageNameChar(c rune) bool {
 
 // validateIntegration applies PutIntegration's type, httpMethod and uri rules.
 func validateIntegration(in *driver.PutIntegrationInput) error {
-	switch in.Type {
+	return validateIntegrationTarget(in.Type, in.IntegrationHTTPMethod, in.URI)
+}
+
+// validateIntegrationTarget applies the type, httpMethod and uri rules shared by
+// PutIntegration and UpdateIntegration.
+func validateIntegrationTarget(integrationType, httpMethod, uri string) error {
+	switch integrationType {
 	case driver.IntegrationMock:
 		return nil
 	case driver.IntegrationHTTP, driver.IntegrationHTTPProxy, driver.IntegrationAWS, driver.IntegrationAWSProxy:
 	default:
-		return cerrors.Newf(cerrors.InvalidArgument, msgIntegrationTypeFmt, in.Type)
+		return cerrors.Newf(cerrors.InvalidArgument, msgIntegrationTypeFmt, integrationType)
 	}
 
-	if in.IntegrationHTTPMethod == "" {
+	if httpMethod == "" {
 		return cerrors.New(cerrors.InvalidArgument, msgEmptyHTTPMethod)
 	}
 
-	if in.Type == driver.IntegrationHTTP || in.Type == driver.IntegrationHTTPProxy {
-		return validateHTTPEndpoint(in.URI)
+	if !validHTTPMethod(strings.ToUpper(httpMethod)) {
+		return cerrors.New(cerrors.InvalidArgument, msgInvalidHTTPMethod)
 	}
 
-	return validateAWSIntegrationARN(in.Type, in.URI)
+	if integrationType == driver.IntegrationHTTP || integrationType == driver.IntegrationHTTPProxy {
+		return validateHTTPEndpoint(uri)
+	}
+
+	return validateAWSIntegrationARN(integrationType, uri)
 }
 
 // validateHTTPEndpoint requires an absolute http(s) URL. Stage-variable

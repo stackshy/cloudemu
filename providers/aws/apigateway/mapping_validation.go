@@ -82,8 +82,8 @@ func validateIntegrationSettings(ig *driver.Integration, methodParams map[string
 		return cerrors.New(cerrors.InvalidArgument, msgBadThroughBehavior)
 	}
 
-	if ig.TimeoutInMillis < minIntegrationTimeoutMillis || ig.TimeoutInMillis > maxIntegrationTimeoutMillis {
-		return cerrors.New(cerrors.InvalidArgument, msgIntegrationTimeout)
+	if err := validateIntegrationTimeout(ig.TimeoutInMillis); err != nil {
+		return err
 	}
 
 	if err := validateContentHandling(ig.ContentHandling); err != nil {
@@ -181,4 +181,13 @@ func sortedKeys(m map[string]string) []string {
 // headerName returns the {name} of a method.response.header.{name} key.
 func headerName(key string) string {
 	return strings.TrimPrefix(key, "method.response.header.")
+}
+
+// validateIntegrationTimeout requires the timeout to be within the default quota.
+func validateIntegrationTimeout(ms int) error {
+	if ms < minIntegrationTimeoutMillis || ms > maxIntegrationTimeoutMillis {
+		return cerrors.New(cerrors.InvalidArgument, msgIntegrationTimeout)
+	}
+
+	return nil
 }

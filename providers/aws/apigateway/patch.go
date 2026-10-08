@@ -234,6 +234,11 @@ func (m *Mock) UpdateIntegration(
 		}
 	}
 
+	// The patched integration must pass the rules PutIntegration applies.
+	if err := validateIntegrationTarget(next.Type, next.IntegrationHTTPMethod, next.URI); err != nil && next.Type != driver.IntegrationMock {
+		return nil, err
+	}
+
 	if err := validateIntegrationSettings(&next, mth.RequestParameters); err != nil {
 		return nil, err
 	}
@@ -406,6 +411,10 @@ func (m *Mock) UpdateStage(
 		if err := m.applyStagePatch(ad, &next, op); err != nil {
 			return nil, err
 		}
+	}
+
+	if len(next.Variables) > maxStageVariables {
+		return nil, cerrors.New(cerrors.InvalidArgument, msgStageVariableLimits)
 	}
 
 	if err := validateStageLogging(&next, m.account.CloudWatchRoleARN != ""); err != nil {

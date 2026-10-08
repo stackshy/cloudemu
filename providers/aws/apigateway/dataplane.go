@@ -122,7 +122,7 @@ func (m *Mock) serveLambda(
 	if m.lambda == nil {
 		// Nil-safe: no Lambda backend wired (library-only construction). A Lambda
 		// integration whose backend is unreachable is a 502 in real API Gateway.
-		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), noIntegration
+		return internalServerError(), noIntegration
 	}
 
 	uri, missing := expandStageVariables(route.integration.URI, route.stageVariables)
@@ -134,7 +134,7 @@ func (m *Mock) serveLambda(
 
 	event, err := buildProxyEvent(req, route, m.opts.AccountID)
 	if err != nil {
-		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), noIntegration
+		return internalServerError(), noIntegration
 	}
 
 	target := extractLambdaTarget(uri)
@@ -147,7 +147,7 @@ func (m *Mock) serveLambda(
 	if invErr != nil || fnErr != "" {
 		lg.errorf("Execution failed due to configuration error: Lambda invocation failed")
 
-		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), integration
+		return internalServerError(), integration
 	}
 
 	return mapLambdaResponse(out, event), integration
@@ -265,11 +265,13 @@ func extractLambdaTarget(uri string) string {
 	return rest
 }
 
-func jsonResponse(status int, body string) *driver.ProxyResponse {
+// internalServerError is the 502 API Gateway returns when a Lambda backend is
+// unreachable, fails, or answers with something that is not a proxy response.
+func internalServerError() *driver.ProxyResponse {
 	return &driver.ProxyResponse{
-		StatusCode: status,
+		StatusCode: statusBadGway,
 		Headers:    map[string]string{"Content-Type": "application/json"},
-		Body:       body,
+		Body:       `{"message": "Internal server error"}`,
 	}
 }
 
@@ -297,7 +299,7 @@ func mapLambdaResponse(out, event []byte) *driver.ProxyResponse {
 	}
 
 	if err := json.Unmarshal(out, &lr); err != nil || lr.StatusCode == 0 {
-		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`)
+		return internalServerError()
 	}
 
 	return &driver.ProxyResponse{

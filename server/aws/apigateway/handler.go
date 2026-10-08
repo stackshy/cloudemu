@@ -161,12 +161,7 @@ func (h *Handler) serveControlPlane(w http.ResponseWriter, r *http.Request) {
 	case segsDocItem:
 		h.serveDocItem(w, r, segs)
 	case segsMethod:
-		if segs[1] == subStages {
-			h.serveExport(w, r, segs)
-			return
-		}
-
-		h.serveMethod(w, r, segs)
+		h.serveMethodOrExport(w, r, segs)
 	case segsIntegration:
 		h.serveIntegration(w, r, segs)
 	case segsMethodResp:
@@ -176,6 +171,18 @@ func (h *Handler) serveControlPlane(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusNotFound, "NotFoundException", "unsupported API Gateway path")
 	}
+}
+
+// serveMethodOrExport routes the five-segment paths: a method of a resource, or
+// the export of a stage ({id}/stages/{stage}/exports/{type}).
+func (h *Handler) serveMethodOrExport(w http.ResponseWriter, r *http.Request, segs []string) {
+	if segs[1] == subStages {
+		h.serveExport(w, r, segs)
+
+		return
+	}
+
+	h.serveMethod(w, r, segs)
 }
 
 // serveCollection handles /restapis: GET=GetRestApis, POST=CreateRestApi.
@@ -558,8 +565,6 @@ func (h *Handler) getDeployments(w http.ResponseWriter, r *http.Request, id stri
 
 // serveDeploymentItem handles /restapis/{id}/deployments/{deploymentId}:
 // GET=GetDeployment, PATCH=UpdateDeployment, DELETE=DeleteDeployment.
-//
-//nolint:dupl // parallel item router for deployments vs stages; the shared serveItem shape is intentional
 func (h *Handler) serveDeploymentItem(w http.ResponseWriter, r *http.Request, id, deploymentID string) {
 	render := toDeploymentResponse
 	if r.Method == http.MethodGet && hasEmbed(r, "apisummary") {
@@ -665,8 +670,6 @@ func (h *Handler) getStages(w http.ResponseWriter, r *http.Request, id string) {
 
 // serveStageItem handles /restapis/{id}/stages/{stageName}: GET=GetStage,
 // PATCH=UpdateStage, DELETE=DeleteStage.
-//
-//nolint:dupl // parallel item router for stages vs deployments; the shared serveItem shape is intentional
 func (h *Handler) serveStageItem(w http.ResponseWriter, r *http.Request, id, stageName string) {
 	serveItem(w, r,
 		func(ops []driver.PatchOperation) (*driver.Stage, error) {

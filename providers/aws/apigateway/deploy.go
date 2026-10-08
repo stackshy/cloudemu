@@ -36,6 +36,11 @@ func (m *Mock) CreateDeployment(
 		if err := validateStageVariables(in.Variables); err != nil {
 			return nil, err
 		}
+
+		// The variables are merged into an existing stage's, which may push it over the limit.
+		if st, ok := ad.stages[in.StageName]; ok && mergedVariableCount(st.Variables, in.Variables) > maxStageVariables {
+			return nil, cerrors.New(cerrors.InvalidArgument, msgStageVariableLimits)
+		}
 	}
 
 	dep := &driver.Deployment{
@@ -321,4 +326,17 @@ func copyStage(s *driver.Stage) driver.Stage {
 	}
 
 	return out
+}
+
+// mergedVariableCount is the number of distinct variable names after adding to cur.
+func mergedVariableCount(cur, add map[string]string) int {
+	n := len(cur)
+
+	for k := range add {
+		if _, ok := cur[k]; !ok {
+			n++
+		}
+	}
+
+	return n
 }
