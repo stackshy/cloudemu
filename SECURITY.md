@@ -12,7 +12,7 @@ If you discover a security vulnerability in CloudEmu, please report it responsib
 
 **Do NOT open a public GitHub issue for security vulnerabilities.**
 
-Instead, please email **nitinraj7488204975@gmail.com** with:
+Instead, please email **nitinvr04@gmail.com** with:
 
 - A description of the vulnerability
 - Steps to reproduce the issue
