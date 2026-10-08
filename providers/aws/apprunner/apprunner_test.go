@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -255,14 +256,14 @@ func TestAutoScalingConfigurationRevisions(t *testing.T) {
 		t.Fatalf("latestOnly should return only revision 2: %+v", latest)
 	}
 
-	all, _, err := m.ListAutoScalingConfigurationRevisions(ctx, "high-availability", driver.Page{})
+	all, _, err := m.ListAutoScalingConfigurations(ctx, "high-availability", false, driver.Page{})
 	requireNoError(t, err)
 
 	if len(all) != 2 {
 		t.Fatalf("revisions should list 2, got %d", len(all))
 	}
 
-	del, err := m.DeleteAutoScalingConfiguration(ctx, c2.AutoScalingConfigurationArn)
+	del, err := m.DeleteAutoScalingConfiguration(ctx, c2.AutoScalingConfigurationArn, false)
 	requireNoError(t, err)
 
 	if del.Status != driver.AutoScalingStatusInactive {
@@ -278,7 +279,7 @@ func TestConnectionVpcConnectorObservabilityCRUD(t *testing.T) {
 	ctx := context.Background()
 
 	conn, err := m.CreateConnection(ctx, &driver.CreateConnectionInput{
-		ConnectionName: "gh", ProviderType: "GITHUB",
+		ConnectionName: "gh-connection", ProviderType: "GITHUB",
 	})
 	requireNoError(t, err)
 
@@ -369,4 +370,261 @@ func assertException(t *testing.T, err error, want string) {
 	}
 
 	_ = strings.TrimSpace(apiErr.Error())
+}
+
+func requireInvalidRequest(t *testing.T, err error) {
+	t.Helper()
+
+	var apiErr *driver.APIError
+	if !errors.As(err, &apiErr) || apiErr.Exception != driver.ExInvalidRequest {
+		t.Fatalf("expected InvalidRequestException, got %v", err)
+	}
+}
+
+func TestDefaultAutoScalingConfigurationIsStored(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	svc := mustService(t, m)
+	arn := svc.AutoScalingConfigurationSummary.AutoScalingConfigurationArn
+
+	cfg, err := m.DescribeAutoScalingConfiguration(ctx, arn)
+	requireNoError(t, err)
+
+	if cfg.AutoScalingConfigurationName != "DefaultConfiguration" || !cfg.IsDefault || !cfg.Latest ||
+		cfg.AutoScalingConfigurationRevision != 1 {
+		t.Fatalf("unexpected default config: %+v", cfg)
+	}
+
+	if !cfg.HasAssociatedService {
+		t.Fatalf("default config used by a service must report HasAssociatedService")
+	}
+
+	list, _, err := m.ListAutoScalingConfigurations(ctx, "DefaultConfiguration", true, driver.Page{})
+	requireNoError(t, err)
+
+	if len(list) != 1 || list[0].AutoScalingConfigurationArn != arn {
+		t.Fatalf("default config must be listable under its ARN, got %+v", list)
+	}
+
+	// A second service shares the same default ARN, and the ARN is stable.
+	secondIn := sampleService()
+	secondIn.ServiceName = "second-app"
+
+	res, err := m.CreateService(ctx, secondIn)
+	requireNoError(t, err)
+
+	other := res.Service
+	if other.AutoScalingConfigurationSummary.AutoScalingConfigurationArn != arn {
+		t.Fatalf("services must share the default config ARN")
+	}
+}
+
+func TestDeleteDefaultAutoScalingConfigurationRejected(t *testing.T) {
+	m := newMock()
+	arn := mustService(t, m).AutoScalingConfigurationSummary.AutoScalingConfigurationArn
+
+	_, err := m.DeleteAutoScalingConfiguration(context.Background(), arn, false)
+	requireInvalidRequest(t, err)
+
+	// Even with no service using it.
+	m2 := newMock()
+	list, _, err := m2.ListAutoScalingConfigurations(context.Background(), "", false, driver.Page{})
+	requireNoError(t, err)
+
+	if len(list) != 1 || !list[0].IsDefault {
+		t.Fatalf("fresh mock must list the default config, got %+v", list)
+	}
+
+	_, err = m2.DeleteAutoScalingConfiguration(context.Background(), list[0].AutoScalingConfigurationArn, false)
+	requireInvalidRequest(t, err)
+}
+
+func TestDeleteAutoScalingConfigurationBlockedWhileReferenced(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	cfg, err := m.CreateAutoScalingConfiguration(ctx, &driver.CreateAutoScalingConfigurationInput{
+		AutoScalingConfigurationName: "high-ha",
+	})
+	requireNoError(t, err)
+
+	in := sampleService()
+	in.AutoScalingConfigurationArn = cfg.AutoScalingConfigurationArn
+	res, err := m.CreateService(ctx, in)
+	requireNoError(t, err)
+
+	got, err := m.DescribeAutoScalingConfiguration(ctx, cfg.AutoScalingConfigurationArn)
+	requireNoError(t, err)
+
+	if !got.HasAssociatedService {
+		t.Fatalf("HasAssociatedService must be true while a service uses the configuration")
+	}
+
+	_, err = m.DeleteAutoScalingConfiguration(ctx, cfg.AutoScalingConfigurationArn, false)
+	requireInvalidRequest(t, err)
+
+	// Still there after the rejected delete.
+	_, err = m.DescribeAutoScalingConfiguration(ctx, cfg.AutoScalingConfigurationArn)
+	requireNoError(t, err)
+
+	_, err = m.DeleteService(ctx, res.Service.ServiceArn)
+	requireNoError(t, err)
+
+	got, err = m.DescribeAutoScalingConfiguration(ctx, cfg.AutoScalingConfigurationArn)
+	requireNoError(t, err)
+
+	if got.HasAssociatedService {
+		t.Fatalf("HasAssociatedService must clear once the service is deleted")
+	}
+
+	_, err = m.DeleteAutoScalingConfiguration(ctx, cfg.AutoScalingConfigurationArn, false)
+	requireNoError(t, err)
+}
+
+func TestUpdateServiceMovesAutoScalingAssociation(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	cfg, err := m.CreateAutoScalingConfiguration(ctx, &driver.CreateAutoScalingConfigurationInput{
+		AutoScalingConfigurationName: "high-ha",
+	})
+	requireNoError(t, err)
+
+	svc := mustService(t, m)
+
+	_, err = m.UpdateService(ctx, &driver.UpdateServiceInput{
+		ServiceArn: svc.ServiceArn, AutoScalingConfigurationArn: cfg.AutoScalingConfigurationArn,
+	})
+	requireNoError(t, err)
+
+	_, err = m.DeleteAutoScalingConfiguration(ctx, cfg.AutoScalingConfigurationArn, false)
+	requireInvalidRequest(t, err)
+}
+
+func TestDeleteVpcConnectorBlockedWhileReferenced(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	conn, err := m.CreateVpcConnector(ctx, &driver.CreateVpcConnectorInput{
+		VpcConnectorName: "vpc-conn", Subnets: []string{"subnet-1"},
+	})
+	requireNoError(t, err)
+
+	in := sampleService()
+	in.NetworkConfiguration = &driver.NetworkConfiguration{
+		EgressConfiguration: &driver.EgressConfiguration{EgressType: "VPC", VpcConnectorArn: conn.VpcConnectorArn},
+	}
+	res, err := m.CreateService(ctx, in)
+	requireNoError(t, err)
+
+	_, err = m.DeleteVpcConnector(ctx, conn.VpcConnectorArn)
+	requireInvalidRequest(t, err)
+
+	_, err = m.DescribeVpcConnector(ctx, conn.VpcConnectorArn)
+	requireNoError(t, err)
+
+	_, err = m.DeleteService(ctx, res.Service.ServiceArn)
+	requireNoError(t, err)
+
+	_, err = m.DeleteVpcConnector(ctx, conn.VpcConnectorArn)
+	requireNoError(t, err)
+}
+
+func TestDeleteObservabilityConfigurationBlockedWhileReferenced(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	cfg, err := m.CreateObservabilityConfiguration(ctx, &driver.CreateObservabilityConfigurationInput{
+		ObservabilityConfigurationName: "xray",
+		TraceConfiguration:             &driver.TraceConfiguration{Vendor: "AWSXRAY"},
+	})
+	requireNoError(t, err)
+
+	in := sampleService()
+	in.ObservabilityConfiguration = &driver.ServiceObservabilityConfiguration{
+		ObservabilityEnabled: boolPtr(true), ObservabilityConfigurationArn: cfg.ObservabilityConfigurationArn,
+	}
+	res, err := m.CreateService(ctx, in)
+	requireNoError(t, err)
+
+	_, err = m.DeleteObservabilityConfiguration(ctx, cfg.ObservabilityConfigurationArn)
+	requireInvalidRequest(t, err)
+
+	_, err = m.DeleteService(ctx, res.Service.ServiceArn)
+	requireNoError(t, err)
+
+	_, err = m.DeleteObservabilityConfiguration(ctx, cfg.ObservabilityConfigurationArn)
+	requireNoError(t, err)
+}
+
+func TestSharedConfigDeleteRacesServiceCreate(t *testing.T) {
+	ctx := context.Background()
+
+	for round := 0; round < 25; round++ {
+		m := newMock()
+
+		conn, err := m.CreateVpcConnector(ctx, &driver.CreateVpcConnectorInput{
+			VpcConnectorName: "vpc-conn", Subnets: []string{"subnet-1"},
+		})
+		requireNoError(t, err)
+
+		in := sampleService()
+		in.NetworkConfiguration = &driver.NetworkConfiguration{
+			EgressConfiguration: &driver.EgressConfiguration{EgressType: "VPC", VpcConnectorArn: conn.VpcConnectorArn},
+		}
+
+		var wg sync.WaitGroup
+
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+
+			if _, cerr := m.CreateService(ctx, in); cerr != nil {
+				requireInvalidRequest(t, cerr)
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			if _, derr := m.DeleteVpcConnector(ctx, conn.VpcConnectorArn); derr != nil {
+				requireInvalidRequest(t, derr)
+			}
+		}()
+
+		wg.Wait()
+
+		// Whichever won, a service never points at a connector that is gone.
+		svcs, _, err := m.ListServices(ctx, driver.Page{})
+		requireNoError(t, err)
+
+		if _, derr := m.DescribeVpcConnector(ctx, conn.VpcConnectorArn); derr != nil && len(svcs) != 0 {
+			t.Fatalf("round %d: service references the deleted connector %s", round, conn.VpcConnectorArn)
+		}
+	}
+}
+
+func TestDefaultAutoScalingSurvivesSnapshotRestore(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	mustService(t, m)
+
+	data, err := m.Snapshot(ctx, false)
+	requireNoError(t, err)
+
+	restored := newMock()
+	requireNoError(t, restored.Restore(ctx, data))
+
+	list, _, err := restored.ListAutoScalingConfigurations(ctx, "", false, driver.Page{})
+	requireNoError(t, err)
+
+	if len(list) != 1 {
+		t.Fatalf("restore must not duplicate the default config, got %d", len(list))
+	}
+
+	if !list[0].HasAssociatedService {
+		t.Fatalf("restored default config must still be associated with the restored service")
+	}
 }

@@ -13,7 +13,6 @@ func (h *Handler) registerObservabilityRoutes() {
 	h.routes["DescribeObservabilityConfiguration"] = h.describeObservabilityConfiguration
 	h.routes["DeleteObservabilityConfiguration"] = h.deleteObservabilityConfiguration
 	h.routes["ListObservabilityConfigurations"] = h.listObservabilityConfigurations
-	h.routes["ListObservabilityConfigurationRevisions"] = h.listObservabilityConfigurationRevisions
 }
 
 type traceConfigurationJSON struct {
@@ -123,7 +122,7 @@ func (h *Handler) deleteObservabilityConfiguration(w http.ResponseWriter, r *htt
 
 type listObservabilityConfigurationsRequest struct {
 	ObservabilityConfigurationName string `json:"ObservabilityConfigurationName"`
-	LatestOnly                     bool   `json:"LatestOnly"`
+	LatestOnly                     *bool  `json:"LatestOnly"`
 	MaxResults                     int32  `json:"MaxResults"`
 	NextToken                      string `json:"NextToken"`
 }
@@ -136,25 +135,7 @@ type observabilitySummaryListResponse struct {
 func (h *Handler) listObservabilityConfigurations(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *listObservabilityConfigurationsRequest) (any, error) {
 		configs, next, err := h.apprunner.ListObservabilityConfigurations(
-			ctx, req.ObservabilityConfigurationName, req.LatestOnly, pageFromWire(req.MaxResults, req.NextToken))
-		if err != nil {
-			return nil, err
-		}
-
-		return observabilitySummaryListPage(configs, next), nil
-	})
-}
-
-type listObservabilityConfigurationRevisionsRequest struct {
-	ObservabilityConfigurationName string `json:"ObservabilityConfigurationName"`
-	MaxResults                     int32  `json:"MaxResults"`
-	NextToken                      string `json:"NextToken"`
-}
-
-func (h *Handler) listObservabilityConfigurationRevisions(w http.ResponseWriter, r *http.Request) {
-	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *listObservabilityConfigurationRevisionsRequest) (any, error) {
-		configs, next, err := h.apprunner.ListObservabilityConfigurationRevisions(
-			ctx, req.ObservabilityConfigurationName, pageFromWire(req.MaxResults, req.NextToken))
+			ctx, req.ObservabilityConfigurationName, latestOnly(req.LatestOnly), pageFromWire(req.MaxResults, req.NextToken))
 		if err != nil {
 			return nil, err
 		}

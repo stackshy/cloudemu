@@ -43,6 +43,9 @@ func New(d ardriver.AppRunner) *Handler {
 	h.registerVpcConnectorRoutes()
 	h.registerObservabilityRoutes()
 	h.registerTagRoutes()
+	registerIf(h, h.registerVpcIngressRoutes)
+	registerIf(h, h.registerCustomDomainRoutes)
+	registerIf(h, h.registerDefaultAutoScalingRoutes)
 
 	return h
 }
@@ -143,3 +146,25 @@ func mapWire[T any, W any](items []T, conv func(T) W) []W {
 // IAMService returns the IAM service prefix of the operations this handler
 // serves.
 func (*Handler) IAMService() string { return "apprunner" }
+
+// registerIf calls register with the driver when it implements capability T.
+func registerIf[T any](h *Handler, register func(T)) {
+	if d, ok := h.apprunner.(T); ok {
+		register(d)
+	}
+}
+
+// handle adapts a typed operation (decoded request in, response out) to an HTTP
+// handler: decode, call, map the error or write the JSON response.
+func handle[Req, Res any](h *Handler, call func(ctx context.Context, req *Req) (Res, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dispatch(h, w, r, func(_ *Handler, ctx context.Context, req *Req) (any, error) {
+			res, err := call(ctx, req)
+			if err != nil {
+				return nil, err
+			}
+
+			return res, nil
+		})
+	}
+}
