@@ -54,7 +54,7 @@ type syncMetricsJSON struct {
 type syncJobJSON struct {
 	ExecutionID         string          `json:"ExecutionId"`
 	StartTime           int64           `json:"StartTime"`
-	EndTime             int64           `json:"EndTime"`
+	EndTime             *int64          `json:"EndTime,omitempty"`
 	Status              string          `json:"Status"`
 	ErrorMessage        string          `json:"ErrorMessage,omitempty"`
 	ErrorCode           string          `json:"ErrorCode,omitempty"`
@@ -65,6 +65,18 @@ type syncJobJSON struct {
 type listSyncJobsResponse struct {
 	History   []syncJobJSON `json:"History"`
 	NextToken string        `json:"NextToken,omitempty"`
+}
+
+// optionalEpoch is the epoch seconds of t, or nil for the zero time (a job that
+// has not ended has no EndTime).
+func optionalEpoch(t time.Time) *int64 {
+	if t.IsZero() {
+		return nil
+	}
+
+	n := epochSeconds(t)
+
+	return &n
 }
 
 func epochToTime(f *float64) *time.Time {
@@ -98,7 +110,7 @@ func listSyncJobs(ctx context.Context, d driver.SyncJobs, req *listSyncJobsReque
 	for i := range jobs {
 		j := &jobs[i]
 		out.History[i] = syncJobJSON{
-			ExecutionID: j.ExecutionID, StartTime: epochSeconds(j.StartTime), EndTime: epochSeconds(j.EndTime),
+			ExecutionID: j.ExecutionID, StartTime: epochSeconds(j.StartTime), EndTime: optionalEpoch(j.EndTime),
 			Status: j.Status, ErrorMessage: j.ErrorMessage, ErrorCode: j.ErrorCode, DataSourceErrorCode: j.DataSourceErrorCode,
 			Metrics: syncMetricsJSON(j.Metrics),
 		}

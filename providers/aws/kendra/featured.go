@@ -70,9 +70,12 @@ func checkQueryTexts(texts []string) error {
 	return nil
 }
 
-// conflictingQuery returns the set (other than skipID) that already features one
-// of the query texts; query texts must be unique per index across all sets.
-func (m *Mock) conflictingQuery(indexID, skipID string, texts []string) (driver.FeaturedResultsSet, string, bool) {
+// conflictingQueries returns every query text that another set (other than
+// skipID) of the index already features, with the set that holds it; query texts
+// must be unique per index across all sets.
+func (m *Mock) conflictingQueries(indexID, skipID string, texts []string) []driver.ConflictingItem {
+	var out []driver.ConflictingItem
+
 	sets := m.featured.SortedValues()
 
 	for i := range sets {
@@ -83,24 +86,25 @@ func (m *Mock) conflictingQuery(indexID, skipID string, texts []string) (driver.
 		for _, have := range sets[i].QueryTexts {
 			for _, want := range texts {
 				if strings.EqualFold(have, want) {
-					return sets[i], want, true
+					out = append(out, driver.ConflictingItem{QueryText: want, SetName: sets[i].Name, SetID: sets[i].ID})
 				}
 			}
 		}
 	}
 
-	return driver.FeaturedResultsSet{}, "", false
+	return out
 }
 
-// featuredConflict builds the FeaturedResultsConflictException for a query text
-// that another set of the index already uses.
-func featuredConflict(set *driver.FeaturedResultsSet, query string) error {
+// featuredConflict builds the FeaturedResultsConflictException listing every
+// query text that another set of the index already uses.
+func featuredConflict(items []driver.ConflictingItem) error {
+	first := items[0]
 	err := conflictErr(driver.ExFeaturedConflict,
-		"the query %q is already used by the featured results set %q (%s)", query, set.Name, set.ID)
+		"the query %q is already used by the featured results set %q (%s)", first.QueryText, first.SetName, first.SetID)
 
 	var apiErr *driver.APIError
 	if errors.As(err, &apiErr) {
-		apiErr.ConflictingItems = []driver.ConflictingItem{{QueryText: query, SetName: set.Name, SetID: set.ID}}
+		apiErr.ConflictingItems = items
 	}
 
 	return err
@@ -134,8 +138,8 @@ func (m *Mock) CreateFeaturedResultsSet(
 		return nil, validation("an index can hold at most %d featured results sets", maxFeaturedSets)
 	}
 
-	if set, q, found := m.conflictingQuery(in.IndexID, "", in.QueryTexts); found {
-		return nil, featuredConflict(&set, q)
+	if conflicts := m.conflictingQueries(in.IndexID, "", in.QueryTexts); len(conflicts) > 0 {
+		return nil, featuredConflict(conflicts)
 	}
 
 	status := in.Status
@@ -226,8 +230,8 @@ func (m *Mock) UpdateFeaturedResultsSet(
 	}
 
 	if in.QueryTextsSet {
-		if set, q, found := m.conflictingQuery(in.IndexID, in.ID, in.QueryTexts); found {
-			return nil, featuredConflict(&set, q)
+		if conflicts := m.conflictingQueries(in.IndexID, in.ID, in.QueryTexts); len(conflicts) > 0 {
+			return nil, featuredConflict(conflicts)
 		}
 	}
 

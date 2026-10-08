@@ -265,14 +265,12 @@ func excerpt(text string, terms []string) driver.TextWithHighlights {
 	}
 
 	lower := strings.ToLower(text)
-	if len(lower) != len(text) {
-		// A few characters change byte length when lower-cased; keep offsets
-		// consistent by cutting the snippet from the lower-cased text.
-		text = lower
-	}
 
 	// Find the first whole-word match with strings.Index (no per-position work)
-	// and cut the window around it; only the snippet is highlighted.
+	// and cut the window around it; only the snippet is highlighted. ToLower maps
+	// rune to rune, so the match's rune index in lower is its rune index in text
+	// and the window is cut from the original (a byte offset would drift where a
+	// character changes byte length, e.g. İ, ẞ or the Kelvin sign).
 	first := 0
 	if at := firstWordMatch(lower, terms); at > 0 {
 		first = utf8.RuneCountInString(lower[:at])
@@ -437,6 +435,13 @@ func (m *Mock) Query(_ context.Context, in *driver.QueryInput) (*driver.QueryOut
 		matches = nil
 	}
 
+	queryID := newUUID()
+
+	// A featured document is returned once, in FeaturedResultsItems, so it leaves
+	// the regular results on every page (keeping the paging consistent).
+	featured := m.featuredItems(in.IndexID, in.QueryText, queryID, in.RequestedAttributes)
+	matches = withoutFeatured(matches, featured)
+
 	sortMatches(matches, in.Sorting)
 
 	start, end, err := pageWindow(in.PageNumber, in.PageSize, len(matches))
@@ -444,7 +449,6 @@ func (m *Mock) Query(_ context.Context, in *driver.QueryInput) (*driver.QueryOut
 		return nil, err
 	}
 
-	queryID := newUUID()
 	out := &driver.QueryOutput{
 		QueryID: queryID,
 		Total:   int32(len(matches)), //nolint:gosec // bounded by documents in one in-memory index
@@ -457,13 +461,35 @@ func (m *Mock) Query(_ context.Context, in *driver.QueryInput) (*driver.QueryOut
 	}
 
 	if in.PageNumber <= 1 {
-		out.FeaturedResultsItems = m.featuredItems(in.IndexID, in.QueryText, queryID, in.RequestedAttributes)
+		out.FeaturedResultsItems = featured
 	}
 
 	m.recordQueryMetrics(in.IndexID)
 	m.logQuery(in.IndexID, in.QueryText, len(matches))
 
 	return out, nil
+}
+
+// withoutFeatured drops the matches whose document is already featured.
+func withoutFeatured(matches []match, featured []driver.QueryResultItem) []match {
+	if len(featured) == 0 {
+		return matches
+	}
+
+	ids := make(map[string]bool, len(featured))
+	for i := range featured {
+		ids[featured[i].DocumentID] = true
+	}
+
+	out := matches[:0:0]
+
+	for i := range matches {
+		if !ids[matches[i].doc.ID] {
+			out = append(out, matches[i])
+		}
+	}
+
+	return out
 }
 
 // featuredItems returns the documents of the ACTIVE featured results set whose

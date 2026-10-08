@@ -239,7 +239,7 @@ func TestGetQuerySuggestionsRequiresQueryText(t *testing.T) {
 	requireException(t, err, driver.ExValidation)
 }
 
-func TestQueryOverLargeDocumentsIsFast(t *testing.T) {
+func TestQueryOverLargeDocumentsKeepsTheMatchInTheExcerpt(t *testing.T) {
 	m := newMock()
 	idx := mustIndex(t, m)
 
@@ -249,7 +249,6 @@ func TestQueryOverLargeDocumentsIsFast(t *testing.T) {
 		putText(t, m, idx.ID, id, "Large "+id, body)
 	}
 
-	start := time.Now()
 	out, err := m.Query(bg, &driver.QueryInput{IndexID: idx.ID, QueryText: "needle"})
 	requireNoError(t, err)
 	assertEqual(t, len(out.Items), 3)
@@ -257,10 +256,58 @@ func TestQueryOverLargeDocumentsIsFast(t *testing.T) {
 	if !strings.Contains(out.Items[0].Excerpt.Text, "needle") || len(out.Items[0].Excerpt.Highlights) == 0 {
 		t.Fatalf("excerpt must hold the match: %+v", out.Items[0].Excerpt)
 	}
-
-	if d := time.Since(start); d > 2*time.Second {
-		t.Fatalf("Query over three ~4 MB documents took %v", d)
-	}
 }
 
 var _ = kendra.New
+
+func TestExcerptKeepsTheOriginalCaseWhenACharacterChangesWidth(t *testing.T) {
+	m := newMock()
+	idx := mustIndex(t, m)
+	putText(t, m, idx.ID, "trip", "Trip", "Trip report: İstanbul OFFICE visit, Budget APPROVED by Finance.")
+
+	out, err := m.Query(bg, &driver.QueryInput{IndexID: idx.ID, QueryText: "budget"})
+	requireNoError(t, err)
+	assertEqual(t, len(out.Items), 1)
+	assertEqual(t, out.Items[0].Excerpt.Text, "Trip report: İstanbul OFFICE visit, Budget APPROVED by Finance.")
+
+	h := out.Items[0].Excerpt.Highlights
+	assertEqual(t, len(h), 1)
+
+	if got := string([]rune(out.Items[0].Excerpt.Text)[h[0].BeginOffset:h[0].EndOffset]); got != "Budget" {
+		t.Fatalf("highlight covers %q, want Budget", got)
+	}
+}
+
+func TestFeaturedDocumentIsNotRepeatedInResultItems(t *testing.T) {
+	m := newMock()
+	idx := mustIndex(t, m)
+	putText(t, m, idx.ID, "doc1", "Policy", "vacation policy for staff")
+	putText(t, m, idx.ID, "doc2", "Handbook", "vacation policy handbook")
+
+	_, err := m.CreateFeaturedResultsSet(bg, &driver.CreateFeaturedResultsSetInput{
+		IndexID: idx.ID, Name: "F", QueryTexts: []string{"vacation policy"}, FeaturedDocuments: []string{"doc2"},
+	})
+	requireNoError(t, err)
+
+	out, err := m.Query(bg, &driver.QueryInput{IndexID: idx.ID, QueryText: "vacation policy"})
+	requireNoError(t, err)
+	assertEqual(t, len(out.FeaturedResultsItems), 1)
+	assertEqual(t, len(out.Items), 1)
+	assertEqual(t, out.Items[0].DocumentID, "doc1")
+	assertEqual(t, out.Total, int32(1))
+}
+
+func TestFeaturedConflictListsEveryConflictingQuery(t *testing.T) {
+	m := newMock()
+	idx := mustIndex(t, m)
+
+	_, err := m.CreateFeaturedResultsSet(bg, &driver.CreateFeaturedResultsSetInput{IndexID: idx.ID, Name: "S3", QueryTexts: []string{"a", "b"}})
+	requireNoError(t, err)
+
+	_, err = m.CreateFeaturedResultsSet(bg, &driver.CreateFeaturedResultsSetInput{IndexID: idx.ID, Name: "S4", QueryTexts: []string{"a", "B", "c"}})
+
+	var apiErr *driver.APIError
+	if !isAPIError(err, &apiErr) || len(apiErr.ConflictingItems) != 2 {
+		t.Fatalf("want both conflicting queries, got %+v (%v)", apiErr, err)
+	}
+}

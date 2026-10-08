@@ -3,7 +3,10 @@ package kendra_test
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -228,6 +231,10 @@ func TestSDKAsyncConflictAndResourceInUse(t *testing.T) {
 	if len(jobs.History) != 1 || jobs.History[0].Status != kendratypes.DataSourceSyncJobStatusSyncing ||
 		aws.ToString(jobs.History[0].Metrics.DocumentsScanned) != "0" {
 		t.Fatalf("unexpected history: %+v", jobs.History)
+	}
+
+	if jobs.History[0].EndTime != nil {
+		t.Fatalf("a running job has no EndTime, got %v", jobs.History[0].EndTime)
 	}
 
 	_, err = c.StopDataSourceSyncJob(ctx, &awskendra.StopDataSourceSyncJobInput{IndexId: idx, Id: ds.Id})
@@ -532,5 +539,51 @@ func TestSDKFeaturedResultsInQueryAndConflictingItems(t *testing.T) {
 	if !errors.As(err, &conflict) || len(conflict.ConflictingItems) != 1 ||
 		aws.ToString(conflict.ConflictingItems[0].SetName) != "Vacation" || aws.ToString(conflict.ConflictingItems[0].QueryText) != "Vacation" {
 		t.Fatalf("want FeaturedResultsConflictException with ConflictingItems, got %v (%+v)", err, conflict)
+	}
+}
+
+// TestFaqWithoutFileFormatOmitsTheField checks the wire JSON: real Kendra leaves
+// FileFormat out of DescribeFaq and ListFaqs when the caller did not send one.
+func TestFaqWithoutFileFormatOmitsTheField(t *testing.T) {
+	cloud := cloudemu.NewAWS()
+	ts := httptest.NewServer(awsserver.New(awsserver.Drivers{Kendra: cloud.Kendra}))
+
+	t.Cleanup(ts.Close)
+
+	c, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion("us-east-1"),
+		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("test", "test", "")))
+	requireNoErr(t, "config", err)
+
+	client := awskendra.NewFromConfig(c, func(o *awskendra.Options) { o.BaseEndpoint = aws.String(ts.URL) })
+	idx := newIndex(t, client)
+
+	faq, err := client.CreateFaq(ctx, &awskendra.CreateFaqInput{
+		IndexId: idx, Name: aws.String("f"), RoleArn: aws.String(roleArn),
+		S3Path: &kendratypes.S3Path{Bucket: aws.String("my-bucket"), Key: aws.String("k.csv")},
+	})
+	requireNoErr(t, "CreateFaq", err)
+
+	call := func(op, body string) string {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, ts.URL, strings.NewReader(body))
+		req.Header.Set("X-Amz-Target", "AWSKendraFrontendService."+op)
+		req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+
+		resp, doErr := http.DefaultClient.Do(req)
+		requireNoErr(t, op, doErr)
+
+		defer resp.Body.Close()
+
+		b, _ := io.ReadAll(resp.Body)
+
+		return string(b)
+	}
+
+	for op, body := range map[string]string{
+		"DescribeFaq": `{"IndexId":"` + aws.ToString(idx) + `","Id":"` + aws.ToString(faq.Id) + `"}`,
+		"ListFaqs":    `{"IndexId":"` + aws.ToString(idx) + `"}`,
+	} {
+		if out := call(op, body); strings.Contains(out, "FileFormat") {
+			t.Fatalf("%s must omit an unset FileFormat: %s", op, out)
+		}
 	}
 }

@@ -73,7 +73,7 @@ type createFaqRequest struct {
 	Description  string      `json:"Description"`
 	RoleArn      string      `json:"RoleArn"`
 	S3Path       *s3PathJSON `json:"S3Path"`
-	FileFormat   string      `json:"FileFormat"`
+	FileFormat   string      `json:"FileFormat,omitempty"`
 	LanguageCode string      `json:"LanguageCode"`
 	ClientToken  string      `json:"ClientToken"`
 	Tags         []tagJSON   `json:"Tags"`
@@ -97,7 +97,7 @@ type describeFaqResponse struct {
 	Description  string      `json:"Description,omitempty"`
 	RoleArn      string      `json:"RoleArn,omitempty"`
 	S3Path       *s3PathJSON `json:"S3Path"`
-	FileFormat   string      `json:"FileFormat"`
+	FileFormat   string      `json:"FileFormat,omitempty"`
 	LanguageCode string      `json:"LanguageCode,omitempty"`
 	Status       string      `json:"Status"`
 	ErrorMessage string      `json:"ErrorMessage,omitempty"`
@@ -119,7 +119,7 @@ func (r *listChildrenRequest) page() driver.Page {
 type faqSummaryJSON struct {
 	ID           string `json:"Id"`
 	Name         string `json:"Name"`
-	FileFormat   string `json:"FileFormat"`
+	FileFormat   string `json:"FileFormat,omitempty"`
 	LanguageCode string `json:"LanguageCode,omitempty"`
 	Status       string `json:"Status"`
 	CreatedAt    int64  `json:"CreatedAt"`
