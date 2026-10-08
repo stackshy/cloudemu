@@ -319,6 +319,10 @@ func TestEnforceAuthAuthorizesQueryAndREST(t *testing.T) {
 		}
 	})
 
+	t.Run("s3", func(t *testing.T) {
+		testEnforceAuthS3(t, endpoint, boot)
+	})
+
 	t.Run("admin reset with the token", func(t *testing.T) {
 		adminCall(t, http.MethodPost, endpoint+"/_cloudemu/reset", nil)
 	})

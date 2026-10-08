@@ -74,9 +74,9 @@ func TestHandlerIAMServicesMatchTable(t *testing.T) {
 		"*iam.Handler": "iam", "*sts.Handler": "sts", "*rds.Handler": "rds", "*redshift.Handler": "redshift",
 		"*elasticache.Handler": "elasticache", "*elbv2.Handler": "elasticloadbalancing", "*sns.Handler": "sns",
 		"*cloudformation.Handler": "cloudformation", "*cloudwatch.Handler": "cloudwatch", "*ec2.Handler": "ec2",
-		"*sagemaker.Handler": "sagemaker",
+		"*sagemaker.Handler": "sagemaker", "*s3.Handler": "s3",
 		// Tier 0: REST, service level.
-		"*lambda.Handler": "lambda", "*s3.Handler": "s3", "*apigateway.Handler": "apigateway",
+		"*lambda.Handler": "lambda", "*apigateway.Handler": "apigateway",
 		"*apigatewayv2.Handler": "apigateway", "*eks.Handler": "eks", "*route53.Handler": "route53",
 		"*cloudfront.Handler": "cloudfront", "*efs.Handler": "elasticfilesystem", "*batch.Handler": "batch",
 		"*sesv2.Handler": "ses", "*opensearch.Handler": "es", "*appsync.Handler": "appsync", "*appflow.Handler": "appflow",

@@ -66,28 +66,39 @@ func parseRetainUntil(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// objectRetentionOp answers GET/PUT /{bucket}/{key}?retention. Without an
-// Object-Lock-capable driver it is a no-op accept (GET reports none), so a write
-// never falls through to overwrite the object.
-func (h *Handler) objectRetentionOp(w http.ResponseWriter, r *http.Request, bucket, key string) {
+// putRetention answers PUT /{bucket}/{key}?retention. Without an
+// Object-Lock-capable driver it is a no-op accept, so a write never falls
+// through to overwrite the object.
+func (h *Handler) putRetention(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	if h.objectLock == nil {
-		if r.Method == http.MethodGet {
-			writeError(w, http.StatusNotFound, "NoSuchObjectLockConfiguration",
-				"The specified object does not have an ObjectLock configuration")
-			return
-		}
-
 		w.WriteHeader(http.StatusOK)
-
 		return
 	}
 
-	if r.Method == http.MethodPut {
-		h.putObjectRetention(w, r, bucket, key)
+	h.putObjectRetention(w, r, bucket, key)
+}
+
+// getRetention answers the other methods on ?retention. Without an
+// Object-Lock-capable driver a GET reports no configuration.
+func (h *Handler) getRetention(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	if h.objectLock == nil {
+		writeNoObjectLock(w, r)
 		return
 	}
 
 	h.getObjectRetention(w, r, bucket, key)
+}
+
+// writeNoObjectLock answers a ?retention or ?legal-hold read on a driver
+// without Object Lock: 404 for a GET, an empty 200 otherwise.
+func writeNoObjectLock(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		writeError(w, http.StatusNotFound, "NoSuchObjectLockConfiguration",
+			"The specified object does not have an ObjectLock configuration")
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func (h *Handler) putObjectRetention(w http.ResponseWriter, r *http.Request, bucket, key string) {
@@ -146,22 +157,21 @@ func (h *Handler) getObjectRetention(w http.ResponseWriter, r *http.Request, buc
 	})
 }
 
-// objectLegalHoldOp answers GET/PUT /{bucket}/{key}?legal-hold.
-func (h *Handler) objectLegalHoldOp(w http.ResponseWriter, r *http.Request, bucket, key string) {
+// putLegalHold answers PUT /{bucket}/{key}?legal-hold, a no-op accept
+// without an Object-Lock-capable driver.
+func (h *Handler) putLegalHold(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	if h.objectLock == nil {
-		if r.Method == http.MethodGet {
-			writeError(w, http.StatusNotFound, "NoSuchObjectLockConfiguration",
-				"The specified object does not have an ObjectLock configuration")
-			return
-		}
-
 		w.WriteHeader(http.StatusOK)
-
 		return
 	}
 
-	if r.Method == http.MethodPut {
-		h.putObjectLegalHold(w, r, bucket, key)
+	h.putObjectLegalHold(w, r, bucket, key)
+}
+
+// getLegalHold answers the other methods on ?legal-hold.
+func (h *Handler) getLegalHold(w http.ResponseWriter, r *http.Request, bucket, key string) {
+	if h.objectLock == nil {
+		writeNoObjectLock(w, r)
 		return
 	}
 
