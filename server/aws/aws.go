@@ -635,19 +635,21 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 		srv.Register(cw)
 	}
 
+	// DynamoDB, DynamoDB Streams and SQS route on X-Amz-Target but name their
+	// own IAM checks with resource ARNs (Resolvers), so they skip rpc.
 	if d.DynamoDB != nil {
-		srv.Register(rpc(dynamodb.New(d.DynamoDB)))
+		srv.Register(dynamodb.New(d.DynamoDB))
 		// DynamoDB Streams shares the DynamoDB host but uses the disjoint
 		// X-Amz-Target prefix DynamoDBStreams_20120810.* (vs DynamoDB_20120810.*
 		// and AmazonSQS.*), so its Matches predicate never collides.
-		srv.Register(rpc(dynamodb.NewStreams(d.DynamoDB)))
+		srv.Register(dynamodb.NewStreams(d.DynamoDB))
 	}
 
 	// SQS shares the X-Amz-Target header with DynamoDB but uses a different
 	// prefix (AmazonSQS.* vs DynamoDB_20120810.*); their Matches predicates
 	// are mutually exclusive.
 	if d.SQS != nil {
-		srv.Register(rpc(sqs.New(d.SQS)))
+		srv.Register(sqs.New(d.SQS))
 	}
 
 	// Resource Groups Tagging API: X-Amz-Target prefix

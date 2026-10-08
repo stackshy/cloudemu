@@ -319,6 +319,33 @@ func TestEnforceAuthAuthorizesQueryAndREST(t *testing.T) {
 		}
 	})
 
+	t.Run("sqs queue scope", func(t *testing.T) {
+		q1, err := boot.sqs.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("scoped-q1")})
+		wantOK(t, "CreateQueue scoped-q1", err)
+		q2, err := boot.sqs.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("scoped-q2")})
+		wantOK(t, "CreateQueue scoped-q2", err)
+
+		attrs, err := boot.sqs.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+			QueueUrl: q1.QueueUrl, AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameQueueArn},
+		})
+		wantOK(t, "GetQueueAttributes QueueArn", err)
+
+		q1ARN := attrs.Attributes[string(sqstypes.QueueAttributeNameQueueArn)]
+		doc := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sqs:SendMessage","Resource":"` + q1ARN + `"}]}`
+		sender := clientsFor(t, endpoint, boot.newUser(t, "q1sender", doc))
+
+		_, err = sender.sqs.SendMessage(ctx, &sqs.SendMessageInput{QueueUrl: q1.QueueUrl, MessageBody: aws.String("hi")})
+		wantOK(t, "SendMessage q1", err)
+		_, err = sender.sqs.SendMessageBatch(ctx, &sqs.SendMessageBatchInput{
+			QueueUrl: q1.QueueUrl, Entries: []sqstypes.SendMessageBatchRequestEntry{{Id: aws.String("a"), MessageBody: aws.String("b")}},
+		})
+		wantOK(t, "SendMessageBatch q1", err)
+		_, err = sender.sqs.SendMessage(ctx, &sqs.SendMessageInput{QueueUrl: q2.QueueUrl, MessageBody: aws.String("hi")})
+		wantCode(t, "SendMessage q2", err, "AccessDeniedException")
+		_, err = sender.sqs.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: q1.QueueUrl})
+		wantCode(t, "ReceiveMessage q1", err, "AccessDeniedException")
+	})
+
 	t.Run("s3", func(t *testing.T) {
 		testEnforceAuthS3(t, endpoint, boot)
 	})

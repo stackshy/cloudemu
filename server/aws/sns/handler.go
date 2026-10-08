@@ -35,7 +35,6 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/server/wire/awsauthz"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
 )
@@ -55,29 +54,32 @@ const (
 	attrFalse     = "false"
 )
 
-// snsActions is the set of Action values this handler recognizes. Matches uses
-// it to decide whether to claim a request. Disjoint from RDS / Redshift / IAM /
-// EC2 / ElastiCache action sets.
-var snsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"CreateTopic":               {},
-	"DeleteTopic":               {},
-	"GetTopicAttributes":        {},
-	"SetTopicAttributes":        {},
-	"ListTopics":                {},
-	"Subscribe":                 {},
-	"Unsubscribe":               {},
-	"ConfirmSubscription":       {},
-	"GetSubscriptionAttributes": {},
-	"SetSubscriptionAttributes": {},
-	"ListSubscriptions":         {},
-	"ListSubscriptionsByTopic":  {},
-	"Publish":                   {},
-	"PublishBatch":              {},
-	"AddPermission":             {},
-	"RemovePermission":          {},
-	"TagResource":               {},
-	"UntagResource":             {},
-	actionListTagsForResource:   {},
+// snsActions maps every Action this handler serves to where the request
+// names the topic it is authorized on, as listed under "Actions defined by
+// Amazon SNS". Matches uses it to decide whether to claim a request. Disjoint
+// from RDS / Redshift / IAM / EC2 / ElastiCache action sets.
+//
+//nolint:gochecknoglobals,goconst // static lookup table of the operation names the dispatch switch lists
+var snsActions = map[string]topicRef{
+	"CreateTopic":               refTopicName,
+	"DeleteTopic":               refTopicARN,
+	"GetTopicAttributes":        refTopicARN,
+	"SetTopicAttributes":        refTopicARN,
+	"ListTopics":                refNoTopic,
+	"Subscribe":                 refTopicARN,
+	"Unsubscribe":               refSubscriptionARN,
+	"ConfirmSubscription":       refTopicARN,
+	"GetSubscriptionAttributes": refSubscriptionARN,
+	"SetSubscriptionAttributes": refSubscriptionARN,
+	"ListSubscriptions":         refNoTopic,
+	"ListSubscriptionsByTopic":  refTopicARN,
+	"Publish":                   refPublishTarget,
+	"PublishBatch":              refPublishTarget,
+	"AddPermission":             refTopicARN,
+	"RemovePermission":          refTopicARN,
+	"TagResource":               refResourceARN,
+	"UntagResource":             refResourceARN,
+	actionListTagsForResource:   refResourceARN,
 }
 
 // actionListTagsForResource is the generic tag-read verb SNS shares with other
@@ -271,10 +273,3 @@ func defaultTopicPolicy(arn, owner string) string {
 // IAMService returns the IAM service prefix of the operations this handler
 // serves.
 func (*Handler) IAMService() string { return "sns" }
-
-// IAMChecks names the IAM action of a request from the form Action that
-// ServeHTTP dispatches on. An Action the handler does not know is authorized
-// as such and then answered with InvalidAction, so nothing runs.
-func (h *Handler) IAMChecks(r *http.Request, _ awsauthz.Scope) ([]awsauthz.Check, bool) {
-	return awsauthz.QueryChecks(r, h.IAMService())
-}
