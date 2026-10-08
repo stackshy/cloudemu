@@ -442,7 +442,8 @@ type Drivers struct {
 	// policies, bound to the handler that dispatch will run. Query services
 	// (IAM, STS, EC2 and Auto Scaling, RDS, Redshift, ElastiCache, ELBv2, SNS,
 	// CloudFormation, CloudWatch) and SageMaker are checked per operation.
-	// JSON-RPC services are checked per operation through X-Amz-Target. REST
+	// JSON-RPC services are checked per operation through X-Amz-Target. S3 is
+	// checked per operation on the bucket and object ARNs. The other REST
 	// services are checked at service level for now: only a grant covering
 	// every action of the service (such as s3:* or AdministratorAccess) lets a
 	// request through, so a fine-grained or resource-scoped REST policy fails
@@ -450,6 +451,12 @@ type Drivers struct {
 	// IAM users with no policies are unrestricted (bootstrap); role sessions are
 	// always evaluated on the role's policies. Operations AWS serves without
 	// credentials, and the Kubernetes data plane, are not IAM-authorized.
+	//
+	// AssumeRole is decided by the role's trust policy for the real caller,
+	// together with the caller's identity policies, and STS temporary
+	// credentials are limited to the STS and IAM calls AWS allows each kind.
+	// Signed AssumeRoleWithWebIdentity and AssumeRoleWithSAML are refused,
+	// since their token or assertion is not validated.
 	EnforceAuth bool
 	// Clock drives SigV4 timestamp-expiry evaluation and STS temporary-credential
 	// expiry when EnforceAuth is on. Nil uses the real clock; tests inject a
@@ -628,19 +635,21 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 		srv.Register(cw)
 	}
 
+	// DynamoDB, DynamoDB Streams and SQS route on X-Amz-Target but name their
+	// own IAM checks with resource ARNs (Resolvers), so they skip rpc.
 	if d.DynamoDB != nil {
-		srv.Register(rpc(dynamodb.New(d.DynamoDB)))
+		srv.Register(dynamodb.New(d.DynamoDB))
 		// DynamoDB Streams shares the DynamoDB host but uses the disjoint
 		// X-Amz-Target prefix DynamoDBStreams_20120810.* (vs DynamoDB_20120810.*
 		// and AmazonSQS.*), so its Matches predicate never collides.
-		srv.Register(rpc(dynamodb.NewStreams(d.DynamoDB)))
+		srv.Register(dynamodb.NewStreams(d.DynamoDB))
 	}
 
 	// SQS shares the X-Amz-Target header with DynamoDB but uses a different
 	// prefix (AmazonSQS.* vs DynamoDB_20120810.*); their Matches predicates
 	// are mutually exclusive.
 	if d.SQS != nil {
-		srv.Register(rpc(sqs.New(d.SQS)))
+		srv.Register(sqs.New(d.SQS))
 	}
 
 	// Resource Groups Tagging API: X-Amz-Target prefix

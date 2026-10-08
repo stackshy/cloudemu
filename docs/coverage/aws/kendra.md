@@ -21,6 +21,131 @@ AWS's `kendra` service · portable interface `driver.Kendra` · [AWS index](./RE
 | `UpdateDataSource` |  |
 | `UpdateIndex` |  |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### AccessControls
+
+AccessControls is the optional access control configuration capability.
+
+| Operation | Description |
+| --- | --- |
+| `CreateAccessControlConfiguration` |  |
+| `DeleteAccessControlConfiguration` |  |
+| `DescribeAccessControlConfiguration` |  |
+| `ListAccessControlConfigurations` |  |
+| `UpdateAccessControlConfiguration` |  |
+
+### BlockLists
+
+BlockLists is the optional query suggestions block list capability.
+
+| Operation | Description |
+| --- | --- |
+| `CreateQuerySuggestionsBlockList` |  |
+| `DeleteQuerySuggestionsBlockList` |  |
+| `DescribeQuerySuggestionsBlockList` |  |
+| `ListQuerySuggestionsBlockLists` |  |
+| `UpdateQuerySuggestionsBlockList` |  |
+
+### Documents
+
+Documents is the optional document-ingestion and search capability: documents
+
+| Operation | Description |
+| --- | --- |
+| `BatchDeleteDocument` |  |
+| `BatchGetDocumentStatus` |  |
+| `BatchPutDocument` |  |
+| `Query` |  |
+| `Retrieve` |  |
+
+### Experiences
+
+Experiences is the optional search experience capability.
+
+| Operation | Description |
+| --- | --- |
+| `CreateExperience` |  |
+| `DeleteExperience` |  |
+| `DescribeExperience` |  |
+| `ListExperiences` |  |
+| `UpdateExperience` |  |
+
+### Faqs
+
+Faqs is the optional FAQ capability (Kendra has no UpdateFaq operation).
+
+| Operation | Description |
+| --- | --- |
+| `CreateFaq` |  |
+| `DeleteFaq` |  |
+| `DescribeFaq` |  |
+| `ListFaqs` |  |
+
+### FeaturedResults
+
+FeaturedResults is the optional featured results capability.
+
+| Operation | Description |
+| --- | --- |
+| `BatchDeleteFeaturedResultsSet` |  |
+| `CreateFeaturedResultsSet` |  |
+| `DescribeFeaturedResultsSet` |  |
+| `ListFeaturedResultsSets` |  |
+| `UpdateFeaturedResultsSet` |  |
+
+### PrincipalMappings
+
+PrincipalMappings is the optional user-to-group principal mapping capability.
+
+| Operation | Description |
+| --- | --- |
+| `DeletePrincipalMapping` |  |
+| `DescribePrincipalMapping` |  |
+| `ListGroupsOlderThanOrderingID` |  |
+| `PutPrincipalMapping` |  |
+
+### QuerySuggestions
+
+QuerySuggestions is the optional query suggestions capability.
+
+| Operation | Description |
+| --- | --- |
+| `ClearQuerySuggestions` |  |
+| `DescribeQuerySuggestionsConfig` |  |
+| `GetQuerySuggestions` |  |
+| `UpdateQuerySuggestionsConfig` |  |
+
+### SyncJobs
+
+SyncJobs is the optional data source synchronization capability.
+
+| Operation | Description |
+| --- | --- |
+| `ListDataSourceSyncJobs` |  |
+| `StartDataSourceSyncJob` |  |
+| `StopDataSourceSyncJob` |  |
+
+### Thesauri
+
+Thesauri is the optional thesaurus capability.
+
+| Operation | Description |
+| --- | --- |
+| `CreateThesaurus` |  |
+| `DeleteThesaurus` |  |
+| `DescribeThesaurus` |  |
+| `ListThesauri` |  |
+| `UpdateThesaurus` |  |
+
 ## Not in scope
 
-_Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
+- Search is a simple term-matching engine over the documents added with `BatchPutDocument`: results are ranked by how many query terms match (title weighs three times the body) and the confidence bucket (`VERY_HIGH` to `LOW`) comes from the share of terms matched. There is no semantic ranking, synonym expansion, spelling correction, relevance tuning, collapsing, nested facets or user-context filtering. FAQ and suggested-answer result types are never produced, so a `QueryResultTypeFilter` of `QUESTION_ANSWER` or `ANSWER` returns nothing.
+- Text formats (`PLAIN_TEXT`, `HTML`, `MD`, `CSV`, `JSON`, `XML`, `XSLT`, `RTF`) are indexed from the inline `Blob`; binary formats (`PDF`, `MS_WORD`, `PPT`, `MS_EXCEL`) and documents given only an `S3Path` are indexed by title and attributes only, because the emulator does not parse binary files or read S3.
+- FAQ, thesaurus and query suggestions block list files are registered by reference: the S3 object is not read, so `FileSizeBytes`, `TermCount`, `SynonymRuleCount`, `ItemCount` and the FAQ question count in `IndexStatistics` are 0 and no block list is applied to suggestions.
+- Data source sync jobs never crawl a repository: a job succeeds with zero counters (under async settling it reports `SYNCING` first), and `DocumentsDeleted` only counts `BatchDeleteDocument` calls that name the job in `DataSourceSyncJobMetricTarget`.
+- Query suggestions are learned from the queries the index served that had a result and a word longer than four characters; `MinimumNumberOfQueryingUsers` is stored but not applied (users are not tracked) and `DOCUMENT_ATTRIBUTES` suggestions are not generated. The settings a fresh index starts with besides `ENABLED` and 180 days (5 minimum queries, 8 minimum users, queries without user information included) are the emulator's choice.
+- Experience `Endpoints` are synthesized and not reachable; experience entity and persona operations, `SubmitFeedback` and `GetSnapshots` are not implemented.
+- Index and child resources are created `ACTIVE` at once so IaC waiters complete; with `--async-settle` they report `CREATING`/`UPDATING` for a short window and operations on them raise `ConflictException`. An index is never `FAILED`, so `ErrorMessage` is always empty. The `FeaturedResultsSet` default status (`ACTIVE`) and the exact error message texts are not documented by AWS and are the emulator's choice; the exception types are the documented ones.

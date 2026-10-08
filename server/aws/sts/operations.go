@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/server/authctx"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsauthz"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsidentity"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 )
@@ -47,9 +48,9 @@ func (h *Handler) resolveCallerIdentity(r *http.Request) awsidentity.Identity {
 }
 
 // assumeRole returns synthetic temporary credentials and an AssumedRoleUser
-// derived from the requested RoleArn and RoleSessionName. When an IAM trust
-// evaluator is wired, the target role must exist and its trust policy must allow
-// the caller to sts:AssumeRole; otherwise AWS returns AccessDenied (403).
+// derived from the requested RoleArn and RoleSessionName. When IAM is wired,
+// RoleArn must be the ARN of an existing role and its trust policy must allow
+// the caller (see trustAllows); otherwise AWS returns AccessDenied (403).
 func (h *Handler) assumeRole(w http.ResponseWriter, r *http.Request) {
 	roleArn := r.Form.Get("RoleArn")
 	sessionName := r.Form.Get("RoleSessionName")
@@ -63,11 +64,10 @@ func (h *Handler) assumeRole(w http.ResponseWriter, r *http.Request) {
 	// where role-name is the last path segment of the requested RoleArn.
 	roleName := roleNameFromArn(roleArn)
 
-	if !h.trustAllows(r, roleName) {
+	if !h.trustAllows(r, roleArn, roleName) {
 		// Real STS returns AccessDenied (403) both when the trust policy denies
 		// the caller and when the role does not exist (it does not disclose which).
-		awsquery.WriteXMLError(w, http.StatusForbidden, "AccessDenied",
-			"User is not authorized to perform sts:AssumeRole on "+roleArn)
+		awsquery.WriteXMLError(w, http.StatusForbidden, "AccessDenied", assumeDeniedMessage(r, roleArn))
 
 		return
 	}
@@ -100,14 +100,26 @@ func (h *Handler) assumeRole(w http.ResponseWriter, r *http.Request) {
 // under for GetCallerIdentity.
 const assumedRoleIDPrefix = "AROACLOUDEMU0000000000"
 
-// trustAllows reports whether the caller may assume roleName. With no trust
-// evaluator wired it stays permissive (standalone init-creds behavior). With one
-// wired, a missing role or a trust policy that does not allow the caller both
-// deny. The caller principal is the account-root identity because cloudemu does not
-// verify SigV4, so it evaluates trust against a consistent same-account root.
-func (h *Handler) trustAllows(r *http.Request, roleName string) bool {
+// trustAllows reports whether the caller may assume the role RoleArn names.
+//
+// Under EnforceAuth the gate has authenticated the caller and recorded its
+// identity decisions, and callerTrusted decides with the real caller.
+//
+// Otherwise the caller is unknown. With no trust evaluator wired AssumeRole
+// stays permissive (standalone init-creds behavior). With one wired, RoleArn
+// must be an existing role's ARN, and the trust policy is evaluated for the
+// account root, as it always has been.
+func (h *Handler) trustAllows(r *http.Request, roleArn, roleName string) bool {
+	if ev, enforced := awsauthz.EvaluationFrom(r.Context()); enforced {
+		return h.callerTrusted(r, &ev, roleArn, roleName)
+	}
+
 	if h.trust == nil {
 		return true
+	}
+
+	if _, ok := h.requestedRole(r, roleArn, roleName); !ok {
+		return false
 	}
 
 	callerPrincipal := "arn:aws:iam::" + h.accountID + ":root"
@@ -120,6 +132,11 @@ func (h *Handler) trustAllows(r *http.Request, roleName string) bool {
 // token (the flow EKS IRSA uses). cloudemu does not validate the token; it
 // echoes a synthetic subject/provider derived from the request.
 func (h *Handler) assumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Request) {
+	if refusedUnderEnforceAuth(w, r, actionAssumeRoleWithWebIdentity,
+		"web identity tokens are validated against a registered OIDC provider") {
+		return
+	}
+
 	sessionName := r.Form.Get("RoleSessionName")
 	if sessionName == "" {
 		sessionName = defaultSessionName
@@ -160,6 +177,11 @@ func (h *Handler) assumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Reque
 // assumeRoleWithSAML mirrors AssumeRole but is fed by a SAML assertion.
 // cloudemu does not validate the assertion; it echoes a synthetic subject.
 func (h *Handler) assumeRoleWithSAML(w http.ResponseWriter, r *http.Request) {
+	if refusedUnderEnforceAuth(w, r, actionAssumeRoleWithSAML,
+		"SAML assertions are validated against a registered SAML provider") {
+		return
+	}
+
 	roleName := roleNameFromArn(r.Form.Get("RoleArn"))
 	sessionName := "cloudemu-saml-session"
 	assumedArn := "arn:aws:sts::" + h.accountID + ":assumed-role/" + roleName + "/" + sessionName
@@ -201,7 +223,7 @@ func (h *Handler) getFederationToken(w http.ResponseWriter, r *http.Request) {
 	fedUserID := h.accountID + ":" + name
 
 	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: fedArn, UserID: fedUserID},
-		h.callerOwner(r))
+		h.callerOwner(r, KindFederation))
 	if !ok {
 		return
 	}
@@ -259,7 +281,7 @@ func durationFromForm(r *http.Request) time.Duration {
 // or a federated user, so the minted credentials are recorded under the
 // identity resolveCallerIdentity resolves for the request that asked for them.
 func (h *Handler) getSessionToken(w http.ResponseWriter, r *http.Request) {
-	creds, ok := h.mintCredentials(w, durationFromForm(r), h.resolveCallerIdentity(r), h.callerOwner(r))
+	creds, ok := h.mintCredentials(w, durationFromForm(r), h.resolveCallerIdentity(r), h.callerOwner(r, KindSessionToken))
 	if !ok {
 		return
 	}
@@ -332,23 +354,26 @@ func (h *Handler) mintCredentials(
 
 // roleOwner is the policy owner of a session for the assumed role roleName.
 func roleOwner(roleName string) SessionOwner {
-	return SessionOwner{PolicyEntity: roleName, Role: true}
+	return SessionOwner{PolicyEntity: roleName, Kind: KindRole}
 }
 
-// callerOwner is the policy owner of a session the caller mints for itself
-// (GetSessionToken, GetFederationToken): the calling IAM user. A caller that is
-// itself signing with a session passes that session's owner on, so a session
-// can never widen its own permissions.
-func (h *Handler) callerOwner(r *http.Request) SessionOwner {
+// callerOwner is the policy owner of a session of kind the caller mints for
+// itself (GetSessionToken, GetFederationToken): the calling IAM user. A caller
+// that is itself signing with a session passes that session's policy owner
+// on, so a session can never widen its own permissions.
+func (h *Handler) callerOwner(r *http.Request, kind SessionKind) SessionOwner {
 	p, _ := authctx.PrincipalFrom(r.Context())
 
 	if h.sessions != nil {
 		if sess, ok := h.sessions.Lookup(p.AccessKeyID); ok {
-			return sess.Owner
+			owner := sess.Owner
+			owner.Kind = kind
+
+			return owner
 		}
 	}
 
-	return SessionOwner{PolicyEntity: p.UserName}
+	return SessionOwner{PolicyEntity: p.UserName, Kind: kind}
 }
 
 // roleNameFromArn extracts the role name (last path segment) from a role ARN

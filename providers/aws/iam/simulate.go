@@ -309,6 +309,31 @@ func (m *Mock) EvaluatePermission(_ context.Context, req driver.EvalRequest) dri
 	return driver.Decision(m.evaluatePrincipal(req.Principal, q, mode))
 }
 
+// EvaluateRoleBoundary reports the decision of the permissions boundary of
+// the role named req.Principal alone, allowed when it has none. The name is
+// looked up as a role only, never as a user or group of the same name. A
+// role that no longer exists is an implicit deny. It implements
+// driver.RoleBoundaryEvaluator.
+func (m *Mock) EvaluateRoleBoundary(_ context.Context, req driver.EvalRequest) driver.Decision {
+	if !m.roles.Has(req.Principal) {
+		return driver.DecisionImplicitDeny
+	}
+
+	doc, ok := m.permissionsBoundaryDoc(entityRole, req.Principal)
+	if !ok {
+		return driver.DecisionAllowed
+	}
+
+	mode := evalUnknownResource
+	if req.ResourceKnown {
+		mode = evalKnownResource
+	}
+
+	q := evalRequest{action: req.Action, resource: req.Resource, cctx: ConditionContext(req.Context)}
+
+	return driver.Decision(decideWith([]string{doc}, q, mode))
+}
+
 // EvaluateServiceWide reports whether principal may perform every action of
 // service on every resource. It implements driver.PermissionEvaluator.
 func (m *Mock) EvaluateServiceWide(

@@ -1449,15 +1449,29 @@ func (m *Mock) CreateMultipartUploadWithTagging(
 	}, nil
 }
 
-func (m *Mock) UploadPart(_ context.Context, bucket, _, uploadID string, partNumber int, data []byte) (*driver.UploadPart, error) {
+// uploadFor returns the in-progress upload uploadID of key. An upload ID is
+// bound to the key it was created for: real S3 answers NoSuchUpload when the
+// ID is sent with any other key, so one caller cannot add parts to, list,
+// complete into another key from, or abort an upload of a key it was not
+// authorized for.
+func uploadFor(bkt *bucketMeta, key, uploadID string) (*multipartUpload, error) {
+	mp, ok := bkt.multiparts.Get(uploadID)
+	if !ok || mp.key != key {
+		return nil, cerrors.Newf(cerrors.NotFound, "upload %q not found", uploadID)
+	}
+
+	return mp, nil
+}
+
+func (m *Mock) UploadPart(_ context.Context, bucket, key, uploadID string, partNumber int, data []byte) (*driver.UploadPart, error) {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
-	mp, ok := bkt.multiparts.Get(uploadID)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "upload %q not found", uploadID)
+	mp, err := uploadFor(bkt, key, uploadID)
+	if err != nil {
+		return nil, err
 	}
 
 	dataCopy := make([]byte, len(data))
@@ -1477,15 +1491,15 @@ func (m *Mock) UploadPart(_ context.Context, bucket, _, uploadID string, partNum
 // ListParts returns the parts buffered so far for an in-progress upload,
 // ordered by part number (the driver keeps each part's bytes, so ETag and Size
 // are reported exactly as UploadPart returned them).
-func (m *Mock) ListParts(_ context.Context, bucket, _, uploadID string) ([]driver.UploadPart, error) {
+func (m *Mock) ListParts(_ context.Context, bucket, key, uploadID string) ([]driver.UploadPart, error) {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
-	mp, ok := bkt.multiparts.Get(uploadID)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "upload %q not found", uploadID)
+	mp, err := uploadFor(bkt, key, uploadID)
+	if err != nil {
+		return nil, err
 	}
 
 	mp.mu.Lock()
@@ -1516,9 +1530,9 @@ func (m *Mock) CompleteMultipartUpload(ctx context.Context, bucket, key, uploadI
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
-	mp, ok := bkt.multiparts.Get(uploadID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "upload %q not found", uploadID)
+	mp, err := uploadFor(bkt, key, uploadID)
+	if err != nil {
+		return err
 	}
 
 	ordered, err := validateAndOrderParts(mp, parts, uploadID)
@@ -1613,14 +1627,14 @@ func orderedPartData(allParts map[int][]byte, parts []driver.UploadPart) [][]byt
 	return out
 }
 
-func (m *Mock) AbortMultipartUpload(_ context.Context, bucket, _, uploadID string) error {
+func (m *Mock) AbortMultipartUpload(_ context.Context, bucket, key, uploadID string) error {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
-	if !bkt.multiparts.Has(uploadID) {
-		return cerrors.Newf(cerrors.NotFound, "upload %q not found", uploadID)
+	if _, err := uploadFor(bkt, key, uploadID); err != nil {
+		return err
 	}
 
 	bkt.multiparts.Delete(uploadID)

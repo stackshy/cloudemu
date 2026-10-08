@@ -424,6 +424,7 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	p.AppRunner.SetMonitoring(p.CloudWatch)
 	p.AppRunner.SetLogSink(p.CloudWatchLogs)
 	p.AppRunner.SetNetworkResolver(p.VPC)
+	p.Kendra.SetMonitoring(p.CloudWatch)
 	p.APIGateway.SetMonitoring(p.CloudWatch)
 	p.Athena.SetMonitoring(p.CloudWatch)
 	p.Athena.SetCatalog(p.Glue)

@@ -77,6 +77,9 @@ type roleData struct {
 	Path                string
 	Description         string
 	AssumeRolePolicyDoc string
+	// TrustPrincipalIDs maps each user or role ARN the trust policy names to
+	// the unique id it resolved to when the policy was saved.
+	TrustPrincipalIDs   map[string]string
 	MaxSessionDuration  int
 	CreatedAt           string
 	Tags                map[string]string
@@ -153,7 +156,11 @@ func (m *Mock) CreateUser(_ context.Context, cfg driver.UserConfig) (*driver.Use
 		path = "/"
 	}
 
-	id := idgen.GenerateID("AIDA")
+	id, err := uniqueID("AIDA")
+	if err != nil {
+		return nil, err
+	}
+
 	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "user/"+strings.TrimPrefix(path, "/")+cfg.Name)
 	tags := copyTags(cfg.Tags)
 
@@ -267,7 +274,11 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 		path = "/"
 	}
 
-	id := idgen.GenerateID("AROA")
+	id, err := uniqueID("AROA")
+	if err != nil {
+		return nil, err
+	}
+
 	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "role/"+strings.TrimPrefix(path, "/")+cfg.Name)
 	tags := copyTags(cfg.Tags)
 
@@ -283,6 +294,7 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 		Path:                path,
 		Description:         cfg.Description,
 		AssumeRolePolicyDoc: cfg.AssumeRolePolicyDoc,
+		TrustPrincipalIDs:   m.resolveTrustPrincipals(cfg.AssumeRolePolicyDoc),
 		MaxSessionDuration:  maxSession,
 		CreatedAt:           m.opts.Clock.Now().UTC().Format(timeFormat),
 		Tags:                tags,
@@ -991,9 +1003,14 @@ func (m *Mock) CreateGroup(
 		"iam", "", m.opts.AccountID, "group/"+strings.TrimPrefix(path, "/")+cfg.Name,
 	)
 
+	id, err := uniqueID("AGPA")
+	if err != nil {
+		return nil, err
+	}
+
 	g := &groupData{
 		Name:      cfg.Name,
-		ID:        idgen.GenerateID("AGPA"),
+		ID:        id,
 		ARN:       arn,
 		Path:      path,
 		CreatedAt: m.opts.Clock.Now().UTC().Format(timeFormat),
@@ -1396,7 +1413,11 @@ func (m *Mock) CreateInstanceProfile(
 		path = "/"
 	}
 
-	id := idgen.GenerateID("AIPA")
+	id, err := uniqueID("AIPA")
+	if err != nil {
+		return nil, err
+	}
+
 	arn := idgen.AWSARN(
 		"iam", "", m.opts.AccountID,
 		"instance-profile/"+strings.TrimPrefix(path, "/")+cfg.Name,

@@ -39,6 +39,7 @@ type createDataSourceResponse struct {
 func (h *Handler) createDataSource(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *createDataSourceRequest) (any, error) {
 		ds, err := h.kendra.CreateDataSource(ctx, &driver.CreateDataSourceInput{
+			ClientToken:                           req.ClientToken,
 			IndexID:                               req.IndexID,
 			Name:                                  req.Name,
 			Type:                                  req.Type,

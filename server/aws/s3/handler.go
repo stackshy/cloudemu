@@ -26,6 +26,10 @@ import (
 )
 
 const (
+	// serviceName is the S3 service name in SigV4 scopes, IAM actions and
+	// endpoint hostnames.
+	serviceName = "s3"
+
 	defaultMaxKeys = 1000
 	xmlns          = "http://s3.amazonaws.com/doc/2006-03-01/"
 	// maxPutObjectSize caps PutObject bodies at 5 GiB (S3 single-PUT limit).
@@ -142,25 +146,11 @@ func (*Handler) Matches(r *http.Request) bool {
 	// request explicitly signed for a different service; it then reaches that
 	// service's handler or cleanly 501s. Unsigned requests carry no scope and
 	// still fall to S3, preserving path-style access for unsigned callers.
-	if svc := awsquery.CredentialScopeService(r.Header.Get("Authorization")); svc != "" && svc != "s3" {
+	if svc := awsquery.CredentialScopeService(r.Header.Get("Authorization")); svc != "" && svc != serviceName {
 		return false
 	}
 
 	return true
-}
-
-// ServeHTTP dispatches S3 REST requests based on method and path.
-func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	bucket, key := parsePath(r.URL.Path)
-
-	switch {
-	case bucket == "":
-		h.listBuckets(w, r)
-	case key == "":
-		h.bucketOp(w, r, bucket)
-	default:
-		h.objectOp(w, r, bucket, key)
-	}
 }
 
 // parsePath extracts bucket and key from a path-style URL.
@@ -183,11 +173,6 @@ func parsePath(path string) (bucket, key string) {
 }
 
 func (h *Handler) listBuckets(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-		return
-	}
-
 	buckets, err := h.bucket.ListBuckets(r.Context())
 	if err != nil {
 		writeErr(w, err)
@@ -205,72 +190,6 @@ func (h *Handler) listBuckets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteXML(w, http.StatusOK, result)
-}
-
-func (h *Handler) bucketOp(w http.ResponseWriter, r *http.Request, bucket string) {
-	q := r.URL.Query()
-
-	switch {
-	case q.Has("tagging"):
-		h.bucketTaggingOp(w, r, bucket)
-		return
-	case q.Has("notification"):
-		h.bucketNotificationOp(w, r, bucket)
-		return
-	case q.Has("versioning"):
-		h.bucketVersioningOp(w, r, bucket)
-		return
-	case q.Has("uploads"):
-		// GET /{bucket}?uploads => ListMultipartUploads. Any other method on the
-		// sub-resource is rejected rather than falling through to create/delete
-		// the bucket (which would ignore the ?uploads sub-resource entirely).
-		if r.Method == http.MethodGet {
-			h.listMultipartUploads(w, r, bucket)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed on ?uploads")
-		return
-	case q.Has("versions"):
-		// GET /{bucket}?versions => ListObjectVersions (see note above re: fallthrough).
-		if r.Method == http.MethodGet {
-			h.listObjectVersions(w, r, bucket)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed on ?versions")
-		return
-	case q.Has("delete"):
-		// POST /{bucket}?delete => DeleteObjects (batch delete). Without this the
-		// request falls through to the method switch and 405s, breaking
-		// `aws s3 rm --recursive`, SDK batch delete, and Terraform force_destroy.
-		h.deleteObjects(w, r, bucket)
-		return
-	case q.Has("acl"):
-		// GET returns a canned ACL; a PUT is a no-op so it does NOT fall through
-		// to createBucket (which 409s); see aclOp.
-		h.aclOp(w, r)
-		return
-	}
-
-	// Read-only bucket configuration sub-resources (policy, cors, encryption,
-	// location, …) that IaC clients read after create; without these the request
-	// would fall through to ListObjects and the client fails to parse it.
-	if sub := configSubresourceKey(q); sub != "" {
-		h.bucketConfigOp(w, r, bucket, sub)
-		return
-	}
-
-	switch r.Method {
-	case http.MethodPut:
-		h.createBucket(w, r, bucket)
-	case http.MethodDelete:
-		h.deleteBucket(w, r, bucket)
-	case http.MethodGet:
-		h.listObjects(w, r, bucket)
-	case http.MethodHead:
-		h.headBucket(w, r, bucket)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-	}
 }
 
 // headBucket answers HEAD /{bucket}: 200 if the bucket exists, 404 otherwise.
@@ -300,68 +219,68 @@ func (h *Handler) headBucket(w http.ResponseWriter, r *http.Request, bucket stri
 	w.WriteHeader(http.StatusNotFound)
 }
 
-// bucketTaggingOp dispatches PUT/GET/DELETE for the bucket ?tagging
-// sub-resource. Without this, a PUT ?tagging fell through to CreateBucket and
-// failed with BucketAlreadyOwnedByYou.
-func (h *Handler) bucketTaggingOp(w http.ResponseWriter, r *http.Request, bucket string) {
-	switch r.Method {
-	case http.MethodPut:
-		var body tagging
-		if err := xml.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeError(w, http.StatusBadRequest, "MalformedXML", "could not parse request body")
-			return
-		}
-
-		tags := make(map[string]string, len(body.TagSet))
-		for _, t := range body.TagSet {
-			tags[t.Key] = t.Value
-		}
-
-		if err := h.bucket.PutBucketTagging(r.Context(), bucket, tags); err != nil {
-			writeErr(w, err)
-			return
-		}
-
-		w.WriteHeader(http.StatusNoContent)
-	case http.MethodGet:
-		tags, err := h.bucket.GetBucketTagging(r.Context(), bucket)
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-
-		// Real S3 has no "empty tag set" state: a bucket with no tags configured
-		// answers GetBucketTagging with 404 NoSuchTagSet, not an empty <TagSet/>.
-		// Returning an empty 200 diverged from the documented special error and
-		// tripped SDK callers that key off NoSuchTagSet to detect absence.
-		if len(tags) == 0 {
-			writeError(w, http.StatusNotFound, "NoSuchTagSet", "The TagSet does not exist")
-			return
-		}
-
-		resp := tagging{Xmlns: xmlns}
-
-		keys := make([]string, 0, len(tags))
-		for k := range tags {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		for _, k := range keys {
-			resp.TagSet = append(resp.TagSet, tagXML{Key: k, Value: tags[k]})
-		}
-
-		wire.WriteXML(w, http.StatusOK, resp)
-	case http.MethodDelete:
-		if err := h.bucket.DeleteBucketTagging(r.Context(), bucket); err != nil {
-			writeErr(w, err)
-			return
-		}
-
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+// putBucketTagging replaces the bucket's tag set (PUT /{bucket}?tagging).
+func (h *Handler) putBucketTagging(w http.ResponseWriter, r *http.Request, bucket string) {
+	var body tagging
+	if err := xml.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "MalformedXML", "could not parse request body")
+		return
 	}
+
+	tags := make(map[string]string, len(body.TagSet))
+	for _, t := range body.TagSet {
+		tags[t.Key] = t.Value
+	}
+
+	if err := h.bucket.PutBucketTagging(r.Context(), bucket, tags); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// getBucketTagging returns the bucket's tag set (GET /{bucket}?tagging).
+func (h *Handler) getBucketTagging(w http.ResponseWriter, r *http.Request, bucket string) {
+	tags, err := h.bucket.GetBucketTagging(r.Context(), bucket)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	// Real S3 has no "empty tag set" state: a bucket with no tags configured
+	// answers GetBucketTagging with 404 NoSuchTagSet, not an empty <TagSet/>.
+	// Returning an empty 200 diverged from the documented special error and
+	// tripped SDK callers that key off NoSuchTagSet to detect absence.
+	if len(tags) == 0 {
+		writeError(w, http.StatusNotFound, "NoSuchTagSet", "The TagSet does not exist")
+		return
+	}
+
+	resp := tagging{Xmlns: xmlns}
+
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		resp.TagSet = append(resp.TagSet, tagXML{Key: k, Value: tags[k]})
+	}
+
+	wire.WriteXML(w, http.StatusOK, resp)
+}
+
+// deleteBucketTagging removes the bucket's tag set (DELETE /{bucket}?tagging).
+func (h *Handler) deleteBucketTagging(w http.ResponseWriter, r *http.Request, bucket string) {
+	if err := h.bucket.DeleteBucketTagging(r.Context(), bucket); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // usEast1 is the region where CreateBucket is idempotent for the owner.
@@ -603,69 +522,6 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 	}
 
 	wire.WriteXML(w, http.StatusOK, resp)
-}
-
-func (h *Handler) objectOp(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	if h.objectSubresourceOp(w, r, bucket, key) {
-		return
-	}
-
-	switch r.Method {
-	case http.MethodPut:
-		if r.Header.Get("X-Amz-Copy-Source") != "" {
-			h.copyObject(w, r, bucket, key)
-		} else {
-			h.putObject(w, r, bucket, key)
-		}
-	case http.MethodGet:
-		h.getObject(w, r, bucket, key)
-	case http.MethodHead:
-		h.headObject(w, r, bucket, key)
-	case http.MethodDelete:
-		h.deleteObject(w, r, bucket, key)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-	}
-}
-
-// objectSubresourceOp dispatches the object-level sub-resource operations
-// selected by a query key (?attributes, ?tagging, ?retention, ?legal-hold,
-// ?uploads, ?uploadId, ?acl). It returns true when it handled the request; false
-// lets objectOp fall through to the plain method switch (GET/PUT/HEAD/DELETE).
-func (h *Handler) objectSubresourceOp(w http.ResponseWriter, r *http.Request, bucket, key string) bool {
-	q := r.URL.Query()
-
-	switch {
-	case q.Has("attributes"):
-		// GET /{bucket}/{key}?attributes => GetObjectAttributes. Without this it
-		// falls through to getObject and the SDK decodes an object body as the
-		// attributes response, reading zero-valued attributes.
-		h.getObjectAttributes(w, r, bucket, key)
-	case q.Has("tagging"):
-		h.objectTaggingOp(w, r, bucket, key)
-	case q.Has("retention"):
-		h.objectRetentionOp(w, r, bucket, key)
-	case q.Has("legal-hold"):
-		h.objectLegalHoldOp(w, r, bucket, key)
-	case q.Has("uploads"):
-		// POST /{bucket}/{key}?uploads => CreateMultipartUpload. Any other method
-		// is rejected rather than falling through to a plain object PUT/GET/DELETE.
-		if r.Method == http.MethodPost {
-			h.createMultipartUpload(w, r, bucket, key)
-		} else {
-			writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed on ?uploads")
-		}
-	case q.Has("uploadId"):
-		h.multipartUploadOp(w, r, bucket, key, q.Get("uploadId"))
-	case q.Has("acl"):
-		// GET returns a canned ACL; a PUT/DELETE is a no-op so it does NOT fall
-		// through to putObject and overwrite the object with the ACL body.
-		h.aclOp(w, r)
-	default:
-		return false
-	}
-
-	return true
 }
 
 func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
@@ -985,11 +841,6 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key
 // x-amz-object-attributes header, plus the Last-Modified and version-id headers.
 // A missing object is NoSuchKey; a missing bucket is NoSuchBucket.
 func (h *Handler) getObjectAttributes(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-		return
-	}
-
 	versionID := r.URL.Query().Get("versionId")
 
 	var (
@@ -1354,16 +1205,11 @@ type accessControlPolicyXML struct {
 	Grants  []aclGrantXML `xml:"AccessControlList>Grant"`
 }
 
-// aclOp answers ?acl on a bucket or object. GET returns a canned
-// full-control-to-owner ACL; any write is accepted as a no-op. The point is to
-// stop a PUT ?acl from falling through and overwriting the object/bucket, and a
-// GET ?acl from returning object bytes instead of an ACL document.
-func (h *Handler) aclOp(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
+// writeCannedACL answers GetBucketAcl and GetObjectAcl with a canned
+// full-control-to-owner ACL. A PUT ?acl is accepted as a no-op, so it neither
+// falls through and overwrites the object or bucket, nor returns object bytes
+// instead of an ACL document.
+func writeCannedACL(w http.ResponseWriter) {
 	owner := aclOwnerXML{ID: cannedOwnerID, DisplayName: "cloudemu"}
 	wire.WriteXML(w, http.StatusOK, accessControlPolicyXML{
 		Xmlns: xmlns,
@@ -1740,27 +1586,6 @@ func copySourceRange(header string, total int64) (start, end int64, ok bool) {
 	return start, end, true
 }
 
-// multipartUploadOp dispatches operations on an in-progress multipart upload
-// (those carrying an ?uploadId=... sub-resource).
-func (h *Handler) multipartUploadOp(w http.ResponseWriter, r *http.Request, bucket, key, uploadID string) {
-	switch r.Method {
-	case http.MethodPut:
-		if r.Header.Get("X-Amz-Copy-Source") != "" {
-			h.uploadPartCopy(w, r, bucket, key, uploadID)
-		} else {
-			h.uploadPart(w, r, bucket, key, uploadID)
-		}
-	case http.MethodPost:
-		h.completeMultipartUpload(w, r, bucket, key, uploadID)
-	case http.MethodDelete:
-		h.abortMultipartUpload(w, r, bucket, key, uploadID)
-	case http.MethodGet:
-		h.listParts(w, r, bucket, key, uploadID)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-	}
-}
-
 // multipartTagger is the AWS-specific capability to carry the create-time
 // x-amz-tagging tag set on a multipart upload (applied to the object on
 // completion). Type-asserted like bucketNotifier; drivers without it ignore
@@ -2082,20 +1907,6 @@ func skipToUploadMarker(uploads []driver.MultipartUpload, keyMarker, uploadIDMar
 	return nil
 }
 
-// objectTaggingOp dispatches PUT/GET/DELETE for the ?tagging sub-resource.
-func (h *Handler) objectTaggingOp(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	switch r.Method {
-	case http.MethodPut:
-		h.putObjectTagging(w, r, bucket, key)
-	case http.MethodGet:
-		h.getObjectTagging(w, r, bucket, key)
-	case http.MethodDelete:
-		h.deleteObjectTagging(w, r, bucket, key)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-	}
-}
-
 func (h *Handler) putObjectTagging(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	var body tagging
 	if err := xml.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -2145,18 +1956,6 @@ func (h *Handler) deleteObjectTagging(w http.ResponseWriter, r *http.Request, bu
 	}
 
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// bucketVersioningOp dispatches PUT/GET for the ?versioning sub-resource.
-func (h *Handler) bucketVersioningOp(w http.ResponseWriter, r *http.Request, bucket string) {
-	switch r.Method {
-	case http.MethodPut:
-		h.putBucketVersioning(w, r, bucket)
-	case http.MethodGet:
-		h.getBucketVersioning(w, r, bucket)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-	}
 }
 
 func (h *Handler) putBucketVersioning(w http.ResponseWriter, r *http.Request, bucket string) {
@@ -2535,7 +2334,7 @@ func writeErr(w http.ResponseWriter, err error) {
 
 // IAMService returns the IAM service prefix of the operations this handler
 // serves.
-func (*Handler) IAMService() string { return "s3" }
+func (*Handler) IAMService() string { return serviceName }
 
 // WriteAccessDenied writes the 403 this service returns when IAM denies a
 // call, in its own XML error shape.
