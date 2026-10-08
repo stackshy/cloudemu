@@ -17,6 +17,7 @@ import (
 var _ driver.OpenAPI = (*Mock)(nil)
 
 const (
+	apiKeyScheme     = "api_key" // the security scheme name an exported document uses for the API key
 	msgImportBody    = "Failed to parse the API definition: it must be an OpenAPI 2.0 or 3.0 document in JSON or YAML"
 	msgImportTitle   = "Unable to create the API: the definition has no info.title"
 	maxImportBytes   = 6 << 20
@@ -303,7 +304,7 @@ func securitySchemes(doc map[string]any) map[string]any {
 func (i *importer) isAPIKeyScheme(name string) bool {
 	scheme, _ := securitySchemes(i.doc)[name].(map[string]any)
 	if scheme == nil {
-		return name == "api_key"
+		return name == apiKeyScheme
 	}
 
 	_, isAuthorizer := scheme[extAuthorizer]

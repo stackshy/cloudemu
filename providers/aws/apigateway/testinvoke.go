@@ -165,7 +165,7 @@ func (m *Mock) TestInvokeAuthorizer(
 	}
 
 	idents, ok := identityValues(azCopy.IdentitySource, req, route)
-	if !ok {
+	if !ok && !needsNoIdentity(&azCopy) {
 		return nil, cerrors.New(cerrors.InvalidArgument, "The authorizer's identity source values are missing from the request")
 	}
 

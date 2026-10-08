@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/aws/apigateway"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs"
@@ -842,5 +843,68 @@ func TestRequestAuthorizerWithoutIdentitySourceIsInvoked(t *testing.T) {
 
 	if auth.lastPayload == nil {
 		t.Fatal("the authorizer Lambda must be invoked")
+	}
+}
+
+func TestRemovingAMethodSettingStopsThrottling(t *testing.T) {
+	f := newDP(t)
+	f.method(t, driver.PutMethodInput{}, nil)
+
+	if _, err := f.m.UpdateStage(ctx(), f.api.ID, "prod", []driver.PatchOperation{
+		{Op: "replace", Path: "/items/GET/throttling/burstLimit", Value: "1"},
+		{Op: "replace", Path: "/items/GET/throttling/rateLimit", Value: "1"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	status(t, f.get(t, nil, nil), 200)
+	status(t, f.get(t, nil, nil), 429)
+
+	// Terraform deletes the settings with remove /{resource}/{method}.
+	if _, err := f.m.UpdateStage(ctx(), f.api.ID, "prod", []driver.PatchOperation{{Op: "remove", Path: "/items/GET"}}); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+
+	st, _ := f.m.GetStage(ctx(), f.api.ID, "prod")
+	if st.MethodSettings["items/GET"] != nil {
+		t.Fatalf("the setting must be gone: %+v", st.MethodSettings)
+	}
+
+	f.clk.Advance(5 * time.Second)
+
+	status(t, f.get(t, nil, nil), 200)
+	status(t, f.get(t, nil, nil), 200)
+
+	// A method with no setting is a BadRequestException, as the provider expects.
+	if _, err := f.m.UpdateStage(ctx(), f.api.ID, "prod", []driver.PatchOperation{{Op: "remove", Path: "/items/GET"}}); !errors.IsInvalidArgument(err) {
+		t.Fatalf("removing an absent setting: want InvalidArgument, got %v", err)
+	}
+
+	if _, err := f.m.UpdateStage(ctx(), f.api.ID, "prod", []driver.PatchOperation{
+		{Op: "replace", Path: "/*/*/metrics/enabled", Value: "true"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := f.m.UpdateStage(ctx(), f.api.ID, "prod", []driver.PatchOperation{{Op: "remove", Path: "/*/*"}}); err != nil {
+		t.Fatalf("remove of the */* setting: %v", err)
+	}
+}
+
+func TestTestInvokeAuthorizerWithoutIdentitySource(t *testing.T) {
+	f := newDP(t)
+
+	az, err := f.m.CreateAuthorizer(ctx(), f.api.ID, &driver.CreateAuthorizerInput{
+		Name: "req", Type: driver.AuthorizerRequest, AuthorizerURI: lambdaURI, AuthorizerResultTTLInSeconds: intPtr(0),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f.inv.output = []byte(`{"principalId":"p","policyDocument":{"Statement":[{"Action":"execute-api:Invoke","Effect":"Allow","Resource":"*"}]}}`)
+
+	ta, err := f.m.TestInvokeAuthorizer(ctx(), &driver.TestInvokeAuthorizerInput{RestAPIID: f.api.ID, AuthorizerID: az.ID})
+	if err != nil || ta.PrincipalID != "p" {
+		t.Fatalf("a REQUEST authorizer with no identity source must run: %v %+v", err, ta)
 	}
 }

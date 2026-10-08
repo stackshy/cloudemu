@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/apigateway/driver"
@@ -204,6 +205,10 @@ func (m *Mock) DeleteModel(_ context.Context, restAPIID, name string) error {
 		return cerrors.New(cerrors.InvalidArgument, "Model is still referenced by a method; remove the reference first")
 	}
 
+	if other := schemaReferencing(ad, name); other != "" {
+		return cerrors.Newf(cerrors.InvalidArgument, "Model is still referenced by the model %s; remove the reference first", other)
+	}
+
 	delete(ad.models, name)
 
 	return nil
@@ -372,6 +377,55 @@ func modelReferenced(mth *driver.Method, name string) bool {
 	for _, mr := range mth.MethodResponses {
 		for _, v := range mr.ResponseModels {
 			if v == name {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// schemaReferencing returns the name of another model whose schema has a $ref to
+// the model, or "".
+func schemaReferencing(ad *apiData, name string) string {
+	names := make([]string, 0, len(ad.models))
+	for n := range ad.models {
+		names = append(names, n)
+	}
+
+	sort.Strings(names)
+
+	for _, other := range names {
+		if other == name {
+			continue
+		}
+
+		var doc any
+		if json.Unmarshal([]byte(ad.models[other].Schema), &doc) == nil && hasModelRef(doc, name) {
+			return other
+		}
+	}
+
+	return ""
+}
+
+// hasModelRef walks a decoded JSON schema for a $ref that names the model, either
+// as .../models/{name} or as #/definitions/{name}.
+func hasModelRef(v any, name string) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		if ref, ok := t["$ref"].(string); ok && (strings.HasSuffix(ref, "/models/"+name) || ref == "#/definitions/"+name) {
+			return true
+		}
+
+		for _, child := range t {
+			if hasModelRef(child, name) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range t {
+			if hasModelRef(child, name) {
 				return true
 			}
 		}

@@ -79,7 +79,7 @@ func (m *Mock) exportDocument(ad *apiData, in *driver.GetExportInput) (map[strin
 		info["description"] = ad.api.Description
 	}
 
-	doc := map[string]any{"info": info, "paths": exportPaths(ad.trees[st.DeploymentID], in.ExportType, ext)}
+	doc := map[string]any{"info": info, "paths": exportPaths(ad.trees[st.DeploymentID], ad, in.ExportType, ext)}
 
 	if in.ExportType == driver.ExportSwagger {
 		doc["swagger"], doc["host"], doc["basePath"], doc["schemes"] = exportSwaggerVer, host, "/"+in.StageName, []string{"https"}
@@ -132,6 +132,8 @@ func (*Mock) exportModelsAndExtensions(doc map[string]any, ad *apiData, exportTy
 	if ext["apigateway"] {
 		addAPIExtensions(doc, ad)
 	}
+
+	declareAPIKeyScheme(doc, exportType)
 }
 
 func addAuthorizerSchemes(doc map[string]any, ad *apiData, exportType string) {
@@ -164,6 +166,10 @@ func authorizerScheme(az *driver.Authorizer) map[string]any {
 
 	if az.AuthorizerURI != "" {
 		cfg["authorizerUri"] = az.AuthorizerURI
+	}
+
+	if az.IdentitySource != "" {
+		cfg["identitySource"] = az.IdentitySource
 	}
 
 	if az.AuthorizerCredentials != "" {
@@ -222,7 +228,7 @@ func addAPIExtensions(doc map[string]any, ad *apiData) {
 }
 
 // exportPaths renders the deployed resource tree as OpenAPI paths.
-func exportPaths(tree map[string]*driver.Resource, exportType string, ext map[string]bool) map[string]any {
+func exportPaths(tree map[string]*driver.Resource, ad *apiData, exportType string, ext map[string]bool) map[string]any {
 	paths := map[string]any{}
 
 	ids := make([]string, 0, len(tree))
@@ -246,7 +252,7 @@ func exportPaths(tree map[string]*driver.Resource, exportType string, ext map[st
 				key = extAnyMethod
 			}
 
-			item[key] = exportOperation(res.Methods[method], exportType, ext)
+			item[key] = exportOperation(res.Methods[method], ad, exportType, ext)
 		}
 
 		paths[res.Path] = item
@@ -266,7 +272,7 @@ func sortedMethodNames(ms map[string]*driver.Method) []string {
 	return out
 }
 
-func exportOperation(mth *driver.Method, exportType string, ext map[string]bool) map[string]any {
+func exportOperation(mth *driver.Method, ad *apiData, exportType string, ext map[string]bool) map[string]any {
 	op := map[string]any{"responses": exportResponses(mth)}
 
 	if mth.OperationName != "" {
@@ -281,8 +287,12 @@ func exportOperation(mth *driver.Method, exportType string, ext map[string]bool)
 		op["produces"] = []string{contentTypeJSON}
 	}
 
-	if mth.APIKeyRequired {
-		op["security"] = []any{map[string]any{"api_key": []string{}}}
+	if sec := exportSecurity(mth, ad, ext); len(sec) > 0 {
+		op["security"] = sec
+	}
+
+	if v, ok := ad.validators[mth.RequestValidatorID]; ok && ext["apigateway"] {
+		op[extValidator] = v.Name
 	}
 
 	if ext["integrations"] || ext["apigateway"] {
@@ -292,6 +302,79 @@ func exportOperation(mth *driver.Method, exportType string, ext map[string]bool)
 	}
 
 	return op
+}
+
+// exportSecurity renders a method's security requirements: the API key, and (when
+// authorizers are exported) the method's CUSTOM or COGNITO_USER_POOLS authorizer
+// by its scheme name, with the Cognito scopes.
+func exportSecurity(mth *driver.Method, ad *apiData, ext map[string]bool) []any {
+	var sec []any
+
+	if mth.APIKeyRequired {
+		sec = append(sec, map[string]any{apiKeyScheme: []string{}})
+	}
+
+	if !ext["authorizers"] && !ext["apigateway"] {
+		return sec
+	}
+
+	if mth.AuthorizationType != authTypeCustom && mth.AuthorizationType != authTypeCognito {
+		return sec
+	}
+
+	if az, ok := ad.authorizers[mth.AuthorizerID]; ok {
+		scopes := append([]string{}, mth.AuthorizationScopes...)
+		sec = append(sec, map[string]any{az.Name: scopes})
+	}
+
+	return sec
+}
+
+// declareAPIKeyScheme declares the api_key security scheme when any exported
+// method requires a key, so the document is self-contained.
+func declareAPIKeyScheme(doc map[string]any, exportType string) {
+	paths, _ := doc["paths"].(map[string]any)
+
+	used := false
+
+	for _, item := range paths {
+		for _, op := range item.(map[string]any) {
+			sec, _ := op.(map[string]any)["security"].([]any)
+			for _, req := range sec {
+				if _, ok := req.(map[string]any)[apiKeyScheme]; ok {
+					used = true
+				}
+			}
+		}
+	}
+
+	if !used {
+		return
+	}
+
+	scheme := map[string]any{"type": "apiKey", "name": "x-api-key", "in": locHeader}
+
+	if exportType == driver.ExportSwagger {
+		defs, _ := doc["securityDefinitions"].(map[string]any)
+		if defs == nil {
+			defs = map[string]any{}
+			doc["securityDefinitions"] = defs
+		}
+
+		defs[apiKeyScheme] = scheme
+
+		return
+	}
+
+	comps, _ := doc["components"].(map[string]any)
+	schemes, _ := comps["securitySchemes"].(map[string]any)
+
+	if schemes == nil {
+		schemes = map[string]any{}
+		comps["securitySchemes"] = schemes
+	}
+
+	schemes[apiKeyScheme] = scheme
 }
 
 func exportResponses(mth *driver.Method) map[string]any {

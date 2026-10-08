@@ -151,7 +151,7 @@ func (m *Mock) vpcLinkInUse(id string) bool {
 
 		for _, res := range ad.resources {
 			for _, mth := range res.Methods {
-				if mth.Integration != nil && mth.Integration.ConnectionID == id {
+				if mth.Integration != nil && mth.Integration.ConnectionType == connectionVpcLink && mth.Integration.ConnectionID == id {
 					used = true
 				}
 			}

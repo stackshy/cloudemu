@@ -493,3 +493,82 @@ func TestPutRestAPILeavesTheAPIUnchangedOnFailure(t *testing.T) {
 		t.Fatalf("a failed overwrite must leave the API as it was, got %v", paths)
 	}
 }
+
+func TestDeleteModelIsRefusedWhileAnotherModelReferencesIt(t *testing.T) {
+	m := newMock(t)
+
+	api, err := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, schema := range map[string]string{
+		"Pet":  `{"type":"object"}`,
+		"Pets": `{"type":"array","items":{"$ref":"https://apigateway.amazonaws.com/restapis/` + api.ID + `/models/Pet"}}`,
+	} {
+		if _, err = m.CreateModel(ctx(), api.ID, &driver.CreateModelInput{Name: name, Schema: schema}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err = m.DeleteModel(ctx(), api.ID, "Pet"); !errors.IsInvalidArgument(err) {
+		t.Fatalf("Pet is referenced by Pets: want InvalidArgument, got %v", err)
+	}
+
+	if err = m.DeleteModel(ctx(), api.ID, "Pets"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = m.DeleteModel(ctx(), api.ID, "Pet"); err != nil {
+		t.Fatalf("Pet is free once Pets is gone: %v", err)
+	}
+}
+
+func TestStaleAuthorizerAndConnectionIdsDoNotBlockDeletes(t *testing.T) {
+	m := newMock(t)
+	api := apiWithGetMethod(t, m)
+
+	az := newAuthorizer(t, m, api.ID)
+
+	if _, err := m.UpdateMethod(ctx(), api.ID, api.RootResourceID, "GET", []driver.PatchOperation{
+		{Op: "replace", Path: "/authorizationType", Value: "CUSTOM"}, {Op: "replace", Path: "/authorizerId", Value: az.ID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Switching to NONE keeps the old id on the method, but nothing uses it.
+	if _, err := m.UpdateMethod(ctx(), api.ID, api.RootResourceID, "GET", []driver.PatchOperation{
+		{Op: "replace", Path: "/authorizationType", Value: "NONE"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.DeleteAuthorizer(ctx(), api.ID, az.ID); err != nil {
+		t.Fatalf("an authorizer left on a NONE method is not in use: %v", err)
+	}
+
+	link, err := m.CreateVpcLink(ctx(), &driver.CreateVpcLinkInput{Name: "l", TargetARNs: []string{"arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/net/n/1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = m.PutIntegration(ctx(), api.ID, api.RootResourceID, "GET", driver.PutIntegrationInput{
+		Type: driver.IntegrationHTTP, IntegrationHTTPMethod: "GET", URI: "https://example.com", ConnectionType: "VPC_LINK", ConnectionID: link.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = m.DeleteVpcLink(ctx(), link.ID); err == nil {
+		t.Fatal("a link a VPC_LINK integration uses must not be deleted")
+	}
+
+	if _, err = m.UpdateIntegration(ctx(), api.ID, api.RootResourceID, "GET", []driver.PatchOperation{
+		{Op: "replace", Path: "/connectionType", Value: "INTERNET"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = m.DeleteVpcLink(ctx(), link.ID); err != nil {
+		t.Fatalf("a link left on an INTERNET integration is not in use: %v", err)
+	}
+}

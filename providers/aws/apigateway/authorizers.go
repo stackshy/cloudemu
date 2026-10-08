@@ -264,7 +264,10 @@ func (m *Mock) DeleteAuthorizer(_ context.Context, restAPIID, id string) error {
 		return cerrors.New(cerrors.NotFound, msgAuthorizerNotFound)
 	}
 
-	if methodUsing(ad, func(mth *driver.Method) bool { return mth.AuthorizerID == id }) {
+	if methodUsing(ad, func(mth *driver.Method) bool {
+		// A method switched to NONE or AWS_IAM keeps a stale id that nothing uses.
+		return mth.AuthorizerID == id && (mth.AuthorizationType == authTypeCustom || mth.AuthorizationType == authTypeCognito)
+	}) {
 		return cerrors.New(cerrors.InvalidArgument, "Authorizer is still in use by a method; remove it from the method first")
 	}
 

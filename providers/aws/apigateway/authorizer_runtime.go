@@ -107,7 +107,7 @@ func identityValue(src string, req *driver.ProxyRequest, route *resolvedRoute) s
 func authorizerIdentity(az *driver.Authorizer, req *driver.ProxyRequest, route *resolvedRoute) ([]string, bool) {
 	idents, ok := identityValues(az.IdentitySource, req, route)
 	if !ok {
-		return nil, az.Type == driver.AuthorizerRequest && az.IdentitySource == "" && authorizerTTL(az) == 0
+		return nil, needsNoIdentity(az)
 	}
 
 	if az.Type == driver.AuthorizerToken && !tokenMatches(az.IdentityValidationExpression, idents[0]) {
@@ -115,6 +115,12 @@ func authorizerIdentity(az *driver.Authorizer, req *driver.ProxyRequest, route *
 	}
 
 	return idents, true
+}
+
+// needsNoIdentity reports a REQUEST authorizer with no identity source and
+// caching off: there is nothing to check, so it is always invoked.
+func needsNoIdentity(az *driver.Authorizer) bool {
+	return az.Type == driver.AuthorizerRequest && az.IdentitySource == "" && authorizerTTL(az) == 0
 }
 
 // runLambdaAuthorizer evaluates a TOKEN or REQUEST authorizer, reusing a cached

@@ -39,11 +39,45 @@ func applyStageSettingsPatch(st *driver.Stage, op driver.PatchOperation) (handle
 		applyAccessLogPatch(st, op)
 	case strings.Count(op.Path, "/") >= methodSettingDepth:
 		return true, applyMethodSettingPatch(st, op)
+	case op.Op == opRemove && isMethodSettingPath(op.Path):
+		return true, removeMethodSetting(st, op.Path)
 	default:
 		return false, nil
 	}
 
 	return true, nil
+}
+
+// minMethodSettingSegs is the segment count of "/{resourcePath}/{method}".
+const minMethodSettingSegs = 2
+
+// isMethodSettingPath reports a "/{resourcePath}/{method}" path (or "/*/*"): the
+// whole setting of one method, which Terraform removes on delete.
+func isMethodSettingPath(path string) bool {
+	toks := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	if len(toks) < minMethodSettingSegs {
+		return false
+	}
+
+	method := toks[len(toks)-1]
+
+	return method == "*" || validHTTPMethod(method)
+}
+
+// removeMethodSetting deletes one method's setting. As in the AWS provider's
+// delete, a method with no setting is a BadRequestException.
+func removeMethodSetting(st *driver.Stage, path string) error {
+	toks := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	n := len(toks)
+	key := methodSettingKey(unescapePointer(strings.Join(toks[:n-1], "/")), toks[n-1])
+
+	if _, ok := st.MethodSettings[key]; !ok {
+		return cerrors.New(cerrors.InvalidArgument, msgMethodSetting)
+	}
+
+	delete(st.MethodSettings, key)
+
+	return nil
 }
 
 // methodSettingDepth is the slash count of "/{path}/{method}/{section}/{field}".

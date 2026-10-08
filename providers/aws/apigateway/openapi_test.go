@@ -303,3 +303,71 @@ func TestImportRecognisesAnyXAPIKeyScheme(t *testing.T) {
 		}
 	}
 }
+
+func TestExportRoundTripsSecuredMethods(t *testing.T) {
+	m := newMock(t)
+
+	api, err := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "sec"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, _ := m.CreateResource(ctx(), api.ID, api.RootResourceID, "r")
+	az, err := m.CreateAuthorizer(ctx(), api.ID, &driver.CreateAuthorizerInput{
+		Name: "reqauth", Type: driver.AuthorizerRequest, AuthorizerURI: lambdaURI, IdentitySource: "method.request.header.X-Tenant",
+		AuthorizerResultTTLInSeconds: intPtr(30),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	val, err := m.CreateRequestValidator(ctx(), api.ID, &driver.CreateRequestValidatorInput{Name: "all", ValidateRequestBody: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = m.PutMethod(ctx(), api.ID, res.ID, "GET", driver.PutMethodInput{
+		AuthorizationType: "CUSTOM", AuthorizerID: az.ID, RequestValidatorID: val.ID, APIKeyRequired: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = m.PutIntegration(ctx(), api.ID, res.ID, "GET", driver.PutIntegrationInput{
+		Type: driver.IntegrationHTTP, IntegrationHTTPMethod: "GET", URI: "https://example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = m.CreateDeployment(ctx(), api.ID, driver.CreateDeploymentInput{StageName: "prod"}); err != nil {
+		t.Fatal(err)
+	}
+
+	exp, err := m.GetExport(ctx(), &driver.GetExportInput{
+		RestAPIID: api.ID, StageName: "prod", ExportType: "swagger", Extensions: []string{"apigateway"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	imp, err := m.ImportRestAPI(ctx(), &driver.ImportRestAPIInput{Body: exp.Body})
+	if err != nil {
+		t.Fatalf("re-import: %v\n%s", err, exp.Body)
+	}
+
+	resources, _ := m.GetResources(ctx(), imp.API.ID)
+	for i := range resources {
+		if resources[i].Path != "/r" {
+			continue
+		}
+
+		got := resources[i].Methods["GET"]
+		if got.AuthorizationType != "CUSTOM" || got.AuthorizerID == "" || got.RequestValidatorID == "" || !got.APIKeyRequired {
+			t.Fatalf("the secured method must survive an export and import: %+v\n%s", got, exp.Body)
+		}
+	}
+
+	azs, _ := m.GetAuthorizers(ctx(), imp.API.ID, driver.PageInput{})
+	if len(azs.Items) != 1 || azs.Items[0].IdentitySource != "method.request.header.X-Tenant" {
+		t.Fatalf("the REQUEST authorizer keeps its identitySource: %+v", azs)
+	}
+}
