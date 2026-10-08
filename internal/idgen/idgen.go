@@ -166,7 +166,9 @@ const iamUniqueIDRandLen = 17
 // repeat, even across a restart, because a policy that names a user or role
 // is bound to its unique id: a later entity with the same name must not
 // inherit what the policy granted the old one.
-func IAMUniqueID(prefix string) (string, error) { return prefixed(prefix, iamUniqueIDRandLen, base32Upper) }
+func IAMUniqueID(prefix string) (string, error) {
+	return prefixed(prefix, iamUniqueIDRandLen, base32Upper)
+}
 
 // Signing secrets. These authenticate callers, so unlike the ids above they
 // never fall back to a predictable value: a crypto/rand failure is returned.
