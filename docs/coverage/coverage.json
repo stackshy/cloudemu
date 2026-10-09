@@ -466,6 +466,243 @@
         "doc": "UpdateStage applies a patchOperations document to a stage (/description,"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "APIKeys",
+        "doc": "APIKeys is the optional API key capability.",
+        "operations": [
+          {
+            "name": "CreateAPIKey"
+          },
+          {
+            "name": "DeleteAPIKey"
+          },
+          {
+            "name": "GetAPIKey"
+          },
+          {
+            "name": "GetAPIKeys"
+          },
+          {
+            "name": "UpdateAPIKey"
+          }
+        ]
+      },
+      {
+        "name": "Authorizers",
+        "doc": "Authorizers is the optional authorizer capability.",
+        "operations": [
+          {
+            "name": "CreateAuthorizer"
+          },
+          {
+            "name": "DeleteAuthorizer"
+          },
+          {
+            "name": "GetAuthorizer"
+          },
+          {
+            "name": "GetAuthorizers"
+          },
+          {
+            "name": "UpdateAuthorizer"
+          }
+        ]
+      },
+      {
+        "name": "DomainNames",
+        "doc": "DomainNames is the optional custom domain capability (domain names and their",
+        "operations": [
+          {
+            "name": "CreateBasePathMapping"
+          },
+          {
+            "name": "CreateDomainName"
+          },
+          {
+            "name": "DeleteBasePathMapping"
+          },
+          {
+            "name": "DeleteDomainName"
+          },
+          {
+            "name": "GetBasePathMapping"
+          },
+          {
+            "name": "GetBasePathMappings"
+          },
+          {
+            "name": "GetDomainName"
+          },
+          {
+            "name": "GetDomainNames"
+          },
+          {
+            "name": "UpdateBasePathMapping"
+          },
+          {
+            "name": "UpdateDomainName"
+          }
+        ]
+      },
+      {
+        "name": "DomainResolver",
+        "doc": "DomainResolver is the optional data-plane hook that maps a request addressed",
+        "operations": [
+          {
+            "name": "ResolveDomain"
+          }
+        ]
+      },
+      {
+        "name": "GatewayResponses",
+        "doc": "GatewayResponses is the optional gateway response capability.",
+        "operations": [
+          {
+            "name": "DeleteGatewayResponse",
+            "doc": "DeleteGatewayResponse restores the default for the response type."
+          },
+          {
+            "name": "GetGatewayResponse"
+          },
+          {
+            "name": "GetGatewayResponses"
+          },
+          {
+            "name": "PutGatewayResponse"
+          },
+          {
+            "name": "UpdateGatewayResponse"
+          }
+        ]
+      },
+      {
+        "name": "Models",
+        "doc": "Models is the optional model capability.",
+        "operations": [
+          {
+            "name": "CreateModel"
+          },
+          {
+            "name": "DeleteModel"
+          },
+          {
+            "name": "GetModel"
+          },
+          {
+            "name": "GetModels"
+          },
+          {
+            "name": "UpdateModel"
+          }
+        ]
+      },
+      {
+        "name": "OpenAPI",
+        "doc": "OpenAPI is the optional OpenAPI import/export capability.",
+        "operations": [
+          {
+            "name": "GetExport"
+          },
+          {
+            "name": "ImportRestAPI"
+          },
+          {
+            "name": "PutRestAPI"
+          }
+        ]
+      },
+      {
+        "name": "RequestValidators",
+        "doc": "RequestValidators is the optional request validator capability.",
+        "operations": [
+          {
+            "name": "CreateRequestValidator"
+          },
+          {
+            "name": "DeleteRequestValidator"
+          },
+          {
+            "name": "GetRequestValidator"
+          },
+          {
+            "name": "GetRequestValidators"
+          },
+          {
+            "name": "UpdateRequestValidator"
+          }
+        ]
+      },
+      {
+        "name": "TestInvoker",
+        "doc": "TestInvoker is the optional capability that runs a method or authorizer",
+        "operations": [
+          {
+            "name": "TestInvokeAuthorizer"
+          },
+          {
+            "name": "TestInvokeMethod"
+          }
+        ]
+      },
+      {
+        "name": "UsagePlans",
+        "doc": "UsagePlans is the optional usage plan capability (plans, their keys and usage).",
+        "operations": [
+          {
+            "name": "CreateUsagePlan"
+          },
+          {
+            "name": "CreateUsagePlanKey"
+          },
+          {
+            "name": "DeleteUsagePlan"
+          },
+          {
+            "name": "DeleteUsagePlanKey"
+          },
+          {
+            "name": "GetUsage"
+          },
+          {
+            "name": "GetUsagePlan"
+          },
+          {
+            "name": "GetUsagePlanKey"
+          },
+          {
+            "name": "GetUsagePlanKeys"
+          },
+          {
+            "name": "GetUsagePlans"
+          },
+          {
+            "name": "UpdateUsagePlan"
+          }
+        ]
+      },
+      {
+        "name": "VpcLinks",
+        "doc": "VpcLinks is the optional VPC link capability.",
+        "operations": [
+          {
+            "name": "CreateVpcLink"
+          },
+          {
+            "name": "DeleteVpcLink"
+          },
+          {
+            "name": "GetVpcLink"
+          },
+          {
+            "name": "GetVpcLinks"
+          },
+          {
+            "name": "UpdateVpcLink"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "APIGateway"
     }

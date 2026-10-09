@@ -198,6 +198,8 @@ github.com/aws/aws-sdk-go-v2/service/acm v1.38.3 h1:Fzab84hCu3rw9R9Y3mH7SHfr/cSE
 github.com/aws/aws-sdk-go-v2/service/acm v1.38.3/go.mod h1:yCteizCNPaHt0SnNusoGGHvy0JDB0tvGDTVhEt5anZM=
 github.com/aws/aws-sdk-go-v2/service/amp v1.30.0 h1:1AQM/Lo024FKGTW/iwIDQHV8+5j8/h0iabYm+4jB5Bo=
 github.com/aws/aws-sdk-go-v2/service/amp v1.30.0/go.mod h1:4OQEJHTg0Z2Q32qQUDWquPZKmLagi5/BVzTCYtcnpJo=
+github.com/aws/aws-sdk-go-v2/service/apigateway v1.39.3 h1:7MJlB7KGFd+KNKtnPgoFWYf52PGO1pd+1VHp10lNKhI=
+github.com/aws/aws-sdk-go-v2/service/apigateway v1.39.3/go.mod h1:MwilTAruv11x8EFjsk1R0VfjMdCxB6JHVtanCqsTR5o=
 github.com/aws/aws-sdk-go-v2/service/appflow v1.59.0 h1:6UZ9qJI/5oeQPgw4cK5Jf7QnVHn4Hsno4EwiRkt3plA=
 github.com/aws/aws-sdk-go-v2/service/appflow v1.59.0/go.mod h1:C2sxquQiMXw9auPpHWD7UpLf+c1z9mXPTXei9URLMr0=
 github.com/aws/aws-sdk-go-v2/service/apprunner v1.39.14 h1:C8XTHmSZQtTrOcmYXkzQUiHD97mINN/MnoOG7/vv9pk=

@@ -66,6 +66,151 @@ AWS's `apigateway` service · portable interface `driver.APIGateway` · [AWS ind
 | `UpdateRestAPI` | UpdateRestAPI applies a patchOperations document to a REST API and returns |
 | `UpdateStage` | UpdateStage applies a patchOperations document to a stage (/description, |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### APIKeys
+
+APIKeys is the optional API key capability.
+
+| Operation | Description |
+| --- | --- |
+| `CreateAPIKey` |  |
+| `DeleteAPIKey` |  |
+| `GetAPIKey` |  |
+| `GetAPIKeys` |  |
+| `UpdateAPIKey` |  |
+
+### Authorizers
+
+Authorizers is the optional authorizer capability.
+
+| Operation | Description |
+| --- | --- |
+| `CreateAuthorizer` |  |
+| `DeleteAuthorizer` |  |
+| `GetAuthorizer` |  |
+| `GetAuthorizers` |  |
+| `UpdateAuthorizer` |  |
+
+### DomainNames
+
+DomainNames is the optional custom domain capability (domain names and their
+
+| Operation | Description |
+| --- | --- |
+| `CreateBasePathMapping` |  |
+| `CreateDomainName` |  |
+| `DeleteBasePathMapping` |  |
+| `DeleteDomainName` |  |
+| `GetBasePathMapping` |  |
+| `GetBasePathMappings` |  |
+| `GetDomainName` |  |
+| `GetDomainNames` |  |
+| `UpdateBasePathMapping` |  |
+| `UpdateDomainName` |  |
+
+### DomainResolver
+
+DomainResolver is the optional data-plane hook that maps a request addressed
+
+| Operation | Description |
+| --- | --- |
+| `ResolveDomain` |  |
+
+### GatewayResponses
+
+GatewayResponses is the optional gateway response capability.
+
+| Operation | Description |
+| --- | --- |
+| `DeleteGatewayResponse` | DeleteGatewayResponse restores the default for the response type. |
+| `GetGatewayResponse` |  |
+| `GetGatewayResponses` |  |
+| `PutGatewayResponse` |  |
+| `UpdateGatewayResponse` |  |
+
+### Models
+
+Models is the optional model capability.
+
+| Operation | Description |
+| --- | --- |
+| `CreateModel` |  |
+| `DeleteModel` |  |
+| `GetModel` |  |
+| `GetModels` |  |
+| `UpdateModel` |  |
+
+### OpenAPI
+
+OpenAPI is the optional OpenAPI import/export capability.
+
+| Operation | Description |
+| --- | --- |
+| `GetExport` |  |
+| `ImportRestAPI` |  |
+| `PutRestAPI` |  |
+
+### RequestValidators
+
+RequestValidators is the optional request validator capability.
+
+| Operation | Description |
+| --- | --- |
+| `CreateRequestValidator` |  |
+| `DeleteRequestValidator` |  |
+| `GetRequestValidator` |  |
+| `GetRequestValidators` |  |
+| `UpdateRequestValidator` |  |
+
+### TestInvoker
+
+TestInvoker is the optional capability that runs a method or authorizer
+
+| Operation | Description |
+| --- | --- |
+| `TestInvokeAuthorizer` |  |
+| `TestInvokeMethod` |  |
+
+### UsagePlans
+
+UsagePlans is the optional usage plan capability (plans, their keys and usage).
+
+| Operation | Description |
+| --- | --- |
+| `CreateUsagePlan` |  |
+| `CreateUsagePlanKey` |  |
+| `DeleteUsagePlan` |  |
+| `DeleteUsagePlanKey` |  |
+| `GetUsage` |  |
+| `GetUsagePlan` |  |
+| `GetUsagePlanKey` |  |
+| `GetUsagePlanKeys` |  |
+| `GetUsagePlans` |  |
+| `UpdateUsagePlan` |  |
+
+### VpcLinks
+
+VpcLinks is the optional VPC link capability.
+
+| Operation | Description |
+| --- | --- |
+| `CreateVpcLink` |  |
+| `DeleteVpcLink` |  |
+| `GetVpcLink` |  |
+| `GetVpcLinks` |  |
+| `UpdateVpcLink` |  |
+
 ## Not in scope
 
-_Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
+- Method authorization is checked for CUSTOM (Lambda TOKEN and REQUEST authorizers, with the result cache) and COGNITO_USER_POOLS (a user pool token is checked for structure, expiry, issuer and scopes; the signature is **not** verified because the emulator has no pool signing keys). `AWS_IAM` methods are not authorized against IAM policies on the data plane.
+- Lambda integrations run whatever the Lambda mock runs. A function with an uploaded zip but no real engine or registered handler gets the Lambda mock's echo stub: API Gateway returns that echo as a 200 JSON body with an `X-Cloudemu-Lambda-Stub: true` header instead of a malformed-response 502, because it cannot tell a stub from a real function. A real function that returns something other than a proxy response still gets the 502.
+- `HTTP` and `HTTP_PROXY` integrations make a real outbound HTTP(S) request to the configured URI (no redirects followed, the stage's client certificate is not presented, responses over 10 MB are truncated). A `VPC_LINK` connection is validated (the link must exist) but the request still goes straight to the URI: there is no private network.
+- Usage plans enforce throttle (a token bucket per plan and key on the mock's clock; only a per-method override in the plan stage gets its own bucket per resource path and method) and quota (per day, week or month), and count usage for `GetUsage`. Stage method throttling treats a rate and burst of 0 as unset (real API Gateway uses -1 for unlimited). `UpdateUsage`, `ImportApiKeys` and `GenerateDistinctId` are not implemented. An API key with no usage plan that lists the stage is rejected with 403, as in AWS.
+- Request validators check required parameters and validate JSON bodies against the model for the content type with a draft-4 subset (type, enum, properties, required, additionalProperties, items, min/max, length, pattern, item counts, allOf/anyOf/oneOf and `$ref` to another model or a local definition). Other keywords are ignored. `GetModelTemplate` is not implemented.
+- `GetExport` supports `swagger` and `oas30` (JSON or YAML) with the `integrations`, `authorizers` and `apigateway` extensions; the `postman` extension and `postman` output are not supported. Import and export cover paths, methods, parameters, integrations, responses, models, authorizers, validators, gateway responses, binary media types and API key source; other OpenAPI keywords are ignored with a warning only where an operation cannot be deployed.
+- Execution logs carry the main request lines (request id, path, query, endpoint URI and status, body when data tracing is on), not AWS's full wording, and access logs support the common `$context.*` variables only. Enabling either needs the account's CloudWatch Logs role, as in AWS. Per-method CloudWatch metrics (Count, 4XXError, 5XXError, Latency, IntegrationLatency on the `ApiName`, `Resource`, `Method`, `Stage` dimensions) are emitted when the stage enables metrics for the method. API Gateway v2 (HTTP and WebSocket APIs) has no data plane in the emulator, so no v2 request metrics are published.
+- Custom domain names are always `AVAILABLE`; certificates are not validated and no DNS records exist. A request is routed to a custom domain by its `Host` header and base path mapping.
+- Deleting a client certificate still attached to a stage, or a documentation version a stage uses, is rejected with `BadRequestException`; whether AWS uses that exception or `ConflictException` is unconfirmed. The exact error message texts of the validations are descriptive; the exception types are the documented ones.

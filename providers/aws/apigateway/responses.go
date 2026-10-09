@@ -395,6 +395,7 @@ func copyMethod(mth *driver.Method) driver.Method {
 	out := *mth
 	out.RequestParameters = copyBoolMap(mth.RequestParameters)
 	out.RequestModels = copyStrMap(mth.RequestModels)
+	out.AuthorizationScopes = copyStrSlice(mth.AuthorizationScopes)
 
 	if mth.MethodResponses != nil {
 		out.MethodResponses = make(map[string]*driver.MethodResponse, len(mth.MethodResponses))

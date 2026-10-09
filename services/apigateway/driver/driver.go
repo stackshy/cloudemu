@@ -84,6 +84,12 @@ type Method struct {
 	RequestModels     map[string]string
 	MethodResponses   map[string]*MethodResponse
 	Integration       *Integration
+	// AuthorizerID names the authorizer a CUSTOM or COGNITO_USER_POOLS method
+	// uses; RequestValidatorID names its request validator;
+	// AuthorizationScopes are the scopes a Cognito access token needs.
+	AuthorizerID        string
+	RequestValidatorID  string
+	AuthorizationScopes []string
 }
 
 // MethodResponse declares a status code a method can return, the response
@@ -136,6 +142,10 @@ type Integration struct {
 	CacheNamespace        string
 	CacheKeyParameters    []string
 	IntegrationResponses  map[string]*IntegrationResponse
+	// ConnectionType is INTERNET (default) or VPC_LINK; ConnectionID is the VPC
+	// link a VPC_LINK integration goes through.
+	ConnectionType string
+	ConnectionID   string
 }
 
 // Deployment is a point-in-time snapshot of a REST API published to a stage.
@@ -170,6 +180,39 @@ type Stage struct {
 	// DocumentationVersion is the documentation snapshot associated with the
 	// stage; empty when none is.
 	DocumentationVersion string
+	Tags                 map[string]string
+	TracingEnabled       bool
+	CacheClusterEnabled  bool
+	CacheClusterSize     string
+	// AccessLogSettings sends one access log line per request to a CloudWatch
+	// Logs group; MethodSettings is keyed "resourcePath/HTTPMETHOD" ("*/*" for
+	// every method) and drives execution logging and per-method metrics.
+	AccessLogSettings *AccessLogSettings
+	MethodSettings    map[string]*MethodSetting
+}
+
+// AccessLogSettings configures stage access logging.
+type AccessLogSettings struct {
+	DestinationARN string
+	Format         string
+}
+
+// Execution log levels of a MethodSetting.
+const (
+	LogLevelOff   = "OFF"
+	LogLevelError = "ERROR"
+	LogLevelInfo  = "INFO"
+)
+
+// MethodSetting holds the stage settings of one method (or "*/*").
+type MethodSetting struct {
+	MetricsEnabled       bool
+	LoggingLevel         string
+	DataTraceEnabled     bool
+	ThrottlingBurstLimit int
+	ThrottlingRateLimit  float64
+	CachingEnabled       bool
+	CacheTTLInSeconds    int
 }
 
 // CreateRestAPIInput carries the fields CreateRestApi accepts.
@@ -188,11 +231,14 @@ type CreateRestAPIInput struct {
 
 // PutMethodInput carries the fields PutMethod accepts.
 type PutMethodInput struct {
-	AuthorizationType string
-	APIKeyRequired    bool
-	OperationName     string
-	RequestParameters map[string]bool
-	RequestModels     map[string]string
+	AuthorizationType   string
+	APIKeyRequired      bool
+	OperationName       string
+	RequestParameters   map[string]bool
+	RequestModels       map[string]string
+	AuthorizerID        string
+	RequestValidatorID  string
+	AuthorizationScopes []string
 }
 
 // PutMethodResponseInput carries the fields PutMethodResponse accepts.
@@ -225,6 +271,8 @@ type PutIntegrationInput struct {
 	ContentHandling       string
 	CacheNamespace        string
 	CacheKeyParameters    []string
+	ConnectionType        string
+	ConnectionID          string
 }
 
 // CreateDeploymentInput carries the fields CreateDeployment accepts. A non-empty
@@ -245,6 +293,10 @@ type CreateStageInput struct {
 	Description          string
 	Variables            map[string]string
 	DocumentationVersion string
+	Tags                 map[string]string
+	TracingEnabled       bool
+	CacheClusterEnabled  bool
+	CacheClusterSize     string
 }
 
 // ProxyRequest is a data-plane request to route through a deployed stage.

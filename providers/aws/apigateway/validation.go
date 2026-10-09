@@ -2,6 +2,7 @@ package apigateway
 
 import (
 	"net/url"
+	"regexp"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -16,12 +17,25 @@ const (
 	msgDeploymentNotFound  = "Invalid Deployment identifier specified"
 	msgInvalidHTTPMethod   = "Invalid HTTP method specified"
 	msgMethodExists        = "Method already exists for this resource"
+	msgMethodAuthorizer    = "Invalid authorizer ID specified. Setting the authorization type to CUSTOM or " +
+		"COGNITO_USER_POOLS requires a valid authorizer."
 	msgStageExists         = "Stage already exists"
 	msgStageName           = "Stage name only allows a-zA-Z0-9_-"
 	msgNoMethods           = "The REST API doesn't contain any methods"
+	msgAuthorizationType   = "Invalid authorization type specified"
+	msgStageVariableName   = "Stage variable names may only contain alphanumeric characters and underscores"
+	msgStageVariableLimits = "Stage variable names may be at most 64 characters, values at most 512, and a stage holds at most 100"
+	msgStageVariableValue  = "Stage variable values must match the regular expression [A-Za-z0-9-._~:/?#&=,]+"
+	msgIntegrationTimeout  = "Timeout should be between 50 ms and 29000 ms"
 	msgNoIntegration       = "No integration defined for method"
 	msgEmptyHTTPMethod     = "Enumeration value for HttpMethod must be non-empty"
 	msgInvalidHTTPEndpoint = "Invalid HTTP endpoint specified for URI"
+	authTypeCustom         = "CUSTOM"
+	authTypeCognito        = "COGNITO_USER_POOLS"
+	pathName               = "/name"
+	pathType               = "/type"
+	connectionInternet     = "INTERNET"
+	connectionVpcLink      = "VPC_LINK"
 	msgInvalidARN          = "Invalid ARN specified in the request"
 	msgARNPathOrAction     = "AWS ARN for integration must contain path or action"
 	msgAWSProxyTarget      = "Integrations of type 'AWS_PROXY' currently only supports " +
@@ -32,6 +46,74 @@ const (
 
 // maxStageNameLen is the longest stage name API Gateway accepts.
 const maxStageNameLen = 128
+
+// Integration timeout bounds in milliseconds, as documented for
+// PutIntegration's timeoutInMillis. The upper bound is the default quota: Regional
+// and private APIs can raise it (the Terraform provider accepts up to 300000), so a
+// config that relies on a raised quota is rejected here.
+const (
+	minIntegrationTimeoutMillis = 50
+	maxIntegrationTimeoutMillis = 29000
+)
+
+// stageVariableName and stageVariableValue are the documented stage variable
+// rules: names are alphanumerics and underscores, values match
+// [A-Za-z0-9-._~:/?#&=,]+.
+var (
+	stageVariableName  = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+	stageVariableValue = regexp.MustCompile(`^[A-Za-z0-9\-._~:/?#&=,]+$`)
+)
+
+// Stage variable quotas, which cannot be raised: key length, value length and the
+// number of variables per stage.
+const (
+	maxStageVariableName  = 64
+	maxStageVariableValue = 512
+	maxStageVariables     = 100
+)
+
+// validateStageVariable checks one stage variable against the documented rules.
+func validateStageVariable(name, value string) error {
+	if len(name) > maxStageVariableName || len(value) > maxStageVariableValue {
+		return cerrors.New(cerrors.InvalidArgument, msgStageVariableLimits)
+	}
+
+	if !stageVariableName.MatchString(name) {
+		return cerrors.New(cerrors.InvalidArgument, msgStageVariableName)
+	}
+
+	if !stageVariableValue.MatchString(value) {
+		return cerrors.New(cerrors.InvalidArgument, msgStageVariableValue)
+	}
+
+	return nil
+}
+
+// validateStageVariables checks every stage variable in vars.
+func validateStageVariables(vars map[string]string) error {
+	if len(vars) > maxStageVariables {
+		return cerrors.New(cerrors.InvalidArgument, msgStageVariableLimits)
+	}
+
+	for _, k := range sortedKeys(vars) {
+		if err := validateStageVariable(k, vars[k]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validAuthorizationType reports whether t is an authorization type a method
+// accepts: NONE, AWS_IAM, CUSTOM or COGNITO_USER_POOLS.
+func validAuthorizationType(t string) bool {
+	switch t {
+	case "NONE", "AWS_IAM", authTypeCustom, authTypeCognito:
+		return true
+	default:
+		return false
+	}
+}
 
 // validHTTPMethod reports whether method is one PutMethod accepts.
 func validHTTPMethod(method string) bool {
@@ -65,30 +147,40 @@ func isStageNameChar(c rune) bool {
 
 // validateIntegration applies PutIntegration's type, httpMethod and uri rules.
 func validateIntegration(in *driver.PutIntegrationInput) error {
-	switch in.Type {
+	return validateIntegrationTarget(in.Type, in.IntegrationHTTPMethod, in.URI)
+}
+
+// validateIntegrationTarget applies the type, httpMethod and uri rules shared by
+// PutIntegration and UpdateIntegration.
+func validateIntegrationTarget(integrationType, httpMethod, uri string) error {
+	switch integrationType {
 	case driver.IntegrationMock:
 		return nil
 	case driver.IntegrationHTTP, driver.IntegrationHTTPProxy, driver.IntegrationAWS, driver.IntegrationAWSProxy:
 	default:
-		return cerrors.Newf(cerrors.InvalidArgument, msgIntegrationTypeFmt, in.Type)
+		return cerrors.Newf(cerrors.InvalidArgument, msgIntegrationTypeFmt, integrationType)
 	}
 
-	if in.IntegrationHTTPMethod == "" {
+	if httpMethod == "" {
 		return cerrors.New(cerrors.InvalidArgument, msgEmptyHTTPMethod)
 	}
 
-	if in.Type == driver.IntegrationHTTP || in.Type == driver.IntegrationHTTPProxy {
-		return validateHTTPEndpoint(in.URI)
+	if !validHTTPMethod(strings.ToUpper(httpMethod)) {
+		return cerrors.New(cerrors.InvalidArgument, msgInvalidHTTPMethod)
 	}
 
-	return validateAWSIntegrationARN(in.Type, in.URI)
+	if integrationType == driver.IntegrationHTTP || integrationType == driver.IntegrationHTTPProxy {
+		return validateHTTPEndpoint(uri)
+	}
+
+	return validateAWSIntegrationARN(integrationType, uri)
 }
 
 // validateHTTPEndpoint requires an absolute http(s) URL. Stage-variable
 // placeholders are allowed anywhere, including the host.
 func validateHTTPEndpoint(uri string) error {
 	u, err := url.Parse(substituteStageVariables(uri, nil, "x"))
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	if err != nil || (u.Scheme != schemeHTTP && u.Scheme != schemeHTTPS) || u.Host == "" {
 		return cerrors.New(cerrors.InvalidArgument, msgInvalidHTTPEndpoint)
 	}
 

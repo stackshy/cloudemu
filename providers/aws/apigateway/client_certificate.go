@@ -103,6 +103,8 @@ func (m *Mock) GetClientCertificate(_ context.Context, id string) (*driver.Clien
 }
 
 // GetClientCertificates lists certificates oldest first, one page at a time.
+//
+//nolint:dupl // the same list-sort-page shape as the sibling collections by design
 func (m *Mock) GetClientCertificates(_ context.Context, page driver.PageInput) (*driver.ClientCertificatePage, error) {
 	m.regionMu.RLock()
 

@@ -99,7 +99,9 @@ func TestEnforcedGateBypassAttempts(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			status, body := doRaw(t, ts, tc.req)
-			if status != http.StatusForbidden || !strings.Contains(body, missingTok) {
+			// An execute-api marker routes to API Gateway's own data plane, which
+			// answers with its spaced message; every other case is the auth gate's.
+			if status != http.StatusForbidden || !(strings.Contains(body, missingTok) || strings.Contains(body, "Missing Authentication Token")) {
 				t.Fatalf("status %d, body %s; want 403 %s", status, body, missingTok)
 			}
 		})

@@ -61,6 +61,9 @@ const (
 // Handler serves API Gateway requests against a driver.
 type Handler struct {
 	ag driver.APIGateway
+	// dataPlaneOnly restricts Matches to API invocations. The server registers one
+	// such handler ahead of the query-protocol handlers.
+	dataPlaneOnly bool
 }
 
 // New returns an API Gateway handler backed by d.
@@ -68,21 +71,41 @@ func New(d driver.APIGateway) *Handler {
 	return &Handler{ag: d}
 }
 
+// NewDataPlane returns a handler that claims only API invocations (an execute-api
+// Host, a /_user_request_/ path or a registered custom domain). Registered ahead
+// of the query-protocol handlers it keeps form-encoded invocations from being
+// mistaken for their requests; the full handler registered later serves the
+// control plane.
+func NewDataPlane(d driver.APIGateway) *Handler {
+	return &Handler{ag: d, dataPlaneOnly: true}
+}
+
 // Matches claims control-plane requests under /restapis and data-plane requests
 // addressed to an execute-api host. It must register before S3's REST catch-all;
 // an S3 bucket literally named "restapis" would be shadowed (documented, and not
 // a real bucket name).
-func (*Handler) Matches(r *http.Request) bool {
+func (h *Handler) Matches(r *http.Request) bool {
 	p := r.URL.Path
 
-	return strings.HasPrefix(p, controlPrefix) || strings.Contains(r.Host, executeAPIMarker) ||
-		p == certsPrefix || strings.HasPrefix(p, certsPrefix+"/") || p == accountPath || ownsTagsPath(p)
+	if h.dataPlaneOnly {
+		return isHostDataPlane(r) || isPathDataPlane(r) || h.isCustomDomain(r)
+	}
+
+	return ownsControlPath(p) || strings.Contains(r.Host, executeAPIMarker) || h.isCustomDomain(r)
+}
+
+// ownsControlPath reports whether p is a control-plane path of this service.
+func ownsControlPath(p string) bool {
+	return strings.HasPrefix(p, controlPrefix) || p == certsPrefix || strings.HasPrefix(p, certsPrefix+"/") ||
+		p == accountPath || ownsTagsPath(p) || ownsAccountPath(p)
 }
 
 // ServeHTTP dispatches to the data plane (execute-api host or a _user_request_
 // path) or the control plane.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case h.isCustomDomain(r):
+		h.serveCustomDomain(w, r)
 	case isHostDataPlane(r):
 		h.serveHostDataPlane(w, r)
 	case isPathDataPlane(r):
@@ -93,6 +116,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveClientCertificates(w, r, strings.Trim(strings.TrimPrefix(r.URL.Path, certsPrefix), "/"))
 	case strings.HasPrefix(r.URL.Path, tagsPrefix):
 		h.serveTags(w, r, strings.TrimPrefix(r.URL.Path, tagsPrefix))
+	case ownsAccountPath(r.URL.Path):
+		h.serveAccountResource(w, r)
 	default:
 		h.serveControlPlane(w, r)
 	}
@@ -101,8 +126,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // PublicRequest reports whether r is an API invocation (either data-plane
 // form), which real API Gateway accepts without SigV4 unless the method uses
 // AWS_IAM authorization. Control-plane requests always need SigV4.
-func (*Handler) PublicRequest(r *http.Request) bool {
-	return isHostDataPlane(r) || isPathDataPlane(r)
+func (h *Handler) PublicRequest(r *http.Request) bool {
+	return isHostDataPlane(r) || isPathDataPlane(r) || h.isCustomDomain(r)
 }
 
 // isHostDataPlane reports a request addressed to an execute-api host.
@@ -111,9 +136,22 @@ func isHostDataPlane(r *http.Request) bool {
 }
 
 // isPathDataPlane reports a /restapis/{apiId}/{stage}/_user_request_/ invoke.
+// Only that exact shape counts: an S3 key such as logs/_user_request_/a.txt must
+// still reach S3.
 func isPathDataPlane(r *http.Request) bool {
-	return strings.Contains(r.URL.Path, "/"+userRequestMark)
+	rest, ok := strings.CutPrefix(r.URL.Path, controlPrefix)
+	if !ok {
+		return false
+	}
+
+	// {apiId}/{stage}/_user_request_[/...]
+	segs := strings.SplitN(strings.TrimPrefix(rest, "/"), "/", pathDataPlaneSegs)
+
+	return len(segs) >= pathDataPlaneSegs-1 && segs[0] != "" && segs[1] != "" && segs[2] == userRequestMark
 }
+
+// pathDataPlaneSegs is how many leading segments identify a path-style invoke.
+const pathDataPlaneSegs = 4
 
 // serveControlPlane routes the restJson1 management API under /restapis.
 func (h *Handler) serveControlPlane(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +174,7 @@ func (h *Handler) serveControlPlane(w http.ResponseWriter, r *http.Request) {
 	case segsDocItem:
 		h.serveDocItem(w, r, segs)
 	case segsMethod:
-		h.serveMethod(w, r, segs)
+		h.serveMethodOrExport(w, r, segs)
 	case segsIntegration:
 		h.serveIntegration(w, r, segs)
 	case segsMethodResp:
@@ -146,6 +184,18 @@ func (h *Handler) serveControlPlane(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusNotFound, "NotFoundException", "unsupported API Gateway path")
 	}
+}
+
+// serveMethodOrExport routes the five-segment paths: a method of a resource, or
+// the export of a stage ({id}/stages/{stage}/exports/{type}).
+func (h *Handler) serveMethodOrExport(w http.ResponseWriter, r *http.Request, segs []string) {
+	if segs[1] == subStages {
+		h.serveExport(w, r, segs)
+
+		return
+	}
+
+	h.serveMethod(w, r, segs)
 }
 
 // serveCollection handles /restapis: GET=GetRestApis, POST=CreateRestApi.
@@ -165,6 +215,11 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request) {
 
 		writeJSON(w, http.StatusOK, out)
 	case http.MethodPost:
+		if r.URL.Query().Get("mode") == "import" {
+			h.serveRestAPIImport(w, r, "")
+			return
+		}
+
 		h.createRestAPI(w, r)
 	default:
 		writeMethodNotAllowed(w)
@@ -209,6 +264,8 @@ func (h *Handler) serveAPI(w http.ResponseWriter, r *http.Request, id string) {
 	}
 
 	switch r.Method {
+	case http.MethodPut:
+		h.serveRestAPIImport(w, r, id)
 	case http.MethodGet:
 		api, err := h.ag.GetRestAPI(r.Context(), id)
 		if err != nil {
@@ -267,7 +324,9 @@ func (h *Handler) serveAPISub(w http.ResponseWriter, r *http.Request, id, sub st
 	case subStages:
 		h.serveStages(w, r, id)
 	default:
-		writeError(w, http.StatusNotFound, "NotFoundException", "unsupported API Gateway path")
+		if !h.serveAPIChild(w, r, id, sub, "") {
+			writeError(w, http.StatusNotFound, "NotFoundException", "unsupported API Gateway path")
+		}
 	}
 }
 
@@ -311,7 +370,9 @@ func (h *Handler) serveAPISubItem(w http.ResponseWriter, r *http.Request, segs [
 	case subDocs:
 		h.serveDocCollection(w, r, id, item)
 	default:
-		writeError(w, http.StatusNotFound, "NotFoundException", "unsupported API Gateway path")
+		if !h.serveAPIChild(w, r, id, sub, item) {
+			writeError(w, http.StatusNotFound, "NotFoundException", "unsupported API Gateway path")
+		}
 	}
 }
 
@@ -399,6 +460,8 @@ func (h *Handler) serveMethod(w http.ResponseWriter, r *http.Request, segs []str
 	}
 
 	switch r.Method {
+	case http.MethodPost:
+		h.testInvokeMethod(w, r, segs)
 	case http.MethodPut:
 		var req putMethodRequest
 		if !decodeJSON(w, r, &req) {
@@ -408,7 +471,8 @@ func (h *Handler) serveMethod(w http.ResponseWriter, r *http.Request, segs []str
 		mth, err := h.ag.PutMethod(r.Context(), id, resourceID, httpMethod, driver.PutMethodInput{
 			AuthorizationType: req.AuthorizationType, APIKeyRequired: req.APIKeyRequired,
 			OperationName: req.OperationName, RequestParameters: req.RequestParameters,
-			RequestModels: req.RequestModels,
+			RequestModels: req.RequestModels, AuthorizerID: req.AuthorizerID,
+			RequestValidatorID: req.RequestValidatorID, AuthorizationScopes: req.AuthorizationScopes,
 		})
 		if err != nil {
 			writeErr(w, err)
@@ -469,7 +533,7 @@ func (h *Handler) serveIntegration(w http.ResponseWriter, r *http.Request, segs 
 			TimeoutInMillis: req.TimeoutInMillis, Credentials: req.Credentials,
 			RequestParameters: req.RequestParameters, RequestTemplates: req.RequestTemplates,
 			ContentHandling: req.ContentHandling, CacheNamespace: req.CacheNamespace,
-			CacheKeyParameters: req.CacheKeyParameters,
+			CacheKeyParameters: req.CacheKeyParameters, ConnectionType: req.ConnectionType, ConnectionID: req.ConnectionID,
 		})
 		if err != nil {
 			writeErr(w, err)
@@ -514,8 +578,6 @@ func (h *Handler) getDeployments(w http.ResponseWriter, r *http.Request, id stri
 
 // serveDeploymentItem handles /restapis/{id}/deployments/{deploymentId}:
 // GET=GetDeployment, PATCH=UpdateDeployment, DELETE=DeleteDeployment.
-//
-//nolint:dupl // parallel item router for deployments vs stages; the shared serveItem shape is intentional
 func (h *Handler) serveDeploymentItem(w http.ResponseWriter, r *http.Request, id, deploymentID string) {
 	render := toDeploymentResponse
 	if r.Method == http.MethodGet && hasEmbed(r, "apisummary") {
@@ -593,7 +655,8 @@ func (h *Handler) createStage(w http.ResponseWriter, r *http.Request, id string)
 	st, err := h.ag.CreateStage(r.Context(), id, driver.CreateStageInput{
 		StageName: req.StageName, DeploymentID: req.DeploymentID,
 		Description: req.Description, Variables: req.Variables,
-		DocumentationVersion: req.DocumentationVersion,
+		DocumentationVersion: req.DocumentationVersion, Tags: req.Tags, TracingEnabled: req.TracingEnabled,
+		CacheClusterEnabled: req.CacheClusterEnabled, CacheClusterSize: req.CacheClusterSize,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -620,8 +683,6 @@ func (h *Handler) getStages(w http.ResponseWriter, r *http.Request, id string) {
 
 // serveStageItem handles /restapis/{id}/stages/{stageName}: GET=GetStage,
 // PATCH=UpdateStage, DELETE=DeleteStage.
-//
-//nolint:dupl // parallel item router for stages vs deployments; the shared serveItem shape is intentional
 func (h *Handler) serveStageItem(w http.ResponseWriter, r *http.Request, id, stageName string) {
 	serveItem(w, r,
 		func(ops []driver.PatchOperation) (*driver.Stage, error) {

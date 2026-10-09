@@ -37,19 +37,79 @@ func (m *Mock) PutMethod(
 		return nil, cerrors.New(cerrors.AlreadyExists, msgMethodExists)
 	}
 
+	authType := orDefault(in.AuthorizationType, "NONE")
+	if !validAuthorizationType(authType) {
+		return nil, cerrors.New(cerrors.InvalidArgument, msgAuthorizationType)
+	}
+
+	if err := checkMethodRefs(ad, authType, &in); err != nil {
+		return nil, err
+	}
+
 	mth := &driver.Method{
-		HTTPMethod:        method,
-		AuthorizationType: orDefault(in.AuthorizationType, "NONE"),
-		APIKeyRequired:    in.APIKeyRequired,
-		OperationName:     in.OperationName,
-		RequestParameters: copyBoolMap(in.RequestParameters),
-		RequestModels:     copyStrMap(in.RequestModels),
+		HTTPMethod:          method,
+		AuthorizationType:   authType,
+		APIKeyRequired:      in.APIKeyRequired,
+		OperationName:       in.OperationName,
+		RequestParameters:   copyBoolMap(in.RequestParameters),
+		RequestModels:       copyStrMap(in.RequestModels),
+		AuthorizerID:        in.AuthorizerID,
+		RequestValidatorID:  in.RequestValidatorID,
+		AuthorizationScopes: copyStrSlice(in.AuthorizationScopes),
 	}
 	res.Methods[method] = mth
 
 	out := copyMethod(mth)
 
 	return &out, nil
+}
+
+// checkMethodRefs validates the authorizer, request validator and models a
+// method names: they must exist in the API, and a CUSTOM or COGNITO_USER_POOLS
+// method needs an authorizer of the matching kind. The caller holds ad.mu.
+func checkMethodRefs(ad *apiData, authType string, in *driver.PutMethodInput) error {
+	if authType == authTypeCustom || authType == authTypeCognito {
+		az, ok := ad.authorizers[in.AuthorizerID]
+		if !ok || (authType == authTypeCognito) != (az.Type == driver.AuthorizerCognito) {
+			return cerrors.New(cerrors.InvalidArgument, msgMethodAuthorizer)
+		}
+	}
+
+	if _, ok := ad.validators[in.RequestValidatorID]; in.RequestValidatorID != "" && !ok {
+		return cerrors.New(cerrors.NotFound, msgValidatorNotFound)
+	}
+
+	return checkModelRefs(ad, in.RequestModels)
+}
+
+// checkModelRefs requires every model a method names to exist in the API.
+func checkModelRefs(ad *apiData, models map[string]string) error {
+	for _, ct := range sortedKeys(models) {
+		if _, ok := ad.models[models[ct]]; !ok {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"Invalid model specified: Validation Result: warnings: [], errors: [Invalid model name specified: %s]", models[ct])
+		}
+	}
+
+	return nil
+}
+
+// checkConnection validates an integration's connection: INTERNET (the default)
+// or a VPC_LINK that exists. Lock order: the caller holds regionMu (read) and then
+// ad.mu, the same order every region-scoped writer uses, so this takes no lock.
+func (m *Mock) checkConnection(ig *driver.Integration) error {
+	switch ig.ConnectionType {
+	case connectionInternet:
+		return nil
+	case connectionVpcLink:
+		if _, ok := m.vpcLinks[ig.ConnectionID]; !ok {
+			return cerrors.New(cerrors.InvalidArgument, "Invalid VPC link identifier specified for the integration")
+		}
+
+		return nil
+	default:
+		return cerrors.New(cerrors.InvalidArgument, "Invalid connection type: must be INTERNET or VPC_LINK")
+	}
 }
 
 // GetMethod returns a resource's configured method.
@@ -102,6 +162,10 @@ func (m *Mock) PutIntegration(
 		return nil, err
 	}
 
+	// regionMu before ad.mu: the VPC link lookup below reads region state.
+	m.regionMu.RLock()
+	defer m.regionMu.RUnlock()
+
 	ad.mu.Lock()
 	defer ad.mu.Unlock()
 
@@ -129,6 +193,12 @@ func (m *Mock) PutIntegration(
 		ContentHandling:       in.ContentHandling,
 		CacheNamespace:        orDefault(in.CacheNamespace, resourceID),
 		CacheKeyParameters:    append([]string(nil), in.CacheKeyParameters...),
+		ConnectionType:        orDefault(in.ConnectionType, connectionInternet),
+		ConnectionID:          in.ConnectionID,
+	}
+
+	if err := m.checkConnection(ig); err != nil {
+		return nil, err
 	}
 
 	if err := validateIntegrationSettings(ig, mth.RequestParameters); err != nil {
@@ -211,4 +281,18 @@ func (m *Mock) lookupMethod(restAPIID, resourceID, httpMethod string) (*driver.M
 	out := copyMethod(mth)
 
 	return &out, nil
+}
+
+// methodUsing reports whether any method of the API satisfies pred. The caller
+// holds ad.mu.
+func methodUsing(ad *apiData, pred func(*driver.Method) bool) bool {
+	for _, res := range ad.resources {
+		for _, mth := range res.Methods {
+			if pred(mth) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
