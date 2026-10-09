@@ -51,6 +51,8 @@ const (
 	DefaultECSTaskStartSettle = 2 * time.Second // ECS task PROVISIONING/PENDING->RUNNING
 	DefaultECSTaskStopSettle  = 1 * time.Second // ECS task STOPPING/DEPROVISIONING->STOPPED
 
+	DefaultECSDeploymentSettle = 3 * time.Second // ECS service deployment IN_PROGRESS->SUCCESSFUL
+
 	DefaultTargetHealthSettle = 2 * time.Second // ELBv2 target initial->healthy
 	DefaultTargetDrainSettle  = 2 * time.Second // ELBv2 target draining->removed
 

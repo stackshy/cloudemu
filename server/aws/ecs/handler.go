@@ -45,6 +45,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	routers := []func(http.ResponseWriter, *http.Request, string) bool{
 		h.routeClusters, h.routeTaskDefs, h.routeTasks, h.routeServices, h.routeContainerInstances,
 		h.routeTags, h.routeAccount, h.routeAttributes, h.routeCapacityProviders,
+		h.routeTaskProtection, h.routeTaskSets, h.routeServiceDeployments,
 	}
 	for _, route := range routers {
 		if route(w, r, op) {

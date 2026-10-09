@@ -77,6 +77,7 @@ func (h *Handler) runTask(w http.ResponseWriter, r *http.Request) {
 		StartedBy                string                             `json:"startedBy"`
 		NetworkConfiguration     *wireNetworkConfiguration          `json:"networkConfiguration"`
 		CapacityProviderStrategy []wireCapacityProviderStrategyItem `json:"capacityProviderStrategy"`
+		EnableExecuteCommand     bool                               `json:"enableExecuteCommand"`
 		Tags                     []wireTag                          `json:"tags"`
 	}
 
@@ -94,6 +95,7 @@ func (h *Handler) runTask(w http.ResponseWriter, r *http.Request) {
 		StartedBy:                req.StartedBy,
 		NetworkConfiguration:     toNetworkConfiguration(req.NetworkConfiguration),
 		CapacityProviderStrategy: toCapacityProviderStrategy(req.CapacityProviderStrategy),
+		EnableExecuteCommand:     req.EnableExecuteCommand,
 		Tags:                     toTags(req.Tags),
 	})
 	if err != nil {

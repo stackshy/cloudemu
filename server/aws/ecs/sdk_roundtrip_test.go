@@ -1222,6 +1222,7 @@ func TestSDKExecuteCommand(t *testing.T) {
 
 	run, err := client.RunTask(ctx, &awsecs.RunTaskInput{
 		Cluster: aws.String("prod"), TaskDefinition: aws.String("web"), Count: aws.Int32(1),
+		EnableExecuteCommand: true,
 	})
 	if err != nil {
 		t.Fatalf("RunTask: %v", err)

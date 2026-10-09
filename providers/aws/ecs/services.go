@@ -95,34 +95,20 @@ func (m *Mock) CreateService(ctx context.Context, in driver.CreateServiceInput) 
 		return nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", cluster)
 	}
 
-	td, err := m.resolveLaunchableTaskDef(in.TaskDefinition)
+	td, err := m.prepareCreateService(&in)
 	if err != nil {
 		return nil, err
-	}
-
-	launchType := effectiveServiceLaunchType(in.LaunchType)
-	if err := validateLaunch(td, launchType, in.NetworkConfiguration); err != nil {
-		return nil, err
-	}
-
-	// Real ECS normalizes the service's taskDefinition to the full ARN regardless
-	// of how the caller referenced it (bare family or family:revision), so echo the
-	// resolved ARN rather than the caller's short form. This is what lets Terraform
-	// diff-suppress family:revision against the ARN AWS always returns.
-	in.TaskDefinition = td.ARN
-
-	// A DAEMON service runs exactly one task per container instance, so AWS
-	// rejects a caller-supplied desiredCount rather than overriding it.
-	if in.SchedulingStrategy == schedDaemon && in.DesiredCount > 0 {
-		return nil, apiErrf(errors.InvalidArgument, excInvalidParameter,
-			"desiredCount must not be specified for a DAEMON service")
 	}
 
 	region := regionctx.RegionOr(ctx, m.opts.Region)
 	arnIn := func(resource string) string { return m.arnIn(region, resource) }
 	svc := serviceFromInput(&in, arnIn, cluster, m.now(), m.rootPrincipalARN())
 
-	if err := m.reserveServiceName(serviceKey(cluster, in.ServiceName), svc); err != nil {
+	// The name is claimed with a copy: convergence below keeps mutating svc, and
+	// the stored claim is read concurrently (metrics, other requests) until the
+	// finished record replaces it.
+	claim := cloneService(svc)
+	if err := m.reserveServiceName(serviceKey(cluster, in.ServiceName), &claim); err != nil {
 		return nil, err
 	}
 
@@ -132,14 +118,66 @@ func (m *Mock) CreateService(ctx context.Context, in driver.CreateServiceInput) 
 	// SERVICE reads them from the tag store, and a re-created service reuses
 	// its predecessor's ARN, whose stale entry must not leak into its tasks.
 	m.recordTags(svc.ARN, in.Tags)
-	m.convergeNewService(ctx, svc, td, &events)
+
+	if svc.DeploymentController == deployControllerExternal {
+		// No tasks and no deployments: an EXTERNAL service runs tasks only
+		// through its task sets.
+		svc.Events = []driver.ServiceEvent{m.serviceEvent(fmt.Sprintf("(service %s) has started 0 tasks.", svc.Name))}
+	} else {
+		m.convergeNewService(ctx, svc, td, &events)
+	}
+
 	m.services.Set(serviceKey(cluster, svc.Name), svc)
+	m.recordServiceDeployment(svc)
 	m.publish(ctx, &events)
+
+	if svc.DeploymentController != deployControllerExternal {
+		m.emitDeploymentEvents(ctx, svc)
+	}
+
 	m.emitServiceSteadyState(ctx, svc)
+	m.publishClusterMetrics(cluster)
 
 	out := cloneService(svc)
 
 	return &out, nil
+}
+
+// prepareCreateService validates and normalizes a CreateService request and
+// returns the task definition its tasks run (nil for an EXTERNAL-controller
+// service created without one, since its task sets supply the definition).
+func (m *Mock) prepareCreateService(in *driver.CreateServiceInput) (*driver.TaskDefinition, error) {
+	// A DAEMON service runs exactly one task per container instance, so AWS
+	// rejects a caller-supplied desiredCount rather than overriding it.
+	if in.SchedulingStrategy == schedDaemon && in.DesiredCount > 0 {
+		return nil, apiErrf(errors.InvalidArgument, excInvalidParameter,
+			"desiredCount must not be specified for a DAEMON service")
+	}
+
+	var td *driver.TaskDefinition
+
+	if in.DeploymentController != deployControllerExternal || in.TaskDefinition != "" {
+		resolved, err := m.resolveLaunchableTaskDef(in.TaskDefinition)
+		if err != nil {
+			return nil, err
+		}
+
+		td = resolved
+
+		if err := validateLaunch(td, effectiveServiceLaunchType(in.LaunchType), in.NetworkConfiguration); err != nil {
+			return nil, err
+		}
+
+		// Real ECS normalizes the service's taskDefinition to the full ARN regardless
+		// of how the caller referenced it (bare family or family:revision), so echo the
+		// resolved ARN rather than the caller's short form. This is what lets Terraform
+		// diff-suppress family:revision against the ARN AWS always returns.
+		in.TaskDefinition = td.ARN
+	}
+
+	in.NetworkConfiguration = withDefaultAssignPublicIP(in.NetworkConfiguration)
+
+	return td, nil
 }
 
 // serviceFromInput builds the service record (without convergence) from the
@@ -189,6 +227,7 @@ func serviceFromInput(
 		CapacityProviderStrategy: append([]driver.CapacityProviderStrategyItem(nil), in.CapacityProviderStrategy...),
 		LoadBalancers:            append([]driver.LoadBalancer(nil), in.LoadBalancers...),
 		ServiceRegistries:        append([]driver.ServiceRegistry(nil), in.ServiceRegistries...),
+		ServiceConnect:           cloneServiceConnect(in.ServiceConnect),
 		Tags:                     copyTags(in.Tags),
 	}
 }
@@ -241,7 +280,7 @@ func ptrInt(v int) *int { return &v }
 func (m *Mock) reserveServiceName(key string, svc *driver.Service) error {
 	existing, exists := m.services.Get(key)
 	if exists && existing.Status == statusActive {
-		return errors.Newf(errors.AlreadyExists, "service %q already exists", svc.Name)
+		return errServiceNotIdempotent()
 	}
 
 	if exists {
@@ -251,10 +290,16 @@ func (m *Mock) reserveServiceName(key string, svc *driver.Service) error {
 	}
 
 	if !m.services.SetIfAbsent(key, svc) {
-		return errors.Newf(errors.AlreadyExists, "service %q already exists", svc.Name)
+		return errServiceNotIdempotent()
 	}
 
 	return nil
+}
+
+// errServiceNotIdempotent is the error CreateService returns when an ACTIVE
+// service of the same name already exists in the cluster.
+func errServiceNotIdempotent() error {
+	return apiErrf(errors.AlreadyExists, excInvalidParameter, "Creation of service was not idempotent.")
 }
 
 // convergeNewService resolves the target count (DAEMON implies one task per
@@ -308,14 +353,19 @@ func (m *Mock) converge(
 	events *pendingTaskEvents,
 ) (running, pending int) {
 	spec := m.serviceTaskSpec(svc, td, deploymentID)
+	placementFailure := ""
 
 	for range target {
-		task, _ := m.launchTask(ctx, &spec, true)
+		task, failure := m.launchTask(ctx, &spec, true)
 		if task == nil {
 			continue
 		}
 
-		events.add(task, taskEventVersionLaunch)
+		if failure != nil && placementFailure == "" {
+			placementFailure = failure.Reason
+		}
+
+		events.addLaunch(m, task)
 
 		if task.LastStatus == statusRunning {
 			running++
@@ -324,6 +374,14 @@ func (m *Mock) converge(
 		} else {
 			pending++
 		}
+	}
+
+	if placementFailure != "" {
+		serviceARN, clusterARN := svc.ARN, svc.ClusterARN
+
+		events.addFunc(func(ctx context.Context) {
+			m.emitServiceAction(ctx, serviceARN, clusterARN, serviceTaskPlacementFailure, serviceEventTypeError, placementFailure)
+		})
 	}
 
 	return running, pending
@@ -343,6 +401,7 @@ func (m *Mock) serviceTaskSpec(svc *driver.Service, td *driver.TaskDefinition, d
 		platformVersion: svc.PlatformVersion,
 		netCfg:          svc.NetworkConfiguration,
 		tags:            m.propagatedTaskTags(svc, td),
+		enableExec:      svc.EnableExecuteCommand,
 	}
 }
 
@@ -365,15 +424,23 @@ func (m *Mock) propagatedTaskTags(svc *driver.Service, td *driver.TaskDefinition
 
 // drainService stops every RUNNING or PENDING task linked to the service in its
 // cluster, releasing any reserved container-instance capacity. It is used to
-// drain a superseded deployment before relaunching and to tear down tasks on
-// delete. Each stop is buffered on events, to be published once the caller
-// commits the service.
-func (m *Mock) drainService(ctx context.Context, svc *driver.Service, events *pendingTaskEvents) {
+// drain a superseded deployment before relaunching (keepProtected leaves tasks
+// with active scale-in protection running) and to tear down tasks on delete.
+// Each stop is buffered on events, to be published once the caller commits the
+// service.
+func (m *Mock) drainService(ctx context.Context, svc *driver.Service, events *pendingTaskEvents, keepProtected bool) {
 	group := serviceGroup(svc.Name)
 	cluster := clusterNameFromARN(svc.ClusterARN)
+	now := m.opts.Clock.Now()
 
 	for _, t := range m.tasks.SortedValues() {
 		if t.Group != group || clusterNameFromARN(t.ClusterARN) != cluster || t.LastStatus == statusStopped {
+			continue
+		}
+
+		// A scale-in or redeployment leaves tasks with active scale-in protection
+		// running; deleting the service stops everything.
+		if keepProtected && taskProtected(t, now) {
 			continue
 		}
 
@@ -382,7 +449,7 @@ func (m *Mock) drainService(ctx context.Context, svc *driver.Service, events *pe
 		// service state itself (the caller launches the replacement tasks), so
 		// StopTask's own reconciliation would race it. See stopTaskQuiet.
 		if stopped, stoppedNow, err := m.stopTaskQuiet(ctx, cluster, t.ARN, serviceStoppedReason); err == nil && stoppedNow {
-			events.add(stopped, taskEventVersionStop)
+			events.addStop(m, stopped)
 		}
 	}
 }
@@ -496,12 +563,17 @@ func (m *Mock) reconcileServiceAfterStop(ctx context.Context, task *driver.Task)
 		return
 	}
 
+	// A task-set task is replaced by its task set, not by the service scheduler.
+	if m.reconcileTaskSetAfterStop(ctx, task, name) {
+		return
+	}
+
 	// Replacement launches are published only after reconcileLock is released:
 	// an event target (e.g. a synchronously invoked Lambda) that stops another
 	// task of this same service re-enters this function for the same key, and
 	// the lock is not reentrant.
 	for _, t := range m.reconcileServiceLocked(ctx, task, name) {
-		m.emitTaskStateChange(ctx, t, taskEventVersionLaunch)
+		m.emitTaskLaunch(ctx, t)
 	}
 }
 
@@ -569,14 +641,16 @@ func (m *Mock) newDeployment(id, status string, svc *driver.Service, running, pe
 		RolloutState:   rolloutState(running, svc.DesiredCount),
 		CreatedAt:      now,
 		UpdatedAt:      now,
+		ServiceConnect: cloneServiceConnect(svc.ServiceConnect),
 	}
 }
 
-// rolloutState reports COMPLETED once the running count reaches the desired
-// count, else IN_PROGRESS. Circuit-breaker FAILED transitions are accepted but
+// rolloutState reports COMPLETED once the running count equals the desired
+// count, else IN_PROGRESS (running fewer tasks, or more because scale-in
+// protection kept surplus ones). Circuit-breaker FAILED transitions are accepted but
 // not simulated.
 func rolloutState(running, desired int) string {
-	if running >= desired {
+	if running == desired {
 		return rolloutCompleted
 	}
 
@@ -602,11 +676,14 @@ func (m *Mock) UpdateService(ctx context.Context, in driver.UpdateServiceInput) 
 		return nil, apiErrf(errors.NotFound, excServiceNotFound, "service %q not found", in.Service)
 	}
 
-	// A DAEMON service runs one task per container instance, so ECS rejects a
-	// caller-supplied desiredCount on update just as it does on create.
-	if svc.SchedulingStrategy == schedDaemon && in.DesiredCount != nil {
-		return nil, apiErrf(errors.InvalidArgument, excInvalidParameter,
-			"desiredCount must not be specified for a DAEMON service")
+	if err := validateServiceUpdate(svc, &in); err != nil {
+		return nil, err
+	}
+
+	in.NetworkConfiguration = withDefaultAssignPublicIP(in.NetworkConfiguration)
+
+	if svc.DeploymentController == deployControllerExternal {
+		return m.updateExternalService(ctx, svc, &in)
 	}
 
 	updated := cloneService(svc)
@@ -628,15 +705,102 @@ func (m *Mock) UpdateService(ctx context.Context, in driver.UpdateServiceInput) 
 	}
 
 	m.services.Set(serviceKey(cluster, updated.Name), &updated)
-	m.publish(ctx, &events)
 
-	if redeployed {
-		m.emitServiceSteadyState(ctx, &updated)
+	deployed := in.ForceNewDeployment || tdChanged || serviceConfigChanged(&in)
+	if deployed {
+		m.recordServiceDeployment(&updated)
 	}
+
+	m.publish(ctx, &events)
+	m.emitServiceUpdateEvents(ctx, &updated, countChanged, deployed, redeployed)
+	m.publishClusterMetrics(cluster)
 
 	out := cloneService(&updated)
 
 	return &out, nil
+}
+
+// validateServiceUpdate rejects the update inputs ECS refuses up front: a
+// caller-supplied desiredCount on a DAEMON service (it runs one task per
+// container instance, as on create) and an invalid assignPublicIp.
+func validateServiceUpdate(svc *driver.Service, in *driver.UpdateServiceInput) error {
+	if svc.SchedulingStrategy == schedDaemon && in.DesiredCount != nil {
+		return apiErrf(errors.InvalidArgument, excInvalidParameter,
+			"desiredCount must not be specified for a DAEMON service")
+	}
+
+	return validateAssignPublicIP(in.NetworkConfiguration)
+}
+
+// emitServiceUpdateEvents publishes the events a committed UpdateService caused:
+// a desired-count change, a started deployment and the steady state it reached.
+func (m *Mock) emitServiceUpdateEvents(ctx context.Context, svc *driver.Service, countChanged, deployed, redeployed bool) {
+	if countChanged {
+		m.emitServiceAction(ctx, svc.ARN, svc.ClusterARN, serviceDesiredCountUpdated, serviceEventTypeInfo, "")
+	}
+
+	if deployed {
+		m.emitDeploymentEvents(ctx, svc)
+	}
+
+	if redeployed {
+		m.emitServiceSteadyState(ctx, svc)
+	}
+}
+
+// updateExternalService updates a service that uses the EXTERNAL deployment
+// controller. Only the desired count and the scalar/reference settings change
+// (the task definition comes from task sets), and a new desired count rescales
+// every task set. It runs under the service's task-set lock.
+func (m *Mock) updateExternalService(ctx context.Context, svc *driver.Service, in *driver.UpdateServiceInput) (*driver.Service, error) {
+	cluster := clusterNameFromARN(svc.ClusterARN)
+	key := serviceKey(cluster, svc.Name)
+
+	var events pendingTaskEvents
+
+	out, err := func() (*driver.Service, error) {
+		unlock := m.taskSetLock.lock(key)
+		defer unlock()
+
+		current, ok := m.services.Get(key)
+		if !ok || current.Status != statusActive {
+			return nil, apiErrf(errors.FailedPrecondition, excServiceNotActive,
+				"The specified service is not active. You can't update a service that is inactive.")
+		}
+
+		updated := cloneService(current)
+		applyServiceScalars(&updated, in)
+		applyServiceRefs(&updated, in)
+
+		countChanged := in.DesiredCount != nil && *in.DesiredCount != current.DesiredCount
+
+		if in.DesiredCount != nil {
+			updated.DesiredCount = *in.DesiredCount
+		}
+
+		m.services.Set(key, &updated)
+
+		if countChanged {
+			m.rescaleTaskSets(ctx, &updated, &events)
+		}
+
+		out := cloneService(&updated)
+
+		return &out, nil
+	}()
+	if err != nil {
+		return nil, err
+	}
+
+	m.publish(ctx, &events)
+
+	if in.DesiredCount != nil && *in.DesiredCount != svc.DesiredCount {
+		m.emitServiceAction(ctx, out.ARN, out.ClusterARN, serviceDesiredCountUpdated, serviceEventTypeInfo, "")
+	}
+
+	m.publishClusterMetrics(cluster)
+
+	return out, nil
 }
 
 // applyTaskDefChange applies a task-definition change to the pending service
@@ -687,10 +851,14 @@ func (m *Mock) redeployService(
 		return
 	}
 
-	m.drainService(ctx, svc, events)
+	m.drainService(ctx, svc, events, true)
 
+	// Tasks kept alive by scale-in protection count toward the service, so only
+	// the shortfall is launched; the service reports IN_PROGRESS while it runs
+	// more tasks than desired.
 	id := m.deploymentID()
-	running, pending := m.converge(ctx, svc, td, id, target, events)
+	m.converge(ctx, svc, td, id, max(0, target-len(m.keptProtectedTasks(svc))), events)
+	running, pending := m.liveServiceTaskCounts(cluster, serviceGroup(svc.Name))
 	svc.RunningCount = running
 	svc.PendingCount = pending
 
@@ -701,6 +869,14 @@ func (m *Mock) redeployService(
 	dep := m.newDeployment(id, deploymentPrimary, svc, running, pending)
 	svc.Deployments = []driver.Deployment{dep}
 	svc.Events = append(svc.Events, m.serviceEvent(fmt.Sprintf("(service %s) has started %d tasks.", svc.Name, running)))
+}
+
+// serviceConfigChanged reports whether an update supplies a setting that is
+// part of a service revision (network, load balancers, registries, capacity
+// providers, platform version, Service Connect), which starts a deployment.
+func serviceConfigChanged(in *driver.UpdateServiceInput) bool {
+	return in.NetworkConfiguration != nil || in.LoadBalancers != nil || in.ServiceRegistries != nil ||
+		in.CapacityProviderStrategy != nil || in.PlatformVersion != "" || in.ServiceConnect != nil
 }
 
 // applyServiceScalars stores the supplied scalar/pointer update fields, leaving
@@ -751,6 +927,10 @@ func applyServiceRefs(svc *driver.Service, in *driver.UpdateServiceInput) {
 	if in.ServiceRegistries != nil {
 		svc.ServiceRegistries = append([]driver.ServiceRegistry(nil), in.ServiceRegistries...)
 	}
+
+	if in.ServiceConnect != nil {
+		svc.ServiceConnect = cloneServiceConnect(in.ServiceConnect)
+	}
 }
 
 // ListServices returns services in a cluster in deterministic order.
@@ -790,6 +970,7 @@ func (m *Mock) DescribeServices(ctx context.Context, cluster string, ids []strin
 		if s, ok := m.resolveService(want, id); ok {
 			out := cloneService(s)
 			out.Tags = m.liveTags(s.ARN, s.Tags)
+			out.TaskSets = m.describedTaskSets(want, s)
 			found = append(found, out)
 			continue
 		}
@@ -801,6 +982,19 @@ func (m *Mock) DescribeServices(ctx context.Context, cluster string, ids []strin
 	}
 
 	return found, failures, nil
+}
+
+// describedTaskSets returns the task sets DescribeServices reports for svc: the
+// refreshed sets of an ACTIVE EXTERNAL-controller service, none otherwise.
+func (m *Mock) describedTaskSets(cluster string, svc *driver.Service) []driver.TaskSet {
+	if svc.DeploymentController != deployControllerExternal || svc.Status != statusActive {
+		return nil
+	}
+
+	unlock := m.taskSetLock.lock(serviceKey(cluster, svc.Name))
+	defer unlock()
+
+	return m.taskSetViews(svc)
 }
 
 // DeleteService marks a service INACTIVE and stops its tasks (releasing
@@ -825,11 +1019,21 @@ func (m *Mock) DeleteService(ctx context.Context, cluster, service string, force
 
 	var events pendingTaskEvents
 
+	// The task-set lock makes the cascade atomic against a concurrent
+	// CreateTaskSet: either the new set exists before the service is marked
+	// deleted (and is removed here) or it is refused as ServiceNotActive.
+	unlock := m.taskSetLock.lock(serviceKey(want, svc.Name))
+
 	updated := cloneService(svc)
-	m.drainService(ctx, &updated, &events)
+	m.drainService(ctx, &updated, &events, false)
+	m.deleteTaskSetsOf(ctx, &updated, &events)
 	m.markServiceDeleted(&updated)
 	m.services.Set(serviceKey(want, updated.Name), &updated)
+	m.deleteServiceDeployments(&updated)
+	unlock()
+
 	m.publish(ctx, &events)
+	m.publishClusterMetrics(want)
 
 	out := cloneService(&updated)
 

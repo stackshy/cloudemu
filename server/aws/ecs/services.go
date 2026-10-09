@@ -1,6 +1,7 @@
 package ecs
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire"
@@ -45,6 +46,7 @@ func (h *Handler) createService(w http.ResponseWriter, r *http.Request) {
 		CapacityProviderStrategy      []wireCapacityProviderStrategyItem `json:"capacityProviderStrategy"`
 		LoadBalancers                 []wireLoadBalancer                 `json:"loadBalancers"`
 		ServiceRegistries             []wireServiceRegistry              `json:"serviceRegistries"`
+		ServiceConnectConfiguration   json.RawMessage                    `json:"serviceConnectConfiguration"`
 		Tags                          []wireTag                          `json:"tags"`
 		AvailabilityZoneRebalancing   string                             `json:"availabilityZoneRebalancing"`
 	}
@@ -71,6 +73,7 @@ func (h *Handler) createService(w http.ResponseWriter, r *http.Request) {
 		CapacityProviderStrategy:      toCapacityProviderStrategy(req.CapacityProviderStrategy),
 		LoadBalancers:                 toLoadBalancers(req.LoadBalancers),
 		ServiceRegistries:             toServiceRegistries(req.ServiceRegistries),
+		ServiceConnect:                toServiceConnect(req.ServiceConnectConfiguration),
 		Tags:                          toTags(req.Tags),
 		AvailabilityZoneRebalancing:   req.AvailabilityZoneRebalancing,
 	})
@@ -99,6 +102,7 @@ func (h *Handler) updateService(w http.ResponseWriter, r *http.Request) {
 		CapacityProviderStrategy      []wireCapacityProviderStrategyItem `json:"capacityProviderStrategy"`
 		LoadBalancers                 []wireLoadBalancer                 `json:"loadBalancers"`
 		ServiceRegistries             []wireServiceRegistry              `json:"serviceRegistries"`
+		ServiceConnectConfiguration   json.RawMessage                    `json:"serviceConnectConfiguration"`
 		AvailabilityZoneRebalancing   string                             `json:"availabilityZoneRebalancing"`
 	}
 
@@ -121,6 +125,7 @@ func (h *Handler) updateService(w http.ResponseWriter, r *http.Request) {
 		CapacityProviderStrategy:      toCapacityProviderStrategy(req.CapacityProviderStrategy),
 		LoadBalancers:                 toLoadBalancers(req.LoadBalancers),
 		ServiceRegistries:             toServiceRegistries(req.ServiceRegistries),
+		ServiceConnect:                toServiceConnect(req.ServiceConnectConfiguration),
 		AvailabilityZoneRebalancing:   req.AvailabilityZoneRebalancing,
 	})
 	if err != nil {

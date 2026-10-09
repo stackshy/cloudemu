@@ -2370,8 +2370,69 @@ real EC2 instance subject to managed-resource visibility.
 | Container instances | RegisterContainerInstance, DeregisterContainerInstance, UpdateContainerInstancesState (DRAINING), ListContainerInstances, DescribeContainerInstances |
 | Tagging | TagResource, UntagResource, ListTagsForResource |
 | Account & attributes | PutAccountSetting(+Default), ListAccountSettings, DeleteAccountSetting, PutAttributes, DeleteAttributes, ListAttributes |
+| Capacity providers | CreateCapacityProvider, DescribeCapacityProviders, UpdateCapacityProvider, DeleteCapacityProvider |
 
-**Total: 37 operations.**
+**Behaviour added for real-cloud parity.** `ExecuteCommand` needs a task started with
+`enableExecuteCommand` that is RUNNING (the task reports the `ExecuteCommandAgent`);
+`CreateCluster` on an ACTIVE name returns that cluster; `assignPublicIp` defaults to
+`DISABLED`; an invalid `launchType` is an `InvalidParameterException`; a repeated
+`StopTask` keeps the first stop reason; awsvpc containers report `networkInterfaces`.
+Tasks publish one EventBridge event per lifecycle state (`PROVISIONING` for awsvpc tasks,
+`PENDING`, `ACTIVATING`, `RUNNING`, `DEACTIVATING`, `STOPPING`, `DEPROVISIONING` for
+awsvpc tasks, `STOPPED`) with `detail.version` +1 each, plus ECS Deployment State Change,
+Container Instance State Change and more Service Action events. With a CloudWatch backend
+wired, ECS publishes `ECS/ContainerInsights` counts (clusters with `containerInsights`
+enabled or enhanced) and `AWS/ECS` `CPUReservation`, `MemoryReservation` and `LiveTaskCount`;
+no usage-driven series. What is deliberately not emulated is listed in
+[coverage/nongoals/ecs.md](coverage/nongoals/ecs.md).
+
+### Task Sets (optional capability: `TaskSets`)
+
+Task sets of services that use the `EXTERNAL` deployment controller. Each set runs its own
+tasks (`computedDesiredCount` = the service desired count x scale, rounded up), starts
+`ACTIVE`, and `UpdateServicePrimaryTaskSet` makes one `PRIMARY` (the previous primary becomes
+`ACTIVE`). A set that is not scaled to zero needs `force` to be deleted. `DescribeServices`
+reports a service's task sets.
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateTaskSet` | `(ctx, CreateTaskSetInput) (*TaskSet, error)` |
+| `UpdateTaskSet` | `(ctx, UpdateTaskSetInput) (*TaskSet, error)` |
+| `DeleteTaskSet` | `(ctx, DeleteTaskSetInput) (*TaskSet, error)` |
+| `DescribeTaskSets` | `(ctx, cluster, service, ids) ([]TaskSet, []Failure, error)` |
+| `UpdateServicePrimaryTaskSet` | `(ctx, cluster, service, primary) (*TaskSet, error)` |
+
+### Task Protection (optional capability: `TaskProtection`)
+
+Scale-in protection (1-2880 minutes, default 120) for service tasks; a scale-in or redeployment
+leaves protected tasks running.
+
+| Operation | Signature |
+|-----------|-----------|
+| `GetTaskProtection` | `(ctx, cluster, tasks) ([]ProtectedTask, []Failure, error)` |
+| `UpdateTaskProtection` | `(ctx, UpdateTaskProtectionInput) ([]ProtectedTask, []Failure, error)` |
+
+### Service Deployments (optional capability: `ServiceDeployments`)
+
+The deployment history of ECS-controller services: every create, force-new-deployment or
+deploying update records a service deployment and a service revision (the newest 100 are
+kept). `StopServiceDeployment` works while a deployment is still in progress (the
+`--async-settle` window); a completed deployment is a `ConflictException`.
+
+| Operation | Signature |
+|-----------|-----------|
+| `ListServiceDeployments` | `(ctx, ListServiceDeploymentsInput) ([]ServiceDeployment, nextToken, error)` |
+| `DescribeServiceDeployments` | `(ctx, arns) ([]ServiceDeployment, []Failure, error)` |
+| `DescribeServiceRevisions` | `(ctx, arns) ([]ServiceRevision, []Failure, error)` |
+| `StopServiceDeployment` | `(ctx, arn, stopType) (arn, error)` |
+
+### Service Connect Namespaces (optional capability: `ServiceNamespaces`)
+
+| Operation | Signature |
+|-----------|-----------|
+| `ListServicesByNamespace` | `(ctx, namespace, maxResults, nextToken) ([]arn, nextToken, error)` |
+
+**Total: 41 operations (+12 optional)**
 
 ---
 
@@ -3250,7 +3311,7 @@ delete) is still enforced.
 | Machine Learning: Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning: GCP Vertex AI (Go API/driver) | 128 |
 | AI Search: Azure AI Search (control + data plane) | 53 |
-| Container Orchestration: AWS ECS | 37 |
+| Container Orchestration: AWS ECS | 41 (+12 optional) |
 | DNS Resolver: AWS Route 53 Resolver | 72 |
 | Application Networking: AWS VPC Lattice | 73 |
 | Key Management: AWS KMS | 45 |
@@ -3266,7 +3327,7 @@ delete) is still enforced.
 | Data Integration: AWS Glue | 299 |
 | Threat Detection: Amazon GuardDuty | 87 |
 | Streaming: Amazon MSK | 59 |
-| **Grand Total** | **2749** (+138 optional) |
+| **Grand Total** | **2753** (+150 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

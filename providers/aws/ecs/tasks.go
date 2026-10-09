@@ -73,6 +73,7 @@ func (m *Mock) RunTask(ctx context.Context, in driver.RunTaskInput) ([]driver.Ta
 		cluster: cluster, clusterARN: clusterARN, td: td, launchType: launchType,
 		group: in.Group, startedBy: in.StartedBy, platformVersion: in.PlatformVersion,
 		netCfg: in.NetworkConfiguration, tags: in.Tags, runToCompletion: true,
+		enableExec: in.EnableExecuteCommand,
 	}
 
 	// Capacity is the validated constant maximum, not the user value, so the
@@ -87,7 +88,7 @@ func (m *Mock) RunTask(ctx context.Context, in driver.RunTaskInput) ([]driver.Ta
 			continue
 		}
 
-		m.emitTaskStateChange(ctx, task, taskEventVersionLaunch)
+		m.emitTaskLaunch(ctx, task)
 
 		// The response reflects what a caller polling DescribeTasks would see
 		// right now: the launch-settle transient (PROVISIONING/PENDING) rather
@@ -95,6 +96,8 @@ func (m *Mock) RunTask(ctx context.Context, in driver.RunTaskInput) ([]driver.Ta
 		m.overlayStatus(task)
 		tasks = append(tasks, *task)
 	}
+
+	m.publishClusterMetrics(cluster)
 
 	return tasks, failures, nil
 }
@@ -105,6 +108,14 @@ func (m *Mock) RunTask(ctx context.Context, in driver.RunTaskInput) ([]driver.Ta
 // the request) plus task-level cpu and memory. It is shared by RunTask and the
 // service scheduler.
 func validateLaunch(td *driver.TaskDefinition, launchType string, netCfg *driver.NetworkConfiguration) error {
+	if err := validateLaunchType(launchType); err != nil {
+		return err
+	}
+
+	if err := validateAssignPublicIP(netCfg); err != nil {
+		return err
+	}
+
 	if len(td.RequiresCompatibilities) > 0 && !containsLaunchType(td.RequiresCompatibilities, launchType) {
 		return apiErrf(errors.InvalidArgument, excInvalidParameter,
 			"task definition does not support the %s launch type", launchType)
@@ -114,6 +125,12 @@ func validateLaunch(td *driver.TaskDefinition, launchType string, netCfg *driver
 		return nil
 	}
 
+	return validateFargateLaunch(td, netCfg)
+}
+
+// validateFargateLaunch enforces the Fargate-only rules: awsvpc networking on the
+// task definition and in the request, and a supported task-level cpu/memory pair.
+func validateFargateLaunch(td *driver.TaskDefinition, netCfg *driver.NetworkConfiguration) error {
 	if td.NetworkMode != networkModeAwsvpc {
 		return apiErrf(errors.InvalidArgument, excInvalidParameter,
 			"Fargate requires the awsvpc network mode")
@@ -135,6 +152,56 @@ func validateLaunch(td *driver.TaskDefinition, launchType string, netCfg *driver
 	}
 
 	return nil
+}
+
+// launchManagedInstances is the fourth ECS launch type the SDK models.
+const launchManagedInstances = "MANAGED_INSTANCES"
+
+// validateLaunchType rejects a launch type outside the ECS LaunchType enum
+// (EC2, FARGATE, EXTERNAL, MANAGED_INSTANCES, case-sensitive) up front, as a
+// request-level InvalidParameterException rather than a placement failure.
+func validateLaunchType(launchType string) error {
+	switch launchType {
+	case launchEC2, launchFargate, launchExternal, launchManagedInstances:
+		return nil
+	default:
+		return apiErrf(errors.InvalidArgument, excInvalidParameter,
+			"Unsupported launch type %q; it must be one of EC2, FARGATE, EXTERNAL, MANAGED_INSTANCES.", launchType)
+	}
+}
+
+// Public-IP assignment values of an awsvpc configuration.
+const (
+	assignPublicIPEnabled  = "ENABLED"
+	assignPublicIPDisabled = "DISABLED"
+)
+
+// validateAssignPublicIP rejects an assignPublicIp value other than ENABLED or
+// DISABLED. An empty value is allowed (it defaults to DISABLED).
+func validateAssignPublicIP(nc *driver.NetworkConfiguration) error {
+	if nc == nil || nc.AwsVpcConfiguration == nil {
+		return nil
+	}
+
+	switch nc.AwsVpcConfiguration.AssignPublicIP {
+	case "", assignPublicIPEnabled, assignPublicIPDisabled:
+		return nil
+	default:
+		return apiErrf(errors.InvalidArgument, excInvalidParameter,
+			"Invalid assignPublicIp %q; it must be ENABLED or DISABLED.", nc.AwsVpcConfiguration.AssignPublicIP)
+	}
+}
+
+// withDefaultAssignPublicIP returns a copy of nc with an empty assignPublicIp
+// defaulted to DISABLED, the value real ECS reports. The caller's value is never
+// mutated.
+func withDefaultAssignPublicIP(nc *driver.NetworkConfiguration) *driver.NetworkConfiguration {
+	out := cloneNetworkConfig(nc)
+	if out != nil && out.AwsVpcConfiguration != nil && out.AwsVpcConfiguration.AssignPublicIP == "" {
+		out.AwsVpcConfiguration.AssignPublicIP = assignPublicIPDisabled
+	}
+
+	return out
 }
 
 // fargateMemRange is the supported task memory (MiB) for one Fargate task-cpu
@@ -203,6 +270,8 @@ type taskSpec struct {
 	platformVersion string
 	netCfg          *driver.NetworkConfiguration
 	tags            []driver.Tag
+	// enableExec is the task's ECS Exec setting, fixed when the task launches.
+	enableExec bool
 	// runToCompletion selects the engine run mode: standalone RunTask runs its
 	// containers to completion (blocking for exit codes), while the service
 	// scheduler launches them detached.
@@ -214,7 +283,8 @@ type taskSpec struct {
 // EXTERNAL runs unplaced when no instance fits. For EC2 with no fitting
 // instance the behavior depends on pendingOnShortfall: RunTask (false) returns a
 // placement failure and stores nothing, while the service scheduler (true)
-// stores the task PENDING so the service reports RunningCount<DesiredCount.
+// stores the task PENDING (returning the placement failure alongside it) so the
+// service reports RunningCount<DesiredCount.
 //
 // Every branch that actually stores the task also calls recordTags(task.ARN,
 // spec.tags), mirroring CreateCluster/CreateService/RegisterTaskDefinition:
@@ -226,7 +296,7 @@ type taskSpec struct {
 // launchTask publishes no task state-change event: a launch can run under the
 // service's reconcileLock (see reconcileServiceAfterStop), and an event target
 // that re-enters the same service's reconciliation would deadlock on it. Each
-// caller publishes the launch with emitTaskStateChange once it holds no lock.
+// caller publishes the launch with emitTaskLaunch once it holds no lock.
 func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfall bool) (*driver.Task, *driver.Failure) {
 	task := &driver.Task{
 		ARN:               m.arnIn(arnRegion(spec.clusterARN, m.opts.Region), "task/"+spec.cluster+"/"+m.hexID()),
@@ -239,6 +309,8 @@ func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfal
 		CreatedAt:         m.now(),
 		Containers:        m.containersFor(spec.td),
 		Tags:              copyTags(spec.tags),
+
+		EnableExecuteCommand: spec.enableExec,
 	}
 
 	if spec.launchType == launchFargate {
@@ -266,7 +338,7 @@ func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfal
 		m.recordTags(task.ARN, spec.tags)
 		clone := cloneTask(task)
 
-		return &clone, nil
+		return &clone, failure
 	}
 
 	task.LastStatus = statusRunning
@@ -293,6 +365,7 @@ const defaultAZSuffix = "a"
 // once the task actually ran, startedAt/connectivity (plus the stop
 // timestamps for an engine-backed task that already ran to completion).
 func (m *Mock) stampLaunch(task *driver.Task, td *driver.TaskDefinition) {
+	task.EventVersion = len(launchSteps(task))
 	task.CPU, task.Memory = td.CPU, td.Memory
 	task.AvailabilityZone = arnRegion(task.ARN, m.opts.Region) + defaultAZSuffix
 	taskID := task.ARN[strings.LastIndex(task.ARN, "/")+1:]
@@ -318,6 +391,26 @@ func (m *Mock) stampLaunch(task *driver.Task, td *driver.TaskDefinition) {
 
 	if task.LastStatus == statusStopped {
 		task.StoppingAt, task.StoppedAt = now, now
+	}
+
+	startExecuteCommandAgents(task, now)
+}
+
+// executeCommandAgent is the name of the managed agent ECS Exec runs in a
+// container.
+const executeCommandAgent = "ExecuteCommandAgent"
+
+// startExecuteCommandAgents records the ExecuteCommandAgent as RUNNING in every
+// running container of a task launched with ECS Exec enabled.
+func startExecuteCommandAgents(task *driver.Task, now string) {
+	if !task.EnableExecuteCommand || task.LastStatus != statusRunning {
+		return
+	}
+
+	for i := range task.Containers {
+		task.Containers[i].ManagedAgents = []driver.ManagedAgent{{
+			Name: executeCommandAgent, LastStatus: statusRunning, LastStartedAt: now,
+		}}
 	}
 }
 
@@ -409,7 +502,40 @@ func (m *Mock) placeFargate(task *driver.Task, netCfg *driver.NetworkConfigurati
 	task.LastStatus = statusRunning
 	task.PlatformVersion = fargatePlatformVersion(platformVersion)
 	task.Attachments = []driver.Attachment{m.syntheticENI(netCfg)}
+	linkContainerInterfaces(task)
 	m.tasks.Set(task.ARN, task)
+}
+
+// linkContainerInterfaces gives every container of an awsvpc task the network
+// interface of the task's ENI attachment: the attachment id and private address
+// real ECS reports in each container's networkInterfaces.
+func linkContainerInterfaces(task *driver.Task) {
+	if len(task.Attachments) == 0 {
+		return
+	}
+
+	eni := task.Attachments[0]
+	privateIP := ""
+
+	for _, d := range eni.Details {
+		if d.Name == "privateIPv4Address" {
+			privateIP = d.Value
+		}
+	}
+
+	for i := range task.Containers {
+		task.Containers[i].NetworkInterfaces = []driver.ContainerNetworkInterface{{
+			AttachmentID: eni.ID, PrivateIPv4Address: privateIP,
+		}}
+	}
+}
+
+// attachmentID mints a UUID-shaped attachment id (8-4-4-4-12 hex), the format
+// real ECS gives task attachments.
+func (m *Mock) attachmentID() string {
+	id := m.hexID()
+
+	return id[:8] + "-" + id[8:12] + "-" + id[12:16] + "-" + id[16:20] + "-" + id[20:]
 }
 
 // fargatePlatformVersion resolves the effective platform version: an explicit
@@ -433,6 +559,7 @@ func (m *Mock) syntheticENI(nc *driver.NetworkConfiguration) driver.Attachment {
 	id := m.hexID()
 
 	return driver.Attachment{
+		ID:     m.attachmentID(),
 		Type:   "ElasticNetworkInterface",
 		Status: "ATTACHED",
 		Details: []driver.KeyValue{
@@ -554,13 +681,15 @@ func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*dri
 	}
 
 	if stoppedNow {
-		m.emitTaskStateChange(ctx, updated, taskEventVersionStop)
+		m.emitTaskStop(ctx, updated)
 		// Reconciliation may itself place a replacement task (taking placeMu
 		// via reserve), so it must run after stopTaskLocked has released
 		// placeMu. Calling it while still holding placeMu would deadlock on a
 		// non-reentrant mutex.
 		m.reconcileServiceAfterStop(ctx, updated)
 	}
+
+	m.publishClusterMetrics(clusterNameFromARN(updated.ClusterARN))
 
 	out := cloneTask(updated)
 	m.overlayStatus(&out)
@@ -626,8 +755,14 @@ func (m *Mock) stopTaskLocked(ctx context.Context, cluster, task, reason string)
 	// DEPROVISIONING/STOPPING again).
 	alreadyStopped := t.LastStatus == statusStopped
 
+	// A second StopTask returns the stopped task as-is: its reason, stop code and
+	// timestamps are those of the stop that actually stopped it.
+	if alreadyStopped {
+		return t, true, nil
+	}
+
 	// Release reserved capacity exactly once, before flipping the task to STOPPED.
-	if !alreadyStopped && t.ContainerInstanceARN != "" {
+	if t.ContainerInstanceARN != "" {
 		if td, tdOK := m.resolveTaskDef(t.TaskDefinitionARN); tdOK {
 			cpu, memory := requiredResources(td)
 			m.release(t.ContainerInstanceARN, cpu, memory)
@@ -641,10 +776,15 @@ func (m *Mock) stopTaskLocked(ctx context.Context, cluster, task, reason string)
 	updated.DesiredStatus = statusStopped
 	updated.StoppedReason = reason
 	updated.StopCode = "UserInitiated"
+	updated.EventVersion = t.EventVersion + len(stopSteps(&updated))
 	m.stampStop(&updated)
 
 	for i := range updated.Containers {
 		updated.Containers[i].LastStatus = statusStopped
+
+		for j := range updated.Containers[i].ManagedAgents {
+			updated.Containers[i].ManagedAgents[j].LastStatus = statusStopped
+		}
 	}
 
 	m.tasks.Set(updated.ARN, &updated)

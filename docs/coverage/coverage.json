@@ -6587,130 +6587,192 @@
   },
   {
     "service": "ecs",
-    "interface": "ECS",
+    "interface": "TaskSets",
     "operations": [
       {
-        "name": "CreateCapacityProvider"
+        "name": "CreateTaskSet"
       },
       {
-        "name": "CreateCluster"
+        "name": "DeleteTaskSet"
       },
       {
-        "name": "CreateService"
+        "name": "DescribeTaskSets"
       },
       {
-        "name": "DeleteAccountSetting"
+        "name": "UpdateServicePrimaryTaskSet"
       },
       {
-        "name": "DeleteAttributes"
+        "name": "UpdateTaskSet"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "ECS",
+        "doc": "ECS is the interface an ECS provider implementation must satisfy.",
+        "operations": [
+          {
+            "name": "CreateCapacityProvider"
+          },
+          {
+            "name": "CreateCluster"
+          },
+          {
+            "name": "CreateService"
+          },
+          {
+            "name": "DeleteAccountSetting"
+          },
+          {
+            "name": "DeleteAttributes"
+          },
+          {
+            "name": "DeleteCapacityProvider"
+          },
+          {
+            "name": "DeleteCluster"
+          },
+          {
+            "name": "DeleteService"
+          },
+          {
+            "name": "DeregisterContainerInstance"
+          },
+          {
+            "name": "DeregisterTaskDefinition"
+          },
+          {
+            "name": "DescribeCapacityProviders"
+          },
+          {
+            "name": "DescribeClusters"
+          },
+          {
+            "name": "DescribeContainerInstances"
+          },
+          {
+            "name": "DescribeServices"
+          },
+          {
+            "name": "DescribeTaskDefinition"
+          },
+          {
+            "name": "DescribeTasks"
+          },
+          {
+            "name": "ExecuteCommand"
+          },
+          {
+            "name": "ListAccountSettings"
+          },
+          {
+            "name": "ListAttributes"
+          },
+          {
+            "name": "ListClusters"
+          },
+          {
+            "name": "ListContainerInstances"
+          },
+          {
+            "name": "ListServices"
+          },
+          {
+            "name": "ListTagsForResource"
+          },
+          {
+            "name": "ListTaskDefinitionFamilies"
+          },
+          {
+            "name": "ListTaskDefinitions"
+          },
+          {
+            "name": "ListTasks"
+          },
+          {
+            "name": "PutAccountSetting"
+          },
+          {
+            "name": "PutAccountSettingDefault"
+          },
+          {
+            "name": "PutAttributes"
+          },
+          {
+            "name": "PutClusterCapacityProviders"
+          },
+          {
+            "name": "RegisterContainerInstance"
+          },
+          {
+            "name": "RegisterTaskDefinition"
+          },
+          {
+            "name": "RunTask"
+          },
+          {
+            "name": "StopTask"
+          },
+          {
+            "name": "TagResource"
+          },
+          {
+            "name": "UntagResource"
+          },
+          {
+            "name": "UpdateCapacityProvider"
+          },
+          {
+            "name": "UpdateCluster"
+          },
+          {
+            "name": "UpdateClusterSettings"
+          },
+          {
+            "name": "UpdateContainerInstancesState"
+          },
+          {
+            "name": "UpdateService"
+          }
+        ]
       },
       {
-        "name": "DeleteCapacityProvider"
+        "name": "ServiceDeployments",
+        "doc": "ServiceDeployments exposes the deployment history of ECS-controller services.",
+        "operations": [
+          {
+            "name": "DescribeServiceDeployments"
+          },
+          {
+            "name": "DescribeServiceRevisions"
+          },
+          {
+            "name": "ListServiceDeployments"
+          },
+          {
+            "name": "StopServiceDeployment"
+          }
+        ]
       },
       {
-        "name": "DeleteCluster"
+        "name": "ServiceNamespaces",
+        "doc": "ServiceNamespaces lists the services that joined a Service Connect namespace.",
+        "operations": [
+          {
+            "name": "ListServicesByNamespace"
+          }
+        ]
       },
       {
-        "name": "DeleteService"
-      },
-      {
-        "name": "DeregisterContainerInstance"
-      },
-      {
-        "name": "DeregisterTaskDefinition"
-      },
-      {
-        "name": "DescribeCapacityProviders"
-      },
-      {
-        "name": "DescribeClusters"
-      },
-      {
-        "name": "DescribeContainerInstances"
-      },
-      {
-        "name": "DescribeServices"
-      },
-      {
-        "name": "DescribeTaskDefinition"
-      },
-      {
-        "name": "DescribeTasks"
-      },
-      {
-        "name": "ExecuteCommand"
-      },
-      {
-        "name": "ListAccountSettings"
-      },
-      {
-        "name": "ListAttributes"
-      },
-      {
-        "name": "ListClusters"
-      },
-      {
-        "name": "ListContainerInstances"
-      },
-      {
-        "name": "ListServices"
-      },
-      {
-        "name": "ListTagsForResource"
-      },
-      {
-        "name": "ListTaskDefinitionFamilies"
-      },
-      {
-        "name": "ListTaskDefinitions"
-      },
-      {
-        "name": "ListTasks"
-      },
-      {
-        "name": "PutAccountSetting"
-      },
-      {
-        "name": "PutAccountSettingDefault"
-      },
-      {
-        "name": "PutAttributes"
-      },
-      {
-        "name": "PutClusterCapacityProviders"
-      },
-      {
-        "name": "RegisterContainerInstance"
-      },
-      {
-        "name": "RegisterTaskDefinition"
-      },
-      {
-        "name": "RunTask"
-      },
-      {
-        "name": "StopTask"
-      },
-      {
-        "name": "TagResource"
-      },
-      {
-        "name": "UntagResource"
-      },
-      {
-        "name": "UpdateCapacityProvider"
-      },
-      {
-        "name": "UpdateCluster"
-      },
-      {
-        "name": "UpdateClusterSettings"
-      },
-      {
-        "name": "UpdateContainerInstancesState"
-      },
-      {
-        "name": "UpdateService"
+        "name": "TaskProtection",
+        "doc": "TaskProtection reads and changes the scale-in protection of service tasks.",
+        "operations": [
+          {
+            "name": "GetTaskProtection"
+          },
+          {
+            "name": "UpdateTaskProtection"
+          }
+        ]
       }
     ],
     "providers": {

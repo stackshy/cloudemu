@@ -232,6 +232,7 @@ const (
 	arnTypeTask             = "task"
 	arnTypeContainerInst    = "container-instance"
 	arnTypeCapacityProvider = "capacity-provider"
+	arnTypeTaskSet          = "task-set"
 )
 
 // storedARN returns the stored ARN of the resource an ECS ARN names.
@@ -265,6 +266,11 @@ func (m *Mock) storedARN(resourceARN, resourceType, rest string) (string, bool) 
 			ci, ok := m.resolveInstance(resourceARN)
 
 			return arnOf(ci, ok, func(ci *driver.ContainerInstance) string { return ci.ARN })
+		},
+		arnTypeTaskSet: func() (string, bool) {
+			ts, ok := m.taskSets.Get(rest)
+
+			return arnOf(ts, ok, func(ts *driver.TaskSet) string { return ts.ARN })
 		},
 		arnTypeCapacityProvider: func() (string, bool) {
 			if isBuiltinCapacityProvider(rest) {

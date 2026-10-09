@@ -288,12 +288,35 @@ type Container struct {
 	Reason          string
 	RuntimeID       string
 	NetworkBindings []NetworkBinding
+	// NetworkInterfaces lists the task ENI addresses of an awsvpc container. Its
+	// AttachmentID equals the ID of the task's ElasticNetworkInterface attachment.
+	NetworkInterfaces []ContainerNetworkInterface
+	// ManagedAgents lists the agents ECS manages in the container. A task started
+	// with enableExecuteCommand reports the ExecuteCommandAgent here.
+	ManagedAgents []ManagedAgent
+}
+
+// ContainerNetworkInterface is one awsvpc network interface of a container.
+type ContainerNetworkInterface struct {
+	AttachmentID       string
+	PrivateIPv4Address string
+	IPv6Address        string
+}
+
+// ManagedAgent is an agent ECS runs inside a container (for example the
+// ExecuteCommandAgent). LastStartedAt is an RFC3339 instant.
+type ManagedAgent struct {
+	Name          string
+	LastStatus    string
+	LastStartedAt string
+	Reason        string
 }
 
 // Attachment is a resource attached to a task, such as the elastic network
 // interface an awsvpc/Fargate task is placed behind. Details carries the
 // attachment-specific key/value pairs (e.g. networkInterfaceId, privateIPv4Address).
 type Attachment struct {
+	ID      string
 	Type    string
 	Status  string
 	Details []KeyValue
@@ -397,6 +420,17 @@ type Task struct {
 	StoppedAt     string
 	StoppedReason string
 	StopCode      string
+	// EnableExecuteCommand records whether the task was started with ECS Exec
+	// enabled. It is fixed at launch and cannot be changed on a running task.
+	EnableExecuteCommand bool
+	// ProtectionEnabled and ProtectionExpiresAt (RFC3339) are the task's
+	// scale-in protection, set by UpdateTaskProtection. Protection counts as
+	// active only until ProtectionExpiresAt.
+	ProtectionEnabled   bool
+	ProtectionExpiresAt string
+	// EventVersion counts the task state changes published so far for the task,
+	// the detail.version of its last ECS Task State Change event.
+	EventVersion int
 	// CPU and Memory are the task-level size (from the task definition, empty
 	// when it sets none).
 	CPU    string
@@ -426,6 +460,9 @@ type Deployment struct {
 	RolloutStateReason string
 	CreatedAt          string
 	UpdatedAt          string
+	// ServiceConnect echoes the service's Service Connect configuration at the
+	// time of the deployment.
+	ServiceConnect *ServiceConnectConfiguration
 }
 
 // ServiceEvent is one entry of a service's event log.
@@ -500,6 +537,11 @@ type Service struct {
 	Deployments                   []Deployment
 	Events                        []ServiceEvent
 	Tags                          []Tag
+	// TaskSets is filled by DescribeServices for a service that uses the
+	// EXTERNAL deployment controller; it is not stored on the service.
+	TaskSets []TaskSet
+	// ServiceConnect is the service's Service Connect configuration, if any.
+	ServiceConnect *ServiceConnectConfiguration
 	// AvailabilityZoneRebalancing is "ENABLED" or "DISABLED". Real ECS always
 	// reports this field (defaulting new services to "DISABLED" when the
 	// caller doesn't specify it), so it is never left empty on a stored
@@ -523,7 +565,10 @@ type ContainerInstance struct {
 	RegisteredMemory  int
 	RemainingCPU      int
 	RemainingMemory   int
-	Tags              []Tag
+	// Version counts the changes to the instance, the detail.version of its
+	// last ECS Container Instance State Change event.
+	Version int
+	Tags    []Tag
 }
 
 // Failure describes a resource that could not be resolved in a batch
@@ -576,6 +621,7 @@ type RunTaskInput struct {
 	StartedBy                string
 	NetworkConfiguration     *NetworkConfiguration
 	CapacityProviderStrategy []CapacityProviderStrategyItem
+	EnableExecuteCommand     bool
 	Tags                     []Tag
 }
 
@@ -599,6 +645,7 @@ type CreateServiceInput struct {
 	CapacityProviderStrategy      []CapacityProviderStrategyItem
 	LoadBalancers                 []LoadBalancer
 	ServiceRegistries             []ServiceRegistry
+	ServiceConnect                *ServiceConnectConfiguration
 	Tags                          []Tag
 	// AvailabilityZoneRebalancing is "ENABLED" or "DISABLED"; an empty value
 	// defaults to "DISABLED" (matching real ECS).
@@ -623,6 +670,7 @@ type UpdateServiceInput struct {
 	CapacityProviderStrategy      []CapacityProviderStrategyItem
 	LoadBalancers                 []LoadBalancer
 	ServiceRegistries             []ServiceRegistry
+	ServiceConnect                *ServiceConnectConfiguration
 	// AvailabilityZoneRebalancing is "ENABLED" or "DISABLED"; an empty value
 	// leaves the service's current setting unchanged.
 	AvailabilityZoneRebalancing string

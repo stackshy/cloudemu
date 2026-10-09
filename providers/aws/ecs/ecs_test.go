@@ -30,9 +30,10 @@ func TestClusterLifecycle(t *testing.T) {
 	assert.Equal(t, statusActive, c.Status)
 	assert.Contains(t, c.ARN, "cluster/prod")
 
-	// Duplicate name is rejected.
-	_, err = m.CreateCluster(ctx, driver.CreateClusterInput{Name: "prod"})
-	assert.True(t, errors.IsAlreadyExists(err))
+	// Re-creating an ACTIVE cluster is idempotent.
+	again, err := m.CreateCluster(ctx, driver.CreateClusterInput{Name: "prod"})
+	require.NoError(t, err)
+	assert.Equal(t, c.ARN, again.ARN)
 
 	list, err := m.ListClusters(ctx)
 	require.NoError(t, err)

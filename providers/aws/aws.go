@@ -417,6 +417,7 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	p.CloudWatchLogs.SetMonitoring(p.CloudWatch)
 	p.SNS.SetMonitoring(p.CloudWatch)
 	p.ECR.SetMonitoring(p.CloudWatch)
+	p.ECS.SetMonitoring(p.CloudWatch)
 	p.EventBridge.SetMonitoring(p.CloudWatch)
 	p.RDS.SetMonitoring(p.CloudWatch)
 	p.Kinesis.SetMonitoring(p.CloudWatch)
