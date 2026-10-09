@@ -133,7 +133,7 @@ func (*Mock) exportModelsAndExtensions(doc map[string]any, ad *apiData, exportTy
 		addAPIExtensions(doc, ad)
 	}
 
-	declareAPIKeyScheme(doc, exportType)
+	declareBuiltinSchemes(doc, exportType)
 }
 
 func addAuthorizerSchemes(doc map[string]any, ad *apiData, exportType string) {
@@ -184,13 +184,33 @@ func authorizerScheme(az *driver.Authorizer) map[string]any {
 		cfg["authorizerResultTtlInSeconds"] = *az.AuthorizerResultTTLInSeconds
 	}
 
-	scheme := map[string]any{"type": "apiKey", "name": "Authorization", "in": "header", extAuthorizer: cfg}
+	scheme := map[string]any{"type": "apiKey", "name": authorizerHeaderName(az), "in": "header", extAuthorizer: cfg}
 
-	if src, ok := strings.CutPrefix(az.IdentitySource, "method.request.header."); ok {
-		scheme["name"] = src
+	if az.AuthType != "" {
+		scheme[extAuthType] = az.AuthType
 	}
 
 	return scheme
+}
+
+// authorizerHeaderName is the header the scheme names: the identity source's header
+// when it is a single header, else "Unused" for a REQUEST authorizer (as the AWS
+// documentation does, so import does not invent an identity source) and
+// "Authorization" for the others.
+func authorizerHeaderName(az *driver.Authorizer) string {
+	sources := splitList(az.IdentitySource)
+
+	if len(sources) == 1 {
+		if src, ok := strings.CutPrefix(sources[0], "method.request.header."); ok {
+			return src
+		}
+	}
+
+	if az.Type == driver.AuthorizerRequest {
+		return unusedHeaderName
+	}
+
+	return "Authorization"
 }
 
 func addAPIExtensions(doc map[string]any, ad *apiData) {
@@ -306,7 +326,7 @@ func exportOperation(mth *driver.Method, ad *apiData, exportType string, ext map
 
 // exportSecurity renders a method's security requirements: the API key, and (when
 // authorizers are exported) the method's CUSTOM or COGNITO_USER_POOLS authorizer
-// by its scheme name, with the Cognito scopes.
+// by its scheme name, with the Cognito scopes, or the sigv4 scheme for AWS_IAM.
 func exportSecurity(mth *driver.Method, ad *apiData, ext map[string]bool) []any {
 	var sec []any
 
@@ -316,6 +336,10 @@ func exportSecurity(mth *driver.Method, ad *apiData, ext map[string]bool) []any 
 
 	if !ext["authorizers"] && !ext["apigateway"] {
 		return sec
+	}
+
+	if mth.AuthorizationType == authTypeIAM {
+		return append(sec, map[string]any{sigv4Scheme: []string{}})
 	}
 
 	if mth.AuthorizationType != authTypeCustom && mth.AuthorizationType != authTypeCognito {
@@ -330,51 +354,63 @@ func exportSecurity(mth *driver.Method, ad *apiData, ext map[string]bool) []any 
 	return sec
 }
 
-// declareAPIKeyScheme declares the api_key security scheme when any exported
-// method requires a key, so the document is self-contained.
-func declareAPIKeyScheme(doc map[string]any, exportType string) {
-	paths, _ := doc["paths"].(map[string]any)
+// declareBuiltinSchemes declares the api_key and sigv4 security schemes when any
+// exported method references them, so the document is self-contained.
+func declareBuiltinSchemes(doc map[string]any, exportType string) {
+	if schemeUsed(doc, apiKeyScheme) {
+		declareScheme(doc, exportType, apiKeyScheme, map[string]any{"type": "apiKey", "name": "x-api-key", "in": locHeader})
+	}
 
-	used := false
+	if schemeUsed(doc, sigv4Scheme) {
+		declareScheme(doc, exportType, sigv4Scheme, map[string]any{
+			"type": "apiKey", "name": "Authorization", "in": locHeader, extAuthType: authTypeSigv4,
+		})
+	}
+}
+
+// schemeUsed reports whether any operation's security requires the named scheme.
+func schemeUsed(doc map[string]any, name string) bool {
+	paths, _ := doc["paths"].(map[string]any)
 
 	for _, item := range paths {
 		for _, op := range item.(map[string]any) {
 			sec, _ := op.(map[string]any)["security"].([]any)
 			for _, req := range sec {
-				if _, ok := req.(map[string]any)[apiKeyScheme]; ok {
-					used = true
+				if _, ok := req.(map[string]any)[name]; ok {
+					return true
 				}
 			}
 		}
 	}
 
-	if !used {
-		return
-	}
+	return false
+}
 
-	scheme := map[string]any{"type": "apiKey", "name": "x-api-key", "in": locHeader}
+// declareScheme adds a security scheme to securityDefinitions (swagger) or
+// components.securitySchemes (oas30). An authorizer already exported under the
+// same name is kept, not overwritten.
+func declareScheme(doc map[string]any, exportType, name string, scheme map[string]any) {
+	var schemes map[string]any
 
 	if exportType == driver.ExportSwagger {
-		defs, _ := doc["securityDefinitions"].(map[string]any)
-		if defs == nil {
-			defs = map[string]any{}
-			doc["securityDefinitions"] = defs
+		schemes, _ = doc["securityDefinitions"].(map[string]any)
+		if schemes == nil {
+			schemes = map[string]any{}
+			doc["securityDefinitions"] = schemes
 		}
+	} else {
+		comps, _ := doc["components"].(map[string]any)
 
-		defs[apiKeyScheme] = scheme
-
-		return
+		schemes, _ = comps["securitySchemes"].(map[string]any)
+		if schemes == nil {
+			schemes = map[string]any{}
+			comps["securitySchemes"] = schemes
+		}
 	}
 
-	comps, _ := doc["components"].(map[string]any)
-	schemes, _ := comps["securitySchemes"].(map[string]any)
-
-	if schemes == nil {
-		schemes = map[string]any{}
-		comps["securitySchemes"] = schemes
+	if _, exists := schemes[name]; !exists {
+		schemes[name] = scheme
 	}
-
-	schemes[apiKeyScheme] = scheme
 }
 
 func exportResponses(mth *driver.Method) map[string]any {

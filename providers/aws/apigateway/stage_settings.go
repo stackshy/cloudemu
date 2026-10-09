@@ -37,10 +37,10 @@ func applyStageSettingsPatch(st *driver.Stage, op driver.PatchOperation) (handle
 		st.AccessLogSettings = nil
 	case strings.HasPrefix(op.Path, pathAccessLog+"/"):
 		applyAccessLogPatch(st, op)
-	case strings.Count(op.Path, "/") >= methodSettingDepth:
-		return true, applyMethodSettingPatch(st, op)
 	case op.Op == opRemove && isMethodSettingPath(op.Path):
 		return true, removeMethodSetting(st, op.Path)
+	case strings.Count(op.Path, "/") >= methodSettingDepth:
+		return true, applyMethodSettingPatch(st, op)
 	default:
 		return false, nil
 	}

@@ -371,3 +371,179 @@ func TestExportRoundTripsSecuredMethods(t *testing.T) {
 		t.Fatalf("the REQUEST authorizer keeps its identitySource: %+v", azs)
 	}
 }
+
+// roundTrip exports the fixture's deployed API and imports the document into a new API.
+func (f *dpFixture) roundTrip(t *testing.T, exportType string) (body, apiID string) {
+	t.Helper()
+
+	exp, err := f.m.GetExport(ctx(), &driver.GetExportInput{
+		RestAPIID: f.api.ID, StageName: "prod", ExportType: exportType, Extensions: []string{"apigateway"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	imp, err := f.m.ImportRestAPI(ctx(), &driver.ImportRestAPIInput{Body: exp.Body})
+	if err != nil {
+		t.Fatalf("re-import: %v\n%s", err, exp.Body)
+	}
+
+	return string(exp.Body), imp.API.ID
+}
+
+func (f *dpFixture) importedGet(t *testing.T, apiID string) *driver.Method {
+	t.Helper()
+
+	resources, err := f.m.GetResources(ctx(), apiID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := range resources {
+		if resources[i].Path == "/items" {
+			return resources[i].Methods["GET"]
+		}
+	}
+
+	t.Fatal("the imported API has no /items")
+
+	return nil
+}
+
+func TestExportRoundTripsAWSIAMMethods(t *testing.T) {
+	for _, exportType := range []string{"swagger", "oas30"} {
+		t.Run(exportType, func(t *testing.T) {
+			f := newDP(t)
+			f.method(t, driver.PutMethodInput{AuthorizationType: "AWS_IAM", APIKeyRequired: true}, nil)
+
+			body, apiID := f.roundTrip(t, exportType)
+
+			got := f.importedGet(t, apiID)
+			if got.AuthorizationType != "AWS_IAM" || !got.APIKeyRequired {
+				t.Fatalf("AWS_IAM and the API key must survive an export and import: %+v\n%s", got, body)
+			}
+
+			if !strings.Contains(body, "awsSigv4") {
+				t.Fatalf("the sigv4 scheme must be declared: %s", body)
+			}
+		})
+	}
+}
+
+func TestImportRecognisesTheDocumentedSigv4Scheme(t *testing.T) {
+	body := `{"swagger":"2.0","info":{"title":"iam","version":"1"},
+"securityDefinitions":{"sigv4":{"type":"apiKey","name":"Authorization","in":"header","x-amazon-apigateway-authtype":"awsSigv4"}},
+"paths":{"/items":{"get":{"security":[{"sigv4":[]}],"responses":{"200":{"description":"ok"}},
+"x-amazon-apigateway-integration":{"type":"http","httpMethod":"GET","uri":"http://example.com"}}}}}`
+
+	f := newDP(t)
+
+	imp, err := f.m.ImportRestAPI(ctx(), &driver.ImportRestAPIInput{Body: []byte(body)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := f.importedGet(t, imp.API.ID); got.AuthorizationType != "AWS_IAM" || got.AuthorizerID != "" {
+		t.Fatalf("a scheme with authtype awsSigv4 must mean AWS_IAM: %+v", got)
+	}
+}
+
+func TestAuthorizerAuthTypeRoundTrips(t *testing.T) {
+	cases := []struct {
+		name, authType string
+		wantField      bool
+	}{
+		{"set", "custom", true},
+		{"empty", "", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newDP(t)
+
+			az, err := f.m.CreateAuthorizer(ctx(), f.api.ID, &driver.CreateAuthorizerInput{
+				Name: "tok", Type: driver.AuthorizerToken, AuthorizerURI: lambdaURI, AuthType: tc.authType,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			f.method(t, driver.PutMethodInput{AuthorizationType: "CUSTOM", AuthorizerID: az.ID}, nil)
+
+			body, apiID := f.roundTrip(t, "swagger")
+
+			if has := strings.Contains(body, "x-amazon-apigateway-authtype"); has != tc.wantField {
+				t.Fatalf("authtype present = %v, want %v\n%s", has, tc.wantField, body)
+			}
+
+			azs, _ := f.m.GetAuthorizers(ctx(), apiID, driver.PageInput{})
+			if len(azs.Items) != 1 || azs.Items[0].AuthType != tc.authType {
+				t.Fatalf("AuthType %q must survive: %+v", tc.authType, azs)
+			}
+		})
+	}
+}
+
+func TestRequestAuthorizerWithoutIdentitySourceRoundTrips(t *testing.T) {
+	f := newDP(t)
+
+	az, err := f.m.CreateAuthorizer(ctx(), f.api.ID, &driver.CreateAuthorizerInput{
+		Name: "req", Type: driver.AuthorizerRequest, AuthorizerURI: strings.Replace(lambdaURI, "hello", "auth", 1),
+		AuthorizerResultTTLInSeconds: intPtr(0),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f.method(t, driver.PutMethodInput{AuthorizationType: "CUSTOM", AuthorizerID: az.ID}, nil)
+
+	body, apiID := f.roundTrip(t, "swagger")
+	if !strings.Contains(body, `"name": "Unused"`) && !strings.Contains(body, `"name":"Unused"`) {
+		t.Fatalf("a REQUEST authorizer with no identity source exports name Unused: %s", body)
+	}
+
+	azs, _ := f.m.GetAuthorizers(ctx(), apiID, driver.PageInput{})
+	if len(azs.Items) != 1 || azs.Items[0].IdentitySource != "" {
+		t.Fatalf("the identity source must stay empty: %+v", azs)
+	}
+
+	auth := &fakeInvoker{output: []byte(`{"principalId":"u","policyDocument":{"Version":"2012-10-17","Statement":[{"Action":"execute-api:Invoke","Effect":"Allow","Resource":"*"}]}}`)}
+	f.m.SetLambdaInvoker(routeInvoker{"auth": auth, "hello": f.inv})
+
+	if _, err = f.m.CreateDeployment(ctx(), apiID, driver.CreateDeploymentInput{StageName: "prod"}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := f.m.InvokeRoute(ctx(), &driver.ProxyRequest{RestAPIID: apiID, StageName: "prod", HTTPMethod: "GET", Path: "/items"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	status(t, resp, 200)
+}
+
+func TestMultiSourceRequestAuthorizerRoundTrips(t *testing.T) {
+	const sources = "method.request.header.X-A,method.request.querystring.q"
+
+	f := newDP(t)
+
+	az, err := f.m.CreateAuthorizer(ctx(), f.api.ID, &driver.CreateAuthorizerInput{
+		Name: "req", Type: driver.AuthorizerRequest, AuthorizerURI: lambdaURI, IdentitySource: sources,
+		AuthorizerResultTTLInSeconds: intPtr(30),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f.method(t, driver.PutMethodInput{AuthorizationType: "CUSTOM", AuthorizerID: az.ID}, nil)
+
+	body, apiID := f.roundTrip(t, "swagger")
+	if !strings.Contains(body, "Unused") || !strings.Contains(body, sources) {
+		t.Fatalf("a multi-source REQUEST authorizer exports name Unused and keeps its identitySource: %s", body)
+	}
+
+	azs, _ := f.m.GetAuthorizers(ctx(), apiID, driver.PageInput{})
+	if len(azs.Items) != 1 || azs.Items[0].IdentitySource != sources {
+		t.Fatalf("the multi-source identity source must survive: %+v", azs)
+	}
+}

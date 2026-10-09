@@ -17,6 +17,11 @@ import (
 var _ driver.OpenAPI = (*Mock)(nil)
 
 const (
+	sigv4Scheme      = "sigv4" // the security scheme name an exported document uses for AWS_IAM
+	extAuthType      = "x-amazon-apigateway-authtype"
+	authTypeSigv4    = "awsSigv4"
+	authTypeIAM      = "AWS_IAM"
+	unusedHeaderName = "Unused"  // the header name AWS documents for a REQUEST authorizer with no identity source
 	apiKeyScheme     = "api_key" // the security scheme name an exported document uses for the API key
 	msgImportBody    = "Failed to parse the API definition: it must be an OpenAPI 2.0 or 3.0 document in JSON or YAML"
 	msgImportTitle   = "Unable to create the API: the definition has no info.title"
@@ -313,6 +318,20 @@ func (i *importer) isAPIKeyScheme(name string) bool {
 	return !isAuthorizer && scheme["type"] == "apiKey" && scheme["in"] == locHeader && strings.EqualFold(header, "x-api-key")
 }
 
+// isSigv4Scheme reports whether the named security scheme is AWS_IAM: it has no
+// authorizer and its x-amazon-apigateway-authtype is awsSigv4. The authtype is the
+// marker, not the type or name, since a Lambda authorizer scheme looks the same.
+func (i *importer) isSigv4Scheme(name string) bool {
+	scheme, _ := securitySchemes(i.doc)[name].(map[string]any)
+	if scheme == nil {
+		return false
+	}
+
+	_, isAuthorizer := scheme[extAuthorizer]
+
+	return !isAuthorizer && strings.EqualFold(strVal(scheme[extAuthType]), authTypeSigv4)
+}
+
 // importAuthorizers creates the authorizers declared as security schemes with
 // the x-amazon-apigateway-authorizer extension.
 func (i *importer) importAuthorizers() {
@@ -344,14 +363,15 @@ func authorizerFromExt(name string, scheme, ext map[string]any) *driver.CreateAu
 		Name: name, Type: strings.ToUpper(strVal(ext["type"])), AuthorizerURI: strVal(ext["authorizerUri"]),
 		AuthorizerCredentials: strVal(ext["authorizerCredentials"]), IdentityValidationExpression: strVal(ext["identityValidationExpression"]),
 		IdentitySource: strVal(ext["identitySource"]), ProviderARNs: stringList(ext["providerARNs"]),
-		AuthType: strVal(scheme["x-amazon-apigateway-authtype"]),
+		AuthType: strVal(scheme[extAuthType]),
 	}
 
 	if in.Type == authTypeCognito {
 		in.Type = driver.AuthorizerCognito
 	}
 
-	if in.IdentitySource == "" && strVal(scheme["in"]) == locHeader && strVal(scheme["name"]) != "" {
+	nameFallback := in.Type == driver.AuthorizerToken || in.Type == driver.AuthorizerCognito
+	if nameFallback && in.IdentitySource == "" && strVal(scheme["in"]) == locHeader && strVal(scheme["name"]) != "" {
 		in.IdentitySource = "method.request.header." + strVal(scheme["name"])
 	}
 
@@ -506,6 +526,10 @@ func (i *importer) applySecurity(in *driver.PutMethodInput, op map[string]any) {
 
 			id, found := i.authorizer[name]
 			if !found {
+				if i.isSigv4Scheme(name) {
+					in.AuthorizationType = authTypeIAM
+				}
+
 				continue
 			}
 

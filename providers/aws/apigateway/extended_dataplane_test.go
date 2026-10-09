@@ -891,6 +891,46 @@ func TestRemovingAMethodSettingStopsThrottling(t *testing.T) {
 	}
 }
 
+func TestRemovingADeepMethodSetting(t *testing.T) {
+	cases := []struct{ name, write, remove, key string }{
+		{"deep path", "/pets/child/deep/GET/metrics/enabled", "/pets/child/deep/GET", "pets/child/deep/GET"},
+		{"deep wildcard", "/a/b/c/d/*/metrics/enabled", "/a/b/c/d/*", "a/b/c/d/*"},
+		{"escaped", "/pets~1child~1deep/GET/metrics/enabled", "/pets~1child~1deep/GET", "pets/child/deep/GET"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newDP(t)
+			f.method(t, driver.PutMethodInput{}, nil)
+
+			if _, err := f.m.UpdateStage(ctx(), f.api.ID, "prod", []driver.PatchOperation{
+				{Op: "replace", Path: tc.write, Value: "true"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			st, _ := f.m.GetStage(ctx(), f.api.ID, "prod")
+			if st.MethodSettings[tc.key] == nil {
+				t.Fatalf("the setting must exist under %q: %+v", tc.key, st.MethodSettings)
+			}
+
+			rm := []driver.PatchOperation{{Op: "remove", Path: tc.remove}}
+			if _, err := f.m.UpdateStage(ctx(), f.api.ID, "prod", rm); err != nil {
+				t.Fatalf("remove: %v", err)
+			}
+
+			st, _ = f.m.GetStage(ctx(), f.api.ID, "prod")
+			if st.MethodSettings[tc.key] != nil {
+				t.Fatalf("the setting must be gone: %+v", st.MethodSettings)
+			}
+
+			if _, err := f.m.UpdateStage(ctx(), f.api.ID, "prod", rm); !errors.IsInvalidArgument(err) {
+				t.Fatalf("second remove: want InvalidArgument, got %v", err)
+			}
+		})
+	}
+}
+
 func TestTestInvokeAuthorizerWithoutIdentitySource(t *testing.T) {
 	f := newDP(t)
 
