@@ -264,53 +264,61 @@ func (*Handler) Matches(r *http.Request) bool {
 		isCodeSigningPath(r.URL.Path)
 }
 
-// ServeHTTP dispatches Lambda operations based on path shape and method.
+// ServeHTTP runs the operation classify picks for the request.
 //
 //	/2015-03-31/functions                       GET=list, POST=create
 //	/2015-03-31/functions/{name}                GET=get, DELETE=delete
 //	/2015-03-31/functions/{name}/invocations    POST=invoke
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if isFunctionURLHost(r.Host) {
+	op, a := classify(r)
+
+	switch a.route {
+	case routeFunctionURLInvoke:
 		h.serveFunctionURLInvoke(w, r)
+	case routeTags:
+		h.serveTags(w, r, op, a.name)
+	case routeEventSourceMappings:
+		h.serveEventSourceMappings(w, r, op, a.item)
+	case routeLayers:
+		h.serveLayers(w, r, op, &a)
+	case routeFunctionURL:
+		h.serveFunctionURL(w, r, op, &a)
+	case routeEventInvokeConfig:
+		h.serveEventInvokeConfig(w, r, op, &a)
+	case routeProvisionedConcurrency:
+		h.serveProvisionedConcurrency(w, r, op, &a)
+	case routeCodeSigning:
+		h.serveFunctionCodeSigningConfig(w, r, op, a.name)
+	case routeConcurrency:
+		h.serveConcurrency(w, r, op, a.name)
+	case routeFunctions:
+		h.serveFunctions(w, r, op, &a)
+	}
+}
+
+// serveFunctions serves the /2015-03-31/functions tree.
+func (h *Handler) serveFunctions(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) {
+	if len(a.parts) == 0 {
+		h.serveCollection(w, r, op)
 		return
 	}
 
-	if h.routePrefixed(w, r) {
-		return
-	}
-
-	rest := strings.TrimPrefix(r.URL.Path, pathPrefix)
-	rest = strings.TrimPrefix(rest, "/")
-
-	if rest == "" {
-		h.serveCollection(w, r)
-		return
-	}
-
-	parts := strings.Split(rest, "/")
-
-	name, ok := h.resolveFunctionRef(w, r, parts[0])
+	name, ok := h.resolveFunctionRef(w, r, a.parts[0])
 	if !ok {
 		return
 	}
 
-	const (
-		partsResource    = 1 // /functions/{name}
-		partsSubresource = 2 // /functions/{name}/{sub}
-		partsSubItem     = 3 // /functions/{name}/{sub}/{id}
-	)
-
-	switch len(parts) {
+	switch len(a.parts) {
 	case partsResource:
-		h.serveResource(w, r, name)
+		h.serveResource(w, r, op, name)
 	case partsSubresource:
-		h.serveSubresource(w, r, name, parts[1])
+		h.serveSubresource(w, r, op, name, a.parts[1])
 	case partsSubItem:
-		switch parts[1] {
+		switch a.parts[1] {
 		case subAliases:
-			h.serveAlias(w, r, name, parts[2])
+			h.serveAlias(w, r, op, name, a.parts[2])
 		case subPolicy:
-			h.serveRemovePermission(w, r, name, parts[2])
+			h.serveRemovePermission(w, r, op, name, a.parts[2])
 		default:
 			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
 		}
@@ -319,55 +327,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// routePrefixed serves the Lambda sub-APIs that live on their own version
-// prefix (tags, event-source-mappings, layers, reserved concurrency). It
-// returns true when it has handled the request, false to fall through to the
-// /2015-03-31/functions control plane.
-func (h *Handler) routePrefixed(w http.ResponseWriter, r *http.Request) bool {
-	switch {
-	case strings.HasPrefix(r.URL.Path, tagsPrefix):
-		arn := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, tagsPrefix), "/")
-		h.serveTags(w, r, arn)
-	case strings.HasPrefix(r.URL.Path, esmPrefix):
-		uuid := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, esmPrefix), "/")
-		h.serveEventSourceMappings(w, r, uuid)
-	case strings.HasPrefix(r.URL.Path, layersPrefix):
-		h.serveLayers(w, r)
-	case strings.HasPrefix(r.URL.Path, functionURLPrefix):
-		h.serveFunctionURL(w, r)
-	case strings.HasPrefix(r.URL.Path, eventInvokeConfigPrefix):
-		h.serveEventInvokeConfig(w, r)
-	case isProvisionedConcurrencyPath(r.URL.Path):
-		h.serveProvisionedConcurrency(w, r)
-	case isCodeSigningPath(r.URL.Path):
-		h.serveFunctionCodeSigningConfig(w, r)
-	default:
-		name, ok := concurrencyFunctionName(r.URL.Path)
-		if !ok {
-			return false
-		}
-
-		h.serveConcurrency(w, r, name)
-	}
-
-	return true
-}
-
 // serveSubresource dispatches /functions/{name}/{sub} paths.
-func (h *Handler) serveSubresource(w http.ResponseWriter, r *http.Request, name, sub string) {
+func (h *Handler) serveSubresource(w http.ResponseWriter, r *http.Request, op opID, name, sub string) {
 	switch sub {
-	case "invocations":
-		h.serveInvoke(w, r, name)
-	case "configuration":
-		h.serveConfiguration(w, r, name)
-	case "code":
-		h.serveCode(w, r, name)
+	case subInvocations:
+		h.serveInvoke(w, r, op, name)
+	case subConfiguration:
+		h.serveConfiguration(w, r, op, name)
+	case subCode:
+		h.serveCode(w, r, op, name)
 	case subVersions:
-		h.serveVersions(w, r, name)
+		h.serveVersions(w, r, op, name)
 	case subAliases:
-		h.serveAliases(w, r, name)
+		h.serveAliases(w, r, op, name)
 	case subPolicy:
-		h.servePolicy(w, r, name)
+		h.servePolicy(w, r, op, name)
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
 	}
@@ -375,17 +349,15 @@ func (h *Handler) serveSubresource(w http.ResponseWriter, r *http.Request, name,
 
 // serveTags handles the Lambda tagging API at /2017-03-31/tags/{arn}:
 // POST=TagResource, DELETE=UntagResource (?tagKeys=...), GET=ListTags.
-func (h *Handler) serveTags(w http.ResponseWriter, r *http.Request, arn string) {
+func (h *Handler) serveTags(w http.ResponseWriter, r *http.Request, op opID, name string) {
 	tagger, ok := h.fn.(functionTagger)
 	if !ok {
 		writeError(w, http.StatusNotImplemented, "InvalidRequestException", "tagging not supported")
 		return
 	}
 
-	name := functionNameFromARN(arn)
-
-	switch r.Method {
-	case http.MethodPost:
+	switch op {
+	case opTagResource:
 		var req struct {
 			Tags map[string]string `json:"Tags"`
 		}
@@ -400,14 +372,14 @@ func (h *Handler) serveTags(w http.ResponseWriter, r *http.Request, arn string) 
 		}
 
 		w.WriteHeader(http.StatusNoContent)
-	case http.MethodDelete:
+	case opUntagResource:
 		if err := tagger.UntagFunction(r.Context(), name, r.URL.Query()["tagKeys"]); err != nil {
 			writeErr(w, err)
 			return
 		}
 
 		w.WriteHeader(http.StatusNoContent)
-	case http.MethodGet:
+	case opListTags:
 		tags, err := tagger.ListFunctionTags(r.Context(), name)
 		if err != nil {
 			writeErr(w, err)
@@ -516,7 +488,7 @@ func setQualifier(r *http.Request, qualifier string) {
 
 // servePolicy handles POST (AddPermission) and GET (GetPolicy) on
 // .../{name}/policy.
-func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name string) {
+func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, op opID, name string) {
 	pm, ok := h.fn.(policyManager)
 	if !ok {
 		writeError(w, http.StatusNotImplemented, "InvalidRequestException", "resource policies not supported")
@@ -525,8 +497,8 @@ func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name strin
 
 	qualifier := r.URL.Query().Get("Qualifier")
 
-	switch r.Method {
-	case http.MethodPost:
+	switch op {
+	case opAddPermission:
 		var req addPermissionRequest
 		if !decodeJSON(w, r, &req) {
 			return
@@ -551,7 +523,7 @@ func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name strin
 		}
 
 		writeJSON(w, http.StatusCreated, map[string]string{"Statement": stmt})
-	case http.MethodGet:
+	case opGetPolicy:
 		policy, err := pm.GetPolicy(r.Context(), name, qualifier)
 		if err != nil {
 			writeErr(w, err)
@@ -595,8 +567,8 @@ func addedStatement(ctx context.Context, pm policyManager, name, qualifier, stat
 }
 
 // serveRemovePermission handles DELETE .../{name}/policy/{statementId}.
-func (h *Handler) serveRemovePermission(w http.ResponseWriter, r *http.Request, name, statementID string) {
-	if r.Method != http.MethodDelete {
+func (h *Handler) serveRemovePermission(w http.ResponseWriter, r *http.Request, op opID, name, statementID string) {
+	if op != opRemovePermission {
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 		return
 	}
@@ -619,8 +591,8 @@ func (h *Handler) serveRemovePermission(w http.ResponseWriter, r *http.Request, 
 // GetFunctionConfiguration (the op FunctionActiveV2 / FunctionUpdatedV2 waiters
 // poll; a 405 here hangs every Terraform/SAM/CDK deploy), PUT is
 // UpdateFunctionConfiguration.
-func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, name string) {
-	if r.Method == http.MethodGet {
+func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, op opID, name string) {
+	if op == opGetFunctionConfiguration {
 		cfg, err := h.resolvedConfiguration(r.Context(), name, r.URL.Query().Get("Qualifier"))
 		if err != nil {
 			writeErr(w, err)
@@ -632,7 +604,7 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
-	if r.Method != http.MethodPut {
+	if op != opUpdateFunctionConfiguration {
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 		return
 	}
@@ -708,8 +680,8 @@ func (h *Handler) writePublished(
 // content overlaid), then redeploys it to the engine via the provider so
 // update-function-code runs the new real code instead of leaving the stale
 // deployment in place. A request with no usable source is a hard error.
-func (h *Handler) serveCode(w http.ResponseWriter, r *http.Request, name string) {
-	if r.Method != http.MethodPut {
+func (h *Handler) serveCode(w http.ResponseWriter, r *http.Request, op opID, name string) {
+	if op != opUpdateFunctionCode {
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 		return
 	}
@@ -781,9 +753,9 @@ func (h *Handler) codeAWSConfig(ctx context.Context, name string, arch []string)
 
 // serveVersions handles POST (PublishVersion) and GET (ListVersionsByFunction)
 // on .../{name}/versions.
-func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, name string) {
-	switch r.Method {
-	case http.MethodPost:
+func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, op opID, name string) {
+	switch op {
+	case opPublishVersion:
 		var req publishVersionRequest
 		if !decodeJSON(w, r, &req) {
 			return
@@ -802,7 +774,7 @@ func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, name str
 		}
 
 		writeJSON(w, http.StatusCreated, toVersionConfiguration(info, ver, h.awsFnConfig(r.Context(), name)))
-	case http.MethodGet:
+	case opListVersionsByFunction:
 		vers, err := h.fn.ListVersions(r.Context(), name)
 		if err != nil {
 			writeErr(w, err)
@@ -838,9 +810,9 @@ func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, name str
 
 // serveAliases handles POST (CreateAlias) and GET (ListAliases) on
 // .../{name}/aliases.
-func (h *Handler) serveAliases(w http.ResponseWriter, r *http.Request, name string) {
-	switch r.Method {
-	case http.MethodPost:
+func (h *Handler) serveAliases(w http.ResponseWriter, r *http.Request, op opID, name string) {
+	switch op {
+	case opCreateAlias:
 		var req aliasRequest
 		if !decodeJSON(w, r, &req) {
 			return
@@ -857,7 +829,7 @@ func (h *Handler) serveAliases(w http.ResponseWriter, r *http.Request, name stri
 		}
 
 		writeJSON(w, http.StatusCreated, toAliasResponse(a))
-	case http.MethodGet:
+	case opListAliases:
 		aliases, err := h.fn.ListAliases(r.Context(), name)
 		if err != nil {
 			writeErr(w, err)
@@ -883,9 +855,9 @@ func (h *Handler) serveAliases(w http.ResponseWriter, r *http.Request, name stri
 }
 
 // serveAlias handles GET/PUT/DELETE on .../{name}/aliases/{aliasName}.
-func (h *Handler) serveAlias(w http.ResponseWriter, r *http.Request, name, aliasName string) {
-	switch r.Method {
-	case http.MethodGet:
+func (h *Handler) serveAlias(w http.ResponseWriter, r *http.Request, op opID, name, aliasName string) {
+	switch op {
+	case opGetAlias:
 		a, err := h.fn.GetAlias(r.Context(), name, aliasName)
 		if err != nil {
 			writeErr(w, err)
@@ -893,7 +865,7 @@ func (h *Handler) serveAlias(w http.ResponseWriter, r *http.Request, name, alias
 		}
 
 		writeJSON(w, http.StatusOK, toAliasResponse(a))
-	case http.MethodPut:
+	case opUpdateAlias:
 		var req aliasRequest
 		if !decodeJSON(w, r, &req) {
 			return
@@ -910,7 +882,7 @@ func (h *Handler) serveAlias(w http.ResponseWriter, r *http.Request, name, alias
 		}
 
 		writeJSON(w, http.StatusOK, toAliasResponse(a))
-	case http.MethodDelete:
+	case opDeleteAlias:
 		if err := h.fn.DeleteAlias(r.Context(), name, aliasName); err != nil {
 			writeErr(w, err)
 			return
@@ -959,30 +931,30 @@ func toAliasResponse(a *sdrv.Alias) aliasResponse {
 	return resp
 }
 
-func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
+func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, op opID) {
+	switch op {
+	case opListFunctions:
 		h.list(w, r)
-	case http.MethodPost:
+	case opCreateFunction:
 		h.create(w, r)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 	}
 }
 
-func (h *Handler) serveResource(w http.ResponseWriter, r *http.Request, name string) {
-	switch r.Method {
-	case http.MethodGet:
+func (h *Handler) serveResource(w http.ResponseWriter, r *http.Request, op opID, name string) {
+	switch op {
+	case opGetFunction:
 		h.get(w, r, name)
-	case http.MethodDelete:
+	case opDeleteFunction:
 		h.delete(w, r, name)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 	}
 }
 
-func (h *Handler) serveInvoke(w http.ResponseWriter, r *http.Request, name string) {
-	if r.Method != http.MethodPost {
+func (h *Handler) serveInvoke(w http.ResponseWriter, r *http.Request, op opID, name string) {
+	if op != opInvoke {
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 		return
 	}

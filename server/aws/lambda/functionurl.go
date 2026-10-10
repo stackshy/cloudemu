@@ -3,7 +3,6 @@ package lambda
 import (
 	"context"
 	"net/http"
-	"strings"
 
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
@@ -105,31 +104,23 @@ func toFunctionURLResponse(u *sdrv.FunctionURLConfig) functionURLResponse {
 // serveFunctionURL dispatches the Lambda Function URL API under
 // /2021-10-31/functions/{name}/url (create/get/update/delete) and
 // /2021-10-31/functions/{name}/urls (list).
-func (h *Handler) serveFunctionURL(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) serveFunctionURL(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) {
 	mgr, ok := h.fn.(functionURLManager)
 	if !ok {
 		writeError(w, http.StatusNotImplemented, "InvalidRequestException", "function urls not supported")
 		return
 	}
 
-	rest := strings.TrimPrefix(r.URL.Path, functionURLPrefix)
-	rest = strings.TrimPrefix(rest, "/")
-	parts := strings.Split(rest, "/")
-
-	const wantParts = 2 // {name}/url or {name}/urls
-	if len(parts) != wantParts || parts[0] == "" {
+	if a.name == "" {
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
 		return
 	}
 
-	name := parts[0]
-	qualifier := r.URL.Query().Get("Qualifier")
-
-	switch parts[1] {
-	case "url":
-		serveFunctionURLItem(w, r, mgr, name, qualifier)
-	case "urls":
-		listFunctionURLConfigs(w, r, mgr, name)
+	switch a.parts[1] {
+	case subURL:
+		serveFunctionURLItem(w, r, op, mgr, a.name, a.qualifier)
+	case subURLs:
+		listFunctionURLConfigs(w, r, op, mgr, a.name)
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
 	}
@@ -138,13 +129,13 @@ func (h *Handler) serveFunctionURL(w http.ResponseWriter, r *http.Request) {
 // serveFunctionURLItem handles POST/GET/PUT/DELETE on .../{name}/url. All four
 // operations accept the target qualifier ("" and "$LATEST" both mean the
 // unqualified $LATEST URL) as the Qualifier query parameter, not the body.
-func serveFunctionURLItem(w http.ResponseWriter, r *http.Request, mgr functionURLManager, name, qualifier string) {
-	switch r.Method {
-	case http.MethodPost:
+func serveFunctionURLItem(w http.ResponseWriter, r *http.Request, op opID, mgr functionURLManager, name, qualifier string) {
+	switch op {
+	case opCreateFunctionURLConfig:
 		writeFunctionURL(w, r, mgr.CreateFunctionURLConfig, name, qualifier, http.StatusCreated)
-	case http.MethodPut:
+	case opUpdateFunctionURLConfig:
 		writeFunctionURL(w, r, mgr.UpdateFunctionURLConfig, name, qualifier, http.StatusOK)
-	case http.MethodGet:
+	case opGetFunctionURLConfig:
 		u, err := mgr.GetFunctionURLConfig(r.Context(), name, qualifier)
 		if err != nil {
 			writeErr(w, err)
@@ -152,7 +143,7 @@ func serveFunctionURLItem(w http.ResponseWriter, r *http.Request, mgr functionUR
 		}
 
 		writeJSON(w, http.StatusOK, toFunctionURLResponse(u))
-	case http.MethodDelete:
+	case opDeleteFunctionURLConfig:
 		if err := mgr.DeleteFunctionURLConfig(r.Context(), name, qualifier); err != nil {
 			writeErr(w, err)
 			return
@@ -191,8 +182,8 @@ func writeFunctionURL(
 	writeJSON(w, status, toFunctionURLResponse(u))
 }
 
-func listFunctionURLConfigs(w http.ResponseWriter, r *http.Request, mgr functionURLManager, name string) {
-	if r.Method != http.MethodGet {
+func listFunctionURLConfigs(w http.ResponseWriter, r *http.Request, op opID, mgr functionURLManager, name string) {
+	if op != opListFunctionURLConfigs {
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 		return
 	}
