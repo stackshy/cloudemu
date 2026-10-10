@@ -80,7 +80,14 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		}
 	}
 
-	m.etagSeq.Store(snap.ETagSeq)
+	// Keep the higher value, so a snapshot without the field (or an older one)
+	// cannot move the sequence back.
+	for {
+		cur := m.etagSeq.Load()
+		if cur >= snap.ETagSeq || m.etagSeq.CompareAndSwap(cur, snap.ETagSeq) {
+			break
+		}
+	}
 
 	return nil
 }

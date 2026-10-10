@@ -38,7 +38,9 @@ func idFloor(ps *ProviderState) uint64 {
 // It is best-effort: it takes the last 8 hex characters of every hex run of 8
 // or more (a GenerateID suffix, the tail of an OCID, the newest of several
 // concatenated ids) and ignores anything at or above legacyIDCap. Random hex
-// below the cap can only push the counter higher than needed, which is safe.
+// below the cap can only push the counter higher than needed, which is safe:
+// ids minted afterwards look larger but keep their 8 hex characters. Ids held
+// in base64-encoded []byte fields are not decoded, so they are not seen.
 func legacyIDFloor(data []byte) uint64 {
 	var floor uint64
 
