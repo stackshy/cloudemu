@@ -57,7 +57,7 @@ func (h *Handler) IAMChecksWithContext(r *http.Request, s awsauthz.Scope) ([]aws
 	op, a := classify(r)
 
 	rule, ok := iamRules[op]
-	if !ok {
+	if !ok || foreignRef(&a, s.AccountID, s.Region) {
 		return nil, nil, false
 	}
 
@@ -98,14 +98,21 @@ func (c *checkSet) functionARN(name, qualifier string) string {
 	return arn
 }
 
-// target is the function ARN the request names: its FunctionName (with any
-// qualifier embedded in it) and its Qualifier.
+// target is the function, version or alias ARN of an operation that acts on
+// the version or alias the request names: its FunctionName (with any
+// qualifier embedded in it) and its Qualifier. $LATEST is the unpublished
+// function itself, which dispatch serves as the unqualified function, so it
+// is checked on the unqualified ARN.
 func (c *checkSet) target() string {
 	name, embedded := splitFunctionNameQualifier(c.args.name)
 
 	qualifier := c.args.qualifier
 	if qualifier == "" {
 		qualifier = embedded
+	}
+
+	if qualifier == latestVersion {
+		qualifier = ""
 	}
 
 	return c.functionARN(name, qualifier)
@@ -222,6 +229,14 @@ func onAny(c *checkSet, op opID) bool {
 // iamRules maps every operation the handler runs to its checks. Operations
 // absent here are the error paths, reported as unknown.
 //
+// The resource is always the one dispatch acts on. Operations that read or
+// act on the version or alias the request names (GetFunction, Invoke,
+// DeleteFunction, the policy, URL, event invoke and provisioned concurrency
+// operations) are checked on that qualified ARN. The others act on the
+// function whatever qualifier the FunctionName carries (configuration, code,
+// versions, aliases, tags, concurrency), so they are checked on the
+// unqualified function ARN.
+//
 //nolint:gochecknoglobals // static lookup table
 var iamRules = map[opID]iamRule{
 	opInvokeFunctionURL: functionURLInvokeChecks,
@@ -233,14 +248,14 @@ var iamRules = map[opID]iamRule{
 	opInvoke:                      invokeChecks,
 	opGetFunctionConfiguration:    onTarget,
 	opUpdateFunctionConfiguration: updateConfigurationChecks,
-	opUpdateFunctionCode:          onTarget,
-	opPublishVersion:              onTarget,
-	opListVersionsByFunction:      onTarget,
-	opCreateAlias:                 onTarget,
-	opListAliases:                 onTarget,
-	opGetAlias:                    onTarget,
-	opUpdateAlias:                 onTarget,
-	opDeleteAlias:                 onTarget,
+	opUpdateFunctionCode:          onFunction,
+	opPublishVersion:              onFunction,
+	opListVersionsByFunction:      onFunction,
+	opCreateAlias:                 onFunction,
+	opListAliases:                 onFunction,
+	opGetAlias:                    onFunction,
+	opUpdateAlias:                 onFunction,
+	opDeleteAlias:                 onFunction,
 	opAddPermission:               addPermissionChecks,
 	opGetPolicy:                   onTarget,
 	opRemovePermission:            removePermissionChecks,
@@ -315,7 +330,11 @@ func createFunctionChecks(c *checkSet, _ opID) bool {
 		return false
 	}
 
-	name, _ := splitFunctionNameQualifier(req.FunctionName)
+	name, invalid := createFunctionName(req.FunctionName, c.scope.AccountID, c.scope.Region)
+	if invalid != "" {
+		return false
+	}
+
 	arn := c.functionARN(name, "")
 
 	c.add(action(opCreateFunction), arn, awsauthz.Required)
@@ -344,7 +363,7 @@ func updateConfigurationChecks(c *checkSet, op opID) bool {
 		return false
 	}
 
-	onTarget(c, op)
+	onFunction(c, op)
 	c.layers(req.Layers)
 	c.vpc(req.VpcConfig)
 
@@ -389,7 +408,7 @@ func removePermissionChecks(c *checkSet, op opID) bool {
 func tagChecks(c *checkSet, op opID) bool {
 	resource := ""
 	if strings.Contains(c.args.item, ":function:") {
-		resource = c.target()
+		resource = c.unqualified()
 	}
 
 	c.add(action(op), resource, awsauthz.Required)

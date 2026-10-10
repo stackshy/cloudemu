@@ -38,6 +38,13 @@ func (m *Mock) AddPermission(_ context.Context, functionName, qualifier string, 
 		return cerrors.New(cerrors.InvalidArgument, "StatementId is required")
 	}
 
+	// "Lambda does not support adding policies to version $LATEST"
+	// (AddPermission API reference): the unqualified function's policy is
+	// written without a qualifier.
+	if qualifier == latestVersion {
+		return cerrors.New(cerrors.InvalidArgument, "We currently do not support adding policies for $LATEST.")
+	}
+
 	switch stmt.FunctionURLAuthType {
 	case "", defaultAuthType, authTypeAWSIAM:
 	default:
@@ -83,6 +90,13 @@ func (m *Mock) AddPermission(_ context.Context, functionName, qualifier string, 
 // RemovePermission drops a statement from a function's (qualifier-scoped)
 // resource-based policy.
 func (m *Mock) RemovePermission(_ context.Context, functionName, qualifier, statementID string) error {
+	// $LATEST has no policy of its own (AddPermission refuses it), so a
+	// $LATEST-qualified remove is refused too rather than editing the
+	// unqualified function's policy.
+	if qualifier == latestVersion {
+		return cerrors.New(cerrors.InvalidArgument, "We currently do not support removing policies for $LATEST.")
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

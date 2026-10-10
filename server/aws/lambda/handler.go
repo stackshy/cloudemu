@@ -229,6 +229,8 @@ type Handler struct {
 	layerContent map[string][]byte
 	// enforce is set under EnforceAuth (WithEnforceAuth).
 	enforce bool
+	// accountID and region are the scope the handler serves (WithScope).
+	accountID, region string
 }
 
 // Option configures a Handler.
@@ -278,6 +280,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case routeFunctionURLInvoke:
 		h.serveFunctionURLInvoke(w, r)
 	case routeTags:
+		if foreignRef(&a, h.accountID, h.region) {
+			writeForeignRef(w, a.item)
+			return
+		}
+
 		h.serveTags(w, r, op, a.name)
 	case routeEventSourceMappings:
 		h.serveEventSourceMappings(w, r, op, a.item)
@@ -302,6 +309,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) serveFunctions(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) {
 	if len(a.parts) == 0 {
 		h.serveCollection(w, r, op)
+		return
+	}
+
+	if foreignRef(a, h.accountID, h.region) {
+		writeForeignRef(w, a.parts[0])
 		return
 	}
 
@@ -977,7 +989,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := validateCreateRequest(&req); err != nil {
+	if err := h.checkCreateRequest(&req); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -1039,6 +1051,20 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, toConfiguration(info, awsCfg))
+}
+
+// checkCreateRequest resolves the FunctionName of a CreateFunction request to
+// the bare name it creates (createFunctionName, the same rule IAMChecks
+// authorizes), then applies validateCreateRequest.
+func (h *Handler) checkCreateRequest(req *createFunctionRequest) error {
+	name, invalid := createFunctionName(req.FunctionName, h.accountID, h.region)
+	if invalid != "" {
+		return cerrors.New(cerrors.InvalidArgument, invalid)
+	}
+
+	req.FunctionName = name
+
+	return validateCreateRequest(req)
 }
 
 // validateCreateRequest enforces the CreateFunction input rules the emulator

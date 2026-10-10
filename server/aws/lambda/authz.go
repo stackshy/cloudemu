@@ -46,6 +46,48 @@ func WithEnforceAuth(on bool) Option {
 	return func(h *Handler) { h.enforce = on }
 }
 
+// WithScope sets the account and region this handler serves. A FunctionName
+// ARN that names another account or region then does not resolve to a local
+// function: it is answered with ResourceNotFoundException, as a function
+// that does not exist here. An empty value skips that check.
+func WithScope(accountID, region string) Option {
+	return func(h *Handler) { h.accountID, h.region = accountID, region }
+}
+
+// foreignRef reports whether the request's function reference names another
+// account or region than the one the handler serves (WithScope), or, for
+// IAMChecks, than the gate's scope s.
+func foreignRef(a *opArgs, accountID, region string) bool {
+	return (a.refAccount != "" && accountID != "" && a.refAccount != accountID) ||
+		(a.refRegion != "" && region != "" && a.refRegion != region)
+}
+
+// createFunctionName returns the bare name a CreateFunction FunctionName
+// creates. FunctionName may be a name, a full ARN or a partial ARN, but it
+// names a new function, so a version or alias qualifier, or an ARN of another
+// account or region, is invalid; invalid is then the error message.
+func createFunctionName(ref, accountID, region string) (name, invalid string) {
+	name, qualifier := splitFunctionNameQualifier(ref)
+	if qualifier != "" {
+		return "", "Unsupported qualifier in FunctionName " + ref + ": a version or alias cannot be created with CreateFunction"
+	}
+
+	a := opArgs{}
+	a.refRegion, a.refAccount = functionRefScope(ref)
+
+	if foreignRef(&a, accountID, region) {
+		return "", "FunctionName " + ref + " is not in this account and region"
+	}
+
+	return name, ""
+}
+
+// writeForeignRef answers a reference to a function in another account or
+// region, which does not exist on this server.
+func writeForeignRef(w http.ResponseWriter, ref string) {
+	writeError(w, http.StatusNotFound, "ResourceNotFoundException", "Function not found: "+ref)
+}
+
 // IAMService returns the IAM service prefix of the operations this handler
 // serves.
 func (*Handler) IAMService() string { return serviceName }

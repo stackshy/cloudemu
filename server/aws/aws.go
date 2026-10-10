@@ -1158,7 +1158,7 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 			lambdaOpts = append(lambdaOpts, lambda.WithObjectStore(d.S3))
 		}
 
-		lambdaOpts = append(lambdaOpts, lambda.WithEnforceAuth(d.EnforceAuth))
+		lambdaOpts = append(lambdaOpts, lambda.WithEnforceAuth(d.EnforceAuth), lambda.WithScope(d.AccountID, d.Region))
 
 		srv.Register(lambda.New(d.Lambda, lambdaOpts...))
 	}

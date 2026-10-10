@@ -118,6 +118,32 @@ type opArgs struct {
 	// qualifierConflict is a FunctionName qualifier that disagrees with
 	// ?Qualifier=, which dispatch answers with a ValidationException.
 	qualifierConflict bool
+	// refRegion and refAccount are the region and account a FunctionName (or
+	// tag resource) ARN names, "" when it does not name one.
+	refRegion, refAccount string
+}
+
+// functionRefScope returns the region and account a function reference
+// names: both for a full ARN (arn:aws:lambda:<region>:<account>:function:...),
+// the account for a partial ARN (<account>:function:...), and neither for a
+// plain name.
+func functionRefScope(ref string) (region, account string) {
+	const arnFields = 6 // arn, partition, service, region, account, rest
+
+	if strings.HasPrefix(ref, "arn:") {
+		parts := strings.SplitN(ref, ":", arnFields)
+		if len(parts) == arnFields {
+			return parts[3], parts[4]
+		}
+
+		return "", ""
+	}
+
+	if i := strings.Index(ref, ":function:"); i >= 0 {
+		return "", ref[:i]
+	}
+
+	return "", ""
 }
 
 // Function sub-resource path segments.
@@ -190,7 +216,10 @@ func classifyTags(r *http.Request, arn string) (opID, opArgs) {
 		http.MethodPost: opTagResource, http.MethodDelete: opUntagResource, http.MethodGet: opListTags,
 	})
 
-	return op, opArgs{route: routeTags, item: arn, name: functionNameFromARN(arn)}
+	a := opArgs{route: routeTags, item: arn, name: functionNameFromARN(arn)}
+	a.refRegion, a.refAccount = functionRefScope(arn)
+
+	return op, a
 }
 
 // classifyEventSourceMappings handles /2015-03-31/event-source-mappings[/{uuid}].
@@ -376,6 +405,7 @@ func classifyFunctions(r *http.Request) (opID, opArgs) {
 	}
 
 	a.parts = strings.Split(rest, "/")
+	a.refRegion, a.refAccount = functionRefScope(a.parts[0])
 
 	name, embedded := splitFunctionNameQualifier(a.parts[0])
 	qualifier, ok := reconcileQualifier(embedded, r.URL.Query().Get("Qualifier"))

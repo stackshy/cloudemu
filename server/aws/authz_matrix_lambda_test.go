@@ -86,8 +86,10 @@ func TestAuthzMatrixLambdaInvoke(t *testing.T) {
 		allowed bool
 	}{
 		{"unqualified", "invoker", invokeReq("fn1"), true},
-		{"function ARN of another account names the local function", "invoker",
-			invokeReq("arn:aws:lambda:eu-west-1:999999999999:function:fn1"), true},
+		{"function ARN of this account and region", "invoker",
+			invokeReq("arn:aws:lambda:us-east-1:123456789012:function:fn1"), true},
+		{"function ARN of another account is not the local function", "invoker",
+			invokeReq("arn:aws:lambda:us-east-1:999999999999:function:fn1"), false},
 		{"alias in the name", "invoker", invokeReq("fn1:prod"), false},
 		{"alias in the query", "invoker", invokeReq("fn1", "Qualifier=prod"), false},
 		{"alias for the alias user", "alias", invokeReq("fn1:prod"), true},
@@ -318,7 +320,9 @@ func TestAuthzMatrixLambdaFunctionURL(t *testing.T) {
 
 	iamHost := functionURLHost(t, cloud, "iamurl", "AWS_IAM")
 	pubHost := functionURLHost(t, cloud, "puburl", "NONE")
-	urlReq := func(host string) sreq { return sreq{method: http.MethodGet, path: "/hello", host: host, service: "lambda"} }
+	urlReq := func(host string) sreq {
+		return sreq{method: http.MethodGet, path: "/hello", host: host, service: "lambda"}
+	}
 
 	both := userWithPolicy(t, cloud, "urlboth", allow("lambda:InvokeFunctionUrl", "lambda:InvokeFunction"))
 	urlOnly := userWithPolicy(t, cloud, "urlonly", allow("lambda:InvokeFunctionUrl"))
