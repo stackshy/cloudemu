@@ -1,9 +1,10 @@
 package metricmath
 
-// A small recursive-descent parser for the supported metric-math syntax:
-// numbers, references to other entry IDs, the binary operators + - * /,
-// unary minus and parentheses. ANOMALY_DETECTION_BAND(id[, k]) is also
-// accepted when it is the whole expression.
+// A recursive-descent parser for the supported metric-math syntax: numbers,
+// references to other entry IDs, the arithmetic operators + - * /, unary
+// minus, parentheses, the comparison operators == != < <= > >=, the logical
+// operators AND (&&) and OR (||), and the functions IF, FILL and SEARCH.
+// ANOMALY_DETECTION_BAND(id[, k]) is accepted when it is the whole expression.
 
 import (
 	"errors"
@@ -24,18 +25,29 @@ func parseExpression(expr string) (n node, ok bool) {
 	p := &mathParser{tokens: tokens}
 
 	n, err := p.parse()
-	if err != nil || !p.atEnd() {
+	if err != nil || !p.atEnd() || !keywordsPlaced(n) {
 		return nil, false
 	}
 
 	return n, true
 }
 
+// Token kinds that are not a single operator rune.
+const (
+	tokNumber  = 'n'
+	tokIdent   = 'i'
+	tokString  = 's'
+	tokCompare = 'c'
+	tokAnd     = '&'
+	tokOr      = '|'
+	tokInvalid = '?'
+)
+
 // mathToken is one lexical unit of an expression.
 type mathToken struct {
-	kind  byte // 'n' number, 'i' ident, or an operator/paren rune
+	kind  byte // one of the tok kinds, or an operator/paren/comma rune
 	num   float64
-	ident string
+	ident string // identifier name, string literal body or comparison operator
 }
 
 func tokenizeMath(expr string) []mathToken {
@@ -50,6 +62,14 @@ func tokenizeMath(expr string) []mathToken {
 		case isOperatorOrParen(c):
 			tokens = append(tokens, mathToken{kind: c})
 			i++
+		case isComparisonStart(c) || c == '&' || c == '|':
+			tok, next := lexSymbol(expr, i)
+			tokens = append(tokens, tok)
+			i = next
+		case c == '\'':
+			tok, next := lexString(expr, i)
+			tokens = append(tokens, tok)
+			i = next
 		case isNumberStart(c):
 			tok, next := lexNumber(expr, i)
 			tokens = append(tokens, tok)
@@ -60,12 +80,58 @@ func tokenizeMath(expr string) []mathToken {
 			i = next
 		default:
 			// Unknown character: emit a sentinel the parser rejects.
-			tokens = append(tokens, mathToken{kind: '?'})
+			tokens = append(tokens, mathToken{kind: tokInvalid})
 			i++
 		}
 	}
 
 	return tokens
+}
+
+// lexSymbol reads a comparison or logical operator.
+func lexSymbol(expr string, start int) (tok mathToken, next int) {
+	two := ""
+	if start+1 < len(expr) {
+		two = expr[start : start+2]
+	}
+
+	switch two {
+	case "==", "!=", "<=", ">=":
+		return mathToken{kind: tokCompare, ident: two}, start + 2
+	case "&&":
+		return mathToken{kind: tokAnd}, start + 2
+	case "||":
+		return mathToken{kind: tokOr}, start + 2
+	}
+
+	switch expr[start] {
+	case '<', '>':
+		return mathToken{kind: tokCompare, ident: expr[start : start+1]}, start + 1
+	default:
+		return mathToken{kind: tokInvalid}, start + 1
+	}
+}
+
+// lexString reads a single-quoted string. A backslash escapes the next
+// character, so a SEARCH term can hold a quote.
+func lexString(expr string, start int) (tok mathToken, next int) {
+	var body []byte
+
+	for i := start + 1; i < len(expr); i++ {
+		switch expr[i] {
+		case '\\':
+			if i+1 < len(expr) {
+				body = append(body, expr[i], expr[i+1])
+				i++
+			}
+		case '\'':
+			return mathToken{kind: tokString, ident: string(body)}, i + 1
+		default:
+			body = append(body, expr[i])
+		}
+	}
+
+	return mathToken{kind: tokInvalid}, len(expr)
 }
 
 func lexNumber(expr string, start int) (tok mathToken, next int) {
@@ -76,10 +142,10 @@ func lexNumber(expr string, start int) (tok mathToken, next int) {
 
 	val, err := strconv.ParseFloat(expr[start:i], 64)
 	if err != nil {
-		return mathToken{kind: '?'}, i
+		return mathToken{kind: tokInvalid}, i
 	}
 
-	return mathToken{kind: 'n', num: val}, i
+	return mathToken{kind: tokNumber, num: val}, i
 }
 
 func lexIdent(expr string, start int) (tok mathToken, next int) {
@@ -88,17 +154,29 @@ func lexIdent(expr string, start int) (tok mathToken, next int) {
 		i++
 	}
 
-	return mathToken{kind: 'i', ident: expr[start:i]}, i
+	word := expr[start:i]
+
+	// AND and OR are the logical operators. IDs start with a lowercase
+	// letter, so they never clash with an entry.
+	switch word {
+	case "AND":
+		return mathToken{kind: tokAnd}, i
+	case "OR":
+		return mathToken{kind: tokOr}, i
+	}
+
+	return mathToken{kind: tokIdent, ident: word}, i
 }
 
-func isSpace(c byte) bool { return c == ' ' || c == '\t' }
+func isSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
 func isOperatorOrParen(c byte) bool {
 	return c == '+' || c == '-' || c == '*' || c == '/' || c == '(' || c == ')' || c == ','
 }
-func isDigit(c byte) bool       { return c >= '0' && c <= '9' }
-func isNumberStart(c byte) bool { return isDigit(c) || c == '.' }
-func isIdentStart(c byte) bool  { return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
-func isIdentPart(c byte) bool   { return isIdentStart(c) || isDigit(c) }
+func isComparisonStart(c byte) bool { return c == '=' || c == '!' || c == '<' || c == '>' }
+func isDigit(c byte) bool           { return c >= '0' && c <= '9' }
+func isNumberStart(c byte) bool     { return isDigit(c) || c == '.' }
+func isIdentStart(c byte) bool      { return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') }
+func isIdentPart(c byte) bool       { return isIdentStart(c) || isDigit(c) }
 
 // mathParser is a recursive-descent parser over a token slice.
 type mathParser struct {
@@ -116,12 +194,94 @@ func (p *mathParser) peek() (mathToken, bool) {
 	return p.tokens[p.pos], true
 }
 
+// peekKind reports whether the next token has this kind.
+func (p *mathParser) peekKind(kind byte) bool {
+	tok, ok := p.peek()
+
+	return ok && tok.kind == kind
+}
+
+// expect consumes a token of this kind.
+func (p *mathParser) expect(kind byte) error {
+	if !p.peekKind(kind) {
+		return errMathParse
+	}
+
+	p.pos++
+
+	return nil
+}
+
 func (p *mathParser) parse() (node, error) {
 	if len(p.tokens) == 0 {
 		return nil, errMathParse
 	}
 
-	return p.parseExpr()
+	return p.parseOr()
+}
+
+// parseOr: or := and (OR and)*. OR binds loosest.
+func (p *mathParser) parseOr() (node, error) {
+	n, err := p.parseAnd()
+	if err != nil {
+		return nil, err
+	}
+
+	for p.peekKind(tokOr) {
+		p.pos++
+
+		right, rerr := p.parseAnd()
+		if rerr != nil {
+			return nil, rerr
+		}
+
+		n = logicNode{and: false, left: n, right: right}
+	}
+
+	return n, nil
+}
+
+// parseAnd: and := compare (AND compare)*.
+func (p *mathParser) parseAnd() (node, error) {
+	n, err := p.parseCompare()
+	if err != nil {
+		return nil, err
+	}
+
+	for p.peekKind(tokAnd) {
+		p.pos++
+
+		right, rerr := p.parseCompare()
+		if rerr != nil {
+			return nil, rerr
+		}
+
+		n = logicNode{and: true, left: n, right: right}
+	}
+
+	return n, nil
+}
+
+// parseCompare: compare := expr (cmp expr)?.
+func (p *mathParser) parseCompare() (node, error) {
+	n, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	tok, ok := p.peek()
+	if !ok || tok.kind != tokCompare {
+		return n, nil
+	}
+
+	p.pos++
+
+	right, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	return compareNode{op: tok.ident, left: n, right: right}, nil
 }
 
 func (p *mathParser) parseExpr() (node, error) {
@@ -197,31 +357,180 @@ func (p *mathParser) parsePrimary() (node, error) {
 	}
 
 	switch tok.kind {
-	case 'n':
+	case tokNumber:
 		p.pos++
 		return numberNode{val: tok.num}, nil
-	case 'i':
+	case tokIdent:
 		p.pos++
+
+		if p.peekKind('(') {
+			return p.parseCall(tok.ident)
+		}
+
+		if !isLowerStart(tok.ident) {
+			// An uppercase word outside a call is a keyword such as REPEAT,
+			// which only FILL reads.
+			return keywordNode{word: tok.ident}, nil
+		}
+
 		return refNode{id: tok.ident}, nil
 	case '(':
 		p.pos++
 
-		inner, err := p.parseExpr()
+		inner, err := p.parseOr()
 		if err != nil {
 			return nil, err
 		}
 
-		closing, has := p.peek()
-		if !has || closing.kind != ')' {
-			return nil, errMathParse
+		if err := p.expect(')'); err != nil {
+			return nil, err
 		}
-
-		p.pos++
 
 		return inner, nil
 	default:
 		return nil, errMathParse
 	}
+}
+
+// isLowerStart reports whether an identifier can name an entry: IDs start
+// with a lowercase letter.
+func isLowerStart(id string) bool {
+	return id != "" && id[0] >= 'a' && id[0] <= 'z'
+}
+
+// parseCall parses the argument list of a function call and builds its node.
+func (p *mathParser) parseCall(name string) (node, error) {
+	if err := p.expect('('); err != nil {
+		return nil, err
+	}
+
+	var args []node
+
+	if !p.peekKind(')') {
+		for {
+			arg, err := p.parseArg()
+			if err != nil {
+				return nil, err
+			}
+
+			args = append(args, arg)
+
+			if !p.peekKind(',') {
+				break
+			}
+
+			p.pos++
+		}
+	}
+
+	if err := p.expect(')'); err != nil {
+		return nil, err
+	}
+
+	return buildCall(name, args)
+}
+
+// parseArg parses one call argument: a string literal or an expression.
+func (p *mathParser) parseArg() (node, error) {
+	if tok, ok := p.peek(); ok && tok.kind == tokString {
+		p.pos++
+		return stringNode{val: tok.ident}, nil
+	}
+
+	return p.parseOr()
+}
+
+// Function names and keywords of the supported metric-math functions.
+const (
+	fnIf      = "IF"
+	fnFill    = "FILL"
+	fnSearch  = "SEARCH"
+	kwRepeat  = "REPEAT"
+	kwLinear  = "LINEAR"
+	ifMinArgs = 2
+	ifMaxArgs = 3
+	fillArgs  = 2
+)
+
+// Argument counts of SEARCH: the term and the statistic, then an optional
+// period.
+const (
+	searchMinArgs = 2
+	searchMaxArgs = 3
+)
+
+// buildCall checks a call's arguments and returns its node.
+func buildCall(name string, args []node) (node, error) {
+	switch name {
+	case fnIf:
+		if len(args) < ifMinArgs || len(args) > ifMaxArgs || hasString(args) {
+			return nil, errMathParse
+		}
+
+		n := ifNode{cond: args[0], then: args[1]}
+		if len(args) == ifMaxArgs {
+			n.otherwise = args[2]
+		}
+
+		return n, nil
+	case fnFill:
+		if len(args) != fillArgs || hasString(args) {
+			return nil, errMathParse
+		}
+
+		if kw, ok := args[1].(keywordNode); ok && kw.word != kwRepeat && kw.word != kwLinear {
+			return nil, errMathParse
+		}
+
+		return fillNode{input: args[0], with: args[1]}, nil
+	case fnSearch:
+		return buildSearch(args)
+	default:
+		return nil, errMathParse
+	}
+}
+
+// buildSearch checks SEARCH('term', 'Stat'[, period]).
+func buildSearch(args []node) (node, error) {
+	if len(args) < searchMinArgs || len(args) > searchMaxArgs {
+		return nil, errMathParse
+	}
+
+	term, ok1 := args[0].(stringNode)
+	stat, ok2 := args[1].(stringNode)
+
+	if !ok1 || !ok2 || stat.val == "" {
+		return nil, errMathParse
+	}
+
+	q, ok := parseSearchQuery(term.val)
+	if !ok {
+		return nil, errMathParse
+	}
+
+	n := searchNode{query: q, stat: stat.val}
+
+	if len(args) == searchMaxArgs {
+		num, ok := args[2].(numberNode)
+		if !ok || num.val <= 0 || num.val != float64(int(num.val)) {
+			return nil, errMathParse
+		}
+
+		n.period = int(num.val)
+	}
+
+	return n, nil
+}
+
+// hasString reports whether a string literal is used where a value belongs.
+func hasString(args []node) bool {
+	for _, a := range args {
+		if _, ok := a.(stringNode); ok {
+			return true
+		}
+	}
+
+	return false
 }
 
 // bandFunction is the metric-math function that returns an anomaly band.
@@ -240,7 +549,8 @@ const (
 // isBandCall reports whether t starts ANOMALY_DETECTION_BAND(id and ends
 // with a closing parenthesis.
 func isBandCall(t []mathToken) bool {
-	return t[0].kind == 'i' && t[0].ident == bandFunction && t[1].kind == '(' && t[2].kind == 'i' && t[len(t)-1].kind == ')'
+	return t[0].kind == tokIdent && t[0].ident == bandFunction && t[1].kind == '(' && t[2].kind == tokIdent &&
+		t[len(t)-1].kind == ')'
 }
 
 // parseBand matches ANOMALY_DETECTION_BAND(id) and ANOMALY_DETECTION_BAND(id, k).
@@ -256,7 +566,7 @@ func parseBand(t []mathToken) (bandNode, bool) {
 	n := bandNode{input: t[2].ident, k: defaultBandWidth}
 
 	if len(t) == bandCallTokensWithK {
-		if t[3].kind != ',' || t[4].kind != 'n' {
+		if t[3].kind != ',' || t[4].kind != tokNumber {
 			return bandNode{}, false
 		}
 

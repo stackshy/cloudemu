@@ -243,7 +243,7 @@ func (m *Mock) detectorPoints(d *driver.AnomalyDetector, now time.Time) int {
 		return 0
 	}
 
-	s, err := metricmath.New(d.Metrics, m.rangeFetcher(start, end)).Resolve(watched[0].ID)
+	s, err := metricmath.New(d.Metrics, m.rangeFetcher(start, end)).WithRange(start, end).Resolve(watched[0].ID)
 	if err != nil {
 		return 0
 	}

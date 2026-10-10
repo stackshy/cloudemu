@@ -89,11 +89,11 @@ func TestMathAlarmUnsupportedExpression(t *testing.T) {
 
 	putMath(t, m, fc, "Errors", 30)
 
-	cfg := rateAlarm("fill")
-	cfg.Metrics[2].Expression = "FILL(err, 0)"
+	cfg := rateAlarm("rate-fn")
+	cfg.Metrics[2].Expression = "RATE(err)"
 
 	requireNoError(t, m.CreateAlarm(ctx, cfg))
-	assertEqual(t, stateInsufficientData, stateOf(t, m, "fill"))
+	assertEqual(t, stateInsufficientData, stateOf(t, m, "rate-fn"))
 }
 
 // The state change event lists the math alarm's queries.
