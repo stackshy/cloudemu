@@ -24,6 +24,7 @@ import (
 	"sort"
 	"syscall"
 
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 )
 
@@ -85,6 +86,13 @@ type Meta struct {
 // identity-preserving snapshots keyed by service name.
 type ProviderState struct {
 	Services map[string]json.RawMessage `json:"services,omitempty"`
+
+	// IDCounter is the shared id counter (internal/idgen) read after the
+	// services were captured, so it is at least the suffix of every
+	// counter-minted id in Services. Restore moves the counter past it, so a
+	// resource created after the restore never reuses a restored id. Zero in
+	// a snapshot written before the field existed (see legacyIDFloor).
+	IDCounter uint64 `json:"idCounter,omitempty"`
 }
 
 // Options controls what Export captures.
@@ -130,6 +138,14 @@ func RestoreAll(ctx context.Context, snap *Snapshot, targets map[string]Services
 func RestoreAllWithFactory(
 	ctx context.Context, snap *Snapshot, targets map[string]Services, ensure func(providerKey string) (Services, bool),
 ) error {
+	// Move the shared id counter past every provider's ids before restoring any
+	// of them, so an id minted while one provider restores (a RestoreMissing
+	// hook) cannot land on an id another provider is about to bring back.
+	for name := range snap.Providers {
+		ps := snap.Providers[name]
+		idgen.AdvanceTo(idFloor(&ps))
+	}
+
 	for name := range snap.Providers {
 		svcs, ok := targets[name]
 		if !ok {
@@ -144,7 +160,7 @@ func RestoreAllWithFactory(
 		}
 
 		ps := snap.Providers[name]
-		if err := Restore(ctx, svcs, &ps); err != nil {
+		if err := restoreServices(ctx, svcs, &ps); err != nil {
 			return fmt.Errorf("restore %s: %w", name, err)
 		}
 	}
@@ -176,6 +192,10 @@ func Export(ctx context.Context, services Services, opts Options) (ProviderState
 		ps.Services = nil
 	}
 
+	// Read after every service was captured: any id inside the snapshot was
+	// minted before this load, so the value covers all of them.
+	ps.IDCounter = idgen.Counter()
+
 	return ps, nil
 }
 
@@ -183,8 +203,18 @@ func Export(ctx context.Context, services Services, opts Options) (ProviderState
 // (empty) provider, restoring each captured service through its mock's
 // Snapshottable.Restore. A service captured in the snapshot but not present in
 // services (e.g. a snapshot from a build with a wider surface) is skipped.
-// Sorted iteration keeps restore order deterministic.
+// Sorted iteration keeps restore order deterministic. The shared id counter is
+// first moved past the snapshot's ids, so later creates do not collide with
+// restored resources.
 func Restore(ctx context.Context, services Services, ps *ProviderState) error {
+	idgen.AdvanceTo(idFloor(ps))
+
+	return restoreServices(ctx, services, ps)
+}
+
+// restoreServices is Restore without the id counter step, for RestoreAll which
+// advances the counter for every provider up front.
+func restoreServices(ctx context.Context, services Services, ps *ProviderState) error {
 	names := make([]string, 0, len(ps.Services))
 	for name := range ps.Services {
 		names = append(names, name)
