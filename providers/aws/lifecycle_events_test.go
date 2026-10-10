@@ -198,37 +198,86 @@ func TestECSTaskAndServiceEvents(t *testing.T) {
 	}
 
 	events := drain()
-	if len(events) != 3 {
-		t.Fatalf("got %d events, want 3 (task RUNNING, task STOPPED, SERVICE_STEADY_STATE)", len(events))
+
+	var taskEvents, deployments, actions []lifecycleEvent
+
+	for i := range events {
+		switch events[i].DetailType {
+		case "ECS Task State Change":
+			taskEvents = append(taskEvents, events[i])
+		case "ECS Deployment State Change":
+			deployments = append(deployments, events[i])
+		case "ECS Service Action":
+			actions = append(actions, events[i])
+		default:
+			t.Fatalf("unexpected event %q", events[i].DetailType)
+		}
 	}
 
-	for i, want := range []string{"RUNNING", "STOPPED"} {
-		requireEnvelope(t, &events[i], "aws.ecs", "ECS Task State Change")
+	// An EXTERNAL task has no ENI: it passes PENDING, ACTIVATING, RUNNING on launch
+	// and DEACTIVATING, STOPPING, STOPPED on stop, one event (version +1) each.
+	wantStates := []string{"PENDING", "ACTIVATING", "RUNNING", "DEACTIVATING", "STOPPING", "STOPPED"}
+	if len(taskEvents) != len(wantStates) {
+		t.Fatalf("got %d task events, want %d", len(taskEvents), len(wantStates))
+	}
 
-		d := detailOf(t, &events[i])
+	for i, want := range wantStates {
+		requireEnvelope(t, &taskEvents[i], "aws.ecs", "ECS Task State Change")
+
+		d := detailOf(t, &taskEvents[i])
 		if d["taskArn"] != tasks[0].ARN || d["lastStatus"] != want || d["clusterArn"] != tasks[0].ClusterARN {
 			t.Fatalf("task event %d detail = %v, want lastStatus %s", i, d, want)
 		}
 
-		if events[i].Resources[0] != tasks[0].ARN {
-			t.Fatalf("task event resources = %v", events[i].Resources)
+		if d["version"] != float64(i+1) {
+			t.Fatalf("task event %d version = %v, want %d", i, d["version"], i+1)
+		}
+
+		if taskEvents[i].Resources[0] != tasks[0].ARN {
+			t.Fatalf("task event resources = %v", taskEvents[i].Resources)
 		}
 	}
 
-	if d := detailOf(t, &events[1]); d["stoppedReason"] != "done" || d["desiredStatus"] != "STOPPED" {
+	const running, stopped = 2, 5
+
+	if d := detailOf(t, &taskEvents[stopped]); d["stoppedReason"] != "done" || d["desiredStatus"] != "STOPPED" {
 		t.Fatalf("STOPPED detail = %v", d)
 	}
 
-	requireTaskTimeline(t, detailOf(t, &events[0]), detailOf(t, &events[1]))
+	requireTaskTimeline(t, detailOf(t, &taskEvents[running]), detailOf(t, &taskEvents[stopped]))
 
-	requireEnvelope(t, &events[2], "aws.ecs", "ECS Service Action")
-
-	if d := detailOf(t, &events[2]); d["eventName"] != "SERVICE_STEADY_STATE" || d["eventType"] != "INFO" {
-		t.Fatalf("service action detail = %v", d)
+	if len(deployments) != 2 {
+		t.Fatalf("got %d deployment events, want in-progress and completed", len(deployments))
 	}
 
-	if events[2].Resources[0] != svc.ARN {
-		t.Fatalf("service action resources = %v, want [%s]", events[2].Resources, svc.ARN)
+	for i, want := range []string{"SERVICE_DEPLOYMENT_IN_PROGRESS", "SERVICE_DEPLOYMENT_COMPLETED"} {
+		requireEnvelope(t, &deployments[i], "aws.ecs", "ECS Deployment State Change")
+
+		if d := detailOf(t, &deployments[i]); d["eventName"] != want || d["eventType"] != "INFO" || d["deploymentId"] == nil {
+			t.Fatalf("deployment event %d detail = %v, want %s", i, d, want)
+		}
+
+		if deployments[i].Resources[0] != svc.ARN {
+			t.Fatalf("deployment event resources = %v, want [%s]", deployments[i].Resources, svc.ARN)
+		}
+	}
+
+	var steady bool
+
+	for i := range actions {
+		requireEnvelope(t, &actions[i], "aws.ecs", "ECS Service Action")
+
+		if d := detailOf(t, &actions[i]); d["eventName"] == "SERVICE_STEADY_STATE" && d["eventType"] == "INFO" {
+			steady = true
+		}
+
+		if actions[i].Resources[0] != svc.ARN {
+			t.Fatalf("service action resources = %v, want [%s]", actions[i].Resources, svc.ARN)
+		}
+	}
+
+	if !steady {
+		t.Fatal("no SERVICE_STEADY_STATE service action")
 	}
 }
 

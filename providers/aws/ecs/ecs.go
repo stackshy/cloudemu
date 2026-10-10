@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/ecs/driver"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 // Compile-time check that Mock implements driver.ECS.
@@ -50,10 +51,15 @@ type Mock struct {
 	settings          *memstore.Store[*driver.AccountSetting]   // keyed by setting name
 	attributes        *memstore.Store[*driver.Attribute]        // keyed by targetId + "\x00" + name
 	capacityProviders *memstore.Store[*driver.CapacityProvider] // keyed by name; excludes the predefined FARGATE/FARGATE_SPOT
-	opts              *config.Options
-	regMu             sync.Mutex // serializes task-definition revision allocation
-	placeMu           sync.Mutex // serializes container-instance capacity reserve/release
-	clusterMu         sync.Mutex // serializes CreateCluster name-reuse compare-and-set
+	taskSets          *memstore.Store[*driver.TaskSet]          // keyed by "cluster/service/id" (the id itself contains a slash)
+
+	serviceDeployments *memstore.Store[*driver.ServiceDeployment] // keyed by deployment ARN
+	serviceRevisions   *memstore.Store[*driver.ServiceRevision]   // keyed by revision ARN
+	opts               *config.Options
+	regMu              sync.Mutex // serializes task-definition revision allocation
+	placeMu            sync.Mutex // serializes container-instance capacity reserve/release
+	clusterMu          sync.Mutex // serializes CreateCluster name-reuse compare-and-set
+	protectMu          sync.Mutex // serializes UpdateTaskProtection's count check and writes
 
 	// reconcileLock serializes reconcileServiceAfterStop per service (see
 	// service_reconcile_lock.go), closing the concurrent-StopTask over-launch
@@ -62,6 +68,24 @@ type Mock struct {
 	// and before m.services's own per-call lock (via Update), so it can never
 	// deadlock against them.
 	reconcileLock *serviceReconcileLock
+
+	// taskSetLock serializes every task-set mutation of one service (create,
+	// scale, promote, delete, rescale on a desired-count change, replacement
+	// after a stop) and DeleteService's cascade over the same set, so a task
+	// set can never be created into a service that is concurrently deleted. It
+	// is taken before placeMu (task launches/stops inside it) and never while
+	// holding placeMu, reconcileLock or an event publish.
+	taskSetLock *serviceReconcileLock
+
+	// deploymentLock serializes one service's deployment-history writes (record,
+	// trim, stop, delete cascade). It is taken after taskSetLock and never while
+	// holding placeMu.
+	deploymentLock *serviceReconcileLock
+
+	// deploymentSettle overlays a transient status (IN_PROGRESS after a deploy,
+	// ROLLBACK_IN_PROGRESS / STOP_REQUESTED after a stop) onto a deployment's
+	// stored final status when opts.AsyncSettle is enabled.
+	deploymentSettle *settle.Set
 
 	launcher ManagedInstanceLauncher // optional: provisions backing managed EC2 instances
 
@@ -83,6 +107,8 @@ type Mock struct {
 	registrar TargetRegistrar // optional: ELBv2 target group the service scheduler registers RUNNING tasks with
 
 	events awsevents.Emitter // optional: EventBridge default bus for task state change / service action events
+
+	monitoring mondriver.Monitoring // optional: CloudWatch backend for AWS/ECS and ECS/ContainerInsights metrics
 
 	// portCounter draws successive dynamic host ports for bridge-mode container
 	// port mappings that leave hostPort unset.
@@ -118,10 +144,17 @@ func New(opts *config.Options) *Mock {
 		settings:          memstore.New[*driver.AccountSetting](),
 		attributes:        memstore.New[*driver.Attribute](),
 		capacityProviders: memstore.New[*driver.CapacityProvider](),
-		engineHandles:     memstore.New[string](),
-		taskSettle:        settle.NewSet(),
-		reconcileLock:     newServiceReconcileLock(),
-		opts:              opts,
+		taskSets:          memstore.New[*driver.TaskSet](),
+
+		serviceDeployments: memstore.New[*driver.ServiceDeployment](),
+		serviceRevisions:   memstore.New[*driver.ServiceRevision](),
+		deploymentLock:     newServiceReconcileLock(),
+		deploymentSettle:   settle.NewSet(),
+		engineHandles:      memstore.New[string](),
+		taskSettle:         settle.NewSet(),
+		reconcileLock:      newServiceReconcileLock(),
+		taskSetLock:        newServiceReconcileLock(),
+		opts:               opts,
 	}
 }
 

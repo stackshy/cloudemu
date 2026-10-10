@@ -218,15 +218,33 @@ type wireContainer struct {
 	LastStatus   string `json:"lastStatus,omitempty"`
 	// ExitCode is a pointer so a real exit 0 on a STOPPED container serializes
 	// (real ECS reports it), while a running container omits it entirely.
-	ExitCode        *int                 `json:"exitCode,omitempty"`
-	Reason          string               `json:"reason,omitempty"`
-	RuntimeID       string               `json:"runtimeId,omitempty"`
-	NetworkBindings []wireNetworkBinding `json:"networkBindings,omitempty"`
+	ExitCode          *int                   `json:"exitCode,omitempty"`
+	Reason            string                 `json:"reason,omitempty"`
+	RuntimeID         string                 `json:"runtimeId,omitempty"`
+	NetworkBindings   []wireNetworkBinding   `json:"networkBindings,omitempty"`
+	NetworkInterfaces []wireNetworkInterface `json:"networkInterfaces,omitempty"`
+	ManagedAgents     []wireManagedAgent     `json:"managedAgents,omitempty"`
+}
+
+// wireNetworkInterface is the ECS NetworkInterface shape of a container.
+type wireNetworkInterface struct {
+	AttachmentID       string `json:"attachmentId,omitempty"`
+	PrivateIPv4Address string `json:"privateIpv4Address,omitempty"`
+	IPv6Address        string `json:"ipv6Address,omitempty"`
+}
+
+// wireManagedAgent is the ECS ManagedAgent shape of a container.
+type wireManagedAgent struct {
+	Name          string  `json:"name,omitempty"`
+	LastStatus    string  `json:"lastStatus,omitempty"`
+	LastStartedAt float64 `json:"lastStartedAt,omitempty"`
+	Reason        string  `json:"reason,omitempty"`
 }
 
 // wireAttachment mirrors the ECS Attachment shape (type/status/details), where
 // details is a list of name/value pairs (KeyValuePair).
 type wireAttachment struct {
+	ID      string         `json:"id,omitempty"`
 	Type    string         `json:"type,omitempty"`
 	Status  string         `json:"status,omitempty"`
 	Details []wireKeyValue `json:"details,omitempty"`
@@ -275,6 +293,7 @@ type wireTask struct {
 	StoppedAt            float64          `json:"stoppedAt,omitempty"`
 	StoppedReason        string           `json:"stoppedReason,omitempty"`
 	StopCode             string           `json:"stopCode,omitempty"`
+	EnableExecuteCommand bool             `json:"enableExecuteCommand"`
 	CPU                  string           `json:"cpu,omitempty"`
 	Memory               string           `json:"memory,omitempty"`
 	AvailabilityZone     string           `json:"availabilityZone,omitempty"`
@@ -346,6 +365,8 @@ type wireDeployment struct {
 	RolloutStateReason string  `json:"rolloutStateReason,omitempty"`
 	CreatedAt          float64 `json:"createdAt,omitempty"`
 	UpdatedAt          float64 `json:"updatedAt,omitempty"`
+	// ServiceConnectConfiguration echoes the service's Service Connect setting.
+	ServiceConnectConfiguration json.RawMessage `json:"serviceConnectConfiguration,omitempty"`
 }
 
 type wireServiceEvent struct {
@@ -380,6 +401,7 @@ type wireService struct {
 	Events                        []wireServiceEvent           `json:"events,omitempty"`
 	CreatedAt                     float64                      `json:"createdAt,omitempty"`
 	Tags                          []wireTag                    `json:"tags,omitempty"`
+	TaskSets                      []wireTaskSet                `json:"taskSets,omitempty"`
 	// AvailabilityZoneRebalancing has no omitempty: real ECS always reports
 	// this field ("ENABLED"/"DISABLED"), even for services that never opted in.
 	AvailabilityZoneRebalancing string `json:"availabilityZoneRebalancing"`
@@ -400,6 +422,7 @@ type wireContainerInstance struct {
 	RegisteredResources  []wireResource `json:"registeredResources,omitempty"`
 	RemainingResources   []wireResource `json:"remainingResources,omitempty"`
 	Tags                 []wireTag      `json:"tags,omitempty"`
+	Version              int64          `json:"version"`
 }
 
 // --- request -> driver converters ---
@@ -1221,6 +1244,36 @@ func fromNetworkBindings(in []driver.NetworkBinding) []wireNetworkBinding {
 	return out
 }
 
+func fromNetworkInterfaces(in []driver.ContainerNetworkInterface) []wireNetworkInterface {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]wireNetworkInterface, 0, len(in))
+	for _, ni := range in {
+		out = append(out, wireNetworkInterface{
+			AttachmentID: ni.AttachmentID, PrivateIPv4Address: ni.PrivateIPv4Address, IPv6Address: ni.IPv6Address,
+		})
+	}
+
+	return out
+}
+
+func fromManagedAgents(in []driver.ManagedAgent) []wireManagedAgent {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]wireManagedAgent, 0, len(in))
+	for _, a := range in {
+		out = append(out, wireManagedAgent{
+			Name: a.Name, LastStatus: a.LastStatus, LastStartedAt: epoch(a.LastStartedAt), Reason: a.Reason,
+		})
+	}
+
+	return out
+}
+
 func taskToWire(t *driver.Task) wireTask {
 	containers := make([]wireContainer, 0, len(t.Containers))
 
@@ -1230,7 +1283,9 @@ func taskToWire(t *driver.Task) wireTask {
 			ContainerArn: c.ARN, TaskArn: t.ARN,
 			Name: c.Name, Image: c.Image, LastStatus: c.LastStatus,
 			Reason: c.Reason, RuntimeID: c.RuntimeID,
-			NetworkBindings: fromNetworkBindings(c.NetworkBindings),
+			NetworkBindings:   fromNetworkBindings(c.NetworkBindings),
+			NetworkInterfaces: fromNetworkInterfaces(c.NetworkInterfaces),
+			ManagedAgents:     fromManagedAgents(c.ManagedAgents),
 		}
 		// Surface the exit code only once the container has stopped, so a genuine
 		// exit 0 is reported while a running container has none.
@@ -1259,6 +1314,7 @@ func taskToWire(t *driver.Task) wireTask {
 		StoppedAt:            epoch(t.StoppedAt),
 		StoppedReason:        t.StoppedReason,
 		StopCode:             t.StopCode,
+		EnableExecuteCommand: t.EnableExecuteCommand,
 		CPU:                  t.CPU,
 		Memory:               t.Memory,
 		AvailabilityZone:     t.AvailabilityZone,
@@ -1277,6 +1333,7 @@ func fromAttachments(in []driver.Attachment) []wireAttachment {
 	out := make([]wireAttachment, 0, len(in))
 	for i := range in {
 		out = append(out, wireAttachment{
+			ID:      in[i].ID,
 			Type:    in[i].Type,
 			Status:  in[i].Status,
 			Details: fromKeyValues(in[i].Details),
@@ -1321,6 +1378,7 @@ func serviceToWire(s *driver.Service) wireService {
 		Events:                        fromServiceEvents(s.Events),
 		CreatedAt:                     epoch(s.CreatedAt),
 		Tags:                          fromTags(s.Tags),
+		TaskSets:                      fromTaskSets(s.TaskSets, false),
 		AvailabilityZoneRebalancing:   s.AvailabilityZoneRebalancing,
 	}
 	if s.DeploymentController != "" {
@@ -1378,10 +1436,20 @@ func fromDeployments(in []driver.Deployment) []wireDeployment {
 			DesiredCount: in[i].DesiredCount, RunningCount: in[i].RunningCount, PendingCount: in[i].PendingCount,
 			LaunchType: in[i].LaunchType, RolloutState: in[i].RolloutState, RolloutStateReason: in[i].RolloutStateReason,
 			CreatedAt: epoch(in[i].CreatedAt), UpdatedAt: epoch(in[i].UpdatedAt),
+			ServiceConnectConfiguration: serviceConnectRaw(in[i].ServiceConnect),
 		})
 	}
 
 	return out
+}
+
+// serviceConnectRaw returns the verbatim Service Connect configuration, or nil.
+func serviceConnectRaw(in *driver.ServiceConnectConfiguration) json.RawMessage {
+	if in == nil || len(in.Raw) == 0 {
+		return nil
+	}
+
+	return in.Raw
 }
 
 func fromServiceEvents(in []driver.ServiceEvent) []wireServiceEvent {
@@ -1480,5 +1548,6 @@ func instanceToWire(ci *driver.ContainerInstance) wireContainerInstance {
 		RegisteredResources:  resourcesFromCapacity(ci.RegisteredCPU, ci.RegisteredMemory),
 		RemainingResources:   resourcesFromCapacity(ci.RemainingCPU, ci.RemainingMemory),
 		Tags:                 fromTags(ci.Tags),
+		Version:              int64(ci.Version),
 	}
 }

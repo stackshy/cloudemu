@@ -6713,6 +6713,68 @@
         "name": "UpdateService"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "ServiceDeployments",
+        "doc": "ServiceDeployments exposes the deployment history of ECS-controller services.",
+        "operations": [
+          {
+            "name": "DescribeServiceDeployments"
+          },
+          {
+            "name": "DescribeServiceRevisions"
+          },
+          {
+            "name": "ListServiceDeployments"
+          },
+          {
+            "name": "StopServiceDeployment"
+          }
+        ]
+      },
+      {
+        "name": "ServiceNamespaces",
+        "doc": "ServiceNamespaces lists the services that joined a Service Connect namespace.",
+        "operations": [
+          {
+            "name": "ListServicesByNamespace"
+          }
+        ]
+      },
+      {
+        "name": "TaskProtection",
+        "doc": "TaskProtection reads and changes the scale-in protection of service tasks.",
+        "operations": [
+          {
+            "name": "GetTaskProtection"
+          },
+          {
+            "name": "UpdateTaskProtection"
+          }
+        ]
+      },
+      {
+        "name": "TaskSets",
+        "doc": "TaskSets manages task sets, the task groups of EXTERNAL-controller services.",
+        "operations": [
+          {
+            "name": "CreateTaskSet"
+          },
+          {
+            "name": "DeleteTaskSet"
+          },
+          {
+            "name": "DescribeTaskSets"
+          },
+          {
+            "name": "UpdateServicePrimaryTaskSet"
+          },
+          {
+            "name": "UpdateTaskSet"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "ECS"
     }
