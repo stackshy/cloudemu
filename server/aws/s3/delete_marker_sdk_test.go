@@ -76,3 +76,53 @@ func TestSDKGetDeleteMarkerVersion(t *testing.T) {
 		t.Fatalf("HeadObject(delete-marker version) = %v, want 405", err)
 	}
 }
+
+// TestSDKGetHeadCurrentDeleteMarker verifies a plain GET/HEAD (no version id)
+// of a key whose current version is a delete marker answers 404 NoSuchKey with
+// x-amz-delete-marker: true and the marker's x-amz-version-id.
+func TestSDKGetHeadCurrentDeleteMarker(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	mustCreateBucket(t, client, "dmcur")
+
+	if _, err := client.PutBucketVersioning(ctx, &awss3.PutBucketVersioningInput{
+		Bucket:                  aws.String("dmcur"),
+		VersioningConfiguration: &types.VersioningConfiguration{Status: types.BucketVersioningStatusEnabled},
+	}); err != nil {
+		t.Fatalf("PutBucketVersioning: %v", err)
+	}
+
+	if _, err := client.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket: aws.String("dmcur"), Key: aws.String("k"), Body: bytes.NewReader([]byte("v1")),
+	}); err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+
+	del, err := client.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: aws.String("dmcur"), Key: aws.String("k")})
+	if err != nil {
+		t.Fatalf("DeleteObject: %v", err)
+	}
+
+	markerID := aws.ToString(del.VersionId)
+
+	_, getErr := client.GetObject(ctx, &awss3.GetObjectInput{Bucket: aws.String("dmcur"), Key: aws.String("k")})
+	requireAPIError(t, getErr, 404, "NoSuchKey")
+
+	_, headErr := client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String("dmcur"), Key: aws.String("k")})
+
+	for name, err := range map[string]error{"GetObject": getErr, "HeadObject": headErr} {
+		var re *awshttp.ResponseError
+		if !errors.As(err, &re) || re.HTTPStatusCode() != 404 {
+			t.Fatalf("%s = %v, want 404", name, err)
+		}
+
+		if got := re.Response.Header.Get("x-amz-delete-marker"); got != "true" {
+			t.Fatalf("%s x-amz-delete-marker = %q, want true", name, got)
+		}
+
+		if got := re.Response.Header.Get("x-amz-version-id"); got != markerID {
+			t.Fatalf("%s x-amz-version-id = %q, want marker %q", name, got, markerID)
+		}
+	}
+}

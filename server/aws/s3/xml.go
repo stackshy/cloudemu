@@ -87,6 +87,8 @@ type copyPartResult struct {
 type createBucketConfiguration struct {
 	XMLName            xml.Name `xml:"CreateBucketConfiguration"`
 	LocationConstraint string   `xml:"LocationConstraint"`
+	// Tags is the bucket's initial tag set (CreateBucketConfiguration/Tags).
+	Tags []tagXML `xml:"Tags>Tag"`
 }
 
 // initiateMultipartUploadResult is the XML response for CreateMultipartUpload.

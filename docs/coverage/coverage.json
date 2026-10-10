@@ -17888,6 +17888,15 @@
         ]
       },
       {
+        "name": "BucketCreator",
+        "doc": "BucketCreator is an OPTIONAL capability (discovered by type assertion) for a",
+        "operations": [
+          {
+            "name": "CreateBucketWithOptions"
+          }
+        ]
+      },
+      {
         "name": "ConditionalBucket",
         "doc": "ConditionalBucket is an OPTIONAL capability (discovered by type assertion like",
         "operations": [
@@ -18143,6 +18152,15 @@
           },
           {
             "name": "VersioningStatus"
+          }
+        ]
+      },
+      {
+        "name": "ObjectTagValidator",
+        "doc": "ObjectTagValidator is an OPTIONAL capability (discovered by type assertion)",
+        "operations": [
+          {
+            "name": "ValidateObjectTags"
           }
         ]
       },
