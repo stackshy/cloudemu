@@ -280,8 +280,9 @@ func listRemove(l *List, args []any) any {
 		return nil
 	}
 
-	if i, ok := args[0].(int64); ok {
-		if i < 0 || int(i) >= len(l.Items) {
+	if n, ok := args[0].(int64); ok {
+		i, inRange := toInt(n)
+		if !inRange || i < 0 || i >= len(l.Items) {
 			return nil
 		}
 

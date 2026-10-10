@@ -20,13 +20,11 @@ const (
 	maxPasswordLen       = 256
 )
 
-// Stored hashes look like "pbkdf2-sha256$<iterations>$<hex key>". The prefix
-// tells them apart from hashes written before it existed (older snapshots),
-// which are a bare hex SHA-256 of salt+password, so a sign-in flow can verify
-// both. The iteration count is modest because this is an emulator holding test
-// credentials, and it keeps tests fast.
+// Stored hashes look like "pbkdf2-sha256$<iterations>$<hex key>". The count is
+// stored with each hash, so changing pbkdf2Iterations keeps old hashes valid.
 const (
-	pbkdf2Prefix     = "pbkdf2-sha256$"
+	pbkdf2Prefix = "pbkdf2-sha256$"
+	// pbkdf2Iterations is deliberately low for an emulator: fast tests, no real secrets.
 	pbkdf2Iterations = 10000
 	pbkdf2KeyLen     = 32
 	// maxPBKDF2Iterations caps the iteration count a stored hash may claim, so
@@ -115,18 +113,12 @@ func pbkdf2Hash(salt, pw string, iter int) string {
 	return pbkdf2Prefix + strconv.Itoa(iter) + "$" + hex.EncodeToString(key)
 }
 
-// verifyPassword reports whether pw matches a stored salt and hash, in either
-// the PBKDF2 format or the legacy bare SHA-256 format older snapshots carry.
+// verifyPassword reports whether pw matches a stored salt and PBKDF2 hash. A
+// hash in any other format never matches.
 func verifyPassword(salt, stored, pw string) bool {
-	if stored == "" {
-		return false
-	}
-
 	rest, ok := strings.CutPrefix(stored, pbkdf2Prefix)
 	if !ok {
-		sum := sha256.Sum256([]byte(salt + pw))
-
-		return subtle.ConstantTimeCompare([]byte(hex.EncodeToString(sum[:])), []byte(stored)) == 1
+		return false
 	}
 
 	iterText, _, ok := strings.Cut(rest, "$")
