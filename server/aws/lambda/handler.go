@@ -507,6 +507,9 @@ func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, op opID, n
 		err := pm.AddPermission(r.Context(), name, qualifier, sdrv.PermissionStatement{
 			StatementID: req.StatementID, Action: req.Action,
 			Principal: req.Principal, SourceARN: req.SourceArn,
+			SourceAccount: req.SourceAccount, PrincipalOrgID: req.PrincipalOrgID,
+			EventSourceToken: req.EventSourceToken, FunctionURLAuthType: req.FunctionURLAuthType,
+			InvokedViaFunctionURL: req.InvokedViaFunctionURL,
 		})
 		if err != nil {
 			writeErr(w, err)

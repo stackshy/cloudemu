@@ -13,6 +13,9 @@ import (
 // principal renders as the account's IAM root ARN.
 const accountIDLen = 12
 
+// condPrincipalOrgID is the condition key of an organization-scoped grant.
+const condPrincipalOrgID = "aws:PrincipalOrgID"
+
 // policyKey normalizes a Qualifier into the resource-policy map key. AWS keeps a
 // separate policy per version/alias; an empty or "$LATEST" qualifier is the
 // function's unqualified policy.
@@ -28,11 +31,19 @@ func policyKey(qualifier string) string {
 // backs Terraform's aws_lambda_permission and the grants S3/SNS/EventBridge
 // create to invoke a function. A Qualifier scopes the statement to a single
 // published version or alias. AWS stores a separate policy per qualifier. The
-// emulator stores statements without evaluating them. Invocation is never
-// actually denied.
+// statements are evaluated by the wire server's Lambda handler, and only under
+// EnforceAuth (see PolicyStatements).
 func (m *Mock) AddPermission(_ context.Context, functionName, qualifier string, stmt driver.PermissionStatement) error {
 	if stmt.StatementID == "" {
 		return cerrors.New(cerrors.InvalidArgument, "StatementId is required")
+	}
+
+	switch stmt.FunctionURLAuthType {
+	case "", defaultAuthType, authTypeAWSIAM:
+	default:
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"1 validation error detected: Value '%s' at 'functionUrlAuthType' failed to satisfy constraint: "+
+				"Member must satisfy enum value set: [AWS_IAM, NONE]", stmt.FunctionURLAuthType)
 	}
 
 	m.mu.Lock()
@@ -119,7 +130,7 @@ func (m *Mock) GetPolicy(_ context.Context, functionName, qualifier string) (str
 
 	statements := make([]map[string]any, 0, len(scoped))
 	for _, s := range scoped {
-		statements = append(statements, statementJSON(s, resource))
+		statements = append(statements, statementJSON(&s, resource))
 	}
 
 	doc, err := json.Marshal(map[string]any{
@@ -136,7 +147,7 @@ func (m *Mock) GetPolicy(_ context.Context, functionName, qualifier string) (str
 
 // statementJSON renders one resource-policy statement in the IAM shape AWS
 // returns, with the principal classified by type (see principalJSON).
-func statementJSON(s driver.PermissionStatement, resource string) map[string]any {
+func statementJSON(s *driver.PermissionStatement, resource string) map[string]any {
 	stmt := map[string]any{
 		"Sid":       s.StatementID,
 		"Effect":    "Allow",
@@ -145,13 +156,74 @@ func statementJSON(s driver.PermissionStatement, resource string) map[string]any
 		"Resource":  resource,
 	}
 
-	if s.SourceARN != "" {
-		stmt["Condition"] = map[string]any{
-			"ArnLike": map[string]string{"AWS:SourceArn": s.SourceARN},
-		}
+	if cond := statementCondition(s); len(cond) > 0 {
+		stmt["Condition"] = cond
 	}
 
 	return stmt
+}
+
+// statementCondition renders the AddPermission options of s as the Condition
+// block AWS stores for them: ArnLike AWS:SourceArn; StringEquals on
+// AWS:SourceAccount, aws:PrincipalOrgID, lambda:EventSourceToken and
+// lambda:FunctionUrlAuthType; Bool lambda:InvokedViaFunctionUrl.
+func statementCondition(s *driver.PermissionStatement) map[string]any {
+	cond := map[string]any{}
+
+	if s.SourceARN != "" {
+		cond["ArnLike"] = map[string]string{"AWS:SourceArn": s.SourceARN}
+	}
+
+	equals := map[string]string{}
+
+	for key, value := range map[string]string{
+		"AWS:SourceAccount":          s.SourceAccount,
+		condPrincipalOrgID:           s.PrincipalOrgID,
+		"lambda:EventSourceToken":    s.EventSourceToken,
+		"lambda:FunctionUrlAuthType": s.FunctionURLAuthType,
+	} {
+		if value != "" {
+			equals[key] = value
+		}
+	}
+
+	if len(equals) > 0 {
+		cond["StringEquals"] = equals
+	}
+
+	if s.InvokedViaFunctionURL {
+		cond["Bool"] = map[string]string{"lambda:InvokedViaFunctionUrl": "true"}
+	}
+
+	return cond
+}
+
+// PolicyStatements returns the statements of the function's resource-based
+// policy for qualifier, and the function ARN that policy applies to (the
+// qualified ARN for a version or alias). A qualifier with no policy returns no
+// statements; a missing function is NotFound.
+func (m *Mock) PolicyStatements(_ context.Context, functionName, qualifier string) (string, []driver.PermissionStatement, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	fd, ok := m.funcs.Get(functionName)
+	if !ok {
+		return "", nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+	}
+
+	key := policyKey(qualifier)
+
+	resource := fd.info.ARN
+	if key != latestVersion {
+		resource += ":" + key
+	}
+
+	stmts := make([]driver.PermissionStatement, 0, len(fd.policies[key]))
+	for sid := range fd.policies[key] {
+		stmts = append(stmts, fd.policies[key][sid])
+	}
+
+	return resource, stmts, nil
 }
 
 // principalJSON renders an AddPermission Principal in the shape AWS uses in the
