@@ -99,6 +99,8 @@ type authzPlan struct {
 	// not parse. A deny is rendered from it, since its form is already parsed.
 	req    *http.Request
 	checks []awsauthz.Check
+	// cond holds the service condition keys a ContextResolver returned.
+	cond map[string]string
 	// action names the operation in a deny message for the plans without
 	// checks (the service-wide action for planServiceWide).
 	action string
@@ -115,13 +117,8 @@ func (g *gateConfig) resolvePlan(probe *http.Request, h server.Handler, probed b
 		return authzPlan{kind: planNoHandler}
 	}
 
-	if res, ok := h.(awsauthz.Resolver); ok {
-		checks, known := res.IAMChecks(probe, g.scope)
-		if !known {
-			return authzPlan{kind: planUnknownOp, req: probe, action: iamService(h) + ":" + rawOperation(probe)}
-		}
-
-		return authzPlan{kind: planChecks, req: probe, checks: checks}
+	if plan, ok := g.resolverPlan(probe, h); ok {
+		return plan
 	}
 
 	if g.jsonRPC[h] {
@@ -137,6 +134,32 @@ func (g *gateConfig) resolvePlan(probe *http.Request, h server.Handler, probed b
 	}
 
 	return authzPlan{kind: planUnmapped, req: probe}
+}
+
+// resolverPlan is the plan of a handler that names its own checks (a
+// Resolver, or a ContextResolver that also returns condition keys). ok=false
+// when h is neither.
+func (g *gateConfig) resolverPlan(probe *http.Request, h server.Handler) (authzPlan, bool) {
+	var (
+		checks []awsauthz.Check
+		cond   map[string]string
+		known  bool
+	)
+
+	switch res := h.(type) {
+	case awsauthz.ContextResolver:
+		checks, cond, known = res.IAMChecksWithContext(probe, g.scope)
+	case awsauthz.Resolver:
+		checks, known = res.IAMChecks(probe, g.scope)
+	default:
+		return authzPlan{}, false
+	}
+
+	if !known {
+		return authzPlan{kind: planUnknownOp, req: probe, action: iamService(h) + ":" + rawOperation(probe)}, true
+	}
+
+	return authzPlan{kind: planChecks, req: probe, checks: checks, cond: cond}, true
 }
 
 // jsonRPCPlan binds a JSON-RPC request to its action through the target
@@ -238,6 +261,7 @@ func (g *gateConfig) authorize(
 	}
 
 	ev := awsauthz.Evaluation{Principal: *p, CondCtx: awsauthz.ConditionContext(r, p, g.scope)}
+	awsauthz.MergeContext(ev.CondCtx, plan.cond, iamService(h))
 	strict := kind == stssrv.KindRole
 	shortcut := !strict && (isAdminPrincipal(*p) || !principalHasPolicies(r, *p, g.iam))
 
