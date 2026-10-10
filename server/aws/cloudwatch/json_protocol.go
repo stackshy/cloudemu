@@ -158,16 +158,16 @@ func (j *jsonWriter) writeError(status int, code, msg string) {
 		shape = s
 	}
 
-	fault := "Sender"
-	if status >= http.StatusInternalServerError {
-		fault = "Receiver"
-	}
+	j.writeShapedError(status, shape, code, msg)
+}
 
+// writeShapedError writes an awsJson1_0 error with an explicit shape name.
+func (j *jsonWriter) writeShapedError(status int, shape, code, msg string) {
 	body, _ := json.Marshal(map[string]string{"__type": shape, "message": msg})
 
 	hdr := j.w.Header()
 	hdr.Set(errTypeHeader, shape)
-	hdr.Set(queryErrorHeader, code+";"+fault)
+	hdr.Set(queryErrorHeader, code+";"+faultOf(status))
 	j.WriteHeader(status)
 	_, _ = j.Write(body)
 }
