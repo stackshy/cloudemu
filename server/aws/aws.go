@@ -443,7 +443,11 @@ type Drivers struct {
 	// (IAM, STS, EC2 and Auto Scaling, RDS, Redshift, ElastiCache, ELBv2, SNS,
 	// CloudFormation, CloudWatch) and SageMaker are checked per operation.
 	// JSON-RPC services are checked per operation through X-Amz-Target. S3 is
-	// checked per operation on the bucket and object ARNs. The other REST
+	// checked per operation on the bucket and object ARNs. Lambda is checked per
+	// operation on function, version, alias, layer and event source mapping
+	// ARNs; Invoke and function URL calls also honor the function's
+	// resource-based policy, and a function URL with AuthType NONE is public
+	// only when that policy grants public access. The other REST
 	// services are checked at service level for now: only a grant covering
 	// every action of the service (such as s3:* or AdministratorAccess) lets a
 	// request through, so a fine-grained or resource-scoped REST policy fails
@@ -1153,6 +1157,8 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 			// code runs instead of the echo stub.
 			lambdaOpts = append(lambdaOpts, lambda.WithObjectStore(d.S3))
 		}
+
+		lambdaOpts = append(lambdaOpts, lambda.WithEnforceAuth(d.EnforceAuth))
 
 		srv.Register(lambda.New(d.Lambda, lambdaOpts...))
 	}

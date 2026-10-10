@@ -82,8 +82,8 @@ func allow(actions ...string) string {
 const (
 	allowAllDenyBucket = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"},` +
 		`{"Effect":"Deny","Action":"s3:DeleteBucket","Resource":"arn:aws:s3:::prod"}]}`
-	allowAllDenyFunction = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"},` +
-		`{"Effect":"Deny","Action":"lambda:DeleteFunction","Resource":"arn:aws:lambda:us-east-1:123456789012:function:prod"}]}`
+	allowAllDenyRestAPI = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"},` +
+		`{"Effect":"Deny","Action":"apigateway:DELETE","Resource":"arn:aws:apigateway:us-east-1::/restapis/prod"}]}`
 	xmlAccessDenied = "<Code>AccessDenied</Code>"
 	createEvilUser  = "Action=CreateUser&Version=2010-05-08&UserName=evil"
 	lambdaCreate    = `{"FunctionName":"f1","Runtime":"python3.12","Role":"arn:aws:iam::123456789012:role/r",` +
@@ -348,7 +348,7 @@ func TestAuthzMatrixForgedTarget(t *testing.T) {
 		status, body := doSigned(t, ts, put, sreq{
 			path: lambdaPath, ctype: "application/json", body: lambdaCreate, service: "lambda", header: forged,
 		})
-		wantDenied(t, status, body, accessDeny)
+		wantDenied(t, status, body, "lambda:CreateFunction on resource: arn:aws:lambda:us-east-1:123456789012:function:f1")
 
 		if fns, _ := cloud.Lambda.ListFunctions(context.Background()); len(fns) != 0 {
 			t.Fatalf("functions %v, want none", fns)
@@ -399,17 +399,18 @@ func TestAuthzMatrixREST(t *testing.T) {
 	})
 
 	for _, tc := range []struct {
-		name string
-		rq   sreq
+		name  string
+		rq    sreq
+		shape string
 	}{
-		{"lambda CreateFunction", sreq{path: lambdaPath, ctype: "application/json", body: lambdaCreate, service: "lambda"}},
-		{"apigateway CreateRestApi", sreq{path: "/restapis", ctype: "application/json", body: `{"name":"a"}`, service: "apigateway"}},
+		{"lambda CreateFunction", sreq{path: lambdaPath, ctype: "application/json", body: lambdaCreate, service: "lambda"}, lambdaDeny},
+		{"apigateway CreateRestApi", sreq{path: "/restapis", ctype: "application/json", body: `{"name":"a"}`, service: "apigateway"}, accessDeny},
 		{"eks CreateCluster", sreq{path: "/clusters", ctype: "application/json", service: "eks",
-			body: `{"name":"c1","roleArn":"arn:aws:iam::123456789012:role/r","resourcesVpcConfig":{}}`}},
+			body: `{"name":"c1","roleArn":"arn:aws:iam::123456789012:role/r","resourcesVpcConfig":{}}`}, accessDeny},
 	} {
 		t.Run(tc.name+" by a dynamodb-only user", func(t *testing.T) {
 			status, body := doSigned(t, ts, dyn, tc.rq)
-			wantDenied(t, status, body, accessDeny)
+			wantDenied(t, status, body, tc.shape)
 		})
 	}
 
@@ -424,9 +425,9 @@ func TestAuthzMatrixREST(t *testing.T) {
 	})
 
 	t.Run("allow-all with one deny on a service-level service", func(t *testing.T) {
-		u := userWithPolicy(t, cloud, "denyone", allowAllDenyFunction)
-		status, body := doSigned(t, ts, u, sreq{path: lambdaPath, ctype: "application/json",
-			body: strings.Replace(lambdaCreate, "f1", "denyone-fn", 1), service: "lambda"})
+		u := userWithPolicy(t, cloud, "denyone", allowAllDenyRestAPI)
+		status, body := doSigned(t, ts, u, sreq{path: "/restapis", ctype: "application/json",
+			body: `{"name":"denyone"}`, service: "apigateway"})
 		wantDenied(t, status, body, accessDeny)
 	})
 

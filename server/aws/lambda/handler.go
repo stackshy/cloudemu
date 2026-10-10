@@ -227,6 +227,8 @@ type Handler struct {
 	// "name:version", so a function importing the layer can have its files
 	// overlaid into the deployment package.
 	layerContent map[string][]byte
+	// enforce is set under EnforceAuth (WithEnforceAuth).
+	enforce bool
 }
 
 // Option configures a Handler.
@@ -1357,6 +1359,11 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 		qualifier = q
 	}
 
+	if msg := h.authorizeInvoke(r, functionName, qualifier); msg != "" {
+		writeAccessDenied(w, msg)
+		return
+	}
+
 	invokeType := r.Header.Get("X-Amz-Invocation-Type")
 
 	// A DryRun invocation validates the request without executing the function:
@@ -1710,7 +1717,3 @@ func writeThrottle(w http.ResponseWriter, msg string) {
 		"Reason":  reservedConcurrencyReason,
 	})
 }
-
-// IAMService returns the IAM service prefix of the operations this handler
-// serves.
-func (*Handler) IAMService() string { return "lambda" }
