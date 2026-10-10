@@ -156,6 +156,10 @@ type bucketMeta struct {
 	// Lock enabled (x-amz-bucket-object-lock-enabled), which also forces
 	// versioning on. Guarded by versionsMu (set alongside versionStatus).
 	objectLockEnabled bool
+	// lockDefault is the bucket's default Object Lock retention (nil = none),
+	// applied to new versions written without an explicit retention. Guarded by
+	// versionsMu.
+	lockDefault *objectLockDefault
 	// versionStatus is "" (never configured), "Enabled", or "Suspended".
 	// versionsMu guards versionStatus and the versions history map; versions
 	// maps a key to its ordered (oldest-first) version chain.
@@ -462,10 +466,21 @@ func (m *Mock) PutObjectWithSystemProps(
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
+	return m.putObject(ctx, bkt, bucket, key, data, contentType, metadata, props, objectLock{})
+}
+
+// putObject writes a new object (or version) with optional system properties
+// and an explicit Object Lock state, then runs the shared post-put effects.
+func (m *Mock) putObject(
+	ctx context.Context, bkt *bucketMeta, bucket, key string, data []byte, contentType string,
+	metadata map[string]string, props *driver.ObjectSystemProps, lock objectLock,
+) error {
 	obj := m.newObject(key, data, contentType, metadata)
 	if props != nil {
 		obj.SystemProps = *props
 	}
+
+	obj.lock = lock
 
 	if err := m.storeObject(bkt, key, obj); err != nil {
 		return err
@@ -599,6 +614,10 @@ func (m *Mock) storeObjectLocked(bkt *bucketMeta, key string, obj *s3Object) err
 	// When an engine holds the bytes, the version record keeps only metadata +
 	// size; its bytes live in the engine under the version id (dropData).
 	dropData := m.opts.StorageEngine != nil
+
+	// Every new version on a bucket with a default retention gets it, unless the
+	// write set an explicit retention.
+	m.applyDefaultRetentionLocked(bkt, obj)
 
 	switch bkt.versionStatus {
 	case versioningEnabled:
@@ -2389,17 +2408,25 @@ func (m *Mock) PutObjectTagging(_ context.Context, bucket, key string, tags map[
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
+	return setObjectTags(bkt, key, maps.Clone(tags))
+}
+
+// setObjectTags replaces key's current object with a copy carrying tags. It
+// runs under versionsMu like every other writer of the current object (put,
+// copy, restore, lock changes), so no update is lost, and readers holding the
+// previous record never see it change.
+func setObjectTags(bkt *bucketMeta, key string, tags map[string]string) error {
+	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
 	obj, ok := bkt.objects.Get(key)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
+		return cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bkt.Name)
 	}
 
-	copied := make(map[string]string, len(tags))
-	for k, v := range tags {
-		copied[k] = v
-	}
-
-	obj.Tags = copied
+	cp := *obj
+	cp.Tags = tags
+	bkt.objects.Set(key, &cp)
 
 	return nil
 }
@@ -2435,14 +2462,7 @@ func (m *Mock) DeleteObjectTagging(_ context.Context, bucket, key string) error 
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
-	obj, ok := bkt.objects.Get(key)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
-	}
-
-	obj.Tags = nil
-
-	return nil
+	return setObjectTags(bkt, key, nil)
 }
 
 // PutBucketConfig stores an opaque bucket-configuration document (policy, cors,

@@ -18067,6 +18067,9 @@
             "doc": "GetObjectLegalHold reports whether legal hold is ON for a version (current"
           },
           {
+            "name": "GetObjectLockConfiguration"
+          },
+          {
             "name": "GetObjectRetention",
             "doc": "GetObjectRetention returns the retention on a version (the current version"
           },
@@ -18132,12 +18135,20 @@
             "doc": "PutObjectLegalHold sets legal hold ON/OFF for a version (current when"
           },
           {
+            "name": "PutObjectLockConfiguration",
+            "doc": "PutObjectLockConfiguration enables Object Lock on the bucket (which must"
+          },
+          {
             "name": "PutObjectRetention",
             "doc": "PutObjectRetention sets the retention on a version (current when"
           },
           {
             "name": "PutObjectTagging",
             "doc": "Object Tagging"
+          },
+          {
+            "name": "PutObjectWithLock",
+            "doc": "PutObjectWithLock is PutObjectWithSystemProps that also sets the new"
           },
           {
             "name": "SetBucketVersioning",

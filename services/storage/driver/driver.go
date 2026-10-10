@@ -844,6 +844,38 @@ type ObjectRetention struct {
 	RetainUntilDate time.Time
 }
 
+// ObjectLockSettings are the Object Lock settings a write sets on the new
+// object version (x-amz-object-lock-mode / -retain-until-date / -legal-hold).
+// An empty Mode means no explicit retention, so the bucket's default retention
+// (if any) applies.
+type ObjectLockSettings struct {
+	Mode        string
+	RetainUntil time.Time
+	LegalHold   bool
+}
+
+// ObjectLockConfiguration is a bucket's S3 Object Lock configuration. Object
+// Lock is enabled whenever a configuration exists. DefaultMode (GOVERNANCE or
+// COMPLIANCE) with exactly one of DefaultDays or DefaultYears is the default
+// retention applied to every new object version; an empty DefaultMode means
+// no default retention.
+type ObjectLockConfiguration struct {
+	DefaultMode  string
+	DefaultDays  int
+	DefaultYears int
+}
+
+// Object Lock configuration errors, matched by the S3 wire layer with errors.Is.
+var (
+	// ErrObjectLockNeedsVersioning: Object Lock can only be enabled on a bucket
+	// whose versioning is Enabled. S3 answers 409 InvalidBucketState.
+	ErrObjectLockNeedsVersioning = cerrors.New(cerrors.FailedPrecondition,
+		"Versioning must be 'Enabled' on the bucket to apply a Object Lock configuration")
+	// ErrNoObjectLockConfiguration: the bucket does not have Object Lock
+	// enabled. S3 answers 404 ObjectLockConfigurationNotFoundError.
+	ErrNoObjectLockConfiguration = cerrors.New(cerrors.NotFound, "Object Lock configuration does not exist for this bucket")
+)
+
 // ObjectLockBucket is an OPTIONAL S3-specific capability (discovered by type
 // assertion, like VersionedBucket) that ENFORCES S3 Object Lock (WORM). Retention
 // (GOVERNANCE/COMPLIANCE + RetainUntilDate) and legal hold are recorded per
@@ -864,6 +896,21 @@ type ObjectLockBucket interface {
 	// EnableObjectLock marks a bucket Object-Lock-enabled and turns on versioning
 	// (Object Lock requires it). Idempotent.
 	EnableObjectLock(ctx context.Context, bucket string) error
+
+	// PutObjectLockConfiguration enables Object Lock on the bucket (which must
+	// have versioning Enabled unless lock is already on) and replaces its
+	// default retention. GetObjectLockConfiguration returns it, or
+	// ErrNoObjectLockConfiguration when Object Lock is not enabled.
+	PutObjectLockConfiguration(ctx context.Context, bucket string, cfg ObjectLockConfiguration) error
+	GetObjectLockConfiguration(ctx context.Context, bucket string) (*ObjectLockConfiguration, error)
+
+	// PutObjectWithLock is PutObjectWithSystemProps that also sets the new
+	// version's Object Lock settings in the same write. An explicit retention
+	// replaces the bucket's default retention for that version.
+	PutObjectWithLock(
+		ctx context.Context, bucket, key string, data []byte, contentType string,
+		metadata map[string]string, props *ObjectSystemProps, lock ObjectLockSettings,
+	) error
 
 	// GetObjectRetention returns the retention on a version (the current version
 	// when versionID==""). A zero ObjectRetention means none is set.
