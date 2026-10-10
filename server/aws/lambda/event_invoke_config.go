@@ -3,7 +3,6 @@ package lambda
 import (
 	"context"
 	"net/http"
-	"strings"
 	"time"
 
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
@@ -132,31 +131,29 @@ func epochSeconds(rfc3339 string) float64 {
 // /2019-09-25/functions/{name}/event-invoke-config (PUT=put, POST=update,
 // GET=get, DELETE=delete) and .../event-invoke-config/list (GET=list). The
 // Qualifier query parameter scopes the config to a version or alias.
-func (h *Handler) serveEventInvokeConfig(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) serveEventInvokeConfig(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) {
 	mgr, ok := h.fn.(eventInvokeConfigManager)
 	if !ok {
 		writeError(w, http.StatusNotImplemented, "InvalidRequestException", "event invoke config not supported")
 		return
 	}
 
-	rest := strings.TrimPrefix(r.URL.Path, eventInvokeConfigPrefix)
-	rest = strings.TrimPrefix(rest, "/")
-	parts := strings.Split(rest, "/")
+	parts := a.parts
 
 	const (
 		itemParts = 2 // {name}/event-invoke-config
 		listParts = 3 // {name}/event-invoke-config/list
 	)
 
-	if len(parts) < itemParts || parts[0] == "" || parts[1] != eventInvokeConfigSuffix {
+	if a.name == "" {
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
 		return
 	}
 
-	name := parts[0]
+	name := a.name
 
 	if len(parts) == listParts && parts[2] == eventInvokeListSegment {
-		if r.Method != http.MethodGet {
+		if op != opListEventInvokeConfigs {
 			writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 			return
 		}
@@ -171,20 +168,20 @@ func (h *Handler) serveEventInvokeConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	serveEventInvokeConfigItem(w, r, mgr, name)
+	serveEventInvokeConfigItem(w, r, op, mgr, name, a.qualifier)
 }
 
 // serveEventInvokeConfigItem handles PUT/POST/GET/DELETE on
 // .../{name}/event-invoke-config.
-func serveEventInvokeConfigItem(w http.ResponseWriter, r *http.Request, mgr eventInvokeConfigManager, name string) {
-	qualifier := r.URL.Query().Get("Qualifier")
-
-	switch r.Method {
-	case http.MethodPut:
+func serveEventInvokeConfigItem(
+	w http.ResponseWriter, r *http.Request, op opID, mgr eventInvokeConfigManager, name, qualifier string,
+) {
+	switch op {
+	case opPutEventInvokeConfig:
 		writeEventInvokeConfig(w, r, mgr.PutFunctionEventInvokeConfig, name, qualifier)
-	case http.MethodPost:
+	case opUpdateEventInvokeConfig:
 		writeEventInvokeConfig(w, r, mgr.UpdateFunctionEventInvokeConfig, name, qualifier)
-	case http.MethodGet:
+	case opGetEventInvokeConfig:
 		c, err := mgr.GetFunctionEventInvokeConfig(r.Context(), name, qualifier)
 		if err != nil {
 			writeErr(w, err)
@@ -192,7 +189,7 @@ func serveEventInvokeConfigItem(w http.ResponseWriter, r *http.Request, mgr even
 		}
 
 		writeJSON(w, http.StatusOK, toEventInvokeConfigResponse(c))
-	case http.MethodDelete:
+	case opDeleteEventInvokeConfig:
 		if err := mgr.DeleteFunctionEventInvokeConfig(r.Context(), name, qualifier); err != nil {
 			writeErr(w, err)
 			return

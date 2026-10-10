@@ -147,6 +147,7 @@ var iamRules = map[opID]iamRule{
 	opHeadObject:            objectAction("GetObject", "GetObjectVersion"),
 	opDeleteObject:          deleteObjectChecks,
 	opGetObjectAttributes:   getObjectAttributesChecks,
+	opRestoreObject:         objectAction("RestoreObject", ""),
 	opGetObjectTagging:      objectAction("GetObjectTagging", "GetObjectVersionTagging"),
 	opPutObjectTagging:      objectAction("PutObjectTagging", "PutObjectVersionTagging"),
 	opDeleteObjectTagging:   objectAction("DeleteObjectTagging", "DeleteObjectVersionTagging"),

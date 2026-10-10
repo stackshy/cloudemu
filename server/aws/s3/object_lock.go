@@ -219,43 +219,67 @@ func (h *Handler) getObjectLegalHold(w http.ResponseWriter, r *http.Request, buc
 	wire.WriteXML(w, http.StatusOK, objectLockLegalHoldXML{Xmlns: xmlns, Status: status})
 }
 
-// applyPutObjectLock stamps the object-lock request headers
-// (x-amz-object-lock-mode / -retain-until-date / -legal-hold) onto the version
-// just written by PutObject. It returns false (after writing the error) when a
-// header is malformed or the driver rejects the setting; a request with no
-// object-lock headers is a no-op success.
-func (h *Handler) applyPutObjectLock(w http.ResponseWriter, r *http.Request, bucket, key, versionID string) bool {
+// parsePutObjectLock reads the Object Lock headers of an upload
+// (x-amz-object-lock-mode / -retain-until-date / -legal-hold). It returns nil
+// when the request sets none or the driver has no Object Lock. A mode without
+// a retain-until date (or the reverse) or an unparseable date is 400
+// InvalidArgument; it returns false after writing that error.
+func (h *Handler) parsePutObjectLock(w http.ResponseWriter, r *http.Request) (*driver.ObjectLockSettings, bool) {
 	if h.objectLock == nil {
-		return true
+		return nil, true
 	}
 
 	mode := r.Header.Get(hdrObjectLockMode)
 	retainStr := r.Header.Get(hdrObjectLockRetainDate)
+	legalHold := r.Header.Get(hdrObjectLockLegalHold)
 
-	if mode != "" || retainStr != "" {
-		ret := driver.ObjectRetention{Mode: mode}
+	if mode == "" && retainStr == "" && legalHold == "" {
+		return nil, true
+	}
 
-		if retainStr != "" {
-			until, ok := parseRetainUntil(retainStr)
-			if !ok {
-				writeError(w, http.StatusBadRequest, "InvalidArgument", "invalid x-amz-object-lock-retain-until-date")
-				return false
-			}
+	if (mode == "") != (retainStr == "") {
+		writeError(w, http.StatusBadRequest, "InvalidArgument",
+			"x-amz-object-lock-retain-until-date and x-amz-object-lock-mode must both be supplied")
 
-			ret.RetainUntilDate = until
+		return nil, false
+	}
+
+	lock := &driver.ObjectLockSettings{Mode: mode, LegalHold: strings.EqualFold(legalHold, legalHoldOn)}
+
+	if retainStr != "" {
+		until, ok := parseRetainUntil(retainStr)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "InvalidArgument", "invalid x-amz-object-lock-retain-until-date")
+			return nil, false
 		}
 
+		lock.RetainUntil = until
+	}
+
+	return lock, true
+}
+
+// applyLockAfterWrite stamps lock onto the version a conditional PutObject just
+// wrote. The conditional write path has no lock parameter, so the settings go
+// on in a second step there. It returns false after writing the error.
+func (h *Handler) applyLockAfterWrite(
+	w http.ResponseWriter, r *http.Request, bucket, key, versionID string, lock *driver.ObjectLockSettings,
+) bool {
+	if lock == nil {
+		return true
+	}
+
+	if lock.Mode != "" {
+		ret := driver.ObjectRetention{Mode: lock.Mode, RetainUntilDate: lock.RetainUntil}
 		if err := h.objectLock.PutObjectRetention(r.Context(), bucket, key, versionID, ret, bypassGovernance(r)); err != nil {
 			writeObjectLockErr(w, err)
 			return false
 		}
 	}
 
-	if lh := r.Header.Get(hdrObjectLockLegalHold); lh != "" {
-		if err := h.objectLock.PutObjectLegalHold(r.Context(), bucket, key, versionID, strings.EqualFold(lh, legalHoldOn)); err != nil {
-			writeObjectLockErr(w, err)
-			return false
-		}
+	if err := h.objectLock.PutObjectLegalHold(r.Context(), bucket, key, versionID, lock.LegalHold); err != nil {
+		writeObjectLockErr(w, err)
+		return false
 	}
 
 	return true

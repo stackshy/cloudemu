@@ -101,6 +101,11 @@ func (h *Handler) serveFunctionURLInvoke(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if !h.authorizeURLInvoke(r, cfg) {
+		writeFunctionURLForbidden(w)
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
 	body, err := io.ReadAll(r.Body)

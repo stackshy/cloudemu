@@ -29,6 +29,17 @@ type PermissionStatement struct {
 	Action      string
 	Principal   string
 	SourceARN   string
+	// SourceAccount, PrincipalOrgID and EventSourceToken narrow the grant to
+	// a source account, an AWS Organization, or an Alexa skill token.
+	SourceAccount    string
+	PrincipalOrgID   string
+	EventSourceToken string
+	// FunctionURLAuthType ("NONE" or "AWS_IAM") limits a
+	// lambda:InvokeFunctionUrl grant to function URLs of that auth type.
+	FunctionURLAuthType string
+	// InvokedViaFunctionURL limits a lambda:InvokeFunction grant to calls
+	// made through a function URL.
+	InvokedViaFunctionURL bool
 }
 
 // FunctionURLConfig is a Lambda Function URL configuration. Function URLs are

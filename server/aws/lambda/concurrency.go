@@ -31,9 +31,9 @@ func concurrencyFunctionName(path string) (string, bool) {
 // serveConcurrency handles the reserved-concurrency sub-resource:
 // PUT=PutFunctionConcurrency, GET=GetFunctionConcurrency,
 // DELETE=DeleteFunctionConcurrency.
-func (h *Handler) serveConcurrency(w http.ResponseWriter, r *http.Request, name string) {
-	switch r.Method {
-	case http.MethodPut:
+func (h *Handler) serveConcurrency(w http.ResponseWriter, r *http.Request, op opID, name string) {
+	switch op {
+	case opPutFunctionConcurrency:
 		var req struct {
 			ReservedConcurrentExecutions int `json:"ReservedConcurrentExecutions"`
 		}
@@ -52,7 +52,7 @@ func (h *Handler) serveConcurrency(w http.ResponseWriter, r *http.Request, name 
 		}
 
 		writeJSON(w, http.StatusOK, map[string]any{"ReservedConcurrentExecutions": req.ReservedConcurrentExecutions})
-	case http.MethodGet:
+	case opGetFunctionConcurrency:
 		// GetFunctionConcurrency 404s only when the FUNCTION is missing. A function
 		// with no reserved concurrency set is HTTP 200 with an empty body, matching
 		// AWS. The provider reports NotFound for both cases, so the function's
@@ -69,7 +69,7 @@ func (h *Handler) serveConcurrency(w http.ResponseWriter, r *http.Request, name 
 		}
 
 		writeJSON(w, http.StatusOK, map[string]any{"ReservedConcurrentExecutions": cfg.ReservedConcurrentExecutions})
-	case http.MethodDelete:
+	case opDeleteFunctionConcurrency:
 		if err := h.fn.DeleteFunctionConcurrency(r.Context(), name); err != nil {
 			writeErr(w, err)
 			return

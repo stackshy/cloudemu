@@ -29,6 +29,10 @@ func providerState(t *testing.T, cloud *awsprovider.Provider) []byte {
 
 	delete(ps.Services, "cloudtrail")
 
+	// The id counter moves with every id minted (CloudTrail event ids too);
+	// it is not resource state.
+	ps.IDCounter = 0
+
 	raw, err := json.Marshal(ps)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

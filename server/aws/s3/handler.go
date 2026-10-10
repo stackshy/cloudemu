@@ -46,6 +46,8 @@ const (
 	// without one. Real S3 uses "binary/octet-stream" (not the more common
 	// "application/octet-stream"), and returns it on GET/HeadObject.
 	defaultContentType = "binary/octet-stream"
+	// userMetaPrefix is the lowercase header prefix of S3 user metadata.
+	userMetaPrefix = "x-amz-meta-"
 )
 
 // Handler serves S3 REST requests against a storage.Bucket driver.
@@ -78,6 +80,12 @@ type Handler struct {
 	// sub-resources, the object-lock request headers, x-amz-bucket-object-lock-
 	// enabled on create, and WORM protection on delete/overwrite.
 	objectLock driver.ObjectLockBucket
+	// tagValidator is set when the driver enforces S3 object tag rules; the
+	// handler checks an upload's x-amz-tagging set with it before writing.
+	tagValidator driver.ObjectTagValidator
+	// creator is set when the driver creates a bucket together with its
+	// CreateBucketConfiguration (region and tags) in one step.
+	creator driver.BucketCreator
 }
 
 // New returns an S3 handler backed by b.
@@ -109,6 +117,14 @@ func New(b driver.Bucket) *Handler {
 
 	if ol, ok := b.(driver.ObjectLockBucket); ok {
 		h.objectLock = ol
+	}
+
+	if tv, ok := b.(driver.ObjectTagValidator); ok {
+		h.tagValidator = tv
+	}
+
+	if bc, ok := b.(driver.BucketCreator); ok {
+		h.creator = bc
 	}
 
 	return h
@@ -339,9 +355,15 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request, bucket st
 		return
 	}
 
-	region := parseLocationConstraint(r)
+	cfg := parseCreateBucketConfiguration(r)
 
-	if err := h.createBucketInRegion(r.Context(), bucket, region); err != nil {
+	tags, err := tagSetMap(cfg.Tags)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	if err := h.createBucketWithConfig(r.Context(), bucket, cfg.LocationConstraint, tags); err != nil {
 		// In us-east-1 (the global endpoint) re-creating a bucket you already own
 		// is idempotent and returns 200; every other region returns 409
 		// BucketAlreadyOwnedByYou. cloudemu models a single account, so an existing
@@ -368,31 +390,65 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request, bucket st
 	w.WriteHeader(http.StatusOK)
 }
 
-// createBucketInRegion honors a CreateBucketConfiguration.LocationConstraint
-// when the driver supports RegionalBucket, so GetBucketLocation reports it back.
-func (h *Handler) createBucketInRegion(ctx context.Context, bucket, region string) error {
-	if region != "" && h.regional != nil {
-		return h.regional.CreateBucketInRegion(ctx, bucket, region)
+// createBucketWithConfig creates the bucket with its CreateBucketConfiguration:
+// the LocationConstraint region (reported back by GetBucketLocation) and the
+// Tags set. A driver that creates and tags in one step validates the tags
+// before the bucket exists; otherwise the bucket is created, then tagged.
+func (h *Handler) createBucketWithConfig(ctx context.Context, bucket, region string, tags map[string]string) error {
+	if h.creator != nil {
+		return h.creator.CreateBucketWithOptions(ctx, bucket, driver.CreateBucketOptions{Region: region, Tags: tags})
 	}
 
-	return h.bucket.CreateBucket(ctx, bucket)
+	var err error
+	if region != "" && h.regional != nil {
+		err = h.regional.CreateBucketInRegion(ctx, bucket, region)
+	} else {
+		err = h.bucket.CreateBucket(ctx, bucket)
+	}
+
+	if err != nil || len(tags) == 0 {
+		return err
+	}
+
+	return h.bucket.PutBucketTagging(ctx, bucket, tags)
 }
 
-// parseLocationConstraint extracts CreateBucketConfiguration.LocationConstraint
-// from a CreateBucket body, or "" when absent/unparseable (which denotes
-// us-east-1).
-func parseLocationConstraint(r *http.Request) string {
+// parseCreateBucketConfiguration reads the CreateBucketConfiguration body of a
+// CreateBucket. An absent or unparseable body is the zero configuration (an
+// empty LocationConstraint denotes us-east-1).
+func parseCreateBucketConfiguration(r *http.Request) createBucketConfiguration {
+	var cfg createBucketConfiguration
+
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxCreateBucketBody))
 	if err != nil || len(body) == 0 {
-		return ""
+		return cfg
 	}
 
-	var cfg createBucketConfiguration
 	if err := xml.Unmarshal(body, &cfg); err != nil {
-		return ""
+		return createBucketConfiguration{}
 	}
 
-	return cfg.LocationConstraint
+	return cfg
+}
+
+// tagSetMap turns a request TagSet into a tag map. S3 rejects a set that names
+// the same key twice with 400 InvalidTag.
+func tagSetMap(set []tagXML) (map[string]string, error) {
+	if len(set) == 0 {
+		return nil, nil
+	}
+
+	tags := make(map[string]string, len(set))
+
+	for _, t := range set {
+		if _, dup := tags[t.Key]; dup {
+			return nil, &driver.TagError{Code: "InvalidTag", Message: "Cannot provide multiple Tags with the same key"}
+		}
+
+		tags[t.Key] = t.Value
+	}
+
+	return tags, nil
 }
 
 // bucketRegion returns the region of an existing bucket, or "" if it can't be
@@ -505,15 +561,18 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		owner = &aclOwnerXML{ID: cannedOwnerID, DisplayName: "cloudemu"}
 	}
 
+	withRestore := wantsRestoreStatus(r.Header)
+
 	for i := range result.Objects {
 		obj := &result.Objects[i]
 		resp.Contents = append(resp.Contents, objectXML{
-			Key:          obj.Key,
-			LastModified: obj.LastModified,
-			ETag:         fmt.Sprintf("%q", obj.ETag),
-			Size:         int(obj.Size),
-			StorageClass: storageClassOrDefault(obj.StorageClass),
-			Owner:        owner,
+			Key:           obj.Key,
+			LastModified:  obj.LastModified,
+			ETag:          fmt.Sprintf("%q", obj.ETag),
+			Size:          int(obj.Size),
+			StorageClass:  storageClassOrDefault(obj.StorageClass),
+			Owner:         owner,
+			RestoreStatus: listRestoreStatus(withRestore, obj.Restore),
 		})
 	}
 
@@ -533,6 +592,22 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		return
 	}
 
+	if !checkContentMD5(w, r.Header, data) {
+		return
+	}
+
+	// The x-amz-tagging tag set is checked before the write so a rejected tag
+	// set never leaves a stored object behind.
+	tags, ok := h.putTags(w, r)
+	if !ok {
+		return
+	}
+
+	lock, ok := h.parsePutObjectLock(w, r)
+	if !ok {
+		return
+	}
+
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = defaultContentType
@@ -540,7 +615,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 
 	metadata := extractMetadata(r.Header)
 
-	etag, versionID, ok := h.storePut(w, r, bucket, key, data, contentType, metadata)
+	etag, versionID, ok := h.storePut(w, r, bucket, key, data, contentType, metadata, lock)
 	if !ok {
 		return // error response already written
 	}
@@ -551,13 +626,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 
 	// x-amz-tagging sets the object's tag set at upload time; apply it so
 	// GetObjectTagging returns it (real S3 stores it atomically with the object).
-	if !h.applyPutTagging(w, r, bucket, key) {
-		return
-	}
-
-	// x-amz-object-lock-mode / -retain-until-date / -legal-hold stamp Object Lock
-	// on the just-written version (real S3 stores it atomically with the object).
-	if !h.applyPutObjectLock(w, r, bucket, key, versionID) {
+	if !h.applyPutTagging(w, r, bucket, key, tags) {
 		return
 	}
 
@@ -572,21 +641,32 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 
 // storePut writes the object, routing through the atomic conditional-write path
 // when an If-None-Match/If-Match header is present and the driver supports it.
-// On failure it writes the error response and returns ok=false; otherwise it
-// returns the stored object's ETag and version id.
+// lock (nil = none) is the request's Object Lock settings, written with the
+// object. On failure it writes the error response and returns ok=false;
+// otherwise it returns the stored object's ETag and version id.
 func (h *Handler) storePut(
 	w http.ResponseWriter, r *http.Request, bucket, key string,
-	data []byte, contentType string, metadata map[string]string,
+	data []byte, contentType string, metadata map[string]string, lock *driver.ObjectLockSettings,
 ) (etag, versionID string, ok bool) {
 	ifNoneMatch := r.Header.Get("If-None-Match")
 	ifMatch := r.Header.Get("If-Match")
 
 	if (ifNoneMatch != "" || ifMatch != "") && h.conditional != nil {
-		return h.storePutConditional(w, r, bucket, key, data, contentType, metadata, ifNoneMatch, ifMatch)
+		etag, versionID, ok = h.storePutConditional(w, r, bucket, key, data, contentType, metadata, ifNoneMatch, ifMatch)
+		if ok && !h.applyLockAfterWrite(w, r, bucket, key, versionID, lock) {
+			return "", "", false
+		}
+
+		return etag, versionID, ok
 	}
 
-	if err := h.putObjectData(r, bucket, key, data, contentType, metadata); err != nil {
-		writeErr(w, err)
+	if err := h.putObjectData(r, bucket, key, data, contentType, metadata, lock); err != nil {
+		if lock != nil {
+			writeObjectLockErr(w, err)
+		} else {
+			writeErr(w, err)
+		}
+
 		return "", "", false
 	}
 
@@ -603,14 +683,19 @@ func (h *Handler) storePut(
 	return etag, versionID, true
 }
 
-// putObjectData writes the object, routing through the system-properties
-// capability (recording Cache-Control/Content-Encoding/… and storage class)
-// when the driver and the request supply them, and falling back to the plain
-// PutObject otherwise.
+// putObjectData writes the object, routing through the Object Lock capability
+// when the request sets lock headers, the system-properties capability
+// (recording Cache-Control/Content-Encoding/… and storage class) when the
+// driver and the request supply them, and the plain PutObject otherwise.
 func (h *Handler) putObjectData(
 	r *http.Request, bucket, key string, data []byte, contentType string, metadata map[string]string,
+	lock *driver.ObjectLockSettings,
 ) error {
 	props := extractSystemProps(r.Header)
+	if lock != nil {
+		return h.objectLock.PutObjectWithLock(r.Context(), bucket, key, data, contentType, metadata, &props, *lock)
+	}
+
 	if h.sysProps != nil && props != (driver.ObjectSystemProps{}) {
 		return h.sysProps.PutObjectWithSystemProps(r.Context(), bucket, key, data, contentType, metadata, &props)
 	}
@@ -643,10 +728,35 @@ func (h *Handler) storePutConditional(
 	return info.ETag, info.VersionID, true
 }
 
+// putTags parses the x-amz-tagging header of an upload and, when the driver
+// enforces tag rules, validates it. It returns false after writing the error.
+func (h *Handler) putTags(w http.ResponseWriter, r *http.Request) (map[string]string, bool) {
+	tags, err := parseTaggingHeader(r.Header.Get("X-Amz-Tagging"))
+	if err != nil {
+		writeErr(w, err)
+		return nil, false
+	}
+
+	if err := h.validateObjectTags(tags); err != nil {
+		writeErr(w, err)
+		return nil, false
+	}
+
+	return tags, true
+}
+
+// validateObjectTags applies the driver's object tag rules, if it has any.
+func (h *Handler) validateObjectTags(tags map[string]string) error {
+	if len(tags) == 0 || h.tagValidator == nil {
+		return nil
+	}
+
+	return h.tagValidator.ValidateObjectTags(tags)
+}
+
 // applyPutTagging stores the x-amz-tagging tag set on the just-written object.
 // It returns false (after writing the error response) if the driver rejects it.
-func (h *Handler) applyPutTagging(w http.ResponseWriter, r *http.Request, bucket, key string) bool {
-	tags := parseTaggingHeader(r.Header.Get("X-Amz-Tagging"))
+func (h *Handler) applyPutTagging(w http.ResponseWriter, r *http.Request, bucket, key string, tags map[string]string) bool {
 	if len(tags) == 0 {
 		return true
 	}
@@ -1015,10 +1125,18 @@ func writeObjectHeaders(w http.ResponseWriter, info *driver.ObjectInfo, size int
 		w.Header().Set("X-Amz-Delete-Marker", "true")
 	}
 
+	if v := restoreHeader(info.Restore); v != "" {
+		w.Header().Set("X-Amz-Restore", v)
+	}
+
 	writeSystemPropHeaders(w, info)
 
+	// Real S3 sends user metadata headers in lowercase (x-amz-meta-<key>).
+	// Header().Set would canonicalize the name to X-Amz-Meta-Key, and clients
+	// that take the metadata key from the raw header name (botocore, the aws
+	// CLI) would read it back with changed case, so write the key verbatim.
 	for k, v := range info.Metadata {
-		w.Header().Set("X-Amz-Meta-"+k, v)
+		w.Header()[userMetaPrefix+k] = []string{v}
 	}
 }
 
@@ -1254,7 +1372,7 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 	// Copying an object onto itself with the default COPY directive, the current
 	// version, and no metadata change is illegal; S3 answers 400 InvalidRequest.
-	if isIllegalSelfCopy(replace, srcVersionID, srcBucket, srcKey, bucket, key) {
+	if isIllegalSelfCopy(r.Header, replace, srcVersionID, srcBucket, srcKey, bucket, key) {
 		writeError(w, http.StatusBadRequest, "InvalidRequest",
 			"This copy request is illegal because it is trying to copy an object to itself without "+
 				"changing the object's metadata, storage class, website redirect location or encryption attributes.")
@@ -1267,7 +1385,11 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket, key
 		return
 	}
 
-	req := buildCopyRequest(r, bucket, key, driver.CopySource{Bucket: srcBucket, Key: srcKey}, srcVersionID, replace)
+	req, err := buildCopyRequest(r, bucket, key, driver.CopySource{Bucket: srcBucket, Key: srcKey}, srcVersionID, replace)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 
 	res, err := h.copier.CopyObjectV2(r.Context(), req)
 	if err != nil {
@@ -1279,9 +1401,34 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket, key
 }
 
 // isIllegalSelfCopy reports whether a copy is a no-op self-copy: same key, the
-// default COPY directive, and the current source version. S3 rejects it.
-func isIllegalSelfCopy(replace bool, srcVersionID, srcBucket, srcKey, dstBucket, dstKey string) bool {
-	return !replace && srcVersionID == "" && srcBucket == dstBucket && srcKey == dstKey
+// current source version, and nothing about the object changes. S3 allows a
+// copy onto itself that changes the metadata (REPLACE directive), storage
+// class, website redirect location or encryption, and rejects any other.
+func isIllegalSelfCopy(h http.Header, replace bool, srcVersionID, srcBucket, srcKey, dstBucket, dstKey string) bool {
+	if replace || srcVersionID != "" || srcBucket != dstBucket || srcKey != dstKey {
+		return false
+	}
+
+	for _, hdr := range selfCopyChangeHeaders {
+		if h.Get(hdr) != "" {
+			return false
+		}
+	}
+
+	return true
+}
+
+// selfCopyChangeHeaders are the copy headers that change an object's storage
+// class, website redirect location or encryption, any of which makes a copy of
+// an object onto itself legal.
+//
+//nolint:gochecknoglobals // static lookup table
+var selfCopyChangeHeaders = []string{
+	"X-Amz-Storage-Class",
+	"X-Amz-Website-Redirect-Location",
+	"X-Amz-Server-Side-Encryption",
+	"X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id",
+	"X-Amz-Server-Side-Encryption-Customer-Algorithm",
 }
 
 // buildCopyRequest assembles a CopyObjectRequest from the copy headers: the
@@ -1289,7 +1436,7 @@ func isIllegalSelfCopy(replace bool, srcVersionID, srcBucket, srcKey, dstBucket,
 // plus the copy-source preconditions.
 func buildCopyRequest(
 	r *http.Request, dstBucket, dstKey string, src driver.CopySource, srcVersionID string, replace bool,
-) *driver.CopyObjectRequest {
+) (*driver.CopyObjectRequest, error) {
 	req := &driver.CopyObjectRequest{
 		DstBucket: dstBucket, DstKey: dstKey, Src: src,
 		SrcVersionID: srcVersionID, ReplaceMetadata: replace,
@@ -1308,13 +1455,18 @@ func buildCopyRequest(
 	// x-amz-tagging-directive: REPLACE takes the destination tag set from the
 	// x-amz-tagging header; the default COPY inherits the source object's tags.
 	if strings.EqualFold(r.Header.Get("X-Amz-Tagging-Directive"), "REPLACE") {
+		tags, err := parseTaggingHeader(r.Header.Get("X-Amz-Tagging"))
+		if err != nil {
+			return nil, err
+		}
+
 		req.ReplaceTags = true
-		req.Tags = parseTaggingHeader(r.Header.Get("X-Amz-Tagging"))
+		req.Tags = tags
 	}
 
 	applyCopyConditions(req, r.Header)
 
-	return req
+	return req, nil
 }
 
 // writeCopyResult writes a CopyObject success: the version-id headers plus the
@@ -1459,6 +1611,12 @@ func etagHeaderMatches(header, etag string) bool {
 // writeCopyErr maps a copy driver error: a failed copy-source precondition is
 // 412 PreconditionFailed; everything else follows the standard mapping.
 func writeCopyErr(w http.ResponseWriter, err error) {
+	// An archived source that is not restored is InvalidObjectState, not a
+	// failed copy-source precondition.
+	if writeInvalidObjectState(w, err) {
+		return
+	}
+
 	if cerrors.IsFailedPrecondition(err) {
 		writeError(w, http.StatusPreconditionFailed, "PreconditionFailed",
 			"At least one of the preconditions you specified did not hold.")
@@ -1620,7 +1778,11 @@ func (h *Handler) createMultipartUpload(w http.ResponseWriter, r *http.Request, 
 // through to a driver that supports create-time multipart tags and falling back
 // to the plain CreateMultipartUpload otherwise.
 func (h *Handler) beginMultipartUpload(r *http.Request, bucket, key, contentType string) (*driver.MultipartUpload, error) {
-	tags := parseTaggingHeader(r.Header.Get("X-Amz-Tagging"))
+	tags, err := parseTaggingHeader(r.Header.Get("X-Amz-Tagging"))
+	if err != nil {
+		return nil, err
+	}
+
 	if len(tags) > 0 {
 		if tagger, ok := h.bucket.(multipartTagger); ok {
 			return tagger.CreateMultipartUploadWithTagging(r.Context(), bucket, key, contentType, tags)
@@ -1643,6 +1805,10 @@ func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket, key
 	data, err := io.ReadAll(limited)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "IncompleteBody", "could not read body")
+		return
+	}
+
+	if !checkContentMD5(w, r.Header, data) {
 		return
 	}
 
@@ -1914,9 +2080,10 @@ func (h *Handler) putObjectTagging(w http.ResponseWriter, r *http.Request, bucke
 		return
 	}
 
-	tags := make(map[string]string, len(body.TagSet))
-	for _, t := range body.TagSet {
-		tags[t.Key] = t.Value
+	tags, err := tagSetMap(body.TagSet)
+	if err != nil {
+		writeErr(w, err)
+		return
 	}
 
 	if err := h.bucket.PutObjectTagging(r.Context(), bucket, key, tags); err != nil {
@@ -2191,8 +2358,8 @@ func extractMetadata(h http.Header) map[string]string {
 
 	for key, vals := range h {
 		lower := strings.ToLower(key)
-		if strings.HasPrefix(lower, "x-amz-meta-") && len(vals) > 0 {
-			name := strings.TrimPrefix(lower, "x-amz-meta-")
+		if strings.HasPrefix(lower, userMetaPrefix) && len(vals) > 0 {
+			name := strings.TrimPrefix(lower, userMetaPrefix)
 			meta[name] = vals[0]
 		}
 	}
@@ -2204,54 +2371,76 @@ func extractMetadata(h http.Header) map[string]string {
 	return meta
 }
 
+// errTaggingHeader is S3's answer to an x-amz-tagging header that is not a
+// URL-encoded query string or repeats a tag key.
+var errTaggingHeader = cerrors.New(cerrors.InvalidArgument,
+	"The header 'x-amz-tagging' shall be encoded as UTF-8 then URLEncoded URL query parameters without tag name duplicates.")
+
 // parseTaggingHeader decodes an x-amz-tagging header ("k1=v1&k2=v2",
-// URL-query-encoded) into a tag map. An empty or unparseable header yields nil.
-func parseTaggingHeader(header string) map[string]string {
+// URL-query-encoded) into a tag map. An empty header yields nil. A header that
+// does not parse, or names a key twice, is rejected with errTaggingHeader.
+func parseTaggingHeader(header string) (map[string]string, error) {
 	if header == "" {
-		return nil
+		return nil, nil
 	}
 
 	values, err := url.ParseQuery(header)
 	if err != nil {
-		return nil
+		return nil, errTaggingHeader
 	}
 
 	tags := make(map[string]string, len(values))
 
 	for k, v := range values {
-		if len(v) > 0 {
-			tags[k] = v[0]
+		if len(v) != 1 {
+			return nil, errTaggingHeader
 		}
+
+		tags[k] = v[0]
 	}
 
 	if len(tags) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	return tags
+	return tags, nil
 }
 
-// writeDeleteMarker answers a version-addressed GET/HEAD of a delete marker
-// with 405 MethodNotAllowed and x-amz-delete-marker: true, as S3 does, since a
-// delete marker has no retrievable content. It returns false when err is not a
-// delete marker, leaving the caller to handle it normally.
+// writeDeleteMarker answers a GET/HEAD that resolved to a delete marker, with
+// x-amz-delete-marker: true as S3 does. A version-addressed request gets 405
+// MethodNotAllowed (a delete marker has no retrievable content) with the
+// marker's Last-Modified; a plain request whose current version is a delete
+// marker gets 404 NoSuchKey with the marker's x-amz-version-id. It returns
+// false when err is not a delete marker, leaving the caller to handle it.
 func writeDeleteMarker(w http.ResponseWriter, err error, versionID string) bool {
 	if !errors.Is(err, driver.ErrDeleteMarker) {
 		return false
 	}
 
 	w.Header().Set("X-Amz-Delete-Marker", "true")
+
+	var dm *driver.DeleteMarkerError
+
+	hasMarker := errors.As(err, &dm)
+
+	if versionID == "" {
+		if hasMarker && dm.VersionID != "" {
+			w.Header().Set("X-Amz-Version-Id", dm.VersionID)
+		}
+
+		writeError(w, http.StatusNotFound, "NoSuchKey", "The specified key does not exist.")
+
+		return true
+	}
+
 	w.Header().Set("Allow", "DELETE")
 
 	// S3 returns the delete marker's Last-Modified timestamp in the 405 response.
-	var dm *driver.DeleteMarkerError
-	if errors.As(err, &dm) && dm.LastModified != "" {
+	if hasMarker && dm.LastModified != "" {
 		w.Header().Set("Last-Modified", wire.ToHTTPDate(dm.LastModified))
 	}
 
-	if versionID != "" {
-		w.Header().Set("X-Amz-Version-Id", versionID)
-	}
+	w.Header().Set("X-Amz-Version-Id", versionID)
 
 	writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed",
 		"The specified method is not allowed against this resource.")
@@ -2306,6 +2495,17 @@ func bucketMissing(err error) bool {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	// A rejected tag set carries its own S3 error code (InvalidTag/BadRequest).
+	var tagErr *driver.TagError
+	if errors.As(err, &tagErr) {
+		writeError(w, http.StatusBadRequest, tagErr.Code, tagErr.Message)
+		return
+	}
+
+	if writeInvalidObjectState(w, err) {
+		return
+	}
+
 	msg := cerrors.Message(err)
 
 	switch {

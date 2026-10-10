@@ -64,6 +64,41 @@ type Resolver interface {
 	IAMChecks(r *http.Request, s Scope) (checks []Check, ok bool)
 }
 
+// ContextResolver is implemented by a Resolver whose operations have
+// service-specific condition keys (such as lambda:FunctionUrlAuthType or
+// aws:RequestTag/*). The gate calls it instead of IAMChecks and adds the keys
+// it returns to the request's condition context, through MergeContext.
+type ContextResolver interface {
+	IAMChecksWithContext(r *http.Request, s Scope) (checks []Check, cond map[string]string, ok bool)
+}
+
+// MergeContext copies into dst the keys of extra a handler of service may
+// set: its own "<service>:" keys and the request and resource tag keys. Any
+// other key is dropped and a key already in dst is kept, so a handler can
+// never replace a global key the gate derived (aws:PrincipalArn,
+// aws:SourceIp, ...).
+func MergeContext(dst, extra map[string]string, service string) {
+	for k, v := range extra {
+		if _, taken := dst[k]; taken || !handlerKey(k, service) {
+			continue
+		}
+
+		dst[k] = v
+	}
+}
+
+// handlerKey reports whether a handler of service may set condition key k.
+func handlerKey(k, service string) bool {
+	switch {
+	case service != "" && strings.HasPrefix(k, service+":"):
+		return true
+	case k == "aws:TagKeys":
+		return true
+	default:
+		return strings.HasPrefix(k, "aws:RequestTag/") || strings.HasPrefix(k, "aws:ResourceTag/")
+	}
+}
+
 // ServiceNamer is implemented by every AWS handler. It returns the IAM
 // service prefix (such as "s3" or "elasticfilesystem") of the operations the
 // handler serves. A handler that is not a Resolver is authorized at service

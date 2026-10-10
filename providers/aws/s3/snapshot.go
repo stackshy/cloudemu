@@ -39,6 +39,9 @@ type bucketSnapshot struct {
 	RawConfigs    map[string][]byte             `json:"rawConfigs,omitempty"`
 	Objects       map[string]*objectSnapshot    `json:"objects,omitempty"`
 	Versions      map[string][]*versionSnapshot `json:"versions,omitempty"`
+
+	// ObjectLockDefault is the bucket's default Object Lock retention.
+	ObjectLockDefault *lockDefaultSnapshot `json:"objectLockDefault,omitempty"`
 }
 
 // objectSnapshot is a current object. Data is omitted in a metadata-only
@@ -55,6 +58,74 @@ type objectSnapshot struct {
 	Tags         map[string]string `json:"tags,omitempty"`
 	VersionID    string            `json:"versionId,omitempty"`
 	Lock         *lockSnapshot     `json:"lock,omitempty"`
+	// SystemProps are the object's storage class and S3 system properties.
+	SystemProps *driver.ObjectSystemProps `json:"systemProps,omitempty"`
+	Restore     *restoreSnapshot          `json:"restore,omitempty"`
+}
+
+// restoreSnapshot serializes an object version's RestoreObject state.
+type restoreSnapshot struct {
+	Tier      string `json:"tier,omitempty"`
+	Days      int    `json:"days,omitempty"`
+	ReadyAt   string `json:"readyAt"`
+	ExpiresAt string `json:"expiresAt"`
+}
+
+// restoreToSnapshot serializes a restoreState, nil when no restore was made.
+func restoreToSnapshot(r restoreState) *restoreSnapshot {
+	if r.readyAt.IsZero() {
+		return nil
+	}
+
+	return &restoreSnapshot{
+		Tier: r.tier, Days: r.days,
+		ReadyAt:   r.readyAt.UTC().Format(time.RFC3339Nano),
+		ExpiresAt: r.expiresAt.UTC().Format(time.RFC3339Nano),
+	}
+}
+
+// restoreFromSnapshot rebuilds a restoreState; a malformed time drops it.
+func restoreFromSnapshot(rs *restoreSnapshot) restoreState {
+	if rs == nil {
+		return restoreState{}
+	}
+
+	ready, err1 := time.Parse(time.RFC3339Nano, rs.ReadyAt)
+	expires, err2 := time.Parse(time.RFC3339Nano, rs.ExpiresAt)
+
+	if err1 != nil || err2 != nil {
+		return restoreState{}
+	}
+
+	return restoreState{tier: rs.Tier, days: rs.Days, readyAt: ready, expiresAt: expires}
+}
+
+// systemPropsToSnapshot returns nil for unset properties, so default objects
+// add nothing to the snapshot.
+func systemPropsToSnapshot(p *driver.ObjectSystemProps) *driver.ObjectSystemProps {
+	if *p == (driver.ObjectSystemProps{}) {
+		return nil
+	}
+
+	cp := *p
+
+	return &cp
+}
+
+// systemPropsFromSnapshot is the inverse of systemPropsToSnapshot.
+func systemPropsFromSnapshot(p *driver.ObjectSystemProps) driver.ObjectSystemProps {
+	if p == nil {
+		return driver.ObjectSystemProps{}
+	}
+
+	return *p
+}
+
+// lockDefaultSnapshot serializes a bucket's default Object Lock retention.
+type lockDefaultSnapshot struct {
+	Mode  string `json:"mode"`
+	Days  int    `json:"days,omitempty"`
+	Years int    `json:"years,omitempty"`
 }
 
 // lockSnapshot serializes an object version's S3 Object Lock state.
@@ -109,6 +180,9 @@ type versionSnapshot struct {
 	Metadata     map[string]string `json:"metadata,omitempty"`
 	DeleteMarker bool              `json:"deleteMarker,omitempty"`
 	Lock         *lockSnapshot     `json:"lock,omitempty"`
+	// SystemProps are the version's storage class and S3 system properties.
+	SystemProps *driver.ObjectSystemProps `json:"systemProps,omitempty"`
+	Restore     *restoreSnapshot          `json:"restore,omitempty"`
 }
 
 // Snapshot captures every bucket's state as JSON. When includeAssets is false
@@ -140,7 +214,8 @@ func snapshotBucket(bkt *bucketMeta, includeAssets bool) *bucketSnapshot {
 			Key: obj.Key, Data: assetBytes(obj.Data, includeAssets), Size: obj.Size,
 			ContentType: obj.ContentType, ETag: obj.ETag, LastModified: obj.LastModified,
 			Metadata: obj.Metadata, Tags: obj.Tags, VersionID: obj.VersionID,
-			Lock: lockToSnapshot(obj.lock),
+			Lock: lockToSnapshot(obj.lock), SystemProps: systemPropsToSnapshot(&obj.SystemProps),
+			Restore: restoreToSnapshot(obj.restore),
 		}
 	}
 
@@ -157,6 +232,10 @@ func snapshotBucketVersions(bkt *bucketMeta, bs *bucketSnapshot, includeAssets b
 	bs.VersionStatus = bkt.versionStatus
 	bs.ObjectLock = bkt.objectLockEnabled
 
+	if d := bkt.lockDefault; d != nil {
+		bs.ObjectLockDefault = &lockDefaultSnapshot{Mode: d.mode, Days: d.days, Years: d.years}
+	}
+
 	if len(bkt.versions) == 0 {
 		return
 	}
@@ -171,6 +250,7 @@ func snapshotBucketVersions(bkt *bucketMeta, bs *bucketSnapshot, includeAssets b
 				VersionID: v.versionID, Data: assetBytes(v.data, includeAssets), Size: v.size,
 				ContentType: v.contentType, ETag: v.etag, LastModified: v.lastModified,
 				Metadata: v.metadata, DeleteMarker: v.deleteMarker, Lock: lockToSnapshot(v.lock),
+				SystemProps: systemPropsToSnapshot(&v.systemProps), Restore: restoreToSnapshot(v.restore),
 			})
 		}
 
@@ -240,7 +320,12 @@ func restoreBucket(bs *bucketSnapshot) *bucketMeta {
 			Key: os.Key, Data: os.Data, Size: os.Size, ContentType: os.ContentType,
 			ETag: os.ETag, LastModified: os.LastModified, Metadata: os.Metadata,
 			Tags: os.Tags, VersionID: os.VersionID, lock: lockFromSnapshot(os.Lock),
+			SystemProps: systemPropsFromSnapshot(os.SystemProps), restore: restoreFromSnapshot(os.Restore),
 		})
+	}
+
+	if d := bs.ObjectLockDefault; d != nil {
+		bkt.lockDefault = &objectLockDefault{mode: d.Mode, days: d.Days, years: d.Years}
 	}
 
 	restoreBucketVersions(bkt, bs)
@@ -262,7 +347,8 @@ func restoreBucketVersions(bkt *bucketMeta, bs *bucketSnapshot) {
 			out = append(out, &s3Version{
 				versionID: v.VersionID, data: v.Data, size: v.Size, contentType: v.ContentType,
 				etag: v.ETag, lastModified: v.LastModified, metadata: v.Metadata, deleteMarker: v.DeleteMarker,
-				lock: lockFromSnapshot(v.Lock),
+				lock: lockFromSnapshot(v.Lock), systemProps: systemPropsFromSnapshot(v.SystemProps),
+				restore: restoreFromSnapshot(v.Restore),
 			})
 		}
 

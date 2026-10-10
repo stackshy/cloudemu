@@ -19,6 +19,9 @@ type dnsSnapshot struct {
 	Zones        json.RawMessage `json:"zones,omitempty"`
 	Records      json.RawMessage `json:"records,omitempty"`
 	HealthChecks json.RawMessage `json:"healthChecks,omitempty"`
+	// ETagSeq is the etag sequence, so a record set written after a restore
+	// gets an etag it never had before and a stale If-Match still fails.
+	ETagSeq uint64 `json:"etagSeq,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused:
@@ -43,6 +46,8 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 
 		*d.dst = b
 	}
+
+	snap.ETagSeq = m.etagSeq.Load()
 
 	return json.Marshal(snap)
 }
@@ -72,6 +77,15 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 
 		if err := l.fn(l.src); err != nil {
 			return fmt.Errorf("azuredns: restore store: %w", err)
+		}
+	}
+
+	// Keep the higher value, so a snapshot without the field (or an older one)
+	// cannot move the sequence back.
+	for {
+		cur := m.etagSeq.Load()
+		if cur >= snap.ETagSeq || m.etagSeq.CompareAndSwap(cur, snap.ETagSeq) {
+			break
 		}
 	}
 

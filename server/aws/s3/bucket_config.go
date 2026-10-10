@@ -126,6 +126,11 @@ func findConfigSubresource(match func(*configSubresource) bool) (configSubresour
 // putBucketConfig persists a configuration document when the driver supports it,
 // otherwise accepts the write as a no-op.
 func (h *Handler) putBucketConfig(w http.ResponseWriter, r *http.Request, bucket, sub string) {
+	if sub == subObjectLock && h.objectLock != nil {
+		h.putObjectLockConfiguration(w, r, bucket)
+		return
+	}
+
 	if h.rawConfig == nil {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -179,6 +184,11 @@ func (h *Handler) deleteBucketConfig(w http.ResponseWriter, r *http.Request, buc
 // getBucketConfig echoes a stored document, or returns the AWS "not
 // configured"/default response when the sub-resource was never set.
 func (h *Handler) getBucketConfig(w http.ResponseWriter, r *http.Request, bucket, sub string) {
+	if sub == subObjectLock && h.objectLock != nil {
+		h.getObjectLockConfiguration(w, r, bucket)
+		return
+	}
+
 	// GetBucketLocation reports the region the bucket was created in
 	// (CreateBucketConfiguration.LocationConstraint); us-east-1 is the empty
 	// constraint. It is derived from bucket state, never a stored document.
