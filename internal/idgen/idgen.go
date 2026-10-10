@@ -102,6 +102,26 @@ func next() uint64 {
 	return atomic.AddUint64(&counter, 1)
 }
 
+// Counter returns the current value of the shared id counter, the suffix of
+// the most recently minted GenerateID or OCID. A snapshot records it so a
+// restore can move the counter past every id it brings back.
+func Counter() uint64 {
+	return atomic.LoadUint64(&counter)
+}
+
+// AdvanceTo moves the shared id counter up to n when it is lower, so the next
+// GenerateID or OCID is above n. It never moves the counter back: loading an
+// older snapshot into a process that has already minted more ids keeps the
+// higher value. Safe for concurrent use with GenerateID.
+func AdvanceTo(n uint64) {
+	for {
+		cur := atomic.LoadUint64(&counter)
+		if cur >= n || atomic.CompareAndSwapUint64(&counter, cur, n) {
+			return
+		}
+	}
+}
+
 // GenerateID generates an ID with the given prefix (e.g., "i-", "vpc-", "sg-").
 func GenerateID(prefix string) string {
 	return fmt.Sprintf("%s%08x", prefix, next())
