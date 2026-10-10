@@ -121,26 +121,24 @@ const findLayerVersion = "LayerVersion"
 // per-layer versions collection (POST=PublishLayerVersion,
 // GET=ListLayerVersions), a specific version (GET/DELETE), and a version's
 // resource policy (POST/GET=.../policy, DELETE=.../policy/{statementId}).
-func (h *Handler) serveLayers(w http.ResponseWriter, r *http.Request) {
-	rest := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, layersPrefix), "/")
-
-	if rest == "" {
-		h.serveLayersCollection(w, r)
+func (h *Handler) serveLayers(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) {
+	if a.parts == nil {
+		h.serveLayersCollection(w, r, op)
 		return
 	}
 
-	h.serveLayerSubpath(w, r, strings.Split(rest, "/"))
+	h.serveLayerSubpath(w, r, op, a.parts)
 }
 
 // serveLayersCollection handles the bare /2018-10-31/layers endpoint:
 // GET=ListLayers, or GET?find=LayerVersion&Arn=...=GetLayerVersionByArn.
-func (h *Handler) serveLayersCollection(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+func (h *Handler) serveLayersCollection(w http.ResponseWriter, r *http.Request, op opID) {
+	if op == opUnknown {
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 		return
 	}
 
-	if r.URL.Query().Get("find") == findLayerVersion {
+	if op == opGetLayerVersionByArn {
 		h.getLayerVersionByArn(w, r)
 		return
 	}
@@ -160,7 +158,7 @@ const (
 // serveLayerSubpath routes a /2018-10-31/layers/{name}/... path to the
 // per-layer versions collection, a specific version, or (via
 // serveLayerVersionPolicyPath) a version's resource policy.
-func (h *Handler) serveLayerSubpath(w http.ResponseWriter, r *http.Request, parts []string) {
+func (h *Handler) serveLayerSubpath(w http.ResponseWriter, r *http.Request, op opID, parts []string) {
 	if len(parts) < partsVersions || parts[1] != subVersions {
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda layers path")
 		return
@@ -170,17 +168,17 @@ func (h *Handler) serveLayerSubpath(w http.ResponseWriter, r *http.Request, part
 
 	switch len(parts) {
 	case partsVersions:
-		h.serveLayerVersions(w, r, name)
+		h.serveLayerVersions(w, r, op, name)
 	case partsVersion:
-		h.serveLayerVersion(w, r, name, parts[2])
+		h.serveLayerVersion(w, r, op, name, parts[2])
 	default:
-		h.serveLayerVersionPolicyPath(w, r, name, parts)
+		h.serveLayerVersionPolicyPath(w, r, op, name, parts)
 	}
 }
 
 // serveLayerVersionPolicyPath routes the .../policy and
 // .../policy/{statementId} tails of a layer-version path.
-func (h *Handler) serveLayerVersionPolicyPath(w http.ResponseWriter, r *http.Request, name string, parts []string) {
+func (h *Handler) serveLayerVersionPolicyPath(w http.ResponseWriter, r *http.Request, op opID, name string, parts []string) {
 	if parts[3] != subPolicy {
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda layers path")
 		return
@@ -188,9 +186,9 @@ func (h *Handler) serveLayerVersionPolicyPath(w http.ResponseWriter, r *http.Req
 
 	switch len(parts) {
 	case partsPolicy:
-		h.serveLayerVersionPolicy(w, r, name, parts[2])
+		h.serveLayerVersionPolicy(w, r, op, name, parts[2])
 	case partsPolicyStmt:
-		h.serveRemoveLayerVersionPermission(w, r, name, parts[2], parts[4])
+		h.serveRemoveLayerVersionPermission(w, r, op, name, parts[2], parts[4])
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda layers path")
 	}
@@ -198,11 +196,11 @@ func (h *Handler) serveLayerVersionPolicyPath(w http.ResponseWriter, r *http.Req
 
 // serveLayerVersions handles POST (PublishLayerVersion) and GET
 // (ListLayerVersions) on .../layers/{name}/versions.
-func (h *Handler) serveLayerVersions(w http.ResponseWriter, r *http.Request, name string) {
-	switch r.Method {
-	case http.MethodPost:
+func (h *Handler) serveLayerVersions(w http.ResponseWriter, r *http.Request, op opID, name string) {
+	switch op {
+	case opPublishLayerVersion:
 		h.publishLayerVersion(w, r, name)
-	case http.MethodGet:
+	case opListLayerVersions:
 		h.listLayerVersions(w, r, name)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
@@ -300,14 +298,14 @@ func filterLayerVersions(vers []sdrv.LayerVersion, form url.Values) []sdrv.Layer
 
 // serveLayerVersion handles GET (GetLayerVersion) and DELETE
 // (DeleteLayerVersion) on .../layers/{name}/versions/{version}.
-func (h *Handler) serveLayerVersion(w http.ResponseWriter, r *http.Request, name, versionStr string) {
+func (h *Handler) serveLayerVersion(w http.ResponseWriter, r *http.Request, op opID, name, versionStr string) {
 	version, ok := parseLayerVersionNumber(w, versionStr)
 	if !ok {
 		return
 	}
 
-	switch r.Method {
-	case http.MethodGet:
+	switch op {
+	case opGetLayerVersion:
 		lv, gerr := h.fn.GetLayerVersion(r.Context(), name, version)
 		if gerr != nil {
 			writeErr(w, gerr)
@@ -315,7 +313,7 @@ func (h *Handler) serveLayerVersion(w http.ResponseWriter, r *http.Request, name
 		}
 
 		writeJSON(w, http.StatusOK, toLayerVersionResponse(lv))
-	case http.MethodDelete:
+	case opDeleteLayerVersion:
 		if derr := h.fn.DeleteLayerVersion(r.Context(), name, version); derr != nil {
 			writeErr(w, derr)
 			return
@@ -397,7 +395,7 @@ func (h *Handler) listLayers(w http.ResponseWriter, r *http.Request) {
 
 // serveLayerVersionPolicy handles POST (AddLayerVersionPermission) and GET
 // (GetLayerVersionPolicy) on .../layers/{name}/versions/{version}/policy.
-func (h *Handler) serveLayerVersionPolicy(w http.ResponseWriter, r *http.Request, name, versionStr string) {
+func (h *Handler) serveLayerVersionPolicy(w http.ResponseWriter, r *http.Request, op opID, name, versionStr string) {
 	pm, ok := h.fn.(layerPolicyManager)
 	if !ok {
 		writeError(w, http.StatusNotImplemented, "InvalidRequestException", "layer version policies not supported")
@@ -409,10 +407,10 @@ func (h *Handler) serveLayerVersionPolicy(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	switch r.Method {
-	case http.MethodPost:
+	switch op {
+	case opAddLayerVersionPermission:
 		addLayerVersionPermission(w, r, pm, name, version)
-	case http.MethodGet:
+	case opGetLayerVersionPolicy:
 		policy, revisionID, err := pm.GetLayerVersionPolicy(r.Context(), name, version)
 		if err != nil {
 			writeErr(w, err)
@@ -449,8 +447,10 @@ func addLayerVersionPermission(w http.ResponseWriter, r *http.Request, pm layerP
 // serveRemoveLayerVersionPermission handles DELETE
 // .../layers/{name}/versions/{version}/policy/{statementId}
 // (RemoveLayerVersionPermission).
-func (h *Handler) serveRemoveLayerVersionPermission(w http.ResponseWriter, r *http.Request, name, versionStr, statementID string) {
-	if r.Method != http.MethodDelete {
+func (h *Handler) serveRemoveLayerVersionPermission(
+	w http.ResponseWriter, r *http.Request, op opID, name, versionStr, statementID string,
+) {
+	if op != opRemoveLayerVersionPermission {
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 		return
 	}

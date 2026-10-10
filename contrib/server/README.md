@@ -189,14 +189,27 @@ actually run the request, so neither the SigV4 signing scope nor a forged
   on the source. A DeleteObjects request is checked key by key, and one
   denied key denies the whole request (real S3 deletes the allowed keys and
   reports the others). Bucket policies are not evaluated yet.
-- The other REST services (Lambda, API Gateway, EKS, Route 53, CloudFront and
-  the rest) are checked at service level for now. A request passes only when
-  the caller's policies allow every action of that service on every resource,
-  such as `lambda:*` on `*` or `AdministratorAccess`. **A fine-grained or
-  resource-scoped policy on one of these services (for example
-  `lambda:InvokeFunction` on one function) is denied until that service gets
-  per-operation checks.** A `Deny` that touches the service also denies the
-  request.
+- Lambda is checked per operation on the function ARN, or the version or alias
+  ARN when the request names one (`function:name:prod`); layers on the layer or
+  layer version ARN, and event source mappings on their ARN. Lambda condition
+  keys such as `lambda:FunctionUrlAuthType`, `lambda:Principal`,
+  `lambda:FunctionArn` and `lambda:Layer`, and the `aws:RequestTag`,
+  `aws:TagKeys` and `aws:ResourceTag` keys, are set. Creating a function with
+  tags also needs `lambda:TagResource`, and with layers `lambda:GetLayerVersion`
+  on each layer version. `Invoke` is also allowed when the function's
+  resource-based policy names the caller's user or role session ARN. A function
+  URL with `AWS_IAM` auth needs `lambda:InvokeFunctionUrl` and
+  `lambda:InvokeFunction`; one with `NONE` auth is called without a signature,
+  and only when the function's resource-based policy grants both actions to
+  `*` (as `aws lambda add-permission --principal '*'` does); otherwise it
+  answers 403 Forbidden.
+- The other REST services (API Gateway, EKS, Route 53, CloudFront and the
+  rest) are checked at service level for now. A request passes only when the
+  caller's policies allow every action of that service on every resource, such
+  as `eks:*` on `*` or `AdministratorAccess`. **A fine-grained or
+  resource-scoped policy on one of these services is denied until that service
+  gets per-operation checks.** A `Deny` that touches the service also denies
+  the request.
 - The account root and IAM users with no policies are unrestricted, so a
   freshly created user can bootstrap others. Role sessions are always
   evaluated on the role's policies.
