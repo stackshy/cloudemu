@@ -723,7 +723,7 @@ func (m *Mock) GetObject(ctx context.Context, bucket, key string) (*driver.Objec
 
 	obj, ok := bkt.objects.Get(key)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
+		return nil, missingObjectErr(bkt, key)
 	}
 
 	data, err := m.engineLoad(ctx, config.StorageRef{Bucket: bucket, Key: key, Version: obj.VersionID}, obj.Data)
@@ -859,7 +859,7 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 
 	obj, ok := bkt.objects.Get(key)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
+		return nil, missingObjectErr(bkt, key)
 	}
 
 	info := &driver.ObjectInfo{
@@ -870,6 +870,24 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 	applyObjectSystemProps(info, obj)
 
 	return info, nil
+}
+
+// missingObjectErr is the error for a GET/HEAD of a key with no current object.
+// When the key's newest version is a delete marker it is a DeleteMarkerError
+// carrying the marker's id and timestamp (S3 answers 404 with
+// x-amz-delete-marker: true and the marker's x-amz-version-id); otherwise it is
+// a plain NotFound.
+func missingObjectErr(bkt *bucketMeta, key string) error {
+	bkt.versionsMu.Lock()
+	defer bkt.versionsMu.Unlock()
+
+	if chain := bkt.versions[key]; len(chain) > 0 {
+		if latest := chain[len(chain)-1]; latest.deleteMarker {
+			return &driver.DeleteMarkerError{LastModified: latest.lastModified, VersionID: latest.versionID}
+		}
+	}
+
+	return cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bkt.Name)
 }
 
 // applyObjectSystemProps copies obj's S3 system-defined object properties and
@@ -1109,6 +1127,12 @@ func copyDstSystemProps(req *driver.CopyObjectRequest, src *copySrcSnapshot) dri
 // MD5 of the copied bytes rather than inherited from the source, matching
 // real S3 even when the source was uploaded via multipart (a "...-N" ETag).
 func (m *Mock) CopyObjectV2(ctx context.Context, req *driver.CopyObjectRequest) (*driver.CopyObjectResult, error) {
+	if req.ReplaceTags {
+		if err := validateObjectTags(req.Tags); err != nil {
+			return nil, err
+		}
+	}
+
 	src, err := m.resolveCopySource(ctx, req.Src, req.SrcVersionID)
 	if err != nil {
 		return nil, err
@@ -1427,6 +1451,10 @@ func (m *Mock) CreateMultipartUpload(ctx context.Context, bucket, key, contentTy
 func (m *Mock) CreateMultipartUploadWithTagging(
 	_ context.Context, bucket, key, contentType string, tags map[string]string,
 ) (*driver.MultipartUpload, error) {
+	if err := validateObjectTags(tags); err != nil {
+		return nil, err
+	}
+
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
@@ -1749,7 +1777,7 @@ func (m *Mock) GetObjectVersion(ctx context.Context, bucket, key, versionID stri
 	}
 
 	if v.deleteMarker {
-		return nil, &driver.DeleteMarkerError{LastModified: v.lastModified}
+		return nil, &driver.DeleteMarkerError{LastModified: v.lastModified, VersionID: v.versionID}
 	}
 
 	data, err := m.engineLoad(ctx, config.StorageRef{Bucket: bucket, Key: key, Version: versionID}, v.data)
@@ -1783,7 +1811,7 @@ func (m *Mock) HeadObjectVersion(ctx context.Context, bucket, key, versionID str
 	}
 
 	if v.deleteMarker {
-		return nil, &driver.DeleteMarkerError{LastModified: v.lastModified}
+		return nil, &driver.DeleteMarkerError{LastModified: v.lastModified, VersionID: v.versionID}
 	}
 
 	info := infoFromVersion(key, v)
@@ -2306,6 +2334,10 @@ func (m *Mock) GetEncryptionConfig(_ context.Context, bucket string) (*driver.En
 
 // PutObjectTagging sets tags on an object.
 func (m *Mock) PutObjectTagging(_ context.Context, bucket, key string, tags map[string]string) error {
+	if err := validateObjectTags(tags); err != nil {
+		return err
+	}
+
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)

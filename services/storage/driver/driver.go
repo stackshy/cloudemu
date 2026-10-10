@@ -21,13 +21,56 @@ var ErrDeleteMarker = cerrors.New(cerrors.NotFound, "the specified version is a 
 // header of the 405 response for a version-addressed GET/HEAD of a delete marker,
 // so providers return this (it unwraps to ErrDeleteMarker, so errors.Is still
 // matches) to let the wire layer emit the header.
+//
+// A plain GET/HEAD (no version id) of a key whose current version is a delete
+// marker also returns this error; S3 answers that with 404 and the marker's id
+// in x-amz-version-id, which VersionID carries.
 type DeleteMarkerError struct {
 	LastModified string
+	VersionID    string
 }
 
 func (*DeleteMarkerError) Error() string { return ErrDeleteMarker.Error() }
 
 func (*DeleteMarkerError) Unwrap() error { return ErrDeleteMarker }
+
+// TagError is a rejected S3 tag set. Code is the S3 error code the wire layer
+// returns (InvalidTag, or BadRequest for too many object tags) and Message the
+// S3 message. It unwraps to an InvalidArgument error, so cerrors.IsInvalidArgument
+// holds for library callers.
+type TagError struct {
+	Code    string
+	Message string
+}
+
+func (e *TagError) Error() string { return e.Message }
+
+func (e *TagError) Unwrap() error { return cerrors.New(cerrors.InvalidArgument, e.Message) }
+
+// ObjectTagValidator is an OPTIONAL capability (discovered by type assertion)
+// for a driver that enforces S3 object tag rules (tag count, key and value
+// length, reserved prefixes). The wire handler calls it before an object write
+// that carries tags, so a rejected tag set never leaves a stored object behind.
+// A rejection is a *TagError.
+type ObjectTagValidator interface {
+	ValidateObjectTags(tags map[string]string) error
+}
+
+// CreateBucketOptions are the CreateBucketConfiguration settings applied at
+// bucket creation: the region (LocationConstraint, empty for the default) and
+// the bucket's initial tag set.
+type CreateBucketOptions struct {
+	Region string
+	Tags   map[string]string
+}
+
+// BucketCreator is an OPTIONAL capability (discovered by type assertion) for a
+// driver that creates a bucket with its CreateBucketConfiguration in one step:
+// the tags are validated before the bucket exists, so an invalid tag set never
+// leaves a half-created bucket. A tag rejection is a *TagError.
+type BucketCreator interface {
+	CreateBucketWithOptions(ctx context.Context, name string, opts CreateBucketOptions) error
+}
 
 // BucketInfo describes a storage bucket.
 type BucketInfo struct {
