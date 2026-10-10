@@ -603,6 +603,11 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		return
 	}
 
+	lock, ok := h.parsePutObjectLock(w, r)
+	if !ok {
+		return
+	}
+
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = defaultContentType
@@ -610,7 +615,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 
 	metadata := extractMetadata(r.Header)
 
-	etag, versionID, ok := h.storePut(w, r, bucket, key, data, contentType, metadata)
+	etag, versionID, ok := h.storePut(w, r, bucket, key, data, contentType, metadata, lock)
 	if !ok {
 		return // error response already written
 	}
@@ -625,12 +630,6 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 		return
 	}
 
-	// x-amz-object-lock-mode / -retain-until-date / -legal-hold stamp Object Lock
-	// on the just-written version (real S3 stores it atomically with the object).
-	if !h.applyPutObjectLock(w, r, bucket, key, versionID) {
-		return
-	}
-
 	w.Header().Set("ETag", fmt.Sprintf("%q", etag))
 
 	if versionID != "" {
@@ -642,21 +641,32 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 
 // storePut writes the object, routing through the atomic conditional-write path
 // when an If-None-Match/If-Match header is present and the driver supports it.
-// On failure it writes the error response and returns ok=false; otherwise it
-// returns the stored object's ETag and version id.
+// lock (nil = none) is the request's Object Lock settings, written with the
+// object. On failure it writes the error response and returns ok=false;
+// otherwise it returns the stored object's ETag and version id.
 func (h *Handler) storePut(
 	w http.ResponseWriter, r *http.Request, bucket, key string,
-	data []byte, contentType string, metadata map[string]string,
+	data []byte, contentType string, metadata map[string]string, lock *driver.ObjectLockSettings,
 ) (etag, versionID string, ok bool) {
 	ifNoneMatch := r.Header.Get("If-None-Match")
 	ifMatch := r.Header.Get("If-Match")
 
 	if (ifNoneMatch != "" || ifMatch != "") && h.conditional != nil {
-		return h.storePutConditional(w, r, bucket, key, data, contentType, metadata, ifNoneMatch, ifMatch)
+		etag, versionID, ok = h.storePutConditional(w, r, bucket, key, data, contentType, metadata, ifNoneMatch, ifMatch)
+		if ok && !h.applyLockAfterWrite(w, r, bucket, key, versionID, lock) {
+			return "", "", false
+		}
+
+		return etag, versionID, ok
 	}
 
-	if err := h.putObjectData(r, bucket, key, data, contentType, metadata); err != nil {
-		writeErr(w, err)
+	if err := h.putObjectData(r, bucket, key, data, contentType, metadata, lock); err != nil {
+		if lock != nil {
+			writeObjectLockErr(w, err)
+		} else {
+			writeErr(w, err)
+		}
+
 		return "", "", false
 	}
 
@@ -673,14 +683,19 @@ func (h *Handler) storePut(
 	return etag, versionID, true
 }
 
-// putObjectData writes the object, routing through the system-properties
-// capability (recording Cache-Control/Content-Encoding/… and storage class)
-// when the driver and the request supply them, and falling back to the plain
-// PutObject otherwise.
+// putObjectData writes the object, routing through the Object Lock capability
+// when the request sets lock headers, the system-properties capability
+// (recording Cache-Control/Content-Encoding/… and storage class) when the
+// driver and the request supply them, and the plain PutObject otherwise.
 func (h *Handler) putObjectData(
 	r *http.Request, bucket, key string, data []byte, contentType string, metadata map[string]string,
+	lock *driver.ObjectLockSettings,
 ) error {
 	props := extractSystemProps(r.Header)
+	if lock != nil {
+		return h.objectLock.PutObjectWithLock(r.Context(), bucket, key, data, contentType, metadata, &props, *lock)
+	}
+
 	if h.sysProps != nil && props != (driver.ObjectSystemProps{}) {
 		return h.sysProps.PutObjectWithSystemProps(r.Context(), bucket, key, data, contentType, metadata, &props)
 	}
@@ -1357,7 +1372,7 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket, key
 
 	// Copying an object onto itself with the default COPY directive, the current
 	// version, and no metadata change is illegal; S3 answers 400 InvalidRequest.
-	if isIllegalSelfCopy(replace, srcVersionID, srcBucket, srcKey, bucket, key) {
+	if isIllegalSelfCopy(r.Header, replace, srcVersionID, srcBucket, srcKey, bucket, key) {
 		writeError(w, http.StatusBadRequest, "InvalidRequest",
 			"This copy request is illegal because it is trying to copy an object to itself without "+
 				"changing the object's metadata, storage class, website redirect location or encryption attributes.")
@@ -1386,9 +1401,34 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket, key
 }
 
 // isIllegalSelfCopy reports whether a copy is a no-op self-copy: same key, the
-// default COPY directive, and the current source version. S3 rejects it.
-func isIllegalSelfCopy(replace bool, srcVersionID, srcBucket, srcKey, dstBucket, dstKey string) bool {
-	return !replace && srcVersionID == "" && srcBucket == dstBucket && srcKey == dstKey
+// current source version, and nothing about the object changes. S3 allows a
+// copy onto itself that changes the metadata (REPLACE directive), storage
+// class, website redirect location or encryption, and rejects any other.
+func isIllegalSelfCopy(h http.Header, replace bool, srcVersionID, srcBucket, srcKey, dstBucket, dstKey string) bool {
+	if replace || srcVersionID != "" || srcBucket != dstBucket || srcKey != dstKey {
+		return false
+	}
+
+	for _, hdr := range selfCopyChangeHeaders {
+		if h.Get(hdr) != "" {
+			return false
+		}
+	}
+
+	return true
+}
+
+// selfCopyChangeHeaders are the copy headers that change an object's storage
+// class, website redirect location or encryption, any of which makes a copy of
+// an object onto itself legal.
+//
+//nolint:gochecknoglobals // static lookup table
+var selfCopyChangeHeaders = []string{
+	"X-Amz-Storage-Class",
+	"X-Amz-Website-Redirect-Location",
+	"X-Amz-Server-Side-Encryption",
+	"X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id",
+	"X-Amz-Server-Side-Encryption-Customer-Algorithm",
 }
 
 // buildCopyRequest assembles a CopyObjectRequest from the copy headers: the
