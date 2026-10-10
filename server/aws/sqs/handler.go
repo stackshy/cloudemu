@@ -18,6 +18,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsidentity"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 )
 
@@ -57,11 +58,29 @@ const (
 // driver.
 type Handler struct {
 	mq mqdriver.MessageQueue
+	// identities, when set, resolves the caller of a send the way STS
+	// GetCallerIdentity reports it, for the SenderId message attribute.
+	identities *awsidentity.Resolver
 }
 
 // New returns an SQS handler backed by mq.
 func New(mq mqdriver.MessageQueue) *Handler {
 	return &Handler{mq: mq}
+}
+
+// SetIdentities shares the resolver STS uses, so a message's SenderId is the
+// caller's IAM unique id: the user id for an IAM user, "<role id>:<session>"
+// for an assumed role. Without it the provider records the account id.
+func (h *Handler) SetIdentities(r *awsidentity.Resolver) { h.identities = r }
+
+// senderID resolves the SenderId of a send request, or "" when no resolver
+// is wired.
+func (h *Handler) senderID(r *http.Request) string {
+	if h.identities == nil {
+		return ""
+	}
+
+	return h.identities.Resolve(r).UserID
 }
 
 // Matches identifies SQS requests by their X-Amz-Target header. SQS shares
@@ -311,6 +330,7 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 		DeduplicationID:   req.DeduplicationID,
 		MessageAttributes: msgAttrs,
 		SystemAttributes:  sysAttrs,
+		SenderID:          h.senderID(r),
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -578,6 +598,7 @@ func (h *Handler) sendMessageBatch(w http.ResponseWriter, r *http.Request) {
 	sysAttrsByID := make(map[string]map[string]mqdriver.MessageAttributeValue, len(req.Entries))
 
 	entries := make([]mqdriver.BatchSendEntry, 0, len(req.Entries))
+	sender := h.senderID(r)
 
 	for i := range req.Entries {
 		msgAttrs := toDriverMessageAttributes(req.Entries[i].MessageAttributes)
@@ -594,6 +615,7 @@ func (h *Handler) sendMessageBatch(w http.ResponseWriter, r *http.Request) {
 			DeduplicationID:   req.Entries[i].MessageDeduplicationID,
 			MessageAttributes: msgAttrs,
 			SystemAttributes:  sysAttrs,
+			SenderID:          sender,
 		})
 	}
 

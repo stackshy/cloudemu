@@ -123,7 +123,7 @@ func (m *Mock) emitMetric(metricName string, value float64, unit string, dims ma
 	}
 
 	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{{
-		Namespace: "AWS/SQS", MetricName: metricName, Value: value, Unit: unit,
+		Namespace: metricsNamespace, MetricName: metricName, Value: value, Unit: unit,
 		Dimensions: dims, Timestamp: m.opts.Clock.Now(),
 	}})
 }
@@ -541,6 +541,7 @@ func (m *Mock) SendMessage(ctx context.Context, input driver.SendMessageInput) (
 	// ReceiveMessage, DeleteMessage against this or another queue) never
 	// deadlocks on it.
 	m.deliverToESM(ctx, qd)
+	m.emitQueueGauges(qd)
 
 	return &driver.SendMessageOutput{
 		MessageID:      msgID,
@@ -634,6 +635,7 @@ func (m *Mock) deliverMessageToESM(ctx context.Context, qd *queueData, msg *sqsM
 			dlqURL, sourceURL := qd.dlqConfig.TargetQueueURL, qd.info.URL
 			qd.mu.Unlock()
 			m.moveToDLQ(dlqURL, sourceURL, msg)
+			m.emitQueueGaugesByURL(dlqURL)
 
 			return
 		}
@@ -694,6 +696,7 @@ func (m *Mock) commitESMReceive(qd *queueData, msg, trial *sqsMessage, deliverEr
 		dlqURL, sourceURL := qd.dlqConfig.TargetQueueURL, qd.info.URL
 		qd.mu.Unlock()
 		m.moveToDLQ(dlqURL, sourceURL, msg)
+		m.emitQueueGaugesByURL(dlqURL)
 
 		return true
 	}
@@ -769,11 +772,22 @@ func (m *Mock) buildStoredMessage(qd *queueData, input *driver.SendMessageInput,
 		Attributes:        attrs,
 		MessageAttributes: copyMessageAttributes(input.MessageAttributes),
 		SystemAttributes:  systemAttributeStrings(input.SystemAttributes),
-		SenderID:          m.opts.AccountID,
+		SenderID:          senderID(input.SenderID, m.opts.AccountID),
 		SequenceNumber:    seqNum,
 		VisibleAt:         now.Add(time.Duration(delaySeconds) * time.Second),
 		SentAt:            now,
 	}
+}
+
+// senderID is the SenderId recorded on a sent message: the caller's IAM unique
+// id when the wire handler resolved one, else the account id (library callers
+// and service-to-service deliveries carry no caller principal).
+func senderID(caller, accountID string) string {
+	if caller != "" {
+		return caller
+	}
+
+	return accountID
 }
 
 // systemAttributeStrings flattens caller-supplied SQS message system attributes
@@ -879,37 +893,51 @@ func (m *Mock) ReceiveMessages(ctx context.Context, input driver.ReceiveMessageI
 
 	deadline := time.Now().Add(resolveWaitDuration(qd, input.WaitTimeSeconds, input.WaitTimeSecondsSet))
 
-	results, err := m.pollForMessages(ctx, qd, input, deadline)
+	results, dlqURL, err := m.pollForMessages(ctx, qd, input, deadline)
+
+	// A receive that crossed MaxReceiveCount moved messages into the DLQ, even
+	// when the poll then ended in an error.
+	m.emitQueueGaugesByURL(dlqURL)
+
 	if err != nil {
 		return nil, err
 	}
 
 	m.emitReceiveMetrics(qd, len(results))
+	m.emitQueueGauges(qd)
 
 	return results, nil
 }
 
 // pollForMessages performs the bounded long-poll loop. It never holds qd.mu across
 // the wait: each attempt acquires the lock via receiveOnce, releases it, then sleeps.
+// dlqURL names the dead-letter queue any attempt moved messages into, or is empty.
 func (m *Mock) pollForMessages(
 	ctx context.Context, qd *queueData, input driver.ReceiveMessageInput, deadline time.Time,
-) ([]driver.Message, error) {
+) (results []driver.Message, dlqURL string, err error) {
 	for {
-		results := m.receiveOnce(qd, input)
+		var movedTo string
+
+		results, movedTo = m.receiveOnce(qd, input)
+		if movedTo != "" {
+			dlqURL = movedTo
+		}
+
 		if len(results) > 0 || !time.Now().Before(deadline) {
-			return results, nil
+			return results, dlqURL, nil
 		}
 
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, dlqURL, ctx.Err()
 		case <-time.After(longPollInterval):
 		}
 	}
 }
 
 // receiveOnce performs a single, immediate receive attempt under the queue lock.
-func (m *Mock) receiveOnce(qd *queueData, input driver.ReceiveMessageInput) []driver.Message {
+// dlqURL names the dead-letter queue the attempt moved messages into, or is empty.
+func (m *Mock) receiveOnce(qd *queueData, input driver.ReceiveMessageInput) (results []driver.Message, dlqURL string) {
 	qd.mu.Lock()
 	defer qd.mu.Unlock()
 
@@ -925,17 +953,17 @@ func (m *Mock) receiveOnce(qd *queueData, input driver.ReceiveMessageInput) []dr
 	now := m.opts.Clock.Now()
 	results, toRemove := m.collectVisibleMessages(qd, maxMessages, visibilityTimeout, now)
 
-	// Remove DLQ-moved messages in reverse order.
-	for i := len(toRemove) - 1; i >= 0; i-- {
-		idx := toRemove[i]
-		qd.messages = append(qd.messages[:idx], qd.messages[idx+1:]...)
+	removeByIndices(qd, toRemove)
+
+	if len(toRemove) > 0 {
+		dlqURL = qd.dlqConfig.TargetQueueURL
 	}
 
 	if results == nil {
-		return []driver.Message{}
+		return []driver.Message{}, dlqURL
 	}
 
-	return results
+	return results, dlqURL
 }
 
 // emitReceiveMetrics records the CloudWatch receive counters for a single receive call.
@@ -1138,19 +1166,29 @@ func (m *Mock) DeleteMessage(_ context.Context, queueURL, receiptHandle string) 
 	}
 
 	qd.mu.Lock()
-	defer qd.mu.Unlock()
+
+	deleted := false
 
 	for i, msg := range qd.messages {
 		if msg.ReceiptHandle == receiptHandle {
 			qd.messages = append(qd.messages[:i], qd.messages[i+1:]...)
-			m.emitMetric("NumberOfMessagesDeleted", 1, "Count", map[string]string{"QueueName": qd.info.Name})
+			deleted = true
 
-			return nil
+			break
 		}
 	}
 
+	qd.mu.Unlock()
+
 	// DeleteMessage is idempotent: an old/stale (but well-formed) receipt handle
-	// against an existing queue succeeds without deleting anything.
+	// against an existing queue succeeds without deleting anything. Metrics are
+	// published after the lock is released, since an alarm on them may deliver
+	// back into this queue.
+	if deleted {
+		m.emitMetric("NumberOfMessagesDeleted", 1, "Count", map[string]string{"QueueName": qd.info.Name})
+		m.emitQueueGauges(qd)
+	}
+
 	return nil
 }
 
@@ -1184,16 +1222,20 @@ func (m *Mock) ChangeVisibility(_ context.Context, queueURL, receiptHandle strin
 	}
 
 	qd.mu.Lock()
-	defer qd.mu.Unlock()
 
 	now := m.opts.Clock.Now()
 
 	for _, msg := range qd.messages {
 		if msg.ReceiptHandle == receiptHandle {
 			msg.VisibleAt = now.Add(time.Duration(timeout) * time.Second)
+			qd.mu.Unlock()
+			m.emitQueueGauges(qd)
+
 			return nil
 		}
 	}
+
+	qd.mu.Unlock()
 
 	// The queue exists but no in-flight message carries this handle. AWS reports
 	// this as ReceiptHandleIsInvalid, not a missing-queue error; FailedPrecondition
@@ -1244,6 +1286,7 @@ func batchEntryToSendInput(queue string, entry *driver.BatchSendEntry) driver.Se
 		Attributes:        entry.Attributes,
 		MessageAttributes: entry.MessageAttributes,
 		SystemAttributes:  entry.SystemAttributes,
+		SenderID:          entry.SenderID,
 	}
 }
 
@@ -1289,7 +1332,6 @@ func (m *Mock) ReceiveMessagesWithOptions(
 	}
 
 	qd.mu.Lock()
-	defer qd.mu.Unlock()
 
 	maxMsgs := defaultMaxMessages(opts.MaxMessages)
 
@@ -1303,16 +1345,20 @@ func (m *Mock) ReceiveMessagesWithOptions(
 
 	removeByIndices(qd, toRemove)
 
+	var dlqURL string
+	if len(toRemove) > 0 {
+		dlqURL = qd.dlqConfig.TargetQueueURL
+	}
+
+	qd.mu.Unlock()
+
 	if results == nil {
 		results = []driver.Message{}
 	}
 
-	dims := map[string]string{"QueueName": qd.info.Name}
-	if len(results) > 0 {
-		m.emitMetric("NumberOfMessagesReceived", float64(len(results)), "Count", dims)
-	} else {
-		m.emitMetric("NumberOfEmptyReceives", 1.0, "Count", dims)
-	}
+	m.emitReceiveMetrics(qd, len(results))
+	m.emitQueueGauges(qd)
+	m.emitQueueGaugesByURL(dlqURL)
 
 	return results, nil
 }
@@ -1539,10 +1585,11 @@ func (m *Mock) PurgeQueue(_ context.Context, queue string) error {
 	}
 
 	qd.mu.Lock()
-	defer qd.mu.Unlock()
-
 	qd.messages = make([]*sqsMessage, 0)
 	qd.lastModifiedAt = m.opts.Clock.Now()
+	qd.mu.Unlock()
+
+	m.emitQueueGauges(qd)
 
 	return nil
 }

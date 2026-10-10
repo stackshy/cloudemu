@@ -621,6 +621,14 @@ type authzSets struct {
 func newServer(d Drivers) (*server.Server, authzSets) {
 	srv := server.New()
 
+	// STS records the sessions it mints here; EKS reads the cluster creator and
+	// SQS the message SenderId from it, so all of them see the caller the same
+	// way.
+	identities := d.Identities
+	if identities == nil {
+		identities = awsidentity.New(d.AccountID, d.IAM)
+	}
+
 	// The auth gate reads X-Amz-Target only for the handlers registered
 	// through rpc, which route on that header.
 	jsonRPC := map[server.Handler]bool{}
@@ -653,7 +661,9 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 	// prefix (AmazonSQS.* vs DynamoDB_20120810.*); their Matches predicates
 	// are mutually exclusive.
 	if d.SQS != nil {
-		srv.Register(sqs.New(d.SQS))
+		sqsHandler := sqs.New(d.SQS)
+		sqsHandler.SetIdentities(identities)
+		srv.Register(sqsHandler)
 	}
 
 	// Resource Groups Tagging API: X-Amz-Target prefix
@@ -1117,13 +1127,6 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 	stsSessions := d.STSSessions
 	if stsSessions == nil && d.EnforceAuth {
 		stsSessions = stssrv.NewSessionStore(authClock)
-	}
-
-	// STS records the sessions it mints here, and EKS reads the cluster
-	// creator from it, so both see the caller the same way.
-	identities := d.Identities
-	if identities == nil {
-		identities = awsidentity.New(d.AccountID, d.IAM)
 	}
 
 	if d.STS {

@@ -157,6 +157,13 @@ type SendMessageInput struct {
 	// message stays invisible until this instant, measured on the provider's
 	// clock. The zero value means no schedule. Ignored by non-Azure providers.
 	ScheduledEnqueueTime time.Time
+	// SenderID is the IAM unique id of the caller that sent the message (an
+	// IAM user id, or "<role id>:<session name>" for an assumed role), which
+	// AWS SQS returns as the SenderId message system attribute. The SQS wire
+	// handler resolves it from the request's credentials; empty means no
+	// caller principal is known and the account id is used. Ignored by
+	// non-AWS providers.
+	SenderID string
 }
 
 // SendMessageOutput is the result of sending a message.
@@ -234,6 +241,8 @@ type BatchSendEntry struct {
 	// SystemAttributes are SQS message system attributes (AWS SQS; the only
 	// supported key is AWSTraceHeader).
 	SystemAttributes map[string]MessageAttributeValue
+	// SenderID has the same meaning as on SendMessageInput.
+	SenderID string
 }
 
 // BatchSendResult is the result of a batch send.
