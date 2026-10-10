@@ -221,7 +221,7 @@ func (h *Handler) describeServices(w http.ResponseWriter, r *http.Request) {
 		out = append(out, ws)
 	}
 
-	wire.WriteJSON(w, map[string]any{"services": out, "failures": fromFailures(failures)})
+	wire.WriteJSON(w, map[string]any{"services": out, keyFailures: fromFailures(failures)})
 }
 
 func (h *Handler) deleteService(w http.ResponseWriter, r *http.Request) {

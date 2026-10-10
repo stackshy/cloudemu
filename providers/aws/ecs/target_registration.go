@@ -112,7 +112,7 @@ func eniPrivateIP(attachments []driver.Attachment) string {
 		}
 
 		for _, kv := range attachments[i].Details {
-			if kv.Name == "privateIPv4Address" {
+			if kv.Name == detailPrivateIPv4Address {
 				return kv.Value
 			}
 		}

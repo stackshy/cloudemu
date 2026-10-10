@@ -170,6 +170,10 @@ func validateLaunchType(launchType string) error {
 	}
 }
 
+// detailPrivateIPv4Address is the ElasticNetworkInterface attachment detail
+// that carries a task's private IP.
+const detailPrivateIPv4Address = "privateIPv4Address"
+
 // Public-IP assignment values of an awsvpc configuration.
 const (
 	assignPublicIPEnabled  = "ENABLED"
@@ -497,13 +501,13 @@ func markContainers(task *driver.Task, status string) {
 // placeFargate marks a Fargate task RUNNING, echoes/normalizes its platform
 // version (LATEST or empty resolves to 1.4.0), and synthesizes an elastic
 // network interface attachment. Fargate has no capacity pool (treated as
-// unlimited), so placement never fails.
+// unlimited), so placement never fails. It does not store the task: the caller
+// still owns it and publishes it once, fully built.
 func (m *Mock) placeFargate(task *driver.Task, netCfg *driver.NetworkConfiguration, platformVersion string) {
 	task.LastStatus = statusRunning
 	task.PlatformVersion = fargatePlatformVersion(platformVersion)
 	task.Attachments = []driver.Attachment{m.syntheticENI(netCfg)}
 	linkContainerInterfaces(task)
-	m.tasks.Set(task.ARN, task)
 }
 
 // linkContainerInterfaces gives every container of an awsvpc task the network
@@ -518,7 +522,7 @@ func linkContainerInterfaces(task *driver.Task) {
 	privateIP := ""
 
 	for _, d := range eni.Details {
-		if d.Name == "privateIPv4Address" {
+		if d.Name == detailPrivateIPv4Address {
 			privateIP = d.Value
 		}
 	}
@@ -564,7 +568,7 @@ func (m *Mock) syntheticENI(nc *driver.NetworkConfiguration) driver.Attachment {
 		Status: "ATTACHED",
 		Details: []driver.KeyValue{
 			{Name: "networkInterfaceId", Value: "eni-" + id[:17]},
-			{Name: "privateIPv4Address", Value: "10.0.0." + strconv.Itoa(int(id[0])%254+1)},
+			{Name: detailPrivateIPv4Address, Value: "10.0.0." + strconv.Itoa(int(id[0])%254+1)},
 			{Name: "subnetId", Value: subnet},
 			{Name: "macAddress", Value: "0a:58:0a:00:00:01"},
 		},

@@ -92,6 +92,19 @@ func TestSDK_ServiceDeployments(t *testing.T) {
 	if !errorsAs(err, &notFound) {
 		t.Fatalf("want *ServiceDeploymentNotFoundException, got %T: %v", err, err)
 	}
+
+	// stopType is optional on the wire (an omitted value means ROLLBACK).
+	_, err = client.StopServiceDeployment(ctx, &awsecs.StopServiceDeploymentInput{
+		ServiceDeploymentArn: aws.String("arn:aws:ecs:us-east-1:000000000000:service-deployment/prod/web/none"),
+	})
+	if !errorsAs(err, &notFound) {
+		t.Fatalf("no stopType, unknown ARN: want *ServiceDeploymentNotFoundException, got %T: %v", err, err)
+	}
+
+	_, err = client.StopServiceDeployment(ctx, &awsecs.StopServiceDeploymentInput{ServiceDeploymentArn: aws.String(arn)})
+	if !errorsAs(err, &conflict) {
+		t.Fatalf("no stopType, completed deployment: want *ConflictException, got %T: %v", err, err)
+	}
 }
 
 func TestSDK_ServiceConnectNamespace(t *testing.T) {

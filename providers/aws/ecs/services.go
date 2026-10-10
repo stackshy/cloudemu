@@ -3,6 +3,8 @@ package ecs
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -645,12 +647,18 @@ func (m *Mock) newDeployment(id, status string, svc *driver.Service, running, pe
 	}
 }
 
+// deploymentComplete reports whether a deployment has converged: the service
+// runs exactly its desired count. Scale-in-protected tasks can keep it above.
+func deploymentComplete(running, desired int) bool {
+	return running == desired
+}
+
 // rolloutState reports COMPLETED once the running count equals the desired
 // count, else IN_PROGRESS (running fewer tasks, or more because scale-in
 // protection kept surplus ones). Circuit-breaker FAILED transitions are accepted but
 // not simulated.
 func rolloutState(running, desired int) string {
-	if running == desired {
+	if deploymentComplete(running, desired) {
 		return rolloutCompleted
 	}
 
@@ -662,10 +670,14 @@ func (m *Mock) serviceEvent(message string) driver.ServiceEvent {
 	return driver.ServiceEvent{ID: m.hexID(), CreatedAt: m.now(), Message: message}
 }
 
-// UpdateService updates a service. It stores/echoes every supplied field and,
-// when the task definition or desired count changes (or forceNewDeployment is
-// set), promotes a new PRIMARY deployment, drains the previous one, relaunches
-// the tasks against the new target/definition, and appends an event.
+// UpdateService updates a service. It applies every supplied field and, when
+// the task definition or desired count changes (or forceNewDeployment is set),
+// promotes a new PRIMARY deployment, drains the previous one, relaunches the
+// tasks against the new target/definition, and appends an event. On an
+// EXTERNAL-controller service, task-set-only fields (task definition, platform
+// version, network configuration, load balancers, capacity providers, service
+// registries) that differ from the stored values are rejected instead, and the
+// rest is applied without a deployment (see validateExternalServiceUpdate).
 //
 //nolint:gocritic // in matches the driver.ECS interface signature; copied once on entry.
 func (m *Mock) UpdateService(ctx context.Context, in driver.UpdateServiceInput) (*driver.Service, error) {
@@ -683,14 +695,27 @@ func (m *Mock) UpdateService(ctx context.Context, in driver.UpdateServiceInput) 
 	in.NetworkConfiguration = withDefaultAssignPublicIP(in.NetworkConfiguration)
 
 	if svc.DeploymentController == deployControllerExternal {
+		if err := m.validateExternalServiceUpdate(svc, &in); err != nil {
+			return nil, err
+		}
+
 		return m.updateExternalService(ctx, svc, &in)
 	}
 
-	updated := cloneService(svc)
-	applyServiceScalars(&updated, &in)
-	applyServiceRefs(&updated, &in)
+	return m.updateManagedService(ctx, cluster, svc, &in)
+}
 
-	tdChanged, err := m.applyTaskDefChange(&updated, svc, &in)
+// updateManagedService applies an UpdateService to a service whose deployments
+// the scheduler manages (ECS or CODE_DEPLOY controller): it merges the supplied
+// fields, redeploys when needed, and records the deployment and its events.
+func (m *Mock) updateManagedService(
+	ctx context.Context, cluster string, svc *driver.Service, in *driver.UpdateServiceInput,
+) (*driver.Service, error) {
+	updated := cloneService(svc)
+	applyServiceScalars(&updated, in)
+	applyServiceRefs(&updated, in)
+
+	tdChanged, err := m.applyTaskDefChange(&updated, svc, in)
 	if err != nil {
 		return nil, err
 	}
@@ -701,18 +726,18 @@ func (m *Mock) UpdateService(ctx context.Context, in driver.UpdateServiceInput) 
 	var events pendingTaskEvents
 
 	if redeployed {
-		m.redeployService(ctx, &updated, &in, &events)
+		m.redeployService(ctx, &updated, in, &events)
 	}
 
 	m.services.Set(serviceKey(cluster, updated.Name), &updated)
 
-	deployed := in.ForceNewDeployment || tdChanged || serviceConfigChanged(&in)
+	deployed := in.ForceNewDeployment || tdChanged || serviceConfigChanged(in)
 	if deployed {
 		m.recordServiceDeployment(&updated)
 	}
 
 	m.publish(ctx, &events)
-	m.emitServiceUpdateEvents(ctx, &updated, countChanged, deployed, redeployed)
+	m.emitServiceUpdateEvents(ctx, &updated, deployed, redeployed)
 	m.publishClusterMetrics(cluster)
 
 	out := cloneService(&updated)
@@ -732,13 +757,71 @@ func validateServiceUpdate(svc *driver.Service, in *driver.UpdateServiceInput) e
 	return validateAssignPublicIP(in.NetworkConfiguration)
 }
 
-// emitServiceUpdateEvents publishes the events a committed UpdateService caused:
-// a desired-count change, a started deployment and the steady state it reached.
-func (m *Mock) emitServiceUpdateEvents(ctx context.Context, svc *driver.Service, countChanged, deployed, redeployed bool) {
-	if countChanged {
-		m.emitServiceAction(ctx, svc.ARN, svc.ClusterARN, serviceDesiredCountUpdated, serviceEventTypeInfo, "")
+// validateExternalServiceUpdate rejects an UpdateService on an EXTERNAL-controller
+// service that would change a field only task sets can change (task definition,
+// platform version, network configuration, load balancers, capacity providers,
+// service registries). A field is rejected only when it is supplied and differs
+// from the stored value, so a client re-sending unchanged values (Terraform) still
+// succeeds. The whole call is rejected, so nothing else is applied.
+func (m *Mock) validateExternalServiceUpdate(svc *driver.Service, in *driver.UpdateServiceInput) error {
+	changed := ""
+
+	if in.TaskDefinition != "" {
+		td, ok := m.resolveTaskDef(in.TaskDefinition)
+		if !ok {
+			return apiErrf(errors.NotFound, excClient, "task definition %q not found", in.TaskDefinition)
+		}
+
+		if td.ARN != svc.TaskDefinition {
+			changed = "taskDefinition"
+		}
 	}
 
+	if changed == "" {
+		changed = changedTaskSetField(svc, in)
+	}
+
+	if changed == "" {
+		return nil
+	}
+
+	return apiErrf(errors.InvalidArgument, excInvalidParameter,
+		"Unable to update %s on services with an EXTERNAL deployment controller. Create a new task set instead.", changed)
+}
+
+// changedTaskSetField returns the name of the first supplied task-set-only field
+// (other than the task definition) whose value differs from the service's, or ""
+// when none does.
+func changedTaskSetField(svc *driver.Service, in *driver.UpdateServiceInput) string {
+	switch {
+	case in.PlatformVersion != "" && in.PlatformVersion != svc.PlatformVersion:
+		return "platformVersion"
+	case in.NetworkConfiguration != nil && !reflect.DeepEqual(in.NetworkConfiguration, svc.NetworkConfiguration):
+		return "networkConfiguration"
+	}
+
+	return changedTaskSetList(svc, in)
+}
+
+// changedTaskSetList is changedTaskSetField for the list-typed fields. A nil list
+// is "not supplied"; an empty non-nil list is a removal, so it differs from a
+// non-empty stored list.
+func changedTaskSetList(svc *driver.Service, in *driver.UpdateServiceInput) string {
+	switch {
+	case in.LoadBalancers != nil && !slices.Equal(in.LoadBalancers, svc.LoadBalancers):
+		return "loadBalancers"
+	case in.CapacityProviderStrategy != nil && !slices.Equal(in.CapacityProviderStrategy, svc.CapacityProviderStrategy):
+		return "capacityProviderStrategy"
+	case in.ServiceRegistries != nil && !slices.Equal(in.ServiceRegistries, svc.ServiceRegistries):
+		return "serviceRegistries"
+	}
+
+	return ""
+}
+
+// emitServiceUpdateEvents publishes the events a committed UpdateService caused:
+// a started deployment and the steady state it reached.
+func (m *Mock) emitServiceUpdateEvents(ctx context.Context, svc *driver.Service, deployed, redeployed bool) {
 	if deployed {
 		m.emitDeploymentEvents(ctx, svc)
 	}
@@ -785,6 +868,7 @@ func (m *Mock) updateExternalService(ctx context.Context, svc *driver.Service, i
 		}
 
 		out := cloneService(&updated)
+		applyTaskSetCounts(&out, m.taskSetViews(&updated))
 
 		return &out, nil
 	}()
@@ -793,10 +877,6 @@ func (m *Mock) updateExternalService(ctx context.Context, svc *driver.Service, i
 	}
 
 	m.publish(ctx, &events)
-
-	if in.DesiredCount != nil && *in.DesiredCount != svc.DesiredCount {
-		m.emitServiceAction(ctx, out.ARN, out.ClusterARN, serviceDesiredCountUpdated, serviceEventTypeInfo, "")
-	}
 
 	m.publishClusterMetrics(cluster)
 
@@ -971,6 +1051,7 @@ func (m *Mock) DescribeServices(ctx context.Context, cluster string, ids []strin
 			out := cloneService(s)
 			out.Tags = m.liveTags(s.ARN, s.Tags)
 			out.TaskSets = m.describedTaskSets(want, s)
+			applyTaskSetCounts(&out, out.TaskSets)
 			found = append(found, out)
 			continue
 		}
@@ -982,6 +1063,23 @@ func (m *Mock) DescribeServices(ctx context.Context, cluster string, ids []strin
 	}
 
 	return found, failures, nil
+}
+
+// applyTaskSetCounts sets an EXTERNAL service's running/pending counts to the
+// sum over its task sets. The stored record never carries them because the
+// tasks belong to the task sets, so they are computed whenever the service is
+// read.
+func applyTaskSetCounts(svc *driver.Service, sets []driver.TaskSet) {
+	if svc.DeploymentController != deployControllerExternal || svc.Status != statusActive {
+		return
+	}
+
+	svc.RunningCount, svc.PendingCount = 0, 0
+
+	for i := range sets {
+		svc.RunningCount += sets[i].RunningCount
+		svc.PendingCount += sets[i].PendingCount
+	}
 }
 
 // describedTaskSets returns the task sets DescribeServices reports for svc: the

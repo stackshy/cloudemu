@@ -2,6 +2,7 @@ package ecs_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -37,6 +38,11 @@ func TestSDK_TaskSets_FullLifecycle(t *testing.T) {
 		t.Fatalf("unexpected task set: %+v", set)
 	}
 
+	svcs, err := client.DescribeServices(ctx, &awsecs.DescribeServicesInput{Cluster: aws.String("prod"), Services: []string{"ext"}})
+	if err != nil || len(svcs.Services) != 1 || svcs.Services[0].RunningCount != 2 || svcs.Services[0].PendingCount != 0 {
+		t.Fatalf("EXTERNAL service counts must follow its task sets: %v %+v", err, svcs)
+	}
+
 	plain, err := client.DescribeTaskSets(ctx, &awsecs.DescribeTaskSetsInput{Cluster: aws.String("prod"), Service: aws.String("ext")})
 	if err != nil || len(plain.TaskSets) != 1 || len(plain.TaskSets[0].Tags) != 0 {
 		t.Fatalf("DescribeTaskSets must omit tags without include=TAGS: %v %+v", err, plain)
@@ -70,18 +76,24 @@ func TestSDK_TaskSets_FullLifecycle(t *testing.T) {
 		t.Fatalf("DescribeServices taskSets: %v", err)
 	}
 
-	_, err = client.DeleteTaskSet(ctx, &awsecs.DeleteTaskSetInput{Cluster: aws.String("prod"), Service: aws.String("ext"), TaskSet: set.Id})
-
-	var invalid *ecstypes.InvalidParameterException
-	if !errorsAs(err, &invalid) {
-		t.Fatalf("DeleteTaskSet without force on a scaled set: want *InvalidParameterException, got %T: %v", err, err)
+	del, err := client.DeleteTaskSet(ctx, &awsecs.DeleteTaskSetInput{Cluster: aws.String("prod"), Service: aws.String("ext"), TaskSet: set.Id})
+	if err != nil || aws.ToString(del.TaskSet.Status) != "DRAINING" {
+		t.Fatalf("DeleteTaskSet without force: %v %+v", err, del)
 	}
 
-	del, err := client.DeleteTaskSet(ctx, &awsecs.DeleteTaskSetInput{
-		Cluster: aws.String("prod"), Service: aws.String("ext"), TaskSet: set.Id, Force: aws.Bool(true),
+	second, err := client.CreateTaskSet(ctx, &awsecs.CreateTaskSetInput{
+		Cluster: aws.String("prod"), Service: aws.String("ext"), TaskDefinition: aws.String("fg"),
+		LaunchType: ecstypes.LaunchTypeFargate, NetworkConfiguration: netCfg,
 	})
-	if err != nil || aws.ToString(del.TaskSet.Status) != "DRAINING" {
-		t.Fatalf("DeleteTaskSet force: %v %+v", err, del)
+	if err != nil {
+		t.Fatalf("CreateTaskSet second: %v", err)
+	}
+
+	forced, err := client.DeleteTaskSet(ctx, &awsecs.DeleteTaskSetInput{
+		Cluster: aws.String("prod"), Service: aws.String("ext"), TaskSet: second.TaskSet.Id, Force: aws.Bool(true),
+	})
+	if err != nil || aws.ToString(forced.TaskSet.Status) != "DRAINING" {
+		t.Fatalf("DeleteTaskSet force: %v %+v", err, forced)
 	}
 
 	_, err = client.UpdateTaskSet(ctx, &awsecs.UpdateTaskSetInput{
@@ -136,5 +148,39 @@ func TestSDK_TaskSets_RequireExternalController(t *testing.T) {
 	var noService *ecstypes.ServiceNotFoundException
 	if !errorsAs(err, &noService) {
 		t.Fatalf("want *ServiceNotFoundException, got %T: %v", err, err)
+	}
+}
+
+func TestSDK_UpdateService_ExternalRejectsTaskDefinition(t *testing.T) {
+	client := newECSClient(t)
+	ctx := context.Background()
+
+	fargateSetup(t, client)
+
+	if _, err := client.CreateService(ctx, &awsecs.CreateServiceInput{
+		Cluster: aws.String("prod"), ServiceName: aws.String("ext"), DesiredCount: aws.Int32(1),
+		DeploymentController: &ecstypes.DeploymentController{Type: ecstypes.DeploymentControllerTypeExternal},
+	}); err != nil {
+		t.Fatalf("CreateService EXTERNAL: %v", err)
+	}
+
+	_, err := client.UpdateService(ctx, &awsecs.UpdateServiceInput{
+		Cluster: aws.String("prod"), Service: aws.String("ext"), TaskDefinition: aws.String("fg"), DesiredCount: aws.Int32(3),
+	})
+
+	var invalid *ecstypes.InvalidParameterException
+	if !errors.As(err, &invalid) {
+		t.Fatalf("UpdateService taskDefinition on EXTERNAL = %v, want InvalidParameterException", err)
+	}
+
+	got, err := client.DescribeServices(ctx, &awsecs.DescribeServicesInput{Cluster: aws.String("prod"), Services: []string{"ext"}})
+	if err != nil || got.Services[0].DesiredCount != 1 || aws.ToString(got.Services[0].TaskDefinition) != "" {
+		t.Fatalf("a rejected update must change nothing: %v %+v", err, got)
+	}
+
+	if _, err := client.UpdateService(ctx, &awsecs.UpdateServiceInput{
+		Cluster: aws.String("prod"), Service: aws.String("ext"), DesiredCount: aws.Int32(3),
+	}); err != nil {
+		t.Fatalf("UpdateService desiredCount on EXTERNAL: %v", err)
 	}
 }

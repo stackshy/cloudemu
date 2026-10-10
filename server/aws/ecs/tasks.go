@@ -196,5 +196,5 @@ func (*Handler) writeTasks(w http.ResponseWriter, tasks []driver.Task, failures 
 		out = append(out, taskToWire(&tasks[i]))
 	}
 
-	wire.WriteJSON(w, map[string]any{"tasks": out, "failures": fromFailures(failures)})
+	wire.WriteJSON(w, map[string]any{"tasks": out, keyFailures: fromFailures(failures)})
 }

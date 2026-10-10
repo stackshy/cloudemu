@@ -6587,154 +6587,133 @@
   },
   {
     "service": "ecs",
-    "interface": "TaskSets",
+    "interface": "ECS",
     "operations": [
       {
-        "name": "CreateTaskSet"
+        "name": "CreateCapacityProvider"
       },
       {
-        "name": "DeleteTaskSet"
+        "name": "CreateCluster"
       },
       {
-        "name": "DescribeTaskSets"
+        "name": "CreateService"
       },
       {
-        "name": "UpdateServicePrimaryTaskSet"
+        "name": "DeleteAccountSetting"
       },
       {
-        "name": "UpdateTaskSet"
+        "name": "DeleteAttributes"
+      },
+      {
+        "name": "DeleteCapacityProvider"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteService"
+      },
+      {
+        "name": "DeregisterContainerInstance"
+      },
+      {
+        "name": "DeregisterTaskDefinition"
+      },
+      {
+        "name": "DescribeCapacityProviders"
+      },
+      {
+        "name": "DescribeClusters"
+      },
+      {
+        "name": "DescribeContainerInstances"
+      },
+      {
+        "name": "DescribeServices"
+      },
+      {
+        "name": "DescribeTaskDefinition"
+      },
+      {
+        "name": "DescribeTasks"
+      },
+      {
+        "name": "ExecuteCommand"
+      },
+      {
+        "name": "ListAccountSettings"
+      },
+      {
+        "name": "ListAttributes"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListContainerInstances"
+      },
+      {
+        "name": "ListServices"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListTaskDefinitionFamilies"
+      },
+      {
+        "name": "ListTaskDefinitions"
+      },
+      {
+        "name": "ListTasks"
+      },
+      {
+        "name": "PutAccountSetting"
+      },
+      {
+        "name": "PutAccountSettingDefault"
+      },
+      {
+        "name": "PutAttributes"
+      },
+      {
+        "name": "PutClusterCapacityProviders"
+      },
+      {
+        "name": "RegisterContainerInstance"
+      },
+      {
+        "name": "RegisterTaskDefinition"
+      },
+      {
+        "name": "RunTask"
+      },
+      {
+        "name": "StopTask"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateCapacityProvider"
+      },
+      {
+        "name": "UpdateCluster"
+      },
+      {
+        "name": "UpdateClusterSettings"
+      },
+      {
+        "name": "UpdateContainerInstancesState"
+      },
+      {
+        "name": "UpdateService"
       }
     ],
     "optionalCapabilities": [
-      {
-        "name": "ECS",
-        "doc": "ECS is the interface an ECS provider implementation must satisfy.",
-        "operations": [
-          {
-            "name": "CreateCapacityProvider"
-          },
-          {
-            "name": "CreateCluster"
-          },
-          {
-            "name": "CreateService"
-          },
-          {
-            "name": "DeleteAccountSetting"
-          },
-          {
-            "name": "DeleteAttributes"
-          },
-          {
-            "name": "DeleteCapacityProvider"
-          },
-          {
-            "name": "DeleteCluster"
-          },
-          {
-            "name": "DeleteService"
-          },
-          {
-            "name": "DeregisterContainerInstance"
-          },
-          {
-            "name": "DeregisterTaskDefinition"
-          },
-          {
-            "name": "DescribeCapacityProviders"
-          },
-          {
-            "name": "DescribeClusters"
-          },
-          {
-            "name": "DescribeContainerInstances"
-          },
-          {
-            "name": "DescribeServices"
-          },
-          {
-            "name": "DescribeTaskDefinition"
-          },
-          {
-            "name": "DescribeTasks"
-          },
-          {
-            "name": "ExecuteCommand"
-          },
-          {
-            "name": "ListAccountSettings"
-          },
-          {
-            "name": "ListAttributes"
-          },
-          {
-            "name": "ListClusters"
-          },
-          {
-            "name": "ListContainerInstances"
-          },
-          {
-            "name": "ListServices"
-          },
-          {
-            "name": "ListTagsForResource"
-          },
-          {
-            "name": "ListTaskDefinitionFamilies"
-          },
-          {
-            "name": "ListTaskDefinitions"
-          },
-          {
-            "name": "ListTasks"
-          },
-          {
-            "name": "PutAccountSetting"
-          },
-          {
-            "name": "PutAccountSettingDefault"
-          },
-          {
-            "name": "PutAttributes"
-          },
-          {
-            "name": "PutClusterCapacityProviders"
-          },
-          {
-            "name": "RegisterContainerInstance"
-          },
-          {
-            "name": "RegisterTaskDefinition"
-          },
-          {
-            "name": "RunTask"
-          },
-          {
-            "name": "StopTask"
-          },
-          {
-            "name": "TagResource"
-          },
-          {
-            "name": "UntagResource"
-          },
-          {
-            "name": "UpdateCapacityProvider"
-          },
-          {
-            "name": "UpdateCluster"
-          },
-          {
-            "name": "UpdateClusterSettings"
-          },
-          {
-            "name": "UpdateContainerInstancesState"
-          },
-          {
-            "name": "UpdateService"
-          }
-        ]
-      },
       {
         "name": "ServiceDeployments",
         "doc": "ServiceDeployments exposes the deployment history of ECS-controller services.",
@@ -6771,6 +6750,27 @@
           },
           {
             "name": "UpdateTaskProtection"
+          }
+        ]
+      },
+      {
+        "name": "TaskSets",
+        "doc": "TaskSets manages task sets, the task groups of EXTERNAL-controller services.",
+        "operations": [
+          {
+            "name": "CreateTaskSet"
+          },
+          {
+            "name": "DeleteTaskSet"
+          },
+          {
+            "name": "DescribeTaskSets"
+          },
+          {
+            "name": "UpdateServicePrimaryTaskSet"
+          },
+          {
+            "name": "UpdateTaskSet"
           }
         ]
       }

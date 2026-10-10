@@ -2391,7 +2391,7 @@ no usage-driven series. What is deliberately not emulated is listed in
 Task sets of services that use the `EXTERNAL` deployment controller. Each set runs its own
 tasks (`computedDesiredCount` = the service desired count x scale, rounded up), starts
 `ACTIVE`, and `UpdateServicePrimaryTaskSet` makes one `PRIMARY` (the previous primary becomes
-`ACTIVE`). A set that is not scaled to zero needs `force` to be deleted. `DescribeServices`
+`ACTIVE`). `DeleteTaskSet` drains the set immediately; `force` is accepted but has no visible effect. `DescribeServices`
 reports a service's task sets.
 
 | Operation | Signature |

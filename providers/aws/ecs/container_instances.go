@@ -291,11 +291,11 @@ func capacityFromResources(resources []driver.Resource) (cpu, memory int) {
 
 	for i := range resources {
 		switch resources[i].Name {
-		case "CPU":
+		case resourceCPU:
 			if v := resourceInt(&resources[i]); v > 0 {
 				cpu = v
 			}
-		case "MEMORY":
+		case resourceMemory:
 			if v := resourceInt(&resources[i]); v > 0 {
 				memory = v
 			}

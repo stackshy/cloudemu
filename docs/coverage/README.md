@@ -80,7 +80,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `digitaltwins` | - | [DigitalTwins](./azure/digitaltwins.md) | - | - | 8 |
 | `disks` | - | [Disks](./azure/disks.md) | - | - | 7 |
 | `dns` | [Route53](./aws/route53.md) | [DNS](./azure/dns.md) | [CloudDNS](./gcp/clouddns.md) | - | 16 |
-| `ecs` | [ECS](./aws/ecs.md) | - | - | - | 5 |
+| `ecs` | [ECS](./aws/ecs.md) | - | - | - | 41 |
 | `efs` | [EFS](./aws/efs.md) | - | - | - | 27 |
 | `eks` | [EKS](./aws/eks.md) | - | - | - | 40 |
 | `elasticsan` | - | [ElasticSan](./azure/elasticsan.md) | - | - | 8 |

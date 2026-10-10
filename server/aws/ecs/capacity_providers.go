@@ -17,6 +17,8 @@ const describeCapacityProvidersDefaultPage = 10
 const (
 	keyCapacityProvider = "capacityProvider"
 	keyFailures         = "failures"
+	keyTaskSet          = "taskSet"
+	jsonNull            = "null"
 )
 
 type wireManagedScaling struct {
@@ -196,7 +198,7 @@ func (h *Handler) deleteCapacityProvider(w http.ResponseWriter, r *http.Request)
 
 // nonNullRaw drops an absent or JSON-null raw block so the driver sees "not set".
 func nonNullRaw(raw json.RawMessage) json.RawMessage {
-	if len(raw) == 0 || string(raw) == "null" {
+	if len(raw) == 0 || string(raw) == jsonNull {
 		return nil
 	}
 

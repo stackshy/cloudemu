@@ -26,9 +26,10 @@ const (
 var _ driver.TaskProtection = (*Mock)(nil)
 
 // taskProtected reports whether t's scale-in protection is active at now:
-// enabled and not past its expiry.
+// enabled and not past its expiry. A stopped task is never protected, whatever
+// protection it carried when it stopped.
 func taskProtected(t *driver.Task, now time.Time) bool {
-	if !t.ProtectionEnabled {
+	if !t.ProtectionEnabled || t.LastStatus == statusStopped {
 		return false
 	}
 
@@ -126,13 +127,26 @@ func (m *Mock) UpdateTaskProtection(
 }
 
 // protectOne applies a protection change to one task under protectMu and
-// returns its new state, or the failure that kept it from applying.
+// returns its new state, or the failure that kept it from applying. It also
+// holds placeMu (the lock StopTask writes STOPPED under) so the read, check and
+// write are one step: a stop cannot land between them and be overwritten with
+// the stale RUNNING copy. Lock order is protectMu, then placeMu.
 func (m *Mock) protectOne(
 	cluster, id string, enable bool, expires string, now time.Time,
 ) (*driver.ProtectedTask, *driver.Failure) {
+	m.placeMu.Lock()
+	defer m.placeMu.Unlock()
+
 	t, failure := m.protectableTask(cluster, id)
 	if failure != nil {
 		return nil, failure
+	}
+
+	if enable && t.LastStatus == statusStopped {
+		return nil, &driver.Failure{
+			ARN: t.ARN, Reason: failureTaskNotValid,
+			Detail: "The task is stopped; only running service tasks can be protected.",
+		}
 	}
 
 	if enable && m.protectionBlocked(t, now) {

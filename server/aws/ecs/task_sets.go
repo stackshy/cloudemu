@@ -137,7 +137,7 @@ func createTaskSet(w http.ResponseWriter, r *http.Request, ts driver.TaskSets) {
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{"taskSet": taskSetToWire(out)})
+	wire.WriteJSON(w, map[string]any{keyTaskSet: taskSetToWire(out)})
 }
 
 func updateTaskSet(w http.ResponseWriter, r *http.Request, ts driver.TaskSets) {
@@ -162,7 +162,7 @@ func updateTaskSet(w http.ResponseWriter, r *http.Request, ts driver.TaskSets) {
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{"taskSet": taskSetToWire(out)})
+	wire.WriteJSON(w, map[string]any{keyTaskSet: taskSetToWire(out)})
 }
 
 func deleteTaskSet(w http.ResponseWriter, r *http.Request, ts driver.TaskSets) {
@@ -186,7 +186,7 @@ func deleteTaskSet(w http.ResponseWriter, r *http.Request, ts driver.TaskSets) {
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{"taskSet": taskSetToWire(out)})
+	wire.WriteJSON(w, map[string]any{keyTaskSet: taskSetToWire(out)})
 }
 
 func describeTaskSets(w http.ResponseWriter, r *http.Request, ts driver.TaskSets) {
@@ -213,7 +213,7 @@ func describeTaskSets(w http.ResponseWriter, r *http.Request, ts driver.TaskSets
 		out = []wireTaskSet{}
 	}
 
-	wire.WriteJSON(w, map[string]any{"taskSets": out, "failures": fromFailures(failures)})
+	wire.WriteJSON(w, map[string]any{"taskSets": out, keyFailures: fromFailures(failures)})
 }
 
 func updatePrimaryTaskSet(w http.ResponseWriter, r *http.Request, ts driver.TaskSets) {
@@ -234,5 +234,5 @@ func updatePrimaryTaskSet(w http.ResponseWriter, r *http.Request, ts driver.Task
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{"taskSet": taskSetToWire(out)})
+	wire.WriteJSON(w, map[string]any{keyTaskSet: taskSetToWire(out)})
 }

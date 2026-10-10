@@ -179,6 +179,48 @@ func TestTaskSet_UpdateScaleAndStability(t *testing.T) {
 	assert.Equal(t, 2, got[0].RunningCount)
 }
 
+func TestExternalService_CountsFollowTaskSets(t *testing.T) {
+	m := newTestMock()
+	netCfg := externalFixture(t, m, 2)
+	ctx := context.Background()
+
+	describe := func() driver.Service {
+		t.Helper()
+
+		got, _, err := m.DescribeServices(ctx, "prod", []string{"ext"})
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+
+		return got[0]
+	}
+
+	newTaskSet(t, m, netCfg, nil)
+
+	svc := describe()
+	assert.Equal(t, 2, svc.RunningCount)
+	assert.Equal(t, 0, svc.PendingCount)
+
+	newTaskSet(t, m, netCfg, &driver.Scale{Unit: driver.ScaleUnitPercent, Value: 50})
+	assert.Equal(t, 3, describe().RunningCount, "the service reports the sum over its task sets")
+
+	tasks, err := m.ListTasks(ctx, "prod", "", "RUNNING", "ext")
+	require.NoError(t, err)
+	require.Len(t, tasks, 3)
+
+	_, err = m.StopTask(ctx, "prod", tasks[0].ARN, "test")
+	require.NoError(t, err)
+	assert.Equal(t, 3, describe().RunningCount, "a stopped task is relaunched and the count recovers")
+
+	four := 4
+	up, err := m.UpdateService(ctx, driver.UpdateServiceInput{Service: "ext", Cluster: "prod", DesiredCount: &four})
+	require.NoError(t, err)
+
+	after := describe()
+	assert.Equal(t, 6, after.RunningCount)
+	assert.Equal(t, after.RunningCount, up.RunningCount, "UpdateService agrees with DescribeServices")
+	assert.Equal(t, after.PendingCount, up.PendingCount)
+}
+
 func TestTaskSet_StabilizingWhenTasksStopped(t *testing.T) {
 	m := newTestMock()
 	netCfg := externalFixture(t, m, 2)
@@ -238,20 +280,20 @@ func TestUpdateServicePrimaryTaskSet(t *testing.T) {
 	require.Len(t, svc[0].TaskSets, 2)
 }
 
-func TestDeleteTaskSet_ScaleGuardAndForce(t *testing.T) {
+func TestDeleteTaskSet_DrainsWithOrWithoutForce(t *testing.T) {
 	m := newTestMock()
 	netCfg := externalFixture(t, m, 2)
 	ctx := context.Background()
 
 	ts := newTaskSet(t, m, netCfg, nil)
 
-	_, err := m.DeleteTaskSet(ctx, driver.DeleteTaskSetInput{Cluster: "prod", Service: "ext", TaskSet: ts.ID})
-	require.Error(t, err)
-	assert.Equal(t, excInvalidParameter, ecsException(t, err))
-
-	deleted, err := m.DeleteTaskSet(ctx, driver.DeleteTaskSetInput{Cluster: "prod", Service: "ext", TaskSet: ts.ID, Force: true})
+	// A scaled set deletes without force (Terraform sends Force=false).
+	deleted, err := m.DeleteTaskSet(ctx, driver.DeleteTaskSetInput{Cluster: "prod", Service: "ext", TaskSet: ts.ID})
 	require.NoError(t, err)
 	assert.Equal(t, "DRAINING", deleted.Status)
+	assert.Zero(t, deleted.RunningCount)
+	assert.Zero(t, deleted.PendingCount)
+	assert.Zero(t, deleted.ComputedDesiredCount)
 
 	running, err := m.ListTasks(ctx, "prod", "", "RUNNING", "ext")
 	require.NoError(t, err)
@@ -260,7 +302,13 @@ func TestDeleteTaskSet_ScaleGuardAndForce(t *testing.T) {
 	_, err = m.UpdateServicePrimaryTaskSet(ctx, "prod", "ext", ts.ID)
 	assert.Equal(t, excTaskSetNotFound, ecsException(t, err))
 
-	// A set scaled to zero deletes without force.
+	// A forced delete behaves the same.
+	forced := newTaskSet(t, m, netCfg, nil)
+	deleted, err = m.DeleteTaskSet(ctx, driver.DeleteTaskSetInput{Cluster: "prod", Service: "ext", TaskSet: forced.ID, Force: true})
+	require.NoError(t, err)
+	assert.Equal(t, "DRAINING", deleted.Status)
+
+	// A set scaled to zero deletes too.
 	zero := newTaskSet(t, m, netCfg, &driver.Scale{Unit: driver.ScaleUnitPercent, Value: 0})
 	_, err = m.DeleteTaskSet(ctx, driver.DeleteTaskSetInput{Cluster: "prod", Service: "ext", TaskSet: zero.ID})
 	require.NoError(t, err)
@@ -469,4 +517,155 @@ func TestMalformedAndForeignIdentifiers_TaskSets(t *testing.T) {
 		Cluster: "other", Service: "ext", TaskSet: ts.ARN, Scale: driver.Scale{Unit: driver.ScaleUnitPercent, Value: 1},
 	})
 	assert.Equal(t, excTaskSetNotFound, ecsException(t, err))
+}
+
+// externalUpdateFixture creates a second EXTERNAL service "ext2" carrying a task
+// definition, platform version, network configuration, load balancers and
+// service registries, so identical echoes can be compared.
+func externalUpdateFixture(t *testing.T, m *Mock, netCfg *driver.NetworkConfiguration) driver.CreateServiceInput {
+	t.Helper()
+
+	in := driver.CreateServiceInput{
+		ServiceName: "ext2", Cluster: "prod", DeploymentController: deployControllerExternal, DesiredCount: 2,
+		TaskDefinition: "fg", LaunchType: launchFargate, PlatformVersion: "1.4.0", NetworkConfiguration: netCfg,
+		LoadBalancers:     []driver.LoadBalancer{{TargetGroupARN: "tg-1", ContainerName: "c", ContainerPort: 80}},
+		ServiceRegistries: []driver.ServiceRegistry{{RegistryARN: "reg-1"}},
+	}
+	_, err := m.CreateService(context.Background(), in)
+	require.NoError(t, err)
+
+	return in
+}
+
+func TestUpdateService_ExternalRejectsTaskDefinitionChange(t *testing.T) {
+	m := newTestMock()
+	externalFixture(t, m, 2)
+	ctx := context.Background()
+
+	_, err := m.UpdateService(ctx, driver.UpdateServiceInput{Service: "ext", Cluster: "prod", TaskDefinition: "fg"})
+	require.Error(t, err)
+	assert.Equal(t, excInvalidParameter, ecsException(t, err))
+
+	got, _, err := m.DescribeServices(ctx, "prod", []string{"ext"})
+	require.NoError(t, err)
+	assert.Empty(t, got[0].TaskDefinition, "the stored service keeps its (empty) task definition")
+
+	_, err = m.UpdateService(ctx, driver.UpdateServiceInput{Service: "ext", Cluster: "prod", TaskDefinition: "missing"})
+	require.Error(t, err)
+	assert.NotEqual(t, excInvalidParameter, ecsException(t, err), "an unresolvable reference is the not-found error")
+}
+
+func TestUpdateService_ExternalRejectsTaskSetFields(t *testing.T) {
+	m := newTestMock()
+	netCfg := externalFixture(t, m, 2)
+	ctx := context.Background()
+	base := externalUpdateFixture(t, m, netCfg)
+
+	newNet := &driver.NetworkConfiguration{AwsVpcConfiguration: &driver.AwsVpcConfiguration{Subnets: []string{"subnet-2"}}}
+	otherLB := []driver.LoadBalancer{{TargetGroupARN: "tg-2", ContainerName: "c", ContainerPort: 80}}
+	seven := 7
+
+	tests := []struct {
+		name string
+		in   driver.UpdateServiceInput
+	}{
+		{"platformVersion", driver.UpdateServiceInput{PlatformVersion: "1.3.0"}},
+		{"networkConfiguration", driver.UpdateServiceInput{NetworkConfiguration: newNet}},
+		{"loadBalancers", driver.UpdateServiceInput{LoadBalancers: otherLB}},
+		{"emptyLoadBalancers", driver.UpdateServiceInput{LoadBalancers: []driver.LoadBalancer{}}},
+		{"capacityProviderStrategy", driver.UpdateServiceInput{
+			CapacityProviderStrategy: []driver.CapacityProviderStrategyItem{{CapacityProvider: "FARGATE", Weight: 1}}}},
+		{"serviceRegistries", driver.UpdateServiceInput{ServiceRegistries: []driver.ServiceRegistry{{RegistryARN: "reg-2"}}}},
+		{"fieldWithDesiredCount", driver.UpdateServiceInput{PlatformVersion: "1.3.0", DesiredCount: &seven}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			before, _, err := m.DescribeServices(ctx, "prod", []string{base.ServiceName})
+			require.NoError(t, err)
+
+			tc.in.Service, tc.in.Cluster = base.ServiceName, "prod"
+
+			_, err = m.UpdateService(ctx, tc.in)
+			require.Error(t, err)
+			assert.Equal(t, excInvalidParameter, ecsException(t, err))
+
+			after, _, err := m.DescribeServices(ctx, "prod", []string{base.ServiceName})
+			require.NoError(t, err)
+			assert.Equal(t, before, after, "a rejected update changes nothing, desiredCount included")
+		})
+	}
+}
+
+func TestUpdateService_ExternalAcceptsIdenticalEchoes(t *testing.T) {
+	m := newTestMock()
+	netCfg := externalFixture(t, m, 2)
+	ctx := context.Background()
+	base := externalUpdateFixture(t, m, netCfg)
+
+	before, _, err := m.DescribeServices(ctx, "prod", []string{"ext2"})
+	require.NoError(t, err)
+
+	echo := &driver.NetworkConfiguration{AwsVpcConfiguration: &driver.AwsVpcConfiguration{
+		Subnets: []string{"subnet-1"}, AssignPublicIP: assignPublicIPDisabled}}
+	td := before[0].TaskDefinition
+
+	for _, ref := range []string{td, "fg", "fg:1"} {
+		_, err = m.UpdateService(ctx, driver.UpdateServiceInput{
+			Service: "ext2", Cluster: "prod", TaskDefinition: ref, PlatformVersion: base.PlatformVersion,
+			NetworkConfiguration: echo, LoadBalancers: base.LoadBalancers, ServiceRegistries: base.ServiceRegistries,
+		})
+		require.NoError(t, err, ref)
+	}
+
+	after, _, err := m.DescribeServices(ctx, "prod", []string{"ext2"})
+	require.NoError(t, err)
+	assert.Equal(t, before[0].TaskDefinition, after[0].TaskDefinition)
+	assert.Equal(t, before[0].NetworkConfiguration, after[0].NetworkConfiguration)
+	assert.Equal(t, before[0].LoadBalancers, after[0].LoadBalancers)
+}
+
+func TestUpdateService_ExternalAllowsScalarUpdates(t *testing.T) {
+	m := newTestMock()
+	netCfg := externalFixture(t, m, 2)
+	ctx := context.Background()
+	newTaskSet(t, m, netCfg, nil)
+
+	four, grace := 4, 30
+
+	_, err := m.UpdateService(ctx, driver.UpdateServiceInput{
+		Service: "ext", Cluster: "prod", DesiredCount: &four, HealthCheckGracePeriodSeconds: &grace, PropagateTags: propagateService,
+	})
+	require.NoError(t, err)
+
+	got, _, err := m.DescribeServices(ctx, "prod", []string{"ext"})
+	require.NoError(t, err)
+	assert.Equal(t, 4, got[0].DesiredCount)
+	assert.Equal(t, 4, got[0].RunningCount, "the task set rescaled")
+	assert.Equal(t, propagateService, got[0].PropagateTags)
+	require.NotNil(t, got[0].HealthCheckGracePeriodSeconds)
+	assert.Equal(t, grace, *got[0].HealthCheckGracePeriodSeconds)
+}
+
+func TestUpdateService_ECSControllerStillAcceptsTaskSetFields(t *testing.T) {
+	m := newTestMock()
+	netCfg := fargateFixture(t, m)
+	ctx := context.Background()
+
+	_, err := m.CreateService(ctx, driver.CreateServiceInput{
+		ServiceName: "rolling", Cluster: "prod", TaskDefinition: "fg", LaunchType: launchFargate, NetworkConfiguration: netCfg,
+	})
+	require.NoError(t, err)
+
+	newNet := &driver.NetworkConfiguration{AwsVpcConfiguration: &driver.AwsVpcConfiguration{Subnets: []string{"subnet-2"}}}
+	lbs := []driver.LoadBalancer{{TargetGroupARN: "tg-2", ContainerName: "c", ContainerPort: 80}}
+
+	got, err := m.UpdateService(ctx, driver.UpdateServiceInput{
+		Service: "rolling", Cluster: "prod", TaskDefinition: "fg", PlatformVersion: "1.3.0", NetworkConfiguration: newNet,
+		LoadBalancers: lbs, ServiceRegistries: []driver.ServiceRegistry{{RegistryARN: "reg-2"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "1.3.0", got.PlatformVersion)
+	assert.Equal(t, lbs, got.LoadBalancers)
+	assert.Equal(t, []string{"subnet-2"}, got.NetworkConfiguration.AwsVpcConfiguration.Subnets)
 }

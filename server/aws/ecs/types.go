@@ -422,6 +422,7 @@ type wireContainerInstance struct {
 	RegisteredResources  []wireResource `json:"registeredResources,omitempty"`
 	RemainingResources   []wireResource `json:"remainingResources,omitempty"`
 	Tags                 []wireTag      `json:"tags,omitempty"`
+	Version              int64          `json:"version"`
 }
 
 // --- request -> driver converters ---
@@ -1547,5 +1548,6 @@ func instanceToWire(ci *driver.ContainerInstance) wireContainerInstance {
 		RegisteredResources:  resourcesFromCapacity(ci.RegisteredCPU, ci.RegisteredMemory),
 		RemainingResources:   resourcesFromCapacity(ci.RemainingCPU, ci.RemainingMemory),
 		Tags:                 fromTags(ci.Tags),
+		Version:              int64(ci.Version),
 	}
 }

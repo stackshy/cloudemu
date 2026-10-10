@@ -23,6 +23,7 @@ const (
 	metricUnitCount          = "Count"
 	metricUnitPercent        = "Percent"
 	percentOf                = 100.0
+	dimClusterName           = "ClusterName"
 
 	settingContainerInsights = "containerInsights"
 	insightsEnabled          = "enabled"
@@ -100,7 +101,7 @@ func (m *Mock) publishClusterMetrics(cluster string) {
 // container instances and, with Container Insights, the instance, service and
 // task counts.
 func (m *Mock) addClusterMetrics(b *metricBatch, cluster string, insights bool) {
-	dims := map[string]string{"ClusterName": cluster}
+	dims := map[string]string{dimClusterName: cluster}
 
 	if cpuPct, memPct, ok := m.reservationPercent(cluster); ok {
 		b.add(metricsNamespaceECS, "CPUReservation", metricUnitPercent, cpuPct, dims)
@@ -123,7 +124,7 @@ func (m *Mock) addClusterMetrics(b *metricBatch, cluster string, insights bool) 
 // counts.
 func (m *Mock) addServiceMetrics(b *metricBatch, cluster string, svc *driver.Service, insights bool) {
 	running, pending := m.liveServiceTaskCounts(cluster, serviceGroup(svc.Name))
-	dims := map[string]string{"ClusterName": cluster, "ServiceName": svc.Name}
+	dims := map[string]string{dimClusterName: cluster, "ServiceName": svc.Name}
 
 	if running > 0 {
 		b.add(metricsNamespaceECS, "LiveTaskCount", metricUnitCount, float64(running), dims)

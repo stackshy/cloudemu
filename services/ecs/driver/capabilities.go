@@ -97,8 +97,8 @@ type UpdateTaskSetInput struct {
 	Scale   Scale
 }
 
-// DeleteTaskSetInput identifies a task set to delete. Without Force the set must
-// already be scaled down to zero.
+// DeleteTaskSetInput identifies a task set to delete. Force is accepted for API
+// compatibility and has no visible effect: the set drains immediately either way.
 type DeleteTaskSetInput struct {
 	Cluster string
 	Service string

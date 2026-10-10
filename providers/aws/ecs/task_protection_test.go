@@ -223,6 +223,65 @@ func TestScaleIn_SkipsProtectedTasks(t *testing.T) {
 	assert.Equal(t, rolloutCompleted, svc.Deployments[0].RolloutState)
 }
 
+func TestForceDeploy_ProtectedSurplusStaysInProgress(t *testing.T) {
+	m := newTestMock()
+	rec := &recordingPublisher{}
+	m.SetEventPublisher(rec)
+	ctx := context.Background()
+	arns := protectionFixture(t, m, 3)
+
+	protect(t, m, nil, arns[0], arns[1])
+
+	one := 1
+	_, err := m.UpdateService(ctx, driver.UpdateServiceInput{Service: "web", Cluster: "prod", DesiredCount: &one})
+	require.NoError(t, err)
+
+	completed := func() int {
+		n := 0
+
+		for _, e := range eventsOf(rec, eventDeploymentStateChange) {
+			if e.Detail.(deploymentStateChangeDetail).EventName == serviceDeploymentCompleted {
+				n++
+			}
+		}
+
+		for _, e := range eventsOf(rec, eventServiceAction) {
+			if e.Detail.(serviceActionDetail).EventName == serviceDeploymentCompleted {
+				n++
+			}
+		}
+
+		return n
+	}
+	newest := func() driver.ServiceDeployment {
+		deps, _, listErr := m.ListServiceDeployments(ctx, driver.ListServiceDeploymentsInput{Cluster: "prod", Service: "web"})
+		require.NoError(t, listErr)
+		require.NotEmpty(t, deps)
+
+		return deps[0]
+	}
+
+	before := completed()
+
+	svc, err := m.UpdateService(ctx, driver.UpdateServiceInput{Service: "web", Cluster: "prod", ForceNewDeployment: true})
+	require.NoError(t, err)
+	assert.Equal(t, rolloutInProgress, svc.Deployments[0].RolloutState)
+	assert.Equal(t, before, completed(), "a deployment above desired is not completed")
+	assert.Equal(t, driver.DeploymentStatusInProgress, newest().Status)
+	assert.Empty(t, newest().FinishedAt)
+
+	_, _, err = m.UpdateTaskProtection(ctx, driver.UpdateTaskProtectionInput{
+		Cluster: "prod", Tasks: []string{arns[0], arns[1]}, ProtectionEnabled: false,
+	})
+	require.NoError(t, err)
+
+	_, err = m.UpdateService(ctx, driver.UpdateServiceInput{Service: "web", Cluster: "prod", ForceNewDeployment: true})
+	require.NoError(t, err)
+	assert.Equal(t, before+2, completed(), "the settled deployment publishes both completed events")
+	assert.Equal(t, driver.DeploymentStatusSuccessful, newest().Status)
+	assert.NotEmpty(t, newest().FinishedAt)
+}
+
 func TestUpdateTaskProtection_DeploymentBlocked(t *testing.T) {
 	m := newTestMock()
 	arns := protectionFixture(t, m, 2)
@@ -275,4 +334,94 @@ func TestTaskProtection_ParallelWithStop(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+func TestUpdateTaskProtection_StoppedTask(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	arns := protectionFixture(t, m, 1)
+
+	_, err := m.StopTask(ctx, "prod", arns[0], "done")
+	require.NoError(t, err)
+
+	out, failures := protect(t, m, nil, arns...)
+	assert.Empty(t, out)
+	require.Len(t, failures, 1)
+	assert.Equal(t, arns[0], failures[0].ARN)
+	assert.Equal(t, failureTaskNotValid, failures[0].Reason)
+	assert.Contains(t, failures[0].Detail, "stopped")
+
+	stored, ok := m.tasks.Get(arns[0])
+	require.True(t, ok)
+	assert.Equal(t, statusStopped, stored.LastStatus)
+	assert.False(t, stored.ProtectionEnabled)
+
+	out, failures, err = m.UpdateTaskProtection(ctx, driver.UpdateTaskProtectionInput{
+		Cluster: "prod", Tasks: arns, ProtectionEnabled: false,
+	})
+	require.NoError(t, err)
+	require.Empty(t, failures)
+	require.Len(t, out, 1)
+	assert.False(t, out[0].ProtectionEnabled)
+}
+
+func TestGetTaskProtection_StoppedAfterProtected(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	arns := protectionFixture(t, m, 1)
+
+	out, failures := protect(t, m, nil, arns...)
+	require.Empty(t, failures)
+	require.True(t, out[0].ProtectionEnabled)
+
+	_, err := m.StopTask(ctx, "prod", arns[0], "done")
+	require.NoError(t, err)
+
+	got, failures, err := m.GetTaskProtection(ctx, "prod", arns)
+	require.NoError(t, err)
+	require.Empty(t, failures)
+	require.Len(t, got, 1)
+	assert.False(t, got[0].ProtectionEnabled)
+	assert.Empty(t, got[0].ExpirationDate)
+}
+
+// TestTaskProtection_EnableRacingStopKeepsStopped guards the lost update where
+// an enable read a RUNNING task, StopTask stored STOPPED, and the enable then
+// wrote its RUNNING copy back over it.
+func TestTaskProtection_EnableRacingStopKeepsStopped(t *testing.T) {
+	const iterations = 400
+
+	ctx := context.Background()
+
+	for range iterations {
+		m := newTestMock()
+		arns := protectionFixture(t, m, 1)
+
+		var wg sync.WaitGroup
+
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+
+			_, _, err := m.UpdateTaskProtection(ctx, driver.UpdateTaskProtectionInput{
+				Cluster: "prod", Tasks: arns, ProtectionEnabled: true,
+			})
+			assert.NoError(t, err)
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			_, err := m.StopTask(ctx, "prod", arns[0], "race")
+			assert.NoError(t, err)
+		}()
+
+		wg.Wait()
+
+		got, _, err := m.DescribeTasks(ctx, "prod", arns)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.Equal(t, statusStopped, got[0].LastStatus, "a stopped task must not come back RUNNING")
+	}
 }

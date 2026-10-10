@@ -134,14 +134,6 @@ func (h *Handler) routeServiceDeployments(w http.ResponseWriter, r *http.Request
 		return true
 	}
 
-	if op == "ListServicesByNamespace" {
-		if sn, ok := capabilityOf[driver.ServiceNamespaces](h.ecs, w, op); ok {
-			listServicesByNamespace(w, r, sn)
-		}
-
-		return true
-	}
-
 	return false
 }
 
@@ -241,7 +233,7 @@ func describeByARNs[T any](
 		out = append(out, toWire(&items[i]))
 	}
 
-	wire.WriteJSON(w, map[string]any{itemsKey: out, "failures": fromFailures(failures)})
+	wire.WriteJSON(w, map[string]any{itemsKey: out, keyFailures: fromFailures(failures)})
 }
 
 func stopServiceDeployment(w http.ResponseWriter, r *http.Request, sd driver.ServiceDeployments) {
@@ -264,31 +256,10 @@ func stopServiceDeployment(w http.ResponseWriter, r *http.Request, sd driver.Ser
 	wire.WriteJSON(w, map[string]any{"serviceDeploymentArn": arn})
 }
 
-func listServicesByNamespace(w http.ResponseWriter, r *http.Request, sn driver.ServiceNamespaces) {
-	var req struct {
-		Namespace  string `json:"namespace"`
-		MaxResults int    `json:"maxResults"`
-		NextToken  string `json:"nextToken"`
-	}
-
-	if !wire.DecodeJSON(w, r, &req) {
-		return
-	}
-
-	arns, next, err := sn.ListServicesByNamespace(r.Context(), req.Namespace, req.MaxResults, req.NextToken)
-	if err != nil {
-		writeErr(w, err)
-
-		return
-	}
-
-	wire.WriteJSON(w, listResponse("serviceArns", arns, next))
-}
-
 // toServiceConnect converts the wire serviceConnectConfiguration to the driver
 // shape, keeping the raw JSON and extracting the namespace.
 func toServiceConnect(raw json.RawMessage) *driver.ServiceConnectConfiguration {
-	if len(raw) == 0 || string(raw) == "null" {
+	if len(raw) == 0 || string(raw) == jsonNull {
 		return nil
 	}
 

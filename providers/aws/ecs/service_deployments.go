@@ -104,7 +104,7 @@ func (m *Mock) addDeploymentLocked(svc *driver.Service) {
 		dep.SourceServiceRevisions = []driver.ServiceRevisionSummary{{ARN: prior[0].TargetServiceRevision.ARN}}
 	}
 
-	if svc.RunningCount < svc.DesiredCount {
+	if !deploymentComplete(svc.RunningCount, svc.DesiredCount) {
 		dep.Status, dep.FinishedAt = driver.DeploymentStatusInProgress, ""
 	}
 
@@ -393,8 +393,13 @@ func (m *Mock) DescribeServiceRevisions(_ context.Context, arns []string) ([]dri
 // ROLLBACK_SUCCESSFUL; ABORT ends STOPPED and leaves the service as it is. With
 // --async-settle the transient ROLLBACK_IN_PROGRESS / STOP_REQUESTED status is
 // visible first and a repeated stop continues as-is; a completed deployment is a
-// ConflictException.
+// ConflictException. stopType is optional on the wire: an omitted stopType
+// means ROLLBACK.
 func (m *Mock) StopServiceDeployment(ctx context.Context, arn, stopType string) (string, error) {
+	if stopType == "" {
+		stopType = driver.StopTypeRollback
+	}
+
 	if stopType != driver.StopTypeAbort && stopType != driver.StopTypeRollback {
 		return "", apiErrf(errors.InvalidArgument, excInvalidParameter,
 			"stopType must be %s or %s.", driver.StopTypeAbort, driver.StopTypeRollback)

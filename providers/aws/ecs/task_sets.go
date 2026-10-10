@@ -394,8 +394,10 @@ func (m *Mock) mutateTaskSet(
 	return &out, nil
 }
 
-// DeleteTaskSet deletes a task set and stops its tasks. Unless force is set the
-// set must already be scaled down to zero. The returned copy is DRAINING.
+// DeleteTaskSet deletes a task set and stops its tasks. The set drains
+// immediately whether or not force is set (scale-down is instant, so force has
+// no visible effect and is only accepted for compatibility). The returned copy
+// is DRAINING.
 func (m *Mock) DeleteTaskSet(ctx context.Context, in driver.DeleteTaskSetInput) (*driver.TaskSet, error) {
 	want := resolveClusterName(in.Cluster)
 
@@ -413,11 +415,6 @@ func (m *Mock) DeleteTaskSet(ctx context.Context, in driver.DeleteTaskSetInput) 
 		stored, ok := m.findTaskSet(svc, in.TaskSet)
 		if !ok {
 			return nil, apiErrf(errors.NotFound, excTaskSetNotFound, "The specified task set %q was not found.", in.TaskSet)
-		}
-
-		if !in.Force && stored.Scale.Value > 0 {
-			return nil, apiErrf(errors.FailedPrecondition, excInvalidParameter,
-				"The task set must be scaled down to 0 before it is deleted. Scale it down or set force.")
 		}
 
 		m.stopTaskSetTasks(ctx, svc, stored, &events)

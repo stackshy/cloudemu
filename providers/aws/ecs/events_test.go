@@ -2,6 +2,7 @@ package ecs
 
 import (
 	"context"
+	"encoding/json"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -243,6 +244,31 @@ func TestContainerInstanceStateChange(t *testing.T) {
 	assert.Equal(t, statusInactive, got[4].Status)
 }
 
+func TestContainerInstanceStateChange_EmptyAttributesIsNotNull(t *testing.T) {
+	m := newTestMock()
+	rec := &recordingPublisher{}
+	m.SetEventPublisher(rec)
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, driver.CreateClusterInput{Name: "prod"})
+	require.NoError(t, err)
+
+	_, err = m.RegisterContainerInstance(ctx, driver.RegisterContainerInstanceInput{Cluster: "prod"})
+	require.NoError(t, err)
+
+	evs := eventsOf(rec, eventContainerInstanceStateChange)
+	require.Len(t, evs, 1)
+
+	d, ok := evs[0].Detail.(containerInstanceDetail)
+	require.True(t, ok)
+	assert.NotNil(t, d.Attributes, "no attributes must marshal as [] not null")
+	assert.Empty(t, d.Attributes)
+
+	raw, err := json.Marshal(d)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"attributes":[]`)
+}
+
 func ciResourceInt(rs []containerInstanceResource, name string) int {
 	for _, r := range rs {
 		if r.Name == name {
@@ -251,6 +277,23 @@ func ciResourceInt(rs []containerInstanceResource, name string) int {
 	}
 
 	return -1
+}
+
+func TestExternalDesiredCountUpdate_NoDesiredCountEvent(t *testing.T) {
+	m := newTestMock()
+	rec := &recordingPublisher{}
+	m.SetEventPublisher(rec)
+	ctx := context.Background()
+
+	externalFixture(t, m, 1)
+
+	three := 3
+	_, err := m.UpdateService(ctx, driver.UpdateServiceInput{Service: "ext", Cluster: "prod", DesiredCount: &three})
+	require.NoError(t, err)
+
+	for _, e := range eventsOf(rec, eventServiceAction) {
+		assert.NotEqual(t, "SERVICE_DESIRED_COUNT_UPDATED", e.Detail.(serviceActionDetail).EventName)
+	}
 }
 
 func TestServiceActionEvents(t *testing.T) {
@@ -275,7 +318,7 @@ func TestServiceActionEvents(t *testing.T) {
 		names = append(names, e.Detail.(serviceActionDetail).EventName)
 	}
 
-	assert.Contains(t, names, "SERVICE_DESIRED_COUNT_UPDATED")
+	assert.NotContains(t, names, "SERVICE_DESIRED_COUNT_UPDATED", "a user-driven count change is not published")
 
 	// EC2 service on a cluster too small for its task: placement failure.
 	_, err = m.CreateCluster(ctx, driver.CreateClusterInput{Name: "small"})

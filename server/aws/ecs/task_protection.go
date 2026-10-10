@@ -100,5 +100,5 @@ func writeProtectedTasks(w http.ResponseWriter, tasks []driver.ProtectedTask, fa
 		})
 	}
 
-	wire.WriteJSON(w, map[string]any{"protectedTasks": out, "failures": fromFailures(failures)})
+	wire.WriteJSON(w, map[string]any{"protectedTasks": out, keyFailures: fromFailures(failures)})
 }

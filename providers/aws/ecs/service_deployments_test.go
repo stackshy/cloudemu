@@ -279,6 +279,27 @@ func TestStopServiceDeployment_Rollback_AsyncWindow(t *testing.T) {
 	assert.Len(t, after, 2, "a rollback does not record a new deployment")
 }
 
+func TestStopServiceDeployment_OmittedStopTypeIsRollback(t *testing.T) {
+	m, clock, deps := asyncDeploymentFixture(t)
+	ctx := context.Background()
+
+	arn, err := m.StopServiceDeployment(ctx, deps[0].ARN, "")
+	require.NoError(t, err)
+	assert.Equal(t, deps[0].ARN, arn)
+
+	clock.Advance(time.Minute)
+
+	got, _, err := m.DescribeServiceDeployments(ctx, []string{deps[0].ARN})
+	require.NoError(t, err)
+	assert.Equal(t, driver.DeploymentStatusRollbackSuccessful, got[0].Status)
+	require.NotNil(t, got[0].Rollback)
+	assert.Equal(t, deps[1].TargetServiceRevision.ARN, got[0].Rollback.ServiceRevisionARN)
+
+	svc, _, err := m.DescribeServices(ctx, "prod", []string{"web"})
+	require.NoError(t, err)
+	assert.Contains(t, svc[0].TaskDefinition, "task-definition/fg:1", "the service is back on the source revision")
+}
+
 func TestStopServiceDeployment_Abort_AsyncWindow(t *testing.T) {
 	m, clock, deps := asyncDeploymentFixture(t)
 	ctx := context.Background()
@@ -312,6 +333,12 @@ func TestStopServiceDeployment_ConflictAndNotFound(t *testing.T) {
 
 	_, err = m.StopServiceDeployment(ctx, "arn:aws:ecs:us-east-1:000000000000:service-deployment/prod/web/nope", driver.StopTypeAbort)
 	assert.Equal(t, excServiceDeploymentNotFound, ecsException(t, err))
+
+	_, err = m.StopServiceDeployment(ctx, "arn:aws:ecs:us-east-1:000000000000:service-deployment/prod/web/nope", "")
+	assert.Equal(t, excServiceDeploymentNotFound, ecsException(t, err), "an omitted stopType still resolves the ARN first")
+
+	_, err = m.StopServiceDeployment(ctx, deps[0].ARN, "")
+	assert.Equal(t, excConflict, ecsException(t, err), "an omitted stopType on a completed deployment")
 
 	_, err = m.StopServiceDeployment(ctx, deps[0].ARN, "HALT")
 	assert.Equal(t, excInvalidParameter, ecsException(t, err))

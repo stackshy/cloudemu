@@ -21,7 +21,6 @@ const (
 	serviceEventTypeError = "ERROR"
 
 	serviceSteadyStateName        = "SERVICE_STEADY_STATE"
-	serviceDesiredCountUpdated    = "SERVICE_DESIRED_COUNT_UPDATED"
 	serviceDeploymentInProgress   = "SERVICE_DEPLOYMENT_IN_PROGRESS"
 	serviceDeploymentCompleted    = "SERVICE_DEPLOYMENT_COMPLETED"
 	serviceTaskPlacementFailure   = "SERVICE_TASK_PLACEMENT_FAILURE"
@@ -369,7 +368,7 @@ func (m *Mock) emitDeploymentEvents(ctx context.Context, svc *driver.Service) {
 
 	m.emitDeploymentChange(ctx, svc, id, serviceDeploymentInProgress, "ECS deployment "+id+" in progress.")
 
-	if svc.RunningCount >= svc.DesiredCount {
+	if deploymentComplete(svc.RunningCount, svc.DesiredCount) {
 		m.emitDeploymentChange(ctx, svc, id, serviceDeploymentCompleted, "ECS deployment "+id+" completed.")
 	}
 }
@@ -407,12 +406,18 @@ func (m *Mock) emitInstanceChangeOfTask(ctx context.Context, t *driver.Task) {
 	}
 }
 
+// Names of the INTEGER resources a container instance registers.
+const (
+	resourceCPU    = "CPU"
+	resourceMemory = "MEMORY"
+)
+
 // emitContainerInstanceDetail publishes an "ECS Container Instance State Change"
 // event for the instance as given (its Version already counts this change).
 func (m *Mock) emitContainerInstanceDetail(ctx context.Context, ci *driver.ContainerInstance) {
 	cluster := instanceClusterName(ci.ARN)
 
-	var attrs []containerInstanceAttr
+	attrs := []containerInstanceAttr{}
 
 	for _, a := range m.attributes.SortedValues() {
 		if a.TargetID == ci.ARN {
@@ -425,12 +430,12 @@ func (m *Mock) emitContainerInstanceDetail(ctx context.Context, ci *driver.Conta
 		ClusterArn:           m.arnIn(arnRegion(ci.ARN, m.opts.Region), "cluster/"+cluster),
 		ContainerInstanceArn: ci.ARN, EC2InstanceID: ci.EC2InstanceID,
 		RegisteredResources: []containerInstanceResource{
-			{Name: "CPU", Type: containerInstanceResourceType, IntegerValue: ci.RegisteredCPU},
-			{Name: "MEMORY", Type: containerInstanceResourceType, IntegerValue: ci.RegisteredMemory},
+			{Name: resourceCPU, Type: containerInstanceResourceType, IntegerValue: ci.RegisteredCPU},
+			{Name: resourceMemory, Type: containerInstanceResourceType, IntegerValue: ci.RegisteredMemory},
 		},
 		RemainingResources: []containerInstanceResource{
-			{Name: "CPU", Type: containerInstanceResourceType, IntegerValue: ci.RemainingCPU},
-			{Name: "MEMORY", Type: containerInstanceResourceType, IntegerValue: ci.RemainingMemory},
+			{Name: resourceCPU, Type: containerInstanceResourceType, IntegerValue: ci.RemainingCPU},
+			{Name: resourceMemory, Type: containerInstanceResourceType, IntegerValue: ci.RemainingMemory},
 		},
 		Status: ci.Status, Version: ci.Version, UpdatedAt: m.now(),
 	}, ci.ARN)
