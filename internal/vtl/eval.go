@@ -680,11 +680,23 @@ func truthy(v any) bool {
 	}
 }
 
+// toInt narrows a template number to an int index, offset or range bound. Like
+// the Java int those take in Velocity, only the int32 range is accepted; a value
+// outside it, NaN or an infinity is not an int, so the caller treats it like any
+// other non-integer argument. A fraction truncates toward zero.
 func toInt(v any) (int, bool) {
 	switch t := v.(type) {
 	case int64:
+		if t < math.MinInt32 || t > math.MaxInt32 {
+			return 0, false
+		}
+
 		return int(t), true
 	case float64:
+		if math.IsNaN(t) || t < math.MinInt32 || t > math.MaxInt32 {
+			return 0, false
+		}
+
 		return int(t), true
 	default:
 		return 0, false
