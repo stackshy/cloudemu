@@ -35,4 +35,6 @@ ActivityLogRecorder is an OPTIONAL capability, discovered by type assertion
 
 ## Not in scope
 
-_Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
+- CloudWatch `GetMetricWidgetImage` is not implemented. It renders a metric graph as a PNG image, which is presentation, not control-plane state, and the emulator has no graph renderer. A call gets the unknown-operation error.
+- CloudWatch metric math evaluates arithmetic, comparison and logical operators, `IF`, `FILL`, `SEARCH` and a whole-expression `ANOMALY_DETECTION_BAND`. Other functions (such as `SUM`, `METRICS`, `RATE`) are stored and return no data. The label of each `SEARCH` result (dimension values, then the metric name) and the labels of the two band rows are the emulator's choice, because the AWS docs do not state them. `FILL` with `REPEAT` or `LINEAR` leaves a gap before the first value (and, for `LINEAR`, after the last one) empty.
+- The CloudWatch anomaly band is mean -/+ k standard deviations of the past two weeks, not AWS's trained model. `AnomalyDetectorId` and the `AnomalyDetectorIds` filter are not returned or accepted.
