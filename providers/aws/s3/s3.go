@@ -106,6 +106,9 @@ type s3Object struct {
 	// lock is the object's S3 Object Lock state (retention + legal hold) for the
 	// current version; mirrors the latest version's lock on a versioned bucket.
 	lock objectLock
+	// restore is the RestoreObject state of an archived (GLACIER/DEEP_ARCHIVE)
+	// object; mirrors the current version's restore on a versioned bucket.
+	restore restoreState
 }
 
 // s3Version is one entry in a key's version history (a stored object or a
@@ -119,9 +122,13 @@ type s3Version struct {
 	lastModified string
 	metadata     map[string]string
 	deleteMarker bool
-	storageClass string
+	// systemProps are the version's S3 system-defined properties and storage
+	// class, so a version that becomes current again keeps them.
+	systemProps driver.ObjectSystemProps
 	// lock is the version's S3 Object Lock state (retention + legal hold).
 	lock objectLock
+	// restore is the version's RestoreObject state.
+	restore restoreState
 }
 
 type multipartUpload struct {
@@ -688,8 +695,9 @@ func versionFromObject(obj *s3Object, dropData bool) *s3Version {
 		etag:         obj.ETag,
 		lastModified: obj.LastModified,
 		metadata:     obj.Metadata,
-		storageClass: obj.SystemProps.StorageClass,
+		systemProps:  obj.SystemProps,
 		lock:         obj.lock,
+		restore:      obj.restore,
 	}
 }
 
@@ -726,6 +734,12 @@ func (m *Mock) GetObject(ctx context.Context, bucket, key string) (*driver.Objec
 		return nil, missingObjectErr(bkt, key)
 	}
 
+	now := m.opts.Clock.Now()
+
+	if err := checkReadable(obj.SystemProps.StorageClass, obj.restore, now); err != nil {
+		return nil, err
+	}
+
 	data, err := m.engineLoad(ctx, config.StorageRef{Bucket: bucket, Key: key, Version: obj.VersionID}, obj.Data)
 	if err != nil {
 		return nil, err
@@ -744,7 +758,7 @@ func (m *Mock) GetObject(ctx context.Context, bucket, key string) (*driver.Objec
 		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
 		VersionID: obj.VersionID,
 	}
-	applyObjectSystemProps(&info, obj)
+	applyObjectSystemProps(&info, obj, now)
 
 	return &driver.Object{Info: info, Data: dataCopy}, nil
 }
@@ -867,7 +881,7 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
 		VersionID: obj.VersionID,
 	}
-	applyObjectSystemProps(info, obj)
+	applyObjectSystemProps(info, obj, m.opts.Clock.Now())
 
 	return info, nil
 }
@@ -881,6 +895,11 @@ func missingObjectErr(bkt *bucketMeta, key string) error {
 	bkt.versionsMu.Lock()
 	defer bkt.versionsMu.Unlock()
 
+	return missingObjectErrLocked(bkt, key)
+}
+
+// missingObjectErrLocked is missingObjectErr for a caller holding versionsMu.
+func missingObjectErrLocked(bkt *bucketMeta, key string) error {
 	if chain := bkt.versions[key]; len(chain) > 0 {
 		if latest := chain[len(chain)-1]; latest.deleteMarker {
 			return &driver.DeleteMarkerError{LastModified: latest.lastModified, VersionID: latest.versionID}
@@ -893,13 +912,19 @@ func missingObjectErr(bkt *bucketMeta, key string) error {
 // applyObjectSystemProps copies obj's S3 system-defined object properties and
 // storage class onto info, so a Head/Get/List response reflects what PutObject
 // recorded.
-func applyObjectSystemProps(info *driver.ObjectInfo, obj *s3Object) {
-	info.CacheControl = obj.SystemProps.CacheControl
-	info.ContentEncoding = obj.SystemProps.ContentEncoding
-	info.ContentDisposition = obj.SystemProps.ContentDisposition
-	info.ContentLanguage = obj.SystemProps.ContentLanguage
-	info.Expires = obj.SystemProps.Expires
-	info.StorageClass = obj.SystemProps.StorageClass
+func applyObjectSystemProps(info *driver.ObjectInfo, obj *s3Object, now time.Time) {
+	applySystemProps(info, &obj.SystemProps)
+	info.Restore = obj.restore.status(now)
+}
+
+// applySystemProps copies stored S3 system-defined properties onto info.
+func applySystemProps(info *driver.ObjectInfo, p *driver.ObjectSystemProps) {
+	info.CacheControl = p.CacheControl
+	info.ContentEncoding = p.ContentEncoding
+	info.ContentDisposition = p.ContentDisposition
+	info.ContentLanguage = p.ContentLanguage
+	info.Expires = p.Expires
+	info.StorageClass = p.StorageClass
 }
 
 func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOptions) (*driver.ListResult, error) {
@@ -911,7 +936,7 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 	allKeys := bkt.objects.Keys()
 	sort.Strings(allKeys)
 
-	matchedObjects, commonPrefixSet := matchListKeys(bkt, allKeys, opts)
+	matchedObjects, commonPrefixSet := matchListKeys(bkt, allKeys, opts, m.opts.Clock.Now())
 
 	maxKeys := opts.MaxKeys
 	if maxKeys <= 0 {
@@ -997,7 +1022,7 @@ func mergeListEntries(objects []driver.ObjectInfo, prefixSet map[string]struct{}
 // continuation always resumes past the start-after key anyway, so re-applying
 // it on a resumed page is a correctness no-op that keeps the offset stable.
 func matchListKeys(
-	bkt *bucketMeta, allKeys []string, opts driver.ListOptions,
+	bkt *bucketMeta, allKeys []string, opts driver.ListOptions, now time.Time,
 ) (matchedObjects []driver.ObjectInfo, commonPrefixSet map[string]struct{}) {
 	commonPrefixSet = make(map[string]struct{})
 
@@ -1028,7 +1053,7 @@ func matchListKeys(
 			Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 			ETag: obj.ETag, LastModified: obj.LastModified, Metadata: obj.Metadata,
 		}
-		applyObjectSystemProps(&info, obj)
+		applyObjectSystemProps(&info, obj, now)
 		matchedObjects = append(matchedObjects, info)
 	}
 
@@ -1044,6 +1069,10 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 	srcObj, ok := srcBkt.objects.Get(src.Key)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "source object %q not found", src.Key)
+	}
+
+	if err := checkReadable(srcObj.SystemProps.StorageClass, srcObj.restore, m.opts.Clock.Now()); err != nil {
+		return err
 	}
 
 	dstBkt, ok := m.buckets.Get(dstBucket)
@@ -1219,6 +1248,10 @@ func (m *Mock) resolveCopySource(ctx context.Context, src driver.CopySource, ver
 		return nil, cerrors.Newf(cerrors.NotFound, "source object %q not found", src.Key)
 	}
 
+	if err := checkReadable(srcObj.SystemProps.StorageClass, srcObj.restore, m.opts.Clock.Now()); err != nil {
+		return nil, err
+	}
+
 	data, err := m.engineLoad(ctx, config.StorageRef{Bucket: src.Bucket, Key: src.Key, Version: srcObj.VersionID}, srcObj.Data)
 	if err != nil {
 		return nil, err
@@ -1246,6 +1279,10 @@ func (m *Mock) resolveCopySourceVersion(
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "source version %q of %q is a delete marker", versionID, src.Key)
 	}
 
+	if err := checkReadable(v.systemProps.StorageClass, v.restore, m.opts.Clock.Now()); err != nil {
+		return nil, err
+	}
+
 	data, err := m.engineLoad(ctx, config.StorageRef{Bucket: src.Bucket, Key: src.Key, Version: versionID}, v.data)
 	if err != nil {
 		return nil, err
@@ -1254,7 +1291,7 @@ func (m *Mock) resolveCopySourceVersion(
 	return &copySrcSnapshot{
 		data: data, size: v.size, contentType: v.contentType, etag: v.etag,
 		lastModified: v.lastModified, metadata: v.metadata, versionID: versionID,
-		systemProps: driver.ObjectSystemProps{StorageClass: v.storageClass},
+		systemProps: v.systemProps,
 	}, nil
 }
 
@@ -1780,6 +1817,12 @@ func (m *Mock) GetObjectVersion(ctx context.Context, bucket, key, versionID stri
 		return nil, &driver.DeleteMarkerError{LastModified: v.lastModified, VersionID: v.versionID}
 	}
 
+	now := m.opts.Clock.Now()
+
+	if err := checkReadable(v.systemProps.StorageClass, v.restore, now); err != nil {
+		return nil, err
+	}
+
 	data, err := m.engineLoad(ctx, config.StorageRef{Bucket: bucket, Key: key, Version: versionID}, v.data)
 	if err != nil {
 		return nil, err
@@ -1788,7 +1831,7 @@ func (m *Mock) GetObjectVersion(ctx context.Context, bucket, key, versionID stri
 	dataCopy := make([]byte, len(data))
 	copy(dataCopy, data)
 
-	return &driver.Object{Info: infoFromVersion(key, v), Data: dataCopy}, nil
+	return &driver.Object{Info: infoFromVersion(key, v, now), Data: dataCopy}, nil
 }
 
 // HeadObjectVersion returns metadata for a specific version.
@@ -1814,7 +1857,7 @@ func (m *Mock) HeadObjectVersion(ctx context.Context, bucket, key, versionID str
 		return nil, &driver.DeleteMarkerError{LastModified: v.lastModified, VersionID: v.versionID}
 	}
 
-	info := infoFromVersion(key, v)
+	info := infoFromVersion(key, v, m.opts.Clock.Now())
 
 	return &info, nil
 }
@@ -2162,7 +2205,7 @@ func (m *Mock) ListObjectVersions(_ context.Context, bucket string, opts driver.
 				Key: k, VersionID: v.versionID, IsLatest: i == len(chain)-1,
 				DeleteMarker: v.deleteMarker, Size: v.size, ETag: v.etag,
 				ContentType: v.contentType, LastModified: v.lastModified,
-				StorageClass: v.storageClass,
+				StorageClass: v.systemProps.StorageClass,
 			})
 		}
 	}
@@ -2209,16 +2252,19 @@ func objectFromVersion(key string, v *s3Version) *s3Object {
 	return &s3Object{
 		Key: key, Data: v.data, Size: v.size, ContentType: v.contentType,
 		ETag: v.etag, LastModified: v.lastModified, Metadata: maps.Clone(v.metadata),
-		VersionID: v.versionID, lock: v.lock,
+		VersionID: v.versionID, SystemProps: v.systemProps, lock: v.lock, restore: v.restore,
 	}
 }
 
-func infoFromVersion(key string, v *s3Version) driver.ObjectInfo {
-	return driver.ObjectInfo{
+func infoFromVersion(key string, v *s3Version, now time.Time) driver.ObjectInfo {
+	info := driver.ObjectInfo{
 		Key: key, Size: v.size, ContentType: v.contentType,
 		ETag: v.etag, LastModified: v.lastModified, Metadata: maps.Clone(v.metadata),
-		VersionID: v.versionID, DeleteMarker: v.deleteMarker,
+		VersionID: v.versionID, DeleteMarker: v.deleteMarker, Restore: v.restore.status(now),
 	}
+	applySystemProps(&info, &v.systemProps)
+
+	return info
 }
 
 // PutBucketPolicy sets the bucket policy.

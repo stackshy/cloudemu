@@ -48,6 +48,9 @@ type objectXML struct {
 	// Owner is emitted only for a ListObjectsV2 request with fetch-owner=true
 	// (ListObjects v1 always includes it); nil otherwise so it is omitted.
 	Owner *aclOwnerXML `xml:"Owner,omitempty"`
+	// RestoreStatus is emitted only when the listing asked for it
+	// (x-amz-optional-object-attributes: RestoreStatus).
+	RestoreStatus *restoreStatusXML `xml:"RestoreStatus,omitempty"`
 }
 
 type prefixXML struct {

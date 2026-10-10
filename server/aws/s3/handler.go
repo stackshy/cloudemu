@@ -561,15 +561,18 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 		owner = &aclOwnerXML{ID: cannedOwnerID, DisplayName: "cloudemu"}
 	}
 
+	withRestore := wantsRestoreStatus(r.Header)
+
 	for i := range result.Objects {
 		obj := &result.Objects[i]
 		resp.Contents = append(resp.Contents, objectXML{
-			Key:          obj.Key,
-			LastModified: obj.LastModified,
-			ETag:         fmt.Sprintf("%q", obj.ETag),
-			Size:         int(obj.Size),
-			StorageClass: storageClassOrDefault(obj.StorageClass),
-			Owner:        owner,
+			Key:           obj.Key,
+			LastModified:  obj.LastModified,
+			ETag:          fmt.Sprintf("%q", obj.ETag),
+			Size:          int(obj.Size),
+			StorageClass:  storageClassOrDefault(obj.StorageClass),
+			Owner:         owner,
+			RestoreStatus: listRestoreStatus(withRestore, obj.Restore),
 		})
 	}
 
@@ -1107,6 +1110,10 @@ func writeObjectHeaders(w http.ResponseWriter, info *driver.ObjectInfo, size int
 		w.Header().Set("X-Amz-Delete-Marker", "true")
 	}
 
+	if v := restoreHeader(info.Restore); v != "" {
+		w.Header().Set("X-Amz-Restore", v)
+	}
+
 	writeSystemPropHeaders(w, info)
 
 	// Real S3 sends user metadata headers in lowercase (x-amz-meta-<key>).
@@ -1564,6 +1571,12 @@ func etagHeaderMatches(header, etag string) bool {
 // writeCopyErr maps a copy driver error: a failed copy-source precondition is
 // 412 PreconditionFailed; everything else follows the standard mapping.
 func writeCopyErr(w http.ResponseWriter, err error) {
+	// An archived source that is not restored is InvalidObjectState, not a
+	// failed copy-source precondition.
+	if writeInvalidObjectState(w, err) {
+		return
+	}
+
 	if cerrors.IsFailedPrecondition(err) {
 		writeError(w, http.StatusPreconditionFailed, "PreconditionFailed",
 			"At least one of the preconditions you specified did not hold.")
@@ -2446,6 +2459,10 @@ func writeErr(w http.ResponseWriter, err error) {
 	var tagErr *driver.TagError
 	if errors.As(err, &tagErr) {
 		writeError(w, http.StatusBadRequest, tagErr.Code, tagErr.Message)
+		return
+	}
+
+	if writeInvalidObjectState(w, err) {
 		return
 	}
 
