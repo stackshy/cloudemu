@@ -47,6 +47,7 @@ const (
 	opHeadObject            opID = "HeadObject"
 	opDeleteObject          opID = "DeleteObject"
 	opGetObjectAttributes   opID = "GetObjectAttributes"
+	opRestoreObject         opID = "RestoreObject"
 	opGetObjectTagging      opID = "GetObjectTagging"
 	opPutObjectTagging      opID = "PutObjectTagging"
 	opDeleteObjectTagging   opID = "DeleteObjectTagging"
@@ -259,6 +260,9 @@ func classifyObject(r *http.Request, a *opArgs) opID {
 		return byMethod{http.MethodGet: opGetObjectAttributes}.pick(r.Method)
 	case q.Has("tagging"):
 		return objectTaggingMethods.pick(r.Method)
+	case q.Has("restore"):
+		// POST /{bucket}/{key}?restore is RestoreObject.
+		return byMethod{http.MethodPost: opRestoreObject}.pick(r.Method)
 	case q.Has("retention"):
 		return putOrGet(r.Method, opPutObjectRetention, opGetObjectRetention)
 	case q.Has("legal-hold"):
@@ -352,6 +356,7 @@ var dispatchTable = map[opID]opHandler{
 	opHeadObject:            objectOp((*Handler).headObject),
 	opDeleteObject:          objectOp((*Handler).deleteObject),
 	opGetObjectAttributes:   objectOp((*Handler).getObjectAttributes),
+	opRestoreObject:         objectOp((*Handler).restoreObject),
 	opGetObjectTagging:      objectOp((*Handler).getObjectTagging),
 	opPutObjectTagging:      objectOp((*Handler).putObjectTagging),
 	opDeleteObjectTagging:   objectOp((*Handler).deleteObjectTagging),

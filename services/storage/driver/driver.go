@@ -34,6 +34,69 @@ func (*DeleteMarkerError) Error() string { return ErrDeleteMarker.Error() }
 
 func (*DeleteMarkerError) Unwrap() error { return ErrDeleteMarker }
 
+// S3 archive and restore errors. They read as FailedPrecondition for library
+// callers; the S3 wire layer matches them with errors.Is to send the S3 code.
+var (
+	// ErrInvalidObjectState: the object is archived (GLACIER, DEEP_ARCHIVE) and
+	// has no restored copy, so it cannot be read or copied; or a restore was
+	// requested for an object that is not archived. S3 answers 403.
+	ErrInvalidObjectState = cerrors.New(cerrors.FailedPrecondition, "The operation is not valid for the object's storage class")
+	// ErrRestoreAlreadyInProgress: a restore of the object is still running. S3
+	// answers 409.
+	ErrRestoreAlreadyInProgress = cerrors.New(cerrors.FailedPrecondition, "Object restore is already in progress")
+	// ErrObjectAlreadyInActiveTier: a restore was requested for an
+	// INTELLIGENT_TIERING object that is in an active (not archive) tier. S3
+	// answers 403.
+	ErrObjectAlreadyInActiveTier = cerrors.New(cerrors.FailedPrecondition, "This action is not allowed against this storage tier.")
+	// ErrRestoreDaysRequired: a restore of a GLACIER/DEEP_ARCHIVE object did not
+	// say for how many days the restored copy is kept.
+	ErrRestoreDaysRequired = cerrors.New(cerrors.InvalidArgument, "Days is required for a restore of this storage class")
+)
+
+// InvalidObjectStateError is ErrInvalidObjectState for an object of
+// StorageClass. S3 names the storage class in the error response.
+type InvalidObjectStateError struct {
+	StorageClass string
+}
+
+func (*InvalidObjectStateError) Error() string { return ErrInvalidObjectState.Error() }
+
+func (*InvalidObjectStateError) Unwrap() error { return ErrInvalidObjectState }
+
+// S3 restore retrieval tiers.
+const (
+	RestoreTierExpedited = "Expedited"
+	RestoreTierStandard  = "Standard"
+	RestoreTierBulk      = "Bulk"
+)
+
+// RestoreRequest is an S3 RestoreObject request: Days is how long the restored
+// copy is kept (0 means not given) and Tier the retrieval tier (empty means
+// Standard).
+type RestoreRequest struct {
+	Days int
+	Tier string
+}
+
+// ObjectRestoreStatus is the restore state of an archived object: InProgress
+// while the restore runs, then the instant the restored copy expires. It
+// backs the S3 x-amz-restore header and the ListObjects RestoreStatus.
+type ObjectRestoreStatus struct {
+	InProgress bool
+	ExpiryDate time.Time
+}
+
+// ObjectRestorer is an OPTIONAL S3-specific capability (discovered by type
+// assertion) for a driver that models archive storage classes: GLACIER and
+// DEEP_ARCHIVE objects cannot be read or copied until RestoreObject makes a
+// temporary copy available. RestoreObject restores the current object
+// (versionID == "") or a specific version. accepted is true when a new
+// restore started (S3 202) and false when an existing restored copy only had
+// its expiry extended (S3 200).
+type ObjectRestorer interface {
+	RestoreObject(ctx context.Context, bucket, key, versionID string, req RestoreRequest) (accepted bool, err error)
+}
+
 // TagError is a rejected S3 tag set. Code is the S3 error code the wire layer
 // returns (InvalidTag, or BadRequest for too many object tags) and Message the
 // S3 message. It unwraps to an InvalidArgument error, so cerrors.IsInvalidArgument
@@ -677,6 +740,10 @@ type ObjectInfo struct {
 	// versioning-enabled bucket. Empty for a live version, or for providers that
 	// don't model versioning/generations.
 	Deleted string
+	// Restore is the S3 restore state of an archived object: nil when no
+	// restore was requested or the restored copy has expired. Providers that
+	// don't model archive storage classes leave it nil.
+	Restore *ObjectRestoreStatus
 }
 
 // Object is an object with its data.

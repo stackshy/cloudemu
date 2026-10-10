@@ -55,6 +55,11 @@ const (
 	DefaultTargetDrainSettle  = 2 * time.Second // ELBv2 target draining->removed
 
 	DefaultStackSettle = 5 * time.Second // CloudFormation stack *_IN_PROGRESS->*_COMPLETE
+
+	// S3 RestoreObject ongoing-request="true"->"false", by retrieval tier.
+	DefaultRestoreExpeditedSettle = 1 * time.Second
+	DefaultRestoreStandardSettle  = 3 * time.Second
+	DefaultRestoreBulkSettle      = 5 * time.Second
 )
 
 // Window is a read-time overlay describing a resource still settling into its

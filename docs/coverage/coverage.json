@@ -18156,6 +18156,15 @@
         ]
       },
       {
+        "name": "ObjectRestorer",
+        "doc": "ObjectRestorer is an OPTIONAL S3-specific capability (discovered by type",
+        "operations": [
+          {
+            "name": "RestoreObject"
+          }
+        ]
+      },
+      {
         "name": "ObjectTagValidator",
         "doc": "ObjectTagValidator is an OPTIONAL capability (discovered by type assertion)",
         "operations": [
