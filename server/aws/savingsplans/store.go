@@ -87,6 +87,9 @@ type offering struct {
 	usageType     string
 	operation     string
 	ec2Family     string
+	// region is the region an EC2Instance offering is scoped to. Compute and
+	// SageMaker offerings span regions and carry no region property.
+	region string
 }
 
 // store is the in-memory backing state for the Savings Plans wire handler. The
@@ -116,15 +119,17 @@ func newStore(accountID, region string, clock config.Clock) *store {
 		accountID: accountID,
 		region:    region,
 		plans:     memstore.New[*savingsPlan](),
-		offerings: seedOfferings(),
+		offerings: seedOfferings(region),
 		byToken:   map[string]string{},
 	}
 }
 
 // seedOfferings returns a representative Savings Plans offering catalog spanning
 // the Compute / EC2Instance / SageMaker plan types, both term lengths and all
-// three payment options.
-func seedOfferings() []offering {
+// three payment options. The EC2Instance offering is scoped to region (an EC2
+// Instance Savings Plan is bought per instance family per region), which is what
+// its region / instanceFamily offering properties report.
+func seedOfferings(region string) []offering {
 	return []offering{
 		{
 			id: "sp-offering-compute-1yr-no", description: "Compute Savings Plan, 1 year, No Upfront",
@@ -142,7 +147,7 @@ func seedOfferings() []offering {
 			id: "sp-offering-ec2-1yr-partial", description: "EC2 Instance Savings Plan, 1 year, Partial Upfront",
 			durationSecs: termOneYear, paymentOption: paymentPartialUpfront, planType: planTypeEC2Instance,
 			productTypes: []string{"EC2"}, serviceCode: "AmazonEC2", usageType: "EC2SP:1yrPartialUpfront",
-			operation: "RunInstances", ec2Family: "m5",
+			operation: "RunInstances", ec2Family: "m5", region: region,
 		},
 		{
 			id: "sp-offering-sagemaker-1yr-no", description: "SageMaker Savings Plan, 1 year, No Upfront",
@@ -177,12 +182,12 @@ func (s *store) create(in *createInput) (string, error) {
 		return "", cerrors.Newf(cerrors.NotFound, "offering not found: %s", in.savingsPlanOfferingID)
 	}
 
-	if in.commitment == "" {
-		return "", cerrors.New(cerrors.InvalidArgument, "commitment is required")
+	if err := validateCommitment(in.commitment); err != nil {
+		return "", err
 	}
 
-	if _, err := strconv.ParseFloat(in.commitment, 64); err != nil {
-		return "", cerrors.Newf(cerrors.InvalidArgument, "invalid commitment: %s", in.commitment)
+	if err := validateTags(in.tags); err != nil {
+		return "", err
 	}
 
 	s.mu.Lock()
@@ -314,6 +319,20 @@ func (s *store) describe(f planFilter) []*savingsPlan {
 	return out
 }
 
+// describeOfferings returns the seeded catalog offerings matching the filter, in
+// catalog order (deterministic, so offset pagination tokens stay stable).
+func (s *store) describeOfferings(f *offeringFilter) []*offering {
+	out := make([]*offering, 0, len(s.offerings))
+
+	for i := range s.offerings {
+		if f.matches(&s.offerings[i]) {
+			out = append(out, &s.offerings[i])
+		}
+	}
+
+	return out
+}
+
 // tagsOf returns a copy of a plan's tags, or nil if the plan is unknown.
 func (s *store) tagsOf(arn string) (map[string]string, bool) {
 	p, ok := s.byARN(arn)
@@ -326,6 +345,10 @@ func (s *store) tagsOf(arn string) (map[string]string, bool) {
 
 // tag merges tags onto the plan named by arn.
 func (s *store) tag(arn string, tags map[string]string) error {
+	if err := validateTags(tags); err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -392,9 +415,10 @@ func (s *store) planARN(id string) string {
 // out at its End. A later Cost Explorer coverage/utilization handler
 // (billing-parity step 3) reads real purchased commitments through this.
 func (s *store) ListActive(_ context.Context, at time.Time) ([]cost.Commitment, error) {
-	var out []cost.Commitment
+	all := s.plans.All()
+	out := make([]cost.Commitment, 0, len(all))
 
-	for _, p := range s.plans.All() {
+	for _, p := range all {
 		if effectiveState(p, at) != stateActive {
 			continue
 		}

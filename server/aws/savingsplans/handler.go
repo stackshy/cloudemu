@@ -152,54 +152,82 @@ func (h *Handler) describeSavingsPlans(w http.ResponseWriter, r *http.Request) {
 	}
 
 	f := newPlanFilter(req.SavingsPlanIDs, req.SavingsPlanArns, req.States, req.Filters)
-	plans := h.store.describe(f)
+
+	plans, next, err := paginate(h.store.describe(f), req.MaxResults, req.NextToken)
+	if err != nil {
+		writeErr(w, err)
+
+		return
+	}
 
 	out := make([]map[string]any, 0, len(plans))
 	for _, p := range plans {
 		out = append(out, planToWire(p))
 	}
 
-	wire.WriteJSON(w, map[string]any{"savingsPlans": out})
+	writePage(w, "savingsPlans", out, next)
 }
 
 func (h *Handler) describeOfferings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OfferingIDs []string     `json:"offeringIds"`
-		PlanTypes   []string     `json:"planTypes"`
-		Filters     []wireFilter `json:"filters"`
-		ProductType string       `json:"productType"`
-		MaxResults  int          `json:"maxResults"`
-		NextToken   string       `json:"nextToken"`
+		OfferingIDs    []string     `json:"offeringIds"`
+		PaymentOptions []string     `json:"paymentOptions"`
+		ProductType    string       `json:"productType"`
+		PlanTypes      []string     `json:"planTypes"`
+		Durations      []int64      `json:"durations"`
+		Currencies     []string     `json:"currencies"`
+		Descriptions   []string     `json:"descriptions"`
+		ServiceCodes   []string     `json:"serviceCodes"`
+		UsageTypes     []string     `json:"usageTypes"`
+		Operations     []string     `json:"operations"`
+		Filters        []wireFilter `json:"filters"`
+		MaxResults     int          `json:"maxResults"`
+		NextToken      string       `json:"nextToken"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	ids := toSet(req.OfferingIDs)
-	types := toSet(req.PlanTypes)
+	f := &offeringFilter{
+		ids:            toSet(req.OfferingIDs),
+		planTypes:      toSet(req.PlanTypes),
+		paymentOptions: toSet(req.PaymentOptions),
+		durations:      toSet(int64sToStrings(req.Durations)),
+		currencies:     toSet(req.Currencies),
+		descriptions:   toSet(req.Descriptions),
+		serviceCodes:   toSet(req.ServiceCodes),
+		usageTypes:     toSet(req.UsageTypes),
+		operations:     toSet(req.Operations),
+		productType:    req.ProductType,
+		attrs:          req.Filters,
+	}
 
-	out := make([]map[string]any, 0, len(h.store.offerings))
+	offerings, next, err := paginate(h.store.describeOfferings(f), req.MaxResults, req.NextToken)
+	if err != nil {
+		writeErr(w, err)
 
-	for i := range h.store.offerings {
-		o := &h.store.offerings[i]
+		return
+	}
 
-		if len(ids) > 0 {
-			if _, ok := ids[o.id]; !ok {
-				continue
-			}
-		}
-
-		if len(types) > 0 {
-			if _, ok := types[o.planType]; !ok {
-				continue
-			}
-		}
-
+	out := make([]map[string]any, 0, len(offerings))
+	for _, o := range offerings {
 		out = append(out, offeringToWire(o))
 	}
 
-	wire.WriteJSON(w, map[string]any{"searchResults": out})
+	writePage(w, "searchResults", out, next)
+}
+
+// writePage writes a describe response: the result list under key, plus
+// nextToken only when more results remain (AWS documents it as null on the last
+// page).
+func writePage(w http.ResponseWriter, key string, items []map[string]any, next string) {
+	resp := map[string]any{key: items}
+	if next != "" {
+		resp["nextToken"] = next
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 func (h *Handler) describeOfferingRates(w http.ResponseWriter, r *http.Request) {
