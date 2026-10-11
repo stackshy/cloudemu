@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"slices"
 	"sort"
 	"time"
 
@@ -73,7 +74,13 @@ func (m *Mock) StartMessageMoveTask(_ context.Context, sourceARN, destARN string
 		return "", err
 	}
 
-	moved, toMove, failure := m.drainSourceQueue(sourceURL, destURL)
+	moved, toMove, targets, failure := m.drainSourceQueue(sourceURL, destURL)
+
+	m.emitQueueGaugesByURL(sourceURL)
+
+	for _, target := range targets {
+		m.emitQueueGaugesByURL(target)
+	}
 
 	status := moveTaskCompleted
 	if failure != "" {
@@ -112,12 +119,13 @@ func (m *Mock) rejectActiveMoveTask(sourceARN string) error {
 
 // drainSourceQueue moves every message out of the source queue into the
 // destination (or, when destURL is empty, each message's recorded origin queue).
-// It returns the number moved, the total that was queued to move, and a failure
-// reason for any message with no resolvable destination.
-func (m *Mock) drainSourceQueue(sourceURL, destURL string) (moved, toMove int64, failure string) {
+// It returns the number moved, the total that was queued to move, the URLs of
+// the queues that received messages (in first-use order), and a failure reason
+// for any message with no resolvable destination.
+func (m *Mock) drainSourceQueue(sourceURL, destURL string) (moved, toMove int64, targets []string, failure string) {
 	src, ok := m.queues.Get(sourceURL)
 	if !ok {
-		return 0, 0, ""
+		return 0, 0, nil, ""
 	}
 
 	src.mu.Lock()
@@ -145,6 +153,10 @@ func (m *Mock) drainSourceQueue(sourceURL, destURL string) (moved, toMove int64,
 
 		movedSet[msg] = struct{}{}
 		moved++
+
+		if !slices.Contains(targets, target) {
+			targets = append(targets, target)
+		}
 	}
 
 	src.mu.Lock()
@@ -159,7 +171,7 @@ func (m *Mock) drainSourceQueue(sourceURL, destURL string) (moved, toMove int64,
 	src.messages = kept
 	src.mu.Unlock()
 
-	return moved, toMove, failure
+	return moved, toMove, targets, failure
 }
 
 // redriveTargetURL resolves where a DLQ message should be redriven when no
