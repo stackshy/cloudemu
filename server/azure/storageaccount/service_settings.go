@@ -30,7 +30,8 @@ const (
 )
 
 // serviceChildType is the nested collection real Azure serves under
-// {x}Services/default. cloudemu does not model these over ARM yet.
+// {x}Services/default. Queues and tables are served from the data-plane
+// stores (see queues_tables.go); file shares are not modeled yet.
 func serviceChildType(kind string) string {
 	switch kind {
 	case kindQueueServices:
@@ -74,7 +75,7 @@ type armChildResource struct {
 //
 //	GET     …/{x}Services                  : {"value":[default]}
 //	GET/PUT …/{x}Services/default          : service properties
-//	GET     …/{x}Services/default/{child}  : empty list (not modeled yet)
+//	…/{x}Services/default/{child}[/{name}] : queues and tables (CRUD); file shares not modeled
 //
 // These are their own resources: a PUT never touches the account.
 func (h *Handler) serveServiceSettings(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -98,6 +99,10 @@ func (h *Handler) serveServiceSettings(w http.ResponseWriter, r *http.Request, r
 		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
 			"The Resource '"+providerName+"/"+resourceType+"/"+rp.ResourceName+"/"+rp.SubResource+"/"+
 				rp.SubResourceName+"' under resource group '"+rp.ResourceGroup+"' was not found.")
+	case rp.SubResourceAction != "" && kind == kindQueueServices && h.queues != nil:
+		h.serveQueueChild(w, r, rp)
+	case rp.SubResourceAction != "" && kind == kindTableServices && h.tables != nil:
+		h.serveTableChild(w, r, rp)
 	case rp.SubResourceAction != "":
 		serveServiceChild(w, r, rp)
 	case rp.SubResourceName == "":

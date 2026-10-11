@@ -7,6 +7,7 @@
 //
 //	POST   /Tables                                        : create table
 //	GET    /Tables                                        : list tables
+//	GET    /Tables('name')                                : get table
 //	DELETE /Tables('name')                                : delete table
 //	POST   /{table}                                       : insert entity
 //	GET    /{table}(PartitionKey='p',RowKey='r')          : get entity
@@ -107,6 +108,12 @@ func (h *Handler) Matches(r *http.Request) bool {
 		return azurearm.IsStorageServiceOp(r.URL.Query()) && (storageHost || isTableClient(r))
 	}
 
+	// Get/Set Table ACL, /{table}?comp=acl: Queue ACL has the same shape, so a
+	// bare host needs a Table client.
+	if isTableACL(r, path) {
+		return storageHost || isTableClient(r)
+	}
+
 	return matchesTablePath(r, path)
 }
 
@@ -150,12 +157,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "" && azurearm.IsStorageServiceOp(r.URL.Query()):
 		azurearm.ServeStorageServiceOp(w, r)
+	case isTableACL(r, path):
+		h.tableACL(w, r, account, path)
 	case path == pathBatch:
 		h.batch(w, r, account)
 	case path == pathTables:
 		h.tablesCollectionOp(w, r, account)
 	case strings.HasPrefix(path, "Tables("):
-		h.deleteTable(w, r, tableKey(account, tableNameFromDelete(path)))
+		h.tableOp(w, r, tableKey(account, tableNameFromDelete(path)))
 	case r.Method == http.MethodPost && !strings.ContainsRune(path, '('):
 		// POST /{table}: insert entity into a bare table path.
 		h.insertEntity(w, r, tableKey(account, path))
@@ -199,6 +208,14 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request, account st
 		return
 	}
 
+	// Prefer: return-no-content asks for 204 with no body, as for Insert Entity.
+	if strings.EqualFold(r.Header.Get("Prefer"), "return-no-content") {
+		w.Header().Set("Preference-Applied", "return-no-content")
+		w.WriteHeader(http.StatusNoContent)
+
+		return
+	}
+
 	resp := map[string]any{
 		"odata.metadata": fmt.Sprintf("%s://%s/$metadata#Tables/@Element", scheme(r), r.Host),
 		"TableName":      body.TableName,
@@ -230,7 +247,13 @@ func (h *Handler) listTables(w http.ResponseWriter, r *http.Request, account str
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) deleteTable(w http.ResponseWriter, r *http.Request, name string) {
+// tableOp serves /Tables('name'): GET reads the table, DELETE deletes it.
+func (h *Handler) tableOp(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method == http.MethodGet {
+		h.getTable(w, r, name)
+		return
+	}
+
 	if r.Method != http.MethodDelete {
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 		return
@@ -241,7 +264,23 @@ func (h *Handler) deleteTable(w http.ResponseWriter, r *http.Request, name strin
 		return
 	}
 
+	h.dropTableACL(r, name)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// getTable serves Query Tables for one table, GET /Tables('name'): 200 with
+// the table, or 404 TableNotFound. azurerm uses it to check that a table
+// exists.
+func (h *Handler) getTable(w http.ResponseWriter, r *http.Request, key string) {
+	if !h.tableExists(r, key) {
+		writeErr(w, driver.ErrTableNotFound)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"odata.metadata": fmt.Sprintf("%s://%s/$metadata#Tables/@Element", scheme(r), r.Host),
+		"TableName":      tableName(key),
+	})
 }
 
 // entityOp routes entity-level requests: /{table}() (query) and

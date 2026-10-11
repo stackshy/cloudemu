@@ -512,7 +512,9 @@ func New(d Drivers) http.Handler {
 	}
 
 	if d.BlobStorage != nil {
-		storageHandler = storageaccountsrv.New(d.BlobStorage)
+		// ARM queues and tables share the data-plane stores, so either surface
+		// sees what the other created.
+		storageHandler = storageaccountsrv.New(d.BlobStorage).WithQueues(d.QueueStorage).WithTables(d.TableStorage)
 	}
 
 	// User-assigned managed identities: a resource-group-scoped resource, so its
