@@ -12,6 +12,9 @@ import (
 
 // CreateAlias creates a new alias pointing to a specific function version.
 func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.Alias, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
@@ -54,6 +57,9 @@ func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 
 // UpdateAlias updates an existing alias configuration.
 func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.Alias, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)

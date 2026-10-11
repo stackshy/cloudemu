@@ -263,7 +263,12 @@ type Mock struct {
 	// recursion guard bounds any DLQ->function->DLQ loop.
 	dlqSQS asyncSQSDeliverer
 	dlqSNS asyncSNSPublisher
-	mu     sync.Mutex // guards PublishVersion read-modify-write on funcData
+	// mu serializes every read-modify-write of a funcData entry in funcs. A
+	// funcData value is copied out of the store, edited and written back, so an
+	// unguarded writer can put back a stale copy and undo a concurrent change
+	// (for example resurrect the policy of an alias DeleteAlias just removed).
+	// Every method that writes funcs takes it; helpers called under it must not.
+	mu sync.Mutex
 	// inflightMu guards inflight, the number of invocations currently executing
 	// per function name. It backs reserved-concurrency enforcement on Invoke.
 	inflightMu sync.Mutex
@@ -319,6 +324,9 @@ func New(opts *config.Options) *Mock {
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*driver.FunctionInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if _, ok := m.funcs.Get(cfg.Name); ok {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "function %s already exists", cfg.Name)
 	}
@@ -398,6 +406,9 @@ func validateFunctionLimits(memory, timeout int) error {
 }
 
 func (m *Mock) DeleteFunction(ctx context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fd, ok := m.funcs.Get(name)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "function %s not found", name)
@@ -440,6 +451,9 @@ func (m *Mock) ListFunctions(_ context.Context) ([]driver.FunctionInfo, error) {
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.FunctionConfig) (*driver.FunctionInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fd, ok := m.funcs.Get(name)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
@@ -809,6 +823,9 @@ func (m *Mock) RegisterHandler(name string, handler driver.HandlerFunc) {
 	m.handlersMu.Lock()
 	m.handlers[name] = handler
 	m.handlersMu.Unlock()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if fd, ok := m.funcs.Get(name); ok {
 		fd.handler = handler

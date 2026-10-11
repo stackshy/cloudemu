@@ -2,6 +2,7 @@ package lambda
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -130,4 +131,72 @@ func TestDeleteVersionDropsQualifierState(t *testing.T) {
 	}
 
 	assertQualifierStateGone(t, m, "1")
+}
+
+// TestDeleteAliasNotUndoneByConcurrentUpdate races DeleteAlias against
+// UpdateFunction. UpdateFunction copies the function's state, edits it and
+// writes it back; without a shared lock it could write back a copy taken
+// before DeleteAlias and bring the deleted alias's policy back, so the next
+// alias of the same name would inherit the old grant.
+func TestDeleteAliasNotUndoneByConcurrentUpdate(t *testing.T) {
+	const rounds = 2000
+
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateFunction(ctx, defaultFuncConfig()); err != nil {
+		t.Fatalf("CreateFunction: %v", err)
+	}
+
+	if _, err := m.PublishVersion(ctx, "my-func", "v1"); err != nil {
+		t.Fatalf("PublishVersion: %v", err)
+	}
+
+	alias := driver.AliasConfig{FunctionName: "my-func", Name: "live", FunctionVersion: "1"}
+	grant := driver.PermissionStatement{StatementID: "old-grant", Action: "lambda:InvokeFunction", Principal: "*"}
+
+	for i := range rounds {
+		if _, err := m.CreateAlias(ctx, alias); err != nil {
+			t.Fatalf("round %d CreateAlias: %v", i, err)
+		}
+
+		if err := m.AddPermission(ctx, "my-func", "live", grant); err != nil {
+			t.Fatalf("round %d AddPermission: %v", i, err)
+		}
+
+		var wg sync.WaitGroup
+
+		start := make(chan struct{})
+
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			<-start
+
+			_ = m.DeleteAlias(ctx, "my-func", "live")
+		}()
+
+		go func() {
+			defer wg.Done()
+			<-start
+
+			_, _ = m.UpdateFunction(ctx, "my-func", driver.FunctionConfig{Timeout: 9})
+		}()
+
+		close(start)
+		wg.Wait()
+
+		if _, err := m.CreateAlias(ctx, alias); err != nil {
+			t.Fatalf("round %d re-CreateAlias: %v", i, err)
+		}
+
+		if _, stmts, _ := m.PolicyStatements(ctx, "my-func", "live"); len(stmts) != 0 {
+			t.Fatalf("round %d: recreated alias inherited %v", i, stmts)
+		}
+
+		if err := m.DeleteAlias(ctx, "my-func", "live"); err != nil {
+			t.Fatalf("round %d DeleteAlias: %v", i, err)
+		}
+	}
 }
