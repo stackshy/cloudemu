@@ -179,7 +179,7 @@ func planToWire(p *savingsPlan) map[string]any {
 // offeringToWire renders a catalog offering in the wire (SavingsPlanOffering)
 // JSON shape.
 func offeringToWire(o *offering) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"offeringId":      o.id,
 		"description":     o.description,
 		"durationSeconds": o.durationSecs,
@@ -191,4 +191,21 @@ func offeringToWire(o *offering) map[string]any {
 		"usageType":       o.usageType,
 		"operation":       o.operation,
 	}
+
+	// properties carries the offering's region / instanceFamily scope (the same
+	// keys the offering filters[] match on); region-spanning offerings have none.
+	props := offeringProperties(o)
+	if len(props) > 0 {
+		list := make([]map[string]any, 0, len(props))
+
+		for _, name := range []string{offeringPropRegion, offeringPropInstanceFamily} {
+			if v, ok := props[name]; ok {
+				list = append(list, map[string]any{"name": name, "value": v})
+			}
+		}
+
+		out["properties"] = list
+	}
+
+	return out
 }
