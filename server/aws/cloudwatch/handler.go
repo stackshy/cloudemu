@@ -282,7 +282,6 @@ func faultOf(status int) string {
 }
 
 func writeCBORErrorBody(w http.ResponseWriter, status int, errType, msg string) {
-
 	payload := map[string]any{
 		"__type":  errType,
 		"message": msg,

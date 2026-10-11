@@ -345,8 +345,8 @@ func parseSearchQuery(src string) (searchQuery, bool) {
 	var q searchQuery
 
 	if p.peek(sLBrace) {
-		sc, ok := p.parseSchema()
-		if !ok {
+		sc, schemaOK := p.parseSchema()
+		if !schemaOK {
 			return searchQuery{}, false
 		}
 
@@ -367,46 +367,52 @@ func parseSearchQuery(src string) (searchQuery, bool) {
 	return q, true
 }
 
+// searchDelimiters end a bare search word.
+const searchDelimiters = " \t\n,=(){}\""
+
 // lexSearch splits a search string into tokens. Commas and white space
 // separate tokens.
 func lexSearch(src string) ([]searchToken, bool) {
 	var out []searchToken
 
 	for i := 0; i < len(src); {
-		c := src[i]
-
-		switch {
-		case c == ' ' || c == '\t' || c == '\n' || c == ',':
-			i++
-		case c == '=' || c == '(' || c == ')' || c == '{' || c == '}':
-			out = append(out, searchToken{kind: c})
-			i++
-		case c == '"':
-			text, next, ok := lexQuoted(src, i)
-			if !ok {
-				return nil, false
-			}
-
-			out = append(out, searchToken{kind: sQuoted, text: text})
-			i = next
-		default:
-			j := i
-			for j < len(src) && !strings.ContainsRune(" \t\n,=(){}\"", rune(src[j])) {
-				j++
-			}
-
-			word := src[i:j]
-			if strings.HasPrefix(word, ":") {
-				// :aws.AccountId and other designators are not supported.
-				return nil, false
-			}
-
-			out = append(out, searchToken{kind: sWord, text: word})
-			i = j
+		tok, next, ok := nextSearchToken(src, i)
+		if !ok {
+			return nil, false
 		}
+
+		if tok.kind != 0 {
+			out = append(out, tok)
+		}
+
+		i = next
 	}
 
 	return out, true
+}
+
+// nextSearchToken reads the token at i. A separator gives a zero token.
+func nextSearchToken(src string, i int) (tok searchToken, next int, ok bool) {
+	switch c := src[i]; c {
+	case ' ', '\t', '\n', ',':
+		return searchToken{}, i + 1, true
+	case sEquals, sOpen, sClose, sLBrace, sRBrace:
+		return searchToken{kind: c}, i + 1, true
+	case '"':
+		text, end, quoted := lexQuoted(src, i)
+
+		return searchToken{kind: sQuoted, text: text}, end, quoted
+	}
+
+	j := i
+	for j < len(src) && !strings.ContainsRune(searchDelimiters, rune(src[j])) {
+		j++
+	}
+
+	word := src[i:j]
+
+	// :aws.AccountId and other designators are not supported.
+	return searchToken{kind: sWord, text: word}, j, !strings.HasPrefix(word, ":")
 }
 
 // lexQuoted reads a double-quoted string. A backslash escapes the next
@@ -472,7 +478,7 @@ func (p *searchParser) parseOr() (searchTerm, bool) {
 		return nil, false
 	}
 
-	for p.peekWord("OR") {
+	for p.peekWord(kwOr) {
 		p.pos++
 
 		right, ok := p.parseAnd()
@@ -493,8 +499,8 @@ func (p *searchParser) parseAnd() (searchTerm, bool) {
 		return nil, false
 	}
 
-	for !p.done() && !p.peek(sClose) && !p.peekWord("OR") {
-		if p.peekWord("AND") {
+	for !p.done() && !p.peek(sClose) && !p.peekWord(kwOr) {
+		if p.peekWord(kwAnd) {
 			p.pos++
 		}
 
@@ -510,7 +516,7 @@ func (p *searchParser) parseAnd() (searchTerm, bool) {
 }
 
 func (p *searchParser) parseUnary() (searchTerm, bool) {
-	if p.peekWord("NOT") {
+	if p.peekWord(kwNot) {
 		p.pos++
 
 		inner, ok := p.parseUnary()
@@ -547,7 +553,7 @@ func (p *searchParser) parsePrimary() (searchTerm, bool) {
 		p.pos++
 		return valueTerm{value: tok.text, exact: true}, true
 	case sWord:
-		if tok.text == "AND" || tok.text == "OR" {
+		if tok.text == kwAnd || tok.text == kwOr {
 			return nil, false
 		}
 

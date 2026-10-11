@@ -30,7 +30,7 @@ func emptySeries() Series {
 // asSeries renders a result as a series. A scalar becomes a single point, so
 // a constant expression still returns a value row. An array has a single
 // series value only when it holds exactly one series.
-func (r result) asSeries() Series {
+func (r *result) asSeries() Series {
 	switch {
 	case r.isScalar:
 		return Series{Timestamps: []time.Time{{}}, Values: []float64{r.scalar}}
@@ -46,7 +46,7 @@ func (r result) asSeries() Series {
 }
 
 // labeled renders a result as the list of series it returns.
-func (r result) labeled() []Labeled {
+func (r *result) labeled() []Labeled {
 	if r.isArray {
 		return r.array
 	}
@@ -59,7 +59,8 @@ func mapArray(arr []Labeled, f func(result) result) result {
 	out := make([]Labeled, 0, len(arr))
 
 	for _, l := range arr {
-		out = append(out, Labeled{Label: l.Label, Series: f(result{series: l.Series}).asSeries()})
+		r := f(result{series: l.Series})
+		out = append(out, Labeled{Label: l.Label, Series: r.asSeries()})
 	}
 
 	return result{isArray: true, array: out}
@@ -73,15 +74,15 @@ type pointFunc func(a, b float64) float64
 // With union set, a timestamp only one series has counts as 0 in the other,
 // as metric-math comparison and logical operators do. Without it the point is
 // dropped.
-func pointwise(f pointFunc, left, right result, union bool) result {
+func pointwise(f pointFunc, left, right *result, union bool) result {
 	switch {
 	case left.isArray && right.isArray:
 		// TS[] op TS[] is not a documented form.
 		return result{series: emptySeries()}
 	case left.isArray:
-		return mapArray(left.array, func(l result) result { return pointwise(f, l, right, union) })
+		return mapArray(left.array, func(l result) result { return pointwise(f, &l, right, union) })
 	case right.isArray:
-		return mapArray(right.array, func(r result) result { return pointwise(f, left, r, union) })
+		return mapArray(right.array, func(r result) result { return pointwise(f, left, &r, union) })
 	case left.isScalar && right.isScalar:
 		return result{isScalar: true, scalar: f(left.scalar, right.scalar)}
 	case left.isScalar:
@@ -162,10 +163,13 @@ func mergeTimestamps(lists ...[]time.Time) []time.Time {
 
 	for _, l := range lists {
 		for _, ts := range l {
-			if !seen[ts.UnixNano()] {
-				seen[ts.UnixNano()] = true
-				out = append(out, ts)
+			if seen[ts.UnixNano()] {
+				continue
 			}
+
+			seen[ts.UnixNano()] = true
+
+			out = append(out, ts)
 		}
 	}
 
@@ -211,17 +215,17 @@ func truth(b bool) float64 {
 func comparison(op string) pointFunc {
 	return func(a, b float64) float64 {
 		switch op {
-		case "==":
+		case opEq:
 			return truth(a == b)
-		case "!=":
+		case opNe:
 			return truth(a != b)
-		case "<":
+		case opLt:
 			return truth(a < b)
-		case "<=":
+		case opLe:
 			return truth(a <= b)
-		case ">":
+		case opGt:
 			return truth(a > b)
-		case ">=":
+		case opGe:
 			return truth(a >= b)
 		default:
 			return 0
@@ -278,7 +282,7 @@ func (n negNode) evaluate(s scope) (result, error) {
 		return result{}, err
 	}
 
-	return pointwise(arithmetic('-'), result{isScalar: true}, v, false), nil
+	return pointwise(arithmetic('-'), &result{isScalar: true}, &v, false), nil
 }
 
 type binaryNode struct {
@@ -292,7 +296,7 @@ func (n binaryNode) evaluate(s scope) (result, error) {
 		return result{}, err
 	}
 
-	return pointwise(arithmetic(n.op), left, right, false), nil
+	return pointwise(arithmetic(n.op), &left, &right, false), nil
 }
 
 // compareNode is a comparison. Each point is 1 when it holds and 0 when not.
@@ -307,7 +311,7 @@ func (n compareNode) evaluate(s scope) (result, error) {
 		return result{}, err
 	}
 
-	return pointwise(comparison(n.op), left, right, true), nil
+	return pointwise(comparison(n.op), &left, &right, true), nil
 }
 
 // logicNode is AND or OR. A non-zero value is true.
@@ -330,7 +334,7 @@ func (n logicNode) evaluate(s scope) (result, error) {
 		return truth(a != 0 || b != 0)
 	}
 
-	return pointwise(f, left, right, true), nil
+	return pointwise(f, &left, &right, true), nil
 }
 
 func evalPair(s scope, a, b node) (left, right result, err error) {

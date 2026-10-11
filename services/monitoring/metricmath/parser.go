@@ -88,25 +88,36 @@ func tokenizeMath(expr string) []mathToken {
 	return tokens
 }
 
+// Comparison and logical operator spellings.
+const (
+	opEq  = "=="
+	opNe  = "!="
+	opLt  = "<"
+	opLe  = "<="
+	opGt  = ">"
+	opGe  = ">="
+	opAnd = "&&"
+	opOr  = "||"
+)
+
 // lexSymbol reads a comparison or logical operator.
 func lexSymbol(expr string, start int) (tok mathToken, next int) {
-	two := ""
-	if start+1 < len(expr) {
-		two = expr[start : start+2]
+	if start+len(opEq) <= len(expr) {
+		two := expr[start : start+len(opEq)]
+
+		switch two {
+		case opEq, opNe, opLe, opGe:
+			return mathToken{kind: tokCompare, ident: two}, start + len(two)
+		case opAnd:
+			return mathToken{kind: tokAnd}, start + len(two)
+		case opOr:
+			return mathToken{kind: tokOr}, start + len(two)
+		}
 	}
 
-	switch two {
-	case "==", "!=", "<=", ">=":
-		return mathToken{kind: tokCompare, ident: two}, start + 2
-	case "&&":
-		return mathToken{kind: tokAnd}, start + 2
-	case "||":
-		return mathToken{kind: tokOr}, start + 2
-	}
-
-	switch expr[start] {
-	case '<', '>':
-		return mathToken{kind: tokCompare, ident: expr[start : start+1]}, start + 1
+	switch one := expr[start : start+1]; one {
+	case opLt, opGt:
+		return mathToken{kind: tokCompare, ident: one}, start + 1
 	default:
 		return mathToken{kind: tokInvalid}, start + 1
 	}
@@ -159,9 +170,9 @@ func lexIdent(expr string, start int) (tok mathToken, next int) {
 	// AND and OR are the logical operators. IDs start with a lowercase
 	// letter, so they never clash with an entry.
 	switch word {
-	case "AND":
+	case kwAnd:
 		return mathToken{kind: tokAnd}, i
-	case "OR":
+	case kwOr:
 		return mathToken{kind: tokOr}, i
 	}
 
@@ -447,6 +458,9 @@ const (
 	fnSearch  = "SEARCH"
 	kwRepeat  = "REPEAT"
 	kwLinear  = "LINEAR"
+	kwAnd     = "AND"
+	kwOr      = "OR"
+	kwNot     = "NOT"
 	ifMinArgs = 2
 	ifMaxArgs = 3
 	fillArgs  = 2
@@ -463,31 +477,41 @@ const (
 func buildCall(name string, args []node) (node, error) {
 	switch name {
 	case fnIf:
-		if len(args) < ifMinArgs || len(args) > ifMaxArgs || hasString(args) {
-			return nil, errMathParse
-		}
-
-		n := ifNode{cond: args[0], then: args[1]}
-		if len(args) == ifMaxArgs {
-			n.otherwise = args[2]
-		}
-
-		return n, nil
+		return buildIf(args)
 	case fnFill:
-		if len(args) != fillArgs || hasString(args) {
-			return nil, errMathParse
-		}
-
-		if kw, ok := args[1].(keywordNode); ok && kw.word != kwRepeat && kw.word != kwLinear {
-			return nil, errMathParse
-		}
-
-		return fillNode{input: args[0], with: args[1]}, nil
+		return buildFill(args)
 	case fnSearch:
 		return buildSearch(args)
 	default:
 		return nil, errMathParse
 	}
+}
+
+// buildIf checks IF(cond, a[, b]).
+func buildIf(args []node) (node, error) {
+	if len(args) < ifMinArgs || len(args) > ifMaxArgs || hasString(args) {
+		return nil, errMathParse
+	}
+
+	n := ifNode{cond: args[0], then: args[1]}
+	if len(args) == ifMaxArgs {
+		n.otherwise = args[2]
+	}
+
+	return n, nil
+}
+
+// buildFill checks FILL(x, S|TS|REPEAT|LINEAR).
+func buildFill(args []node) (node, error) {
+	if len(args) != fillArgs || hasString(args) {
+		return nil, errMathParse
+	}
+
+	if kw, ok := args[1].(keywordNode); ok && kw.word != kwRepeat && kw.word != kwLinear {
+		return nil, errMathParse
+	}
+
+	return fillNode{input: args[0], with: args[1]}, nil
 }
 
 // buildSearch checks SEARCH('term', 'Stat'[, period]).
@@ -496,10 +520,10 @@ func buildSearch(args []node) (node, error) {
 		return nil, errMathParse
 	}
 
-	term, ok1 := args[0].(stringNode)
-	stat, ok2 := args[1].(stringNode)
+	term, isTerm := args[0].(stringNode)
+	stat, isStat := args[1].(stringNode)
 
-	if !ok1 || !ok2 || stat.val == "" {
+	if !isTerm || !isStat || stat.val == "" {
 		return nil, errMathParse
 	}
 
@@ -511,15 +535,25 @@ func buildSearch(args []node) (node, error) {
 	n := searchNode{query: q, stat: stat.val}
 
 	if len(args) == searchMaxArgs {
-		num, ok := args[2].(numberNode)
-		if !ok || num.val <= 0 || num.val != float64(int(num.val)) {
+		period, ok := searchPeriod(args[2])
+		if !ok {
 			return nil, errMathParse
 		}
 
-		n.period = int(num.val)
+		n.period = period
 	}
 
 	return n, nil
+}
+
+// searchPeriod reads the period argument of SEARCH: a positive whole number.
+func searchPeriod(arg node) (int, bool) {
+	num, ok := arg.(numberNode)
+	if !ok || num.val <= 0 || num.val != float64(int(num.val)) {
+		return 0, false
+	}
+
+	return int(num.val), true
 }
 
 // hasString reports whether a string literal is used where a value belongs.

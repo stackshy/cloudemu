@@ -40,17 +40,17 @@ func (n ifNode) evaluate(s scope) (result, error) {
 	}
 
 	if cond.isScalar {
-		return ifScalar(cond.scalar, then, otherwise), nil
+		return ifScalar(cond.scalar, &then, otherwise), nil
 	}
 
-	return result{series: ifSeries(cond.series, then, otherwise)}, nil
+	return result{series: ifSeries(cond.series, &then, otherwise)}, nil
 }
 
 // ifScalar is IF(S, a, b): a when S is true, b when false, and an empty
 // series when false and b is left out.
-func ifScalar(cond float64, then result, otherwise *result) result {
+func ifScalar(cond float64, then, otherwise *result) result {
 	if cond != 0 {
-		return then
+		return *then
 	}
 
 	if otherwise == nil {
@@ -69,12 +69,12 @@ func ifScalar(cond float64, then result, otherwise *result) result {
 //   - A series branch with no point at that time gives 0, except that a
 //     missing false-branch point gives no point when the true branch is a
 //     scalar. This is the IF(metric1, scalar2, metric3) table of the guide.
-func ifSeries(cond Series, then result, otherwise *result) Series {
+func ifSeries(cond Series, then, otherwise *result) Series {
 	thenAt := branchValues(then)
 
 	var otherAt map[int64]float64
 	if otherwise != nil {
-		otherAt = branchValues(*otherwise)
+		otherAt = branchValues(otherwise)
 	}
 
 	out := emptySeries()
@@ -88,7 +88,7 @@ func ifSeries(cond Series, then result, otherwise *result) Series {
 		if cond.Values[i] != 0 {
 			v, ok = branchValue(then, thenAt, ts, true)
 		} else if otherwise != nil {
-			v, ok = branchValue(*otherwise, otherAt, ts, !then.isScalar)
+			v, ok = branchValue(otherwise, otherAt, ts, !then.isScalar)
 		}
 
 		if ok {
@@ -100,7 +100,7 @@ func ifSeries(cond Series, then result, otherwise *result) Series {
 	return out
 }
 
-func branchValues(r result) map[int64]float64 {
+func branchValues(r *result) map[int64]float64 {
 	if r.isScalar {
 		return nil
 	}
@@ -110,7 +110,7 @@ func branchValues(r result) map[int64]float64 {
 
 // branchValue reads one IF branch at ts. zeroIfMissing says whether a series
 // branch with no point there gives 0 or no point.
-func branchValue(r result, at map[int64]float64, ts time.Time, zeroIfMissing bool) (float64, bool) {
+func branchValue(r *result, at map[int64]float64, ts time.Time, zeroIfMissing bool) (float64, bool) {
 	if r.isScalar {
 		return r.scalar, true
 	}
