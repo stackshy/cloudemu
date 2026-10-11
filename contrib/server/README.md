@@ -203,8 +203,23 @@ actually run the request, so neither the SigV4 signing scope nor a forged
   and only when the function's resource-based policy grants both actions to
   `*` (as `aws lambda add-permission --principal '*'` does); otherwise it
   answers 403 Forbidden.
-- The other REST services (API Gateway, EKS, Route 53, CloudFront and the
-  rest) are checked at service level for now. A request passes only when the
+- Route 53 is checked per operation on the hosted zone, health check or
+  change ARN (`arn:aws:route53:::hostedzone/Z1`, no region or account).
+  `ChangeResourceRecordSets` sets `route53:ChangeResourceRecordSetsActions`,
+  `route53:ChangeResourceRecordSetsRecordTypes` and
+  `route53:ChangeResourceRecordSetsNormalizedRecordNames` (lower case, no
+  trailing dot, other characters as `\ooo` octal escapes, so `*` is `\052`).
+  The VPC operations set `route53:VPCs` (`VPCId=<id>,VPCRegion=<region>`), and
+  creating a private zone or associating a VPC also needs `ec2:DescribeVpcs`.
+- CloudFront is checked per operation on the distribution ARN
+  (`arn:aws:cloudfront::<account>:distribution/<id>`); invalidations are
+  checked on their distribution. `CreateDistribution` and `ListDistributions`
+  take no resource. `CreateDistributionWithTags` also needs
+  `cloudfront:TagResource`, checked on `distribution/*` since the id is not
+  known yet. The `aws:RequestTag`, `aws:TagKeys` and `aws:ResourceTag` keys are
+  set.
+- The other REST services (API Gateway, EKS and the rest) are checked at
+  service level for now. A request passes only when the
   caller's policies allow every action of that service on every resource, such
   as `eks:*` on `*` or `AdministratorAccess`. **A fine-grained or
   resource-scoped policy on one of these services is denied until that service

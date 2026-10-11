@@ -447,8 +447,10 @@ type Drivers struct {
 	// operation on function, version, alias, layer and event source mapping
 	// ARNs; Invoke and function URL calls also honor the function's
 	// resource-based policy, and a function URL with AuthType NONE is public
-	// only when that policy grants public access. The other REST
-	// services are checked at service level for now: only a grant covering
+	// only when that policy grants public access. Route 53 is checked per
+	// operation on hosted zone, health check and change ARNs, with the record
+	// set and VPC condition keys; CloudFront per operation on distribution
+	// ARNs. The other REST services are checked at service level for now: only a grant covering
 	// every action of the service (such as s3:* or AdministratorAccess) lets a
 	// request through, so a fine-grained or resource-scoped REST policy fails
 	// closed until that service gets per-operation checks. The account root and
