@@ -49,6 +49,7 @@ func TestResourceGroupPutValidation(t *testing.T) {
 		{"trailing period", "rg.", `{"location":"eastus"}`, 400, "InvalidResourceGroupName"},
 		{"bad char", "rg%20x", `{"location":"eastus"}`, 400, "InvalidResourceGroupName"},
 		{"spaced location", "rg2", `{"location":"West US 2"}`, 201, ""},
+		{"unicode letters", "gruppe-%C3%BC", `{"location":"eastus"}`, 201, ""},
 		{"unknown location", "rg3", `{"location":"mars"}`, 400, "LocationNotAvailableForResourceGroup"},
 	}
 
@@ -129,5 +130,14 @@ func TestResourceGroupListTopAndFilter(t *testing.T) {
 
 	if n, _ := count("&$filter=tagName%20eq%20'nope'"); n != 0 {
 		t.Fatalf("no match: %d", n)
+	}
+}
+
+func TestResourceGroupLocationIsCanonical(t *testing.T) {
+	h := newRGHandler()
+
+	status, out := rgDo(t, h, http.MethodPut, rgBase+"rg1?api-version=2021-04-01", `{"location":"West US 2"}`)
+	if status != http.StatusCreated || out["location"] != "westus2" {
+		t.Fatalf("got %d location %v, want 201 westus2", status, out["location"])
 	}
 }

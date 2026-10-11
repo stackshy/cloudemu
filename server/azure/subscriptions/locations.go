@@ -108,6 +108,46 @@ var regionTable = []region{
 	{"austriaeast", "Austria East", "(Europe) Austria East", "Europe", "AT", "48.2082", "16.3738", "Vienna", ""},
 	{"denmarkeast", "Denmark East", "(Europe) Denmark East", "Europe", "DK", "55.6761", "12.5683", "Copenhagen", ""},
 	{"taiwannorth", "Taiwan North", "(Asia Pacific) Taiwan North", "Asia Pacific", "TW", "25.033", "121.5654", "Taipei", ""},
+	{
+		"francesouth", "France South", "(Europe) France South",
+		"Europe", "EU", "43.8345", "2.1972", "Marseille", "francecentral",
+	},
+	{
+		"germanynorth", "Germany North", "(Europe) Germany North",
+		"Europe", "EU", "53.073635", "8.806422", "Berlin", "germanywestcentral",
+	},
+	{
+		"swedensouth", "Sweden South", "(Europe) Sweden South",
+		"Europe", "EU", "55.6059", "13.0007", "Malmo", "swedencentral",
+	},
+	{
+		"norwaywest", "Norway West", "(Europe) Norway West",
+		"Europe", "EU", "58.969975", "5.733107", "Norway", "norwayeast",
+	},
+	{
+		"switzerlandwest", "Switzerland West", "(Europe) Switzerland West",
+		"Europe", "EU", "46.204391", "6.143158", "Geneva", "switzerlandnorth",
+	},
+	{
+		"uaecentral", "UAE Central", "(Middle East) UAE Central",
+		"Middle East", "ME", "24.466667", "54.366669", "Abu Dhabi", "uaenorth",
+	},
+	{
+		"southafricawest", "South Africa West", "(Africa) South Africa West",
+		"South Africa", "ZA", "-34.075691", "18.843266", "Cape Town", "southafricanorth",
+	},
+	{
+		"australiacentral2", "Australia Central 2", "(Asia Pacific) Australia Central 2",
+		"Asia Pacific", "APAC", "-35.3075", "149.1244", "Canberra", "australiacentral",
+	},
+	{
+		"eastus2euap", "East US 2 EUAP", "(US) East US 2 EUAP",
+		"United States", "US", "36.6681", "-78.3889", "", "centraluseuap",
+	},
+	{
+		"centraluseuap", "Central US EUAP", "(US) Central US EUAP",
+		"United States", "US", "41.5908", "-93.6208", "", "eastus2euap",
+	},
 }
 
 // locations renders the geo-location list for subscription id in the ARM shape
@@ -133,10 +173,7 @@ func locations(subscriptionID string) []map[string]any {
 				"longitude":        reg.longitude,
 				"latitude":         reg.latitude,
 				"physicalLocation": reg.physicalLocation,
-				"pairedRegion": []map[string]any{{
-					"name": reg.pairedRegion,
-					"id":   base + reg.pairedRegion,
-				}},
+				"pairedRegion":     pairedRegions(base, reg.pairedRegion),
 			},
 		})
 	}
@@ -146,6 +183,30 @@ func locations(subscriptionID string) []map[string]any {
 
 // IsRegion reports whether name is a known Azure region. The comparison is
 // case-insensitive and ignores spaces, so "West US 2" matches "westus2".
+// pairedRegions is a region's pair list; regions without a pair report an
+// empty list, as ARM does.
+func pairedRegions(base, paired string) []map[string]any {
+	if paired == "" {
+		return []map[string]any{}
+	}
+
+	return []map[string]any{{"name": paired, "id": base + paired}}
+}
+
+// CanonicalLocation returns the region's programmatic name ("West US 2" ->
+// "westus2"), or name unchanged when it is not a known region.
+func CanonicalLocation(name string) string {
+	want := NormalizeLocation(name)
+
+	for i := range regionTable {
+		if regionTable[i].name == want {
+			return want
+		}
+	}
+
+	return name
+}
+
 func IsRegion(name string) bool {
 	want := NormalizeLocation(name)
 

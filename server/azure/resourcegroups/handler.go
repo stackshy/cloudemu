@@ -298,7 +298,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, sub, name string) 
 		"id":         azureGroupID(sub, name),
 		"name":       name,
 		"type":       resourceGroupType,
-		"location":   loc,
+		"location":   subscriptions.CanonicalLocation(loc),
 		"properties": map[string]any{"provisioningState": "Succeeded"},
 	}
 
@@ -618,7 +618,7 @@ func (h *Handler) putGroup(sub, name string, group map[string]any) (existed bool
 }
 
 var (
-	groupNameRe = regexp.MustCompile(`^[\w.()-]{1,90}$`)
+	groupNameRe = regexp.MustCompile(`^[\p{L}\p{N}_.()-]{1,90}$`)
 	tagFilterRe = regexp.MustCompile(`^\s*tagName\s+eq\s+'([^']*)'(?:\s+and\s+tagValue\s+eq\s+'([^']*)')?\s*$`)
 )
 
