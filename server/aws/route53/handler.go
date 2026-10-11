@@ -90,122 +90,99 @@ func (*Handler) Matches(r *http.Request) bool {
 		r.URL.Path == testDNSAnswerPath
 }
 
-// ServeHTTP routes on the path tail and method.
+// ServeHTTP runs the operation classify names, or writes the error of a
+// request it cannot name.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.HasPrefix(r.URL.Path, tagsPrefix) {
-		h.serveTags(w, r, strings.TrimPrefix(r.URL.Path, tagsPrefix))
-		return
-	}
+	op, a := classify(r)
 
-	if r.URL.Path == healthCheckPrefix || strings.HasPrefix(r.URL.Path, healthCheckPrefix+"/") {
-		h.serveHealthCheck(w, r)
-		return
-	}
-
-	if strings.HasPrefix(r.URL.Path, changePrefix) {
-		h.getChange(w, r, strings.TrimPrefix(r.URL.Path, changePrefix))
-		return
-	}
-
-	switch r.URL.Path {
-	case hostedZoneCountPath:
-		h.getHostedZoneCount(w, r)
-		return
-	case hostedZonesByNamePath:
-		h.listHostedZonesByName(w, r)
-		return
-	case hostedZonesByVPCPath:
-		h.listHostedZonesByVPC(w, r)
-		return
-	case testDNSAnswerPath:
-		h.testDNSAnswer(w, r)
-		return
-	}
-
-	h.serveHostedZonePath(w, r)
-}
-
-// serveHostedZonePath dispatches the /hostedzone[/{id}[/sub]] path space:
-// the collection, a single zone, and the rrset / associatevpc / disassociatevpc
-// sub-resources.
-func (h *Handler) serveHostedZonePath(w http.ResponseWriter, r *http.Request) {
-	tail := strings.Trim(strings.TrimPrefix(r.URL.Path, pathPrefix), "/")
-	if tail == "" {
-		h.serveZoneCollection(w, r)
-		return
-	}
-
-	// tail is "{id}" or "{id}/{sub}".
-	id, sub, _ := strings.Cut(tail, "/")
-
-	switch sub {
-	case "":
-		h.serveZone(w, r, id)
-	case rrsetSeg:
-		h.serveRRSet(w, r, id)
-	case associateVPCSeg:
-		h.serveAssociateVPC(w, r, id)
-	case disassociateVPCSeg:
-		h.serveDisassociateVPC(w, r, id)
-	default:
-		writeError(w, http.StatusNotFound, "NoSuchHostedZone", "unrecognized Route 53 path")
+	if !h.serveZoneOp(w, r, op, &a) && !h.serveOtherOp(w, r, op, &a) {
+		h.writeUnknown(w, &a)
 	}
 }
 
-// serveAssociateVPC dispatches POST /hostedzone/{id}/associatevpc.
-func (h *Handler) serveAssociateVPC(w http.ResponseWriter, r *http.Request, id string) {
-	if r.Method != http.MethodPost {
-		writeMethodNotAllowed(w)
-		return
-	}
-
-	h.associateVPCWithHostedZone(w, r, id)
-}
-
-// serveDisassociateVPC dispatches POST /hostedzone/{id}/disassociatevpc.
-func (h *Handler) serveDisassociateVPC(w http.ResponseWriter, r *http.Request, id string) {
-	if r.Method != http.MethodPost {
-		writeMethodNotAllowed(w)
-		return
-	}
-
-	h.disassociateVPCFromHostedZone(w, r, id)
-}
-
-// serveZoneCollection dispatches /hostedzone collection requests.
-func (h *Handler) serveZoneCollection(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
+// serveZoneOp runs op when it is a hosted zone operation.
+func (h *Handler) serveZoneOp(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) bool {
+	switch op {
+	case opCreateHostedZone:
 		h.createHostedZone(w, r)
-	case http.MethodGet:
+	case opListHostedZones:
 		h.listHostedZones(w, r)
+	case opGetHostedZone:
+		h.getHostedZone(w, r, a.id)
+	case opDeleteHostedZone:
+		h.deleteHostedZone(w, r, a.id)
+	case opUpdateHostedZoneComment:
+		h.updateHostedZoneComment(w, r, a.id)
+	case opChangeResourceRecordSets:
+		h.changeResourceRecordSets(w, r, a.id)
+	case opListResourceRecordSets:
+		h.listResourceRecordSets(w, r, a.id)
+	case opAssociateVPCWithHostedZone:
+		h.associateVPCWithHostedZone(w, r, a.id)
+	case opDisassociateVPCFromHostedZone:
+		h.disassociateVPCFromHostedZone(w, r, a.id)
 	default:
-		writeMethodNotAllowed(w)
+		return false
+	}
+
+	return true
+}
+
+// serveOtherOp runs op when it is a health check, change, tagging or
+// account-level operation.
+func (h *Handler) serveOtherOp(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) bool {
+	switch op {
+	case opGetChange:
+		h.getChange(w, a.id)
+	case opGetHostedZoneCount, opListHostedZonesByName, opListHostedZonesByVPC, opTestDNSAnswer:
+		h.serveAccountOp(w, r, op)
+	case opCreateHealthCheck:
+		h.createHealthCheck(w, r)
+	case opListHealthChecks:
+		h.listHealthChecks(w, r)
+	case opGetHealthCheck:
+		h.getHealthCheck(w, r, a.id)
+	case opUpdateHealthCheck:
+		h.updateHealthCheck(w, r, a.id)
+	case opDeleteHealthCheck:
+		h.deleteHealthCheck(w, r, a.id)
+	case opChangeTagsForResource, opListTagsForResource:
+		h.serveTags(w, r, op, a)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// serveAccountOp runs the read-only operations that act on no single
+// resource.
+func (h *Handler) serveAccountOp(w http.ResponseWriter, r *http.Request, op opID) {
+	switch op {
+	case opGetHostedZoneCount:
+		h.getHostedZoneCount(w, r)
+	case opListHostedZonesByName:
+		h.listHostedZonesByName(w, r)
+	case opListHostedZonesByVPC:
+		h.listHostedZonesByVPC(w, r)
+	default:
+		h.testDNSAnswer(w, r)
 	}
 }
 
-// serveZone dispatches /hostedzone/{id} resource requests.
-func (h *Handler) serveZone(w http.ResponseWriter, r *http.Request, id string) {
-	switch r.Method {
-	case http.MethodGet:
-		h.getHostedZone(w, r, id)
-	case http.MethodDelete:
-		h.deleteHostedZone(w, r, id)
-	case http.MethodPost:
-		h.updateHostedZoneComment(w, r, id)
-	default:
-		writeMethodNotAllowed(w)
-	}
-}
-
-// serveRRSet dispatches /hostedzone/{id}/rrset requests.
-func (h *Handler) serveRRSet(w http.ResponseWriter, r *http.Request, id string) {
-	switch r.Method {
-	case http.MethodPost:
-		h.changeResourceRecordSets(w, r, id)
-	case http.MethodGet:
-		h.listResourceRecordSets(w, r, id)
-	default:
+// writeUnknown writes the error of a request classify cannot name. None of
+// these branches reads or changes state.
+func (h *Handler) writeUnknown(w http.ResponseWriter, a *opArgs) {
+	switch a.fail {
+	case failPath:
+		writeError(w, http.StatusNotFound, "NoSuchHostedZone", "unrecognized Route 53 path")
+	case failTags:
+		h.writeTagsFailure(w, a)
+	case failTagType:
+		writeError(w, http.StatusBadRequest, "InvalidInput",
+			"Value '"+a.tagType+"' at 'resourceType' failed to satisfy constraint: "+
+				"Member must satisfy enum value set: [healthcheck, hostedzone]")
+	case failMethod:
 		writeMethodNotAllowed(w)
 	}
 }
@@ -216,7 +193,7 @@ func writeMethodNotAllowed(w http.ResponseWriter) {
 
 // IAMService returns the IAM service prefix of the operations this handler
 // serves.
-func (*Handler) IAMService() string { return "route53" }
+func (*Handler) IAMService() string { return serviceName }
 
 // WriteAccessDenied writes the 403 this service returns when IAM denies a
 // call, in its own XML error shape.

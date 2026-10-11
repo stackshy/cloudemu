@@ -170,6 +170,71 @@
     "body": "{\"Functions\":[]}\n"
   },
   {
+    "name": "route53 ListHostedZones",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cListHostedZonesResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"\u003e\u003cHostedZones\u003e\u003c/HostedZones\u003e\u003cIsTruncated\u003efalse\u003c/IsTruncated\u003e\u003cMaxItems\u003e100\u003c/MaxItems\u003e\u003c/ListHostedZonesResponse\u003e"
+  },
+  {
+    "name": "route53 GetHostedZone missing",
+    "status": 404,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cErrorResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"\u003e\u003cError\u003e\u003cCode\u003eNoSuchHostedZone\u003c/Code\u003e\u003cMessage\u003ezone \u0026#34;ZNONE\u0026#34; not found\u003c/Message\u003e\u003c/Error\u003e\u003c/ErrorResponse\u003e"
+  },
+  {
+    "name": "route53 unknown sub-resource",
+    "status": 404,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cErrorResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"\u003e\u003cError\u003e\u003cCode\u003eNoSuchHostedZone\u003c/Code\u003e\u003cMessage\u003eunrecognized Route 53 path\u003c/Message\u003e\u003c/Error\u003e\u003c/ErrorResponse\u003e"
+  },
+  {
+    "name": "route53 wrong method",
+    "status": 405,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cErrorResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"\u003e\u003cError\u003e\u003cCode\u003eInvalidInput\u003c/Code\u003e\u003cMessage\u003emethod not allowed\u003c/Message\u003e\u003c/Error\u003e\u003c/ErrorResponse\u003e"
+  },
+  {
+    "name": "route53 bad rrset body",
+    "status": 400,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cErrorResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"\u003e\u003cError\u003e\u003cCode\u003eInvalidInput\u003c/Code\u003e\u003cMessage\u003einvalid XML: XML syntax error on line 1: unexpected EOF\u003c/Message\u003e\u003c/Error\u003e\u003c/ErrorResponse\u003e"
+  },
+  {
+    "name": "route53 GetHealthCheck missing",
+    "status": 404,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cErrorResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"\u003e\u003cError\u003e\u003cCode\u003eNoSuchHealthCheck\u003c/Code\u003e\u003cMessage\u003ehealth check \u0026#34;none\u0026#34; not found\u003c/Message\u003e\u003c/Error\u003e\u003c/ErrorResponse\u003e"
+  },
+  {
+    "name": "route53 tags without id",
+    "status": 400,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cErrorResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"\u003e\u003cError\u003e\u003cCode\u003eInvalidInput\u003c/Code\u003e\u003cMessage\u003eresource id is required\u003c/Message\u003e\u003c/Error\u003e\u003c/ErrorResponse\u003e"
+  },
+  {
+    "name": "route53 GetHostedZoneCount",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cGetHostedZoneCountResponse xmlns=\"https://route53.amazonaws.com/doc/2013-04-01/\"\u003e\u003cHostedZoneCount\u003e0\u003c/HostedZoneCount\u003e\u003c/GetHostedZoneCountResponse\u003e"
+  },
+  {
+    "name": "cloudfront ListDistributions",
+    "status": 200,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cDistributionList xmlns=\"http://cloudfront.amazonaws.com/doc/2020-05-31/\"\u003e\u003cMarker\u003e\u003c/Marker\u003e\u003cMaxItems\u003e100\u003c/MaxItems\u003e\u003cIsTruncated\u003efalse\u003c/IsTruncated\u003e\u003cQuantity\u003e0\u003c/Quantity\u003e\u003cItems\u003e\u003c/Items\u003e\u003c/DistributionList\u003e"
+  },
+  {
+    "name": "cloudfront GetDistribution missing",
+    "status": 404,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cErrorResponse xmlns=\"http://cloudfront.amazonaws.com/doc/2020-05-31/\"\u003e\u003cError\u003e\u003cType\u003eSender\u003c/Type\u003e\u003cCode\u003eNoSuchDistribution\u003c/Code\u003e\u003cMessage\u003ethe specified distribution does not exist\u003c/Message\u003e\u003c/Error\u003e\u003c/ErrorResponse\u003e"
+  },
+  {
+    "name": "cloudfront unknown path",
+    "status": 404,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cErrorResponse xmlns=\"http://cloudfront.amazonaws.com/doc/2020-05-31/\"\u003e\u003cError\u003e\u003cType\u003eSender\u003c/Type\u003e\u003cCode\u003eNoSuchResource\u003c/Code\u003e\u003cMessage\u003ethe specified resource does not exist\u003c/Message\u003e\u003c/Error\u003e\u003c/ErrorResponse\u003e"
+  },
+  {
+    "name": "cloudfront wrong method",
+    "status": 405,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cErrorResponse xmlns=\"http://cloudfront.amazonaws.com/doc/2020-05-31/\"\u003e\u003cError\u003e\u003cType\u003eSender\u003c/Type\u003e\u003cCode\u003eMethodNotAllowed\u003c/Code\u003e\u003cMessage\u003emethod not allowed\u003c/Message\u003e\u003c/Error\u003e\u003c/ErrorResponse\u003e"
+  },
+  {
+    "name": "cloudfront bad tagging op",
+    "status": 400,
+    "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cErrorResponse xmlns=\"http://cloudfront.amazonaws.com/doc/2020-05-31/\"\u003e\u003cError\u003e\u003cType\u003eSender\u003c/Type\u003e\u003cCode\u003eInvalidArgument\u003c/Code\u003e\u003cMessage\u003eunsupported tagging operation\u003c/Message\u003e\u003c/Error\u003e\u003c/ErrorResponse\u003e"
+  },
+  {
     "name": "unknown target",
     "status": 501,
     "body": "no handler registered for this request\n"

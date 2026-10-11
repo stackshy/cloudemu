@@ -244,6 +244,7 @@ func registerEnforceAuthFlag(fs *flag.FlagSet, c *CommonConfig) {
 			"the caller's IAM policies: per operation for query and JSON-RPC services, S3 (on bucket and object ARNs) and Lambda "+
 			"(on function, version, alias, layer and event source mapping ARNs, with the function's resource-based policy for "+
 			"Invoke and function URLs; a function URL with AuthType NONE is public only when that policy grants public access), "+
+			"Route 53 (on hosted zone, health check and change ARNs) and CloudFront (on distribution ARNs), "+
 			"and at service level for the other REST services (only a service-wide grant such as eks:* passes, so fine-grained "+
 			"policies on them are denied until per-operation checks land). Root and users with no policies are unrestricted. "+
 			"AssumeRole is decided by the role's trust policy for the signed caller, and signed AssumeRoleWithWebIdentity/SAML "+
