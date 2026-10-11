@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/stackshy/cloudemu/v2/server/wire"
+	cfdriver "github.com/stackshy/cloudemu/v2/services/cloudfront/driver"
 )
 
 // serveTagging runs a tagging operation on the distribution its Resource ARN
@@ -14,7 +15,7 @@ import (
 // account's distribution of the same id.
 func (h *Handler) serveTagging(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) {
 	if a.id == "" || (h.accountID != "" && a.resourceAccount != h.accountID) {
-		writeError(w, http.StatusNotFound, "NoSuchResource", "The specified resource does not exist.")
+		writeErr(w, cfdriver.ErrNoSuchResource)
 		return
 	}
 
