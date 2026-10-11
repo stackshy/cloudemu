@@ -1219,7 +1219,7 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 	// otherwise claim the same path. EKS's Matches predicate is rooted
 	// at /clusters specifically so it doesn't shadow other REST URLs.
 	if d.EKS != nil {
-		eksHandler := eks.New(d.EKS)
+		eksHandler := eks.New(d.EKS, eks.WithScope(d.AccountID, d.Region))
 		eksHandler.SetIdentities(identities)
 		srv.Register(eksHandler)
 	}

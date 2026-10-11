@@ -72,11 +72,28 @@ type Handler struct {
 	// identities, when set, resolves the cluster creator the way STS
 	// GetCallerIdentity reports the caller.
 	identities *awsidentity.Resolver
+	// accountID and region are the account and region this handler serves.
+	accountID, region string
+}
+
+// Option configures a Handler.
+type Option func(*Handler)
+
+// WithScope sets the account and region this handler serves. A tagging ARN
+// of another account or region then names no resource here. Empty values skip
+// that check.
+func WithScope(accountID, region string) Option {
+	return func(h *Handler) { h.accountID, h.region = accountID, region }
 }
 
 // New returns an EKS handler backed by the supplied driver.
-func New(eks eksdriver.EKS) *Handler {
-	return &Handler{eks: eks}
+func New(eks eksdriver.EKS, opts ...Option) *Handler {
+	h := &Handler{eks: eks}
+	for _, o := range opts {
+		o(h)
+	}
+
+	return h
 }
 
 // SetIdentities wires the resolver CreateCluster uses to find the creator.
@@ -230,7 +247,7 @@ func (h *Handler) serveAccountOp(w http.ResponseWriter, r *http.Request, op opID
 	case opDescribeAddonConfiguration:
 		h.describeAddonConfiguration(w, r)
 	case opTagResource, opUntagResource, opListTagsForResource:
-		h.serveTags(w, r, op, a.tagARN)
+		h.serveTags(w, r, op, a)
 	default:
 		return false
 	}
@@ -309,4 +326,4 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 // IAMService returns the IAM service prefix of the operations this handler
 // serves.
-func (*Handler) IAMService() string { return "eks" }
+func (*Handler) IAMService() string { return serviceName }

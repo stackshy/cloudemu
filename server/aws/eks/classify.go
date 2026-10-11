@@ -84,8 +84,9 @@ type opArgs struct {
 	child string
 	// policyARN is the access policy DisassociateAccessPolicy removes.
 	policyARN string
-	// tagARN is the resource ARN of a tagging request.
+	// tagARN is the resource ARN of a tagging request, and tag what it names.
 	tagARN string
+	tag    tagRef
 	// fail is the error branch of an opUnknown request, and failMsg its
 	// message.
 	fail    failKind
@@ -120,7 +121,7 @@ func classify(r *http.Request) (opID, opArgs) {
 	}
 
 	if arn, ok := strings.CutPrefix(r.URL.Path, tagsPrefix); ok {
-		a := opArgs{tagARN: arn}
+		a := opArgs{tagARN: arn, tag: parseTagARN(arn)}
 
 		op, a := pick(r.Method, map[string]opID{
 			http.MethodPost: opTagResource, http.MethodDelete: opUntagResource, http.MethodGet: opListTagsForResource,
@@ -241,4 +242,84 @@ func classifyChildAction(method, cluster, kind, child, action string) (opID, opA
 	default:
 		return unknown(&a, failNotFound, "unknown child action: "+kind+"/"+action)
 	}
+}
+
+// serviceName is the IAM service prefix of EKS actions and the service field
+// of EKS ARNs.
+const serviceName = "eks"
+
+// The resource types of EKS ARNs (Service Authorization Reference, Amazon
+// EKS, "Resource types").
+const (
+	arnKindCluster     = "cluster"
+	arnKindNodegroup   = "nodegroup"
+	arnKindFargate     = "fargateprofile"
+	arnKindAddon       = "addon"
+	arnKindAccessEntry = "access-entry"
+)
+
+// tagRef is what a tagging ARN names: an EKS ARN
+// arn:<partition>:eks:<region>:<account>:<kind>/<cluster>[/<name>...]. kind is
+// empty when the ARN is not one.
+type tagRef struct {
+	region, account, kind string
+	// cluster and name are the cluster and child resource names; name is
+	// empty for a cluster or an access entry.
+	cluster, name string
+}
+
+// parseTagARN reads a tagging ARN the way the provider resolves it: a
+// cluster by cluster/<name>, a nodegroup, Fargate profile or add-on by
+// <kind>/<cluster>/<name> (a trailing id is ignored), and an access entry by
+// its whole ARN.
+func parseTagARN(arn string) tagRef {
+	const fields = 6 // arn, partition, service, region, account, resource
+
+	parts := strings.SplitN(arn, ":", fields)
+	if len(parts) != fields || parts[0] != "arn" || parts[2] != serviceName || parts[3] == "" || parts[4] == "" {
+		return tagRef{}
+	}
+
+	ref, ok := parseResourcePath(strings.Split(parts[5], "/"))
+	if !ok {
+		return tagRef{}
+	}
+
+	ref.region, ref.account = parts[3], parts[4]
+
+	return ref
+}
+
+// parseResourcePath reads the <kind>/<cluster>[/<name>...] part of an EKS ARN.
+func parseResourcePath(segs []string) (tagRef, bool) {
+	const (
+		clusterSegs = 2
+		childSegs   = 3
+	)
+
+	if len(segs) < clusterSegs || segs[1] == "" {
+		return tagRef{}, false
+	}
+
+	switch kind := segs[0]; kind {
+	case arnKindCluster:
+		return tagRef{kind: kind, cluster: segs[1]}, len(segs) == clusterSegs
+	case arnKindNodegroup, arnKindFargate, arnKindAddon:
+		ok := len(segs) >= childSegs && segs[2] != ""
+		if !ok {
+			return tagRef{}, false
+		}
+
+		return tagRef{kind: kind, cluster: segs[1], name: segs[2]}, true
+	case arnKindAccessEntry:
+		return tagRef{kind: kind, cluster: segs[1]}, len(segs) > clusterSegs
+	default:
+		return tagRef{}, false
+	}
+}
+
+// foreign reports whether the tagging ARN names nothing this handler serves:
+// not an EKS resource ARN, or one of another account or region.
+func (t *tagRef) foreign(accountID, region string) bool {
+	return t.kind == "" || (accountID != "" && t.account != accountID) || (region != "" && t.region != region)
 }

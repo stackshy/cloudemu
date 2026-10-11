@@ -89,3 +89,31 @@ func TestClassify(t *testing.T) {
 		}
 	}
 }
+
+func TestParseTagARN(t *testing.T) {
+	const pre = "arn:aws:eks:us-east-1:123456789012:"
+
+	cases := []struct {
+		arn  string
+		want tagRef
+	}{
+		{pre + "cluster/c", tagRef{region: "us-east-1", account: "123456789012", kind: "cluster", cluster: "c"}},
+		{pre + "nodegroup/c/ng", tagRef{region: "us-east-1", account: "123456789012", kind: "nodegroup", cluster: "c", name: "ng"}},
+		{pre + "nodegroup/c/ng/uuid", tagRef{region: "us-east-1", account: "123456789012", kind: "nodegroup", cluster: "c", name: "ng"}},
+		{pre + "fargateprofile/c/fp", tagRef{region: "us-east-1", account: "123456789012", kind: "fargateprofile", cluster: "c", name: "fp"}},
+		{pre + "addon/c/vpc-cni/id", tagRef{region: "us-east-1", account: "123456789012", kind: "addon", cluster: "c", name: "vpc-cni"}},
+		{pre + "access-entry/c/role/123456789012/r/id", tagRef{region: "us-east-1", account: "123456789012", kind: "access-entry", cluster: "c"}},
+		{pre + "cluster/c/extra", tagRef{}},
+		{pre + "nodegroup/c", tagRef{}},
+		{pre + "podidentityassociation/c/a", tagRef{}},
+		{"arn:aws:eks::123456789012:cluster/c", tagRef{}},
+		{"arn:aws:s3:::b", tagRef{}},
+		{"c", tagRef{}},
+	}
+
+	for _, tc := range cases {
+		if got := parseTagARN(tc.arn); got != tc.want {
+			t.Errorf("%q: got %+v, want %+v", tc.arn, got, tc.want)
+		}
+	}
+}
