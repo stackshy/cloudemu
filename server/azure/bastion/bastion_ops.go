@@ -2,10 +2,14 @@ package bastion
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	bastiondriver "github.com/stackshy/cloudemu/v2/services/bastion/driver"
 )
+
+// bastionSubnetName is the only subnet name ARM accepts for a Bastion host.
+const bastionSubnetName = "AzureBastionSubnet"
 
 // createOrUpdateBastionHost handles PUT .../bastionHosts/{name}. The whole host
 // arrives in one body and fully REPLACES the stored state, matching ARM's
@@ -19,6 +23,16 @@ func (h *Handler) createOrUpdateBastionHost(w http.ResponseWriter, r *http.Reque
 	}
 
 	host := buildBastionHost(&body)
+
+	for i := range host.IPConfigurations {
+		subnet := host.IPConfigurations[i].SubnetID
+		if subnet != "" && subnet[strings.LastIndex(subnet, "/")+1:] != bastionSubnetName {
+			azurearm.WriteError(w, http.StatusBadRequest, "InvalidParameter",
+				"Subnet "+subnet+" used by Bastion host must be named "+bastionSubnetName+".")
+
+			return
+		}
+	}
 
 	stored, created, err := h.hosts.CreateOrUpdateBastionHost(r.Context(), rp.ResourceGroup, rp.ResourceName, host)
 	if err != nil {

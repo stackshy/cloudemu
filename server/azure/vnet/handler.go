@@ -1708,17 +1708,19 @@ func (h *Handler) deletePublicIP(w http.ResponseWriter, r *http.Request, rp azur
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typePublicIP, rp.ResourceName)
 
 	if h.publicIPConfigurationRef(r.Context(), rp.Subscription, id) != nil {
-		azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeDeleted",
-			"public IP "+rp.ResourceName+" is still referenced by a network interface ipConfiguration")
+		azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressInUse",
+			"Public IP address "+id+" is in use by a network interface ipConfiguration and cannot be deleted.")
 
 		return
 	}
 
 	if err := h.net.ReleaseAddress(r.Context(), info.AllocationID); err != nil {
 		// A public IP still bound to a NIC/NAT gateway: ARM answers 400 with
-		// this specific code, not the generic 409 WriteCErr would emit.
+		// this specific code, naming the ARM resource id (never the internal
+		// allocation id), not the generic 409 WriteCErr would emit.
 		if cerrors.IsFailedPrecondition(err) {
-			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeDeleted", cerrors.Message(err))
+			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressInUse",
+				"Public IP address "+id+" is still in use and cannot be deleted.")
 			return
 		}
 
