@@ -4,7 +4,6 @@ import (
 	"encoding/xml"
 	"net"
 	"net/http"
-	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
@@ -112,43 +111,6 @@ type updateHealthCheckResponse struct {
 type deleteHealthCheckResponse struct {
 	XMLName xml.Name `xml:"DeleteHealthCheckResponse"`
 	Xmlns   string   `xml:"xmlns,attr"`
-}
-
-// serveHealthCheck dispatches /2013-04-01/healthcheck[/{id}] requests.
-func (h *Handler) serveHealthCheck(w http.ResponseWriter, r *http.Request) {
-	id := strings.Trim(strings.TrimPrefix(r.URL.Path, healthCheckPrefix), "/")
-	if id == "" {
-		h.serveHealthCheckCollection(w, r)
-		return
-	}
-
-	h.serveHealthCheckResource(w, r, id)
-}
-
-// serveHealthCheckCollection dispatches /healthcheck collection requests.
-func (h *Handler) serveHealthCheckCollection(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		h.createHealthCheck(w, r)
-	case http.MethodGet:
-		h.listHealthChecks(w, r)
-	default:
-		writeMethodNotAllowed(w)
-	}
-}
-
-// serveHealthCheckResource dispatches /healthcheck/{id} resource requests.
-func (h *Handler) serveHealthCheckResource(w http.ResponseWriter, r *http.Request, id string) {
-	switch r.Method {
-	case http.MethodGet:
-		h.getHealthCheck(w, r, id)
-	case http.MethodPost:
-		h.updateHealthCheck(w, r, id)
-	case http.MethodDelete:
-		h.deleteHealthCheck(w, r, id)
-	default:
-		writeMethodNotAllowed(w)
-	}
 }
 
 func (h *Handler) createHealthCheck(w http.ResponseWriter, r *http.Request) {

@@ -67,76 +67,64 @@ func (*Handler) Matches(r *http.Request) bool {
 		strings.HasPrefix(p, taggingPrefix+"/")
 }
 
-// ServeHTTP routes on the path tail and method.
+// ServeHTTP runs the operation classify names, or writes the error of a
+// request it cannot name.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == taggingPrefix || strings.HasPrefix(r.URL.Path, taggingPrefix+"/") {
-		h.serveTagging(w, r)
-		return
-	}
+	op, a := classify(r)
 
-	tail := strings.Trim(strings.TrimPrefix(r.URL.Path, distPrefix), "/")
-	if tail == "" {
-		h.serveCollection(w, r)
-		return
-	}
-
-	segs := strings.Split(tail, "/")
-	h.serveDistribution(w, r, segs)
-}
-
-// serveCollection handles /2020-05-31/distribution (create + list).
-func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		if r.URL.Query().Has("WithTags") {
-			h.createDistributionWithTags(w, r)
-			return
-		}
-
+	switch op {
+	case opCreateDistribution:
 		h.createDistribution(w, r)
-	case http.MethodGet:
+	case opCreateDistributionWithTags:
+		h.createDistributionWithTags(w, r)
+	case opListDistributions:
 		h.listDistributions(w, r)
+	case opGetDistribution:
+		h.getDistribution(w, r, a.id)
+	case opDeleteDistribution:
+		h.deleteDistribution(w, r, a.id)
+	case opGetDistributionConfig:
+		h.getDistributionConfig(w, r, a.id)
+	case opUpdateDistribution:
+		h.updateDistribution(w, r, a.id)
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		if !h.serveSubOp(w, r, op, &a) {
+			writeUnknown(w, &a)
+		}
 	}
 }
 
-// serveDistribution handles /2020-05-31/distribution/{Id}[/config|/invalidation[/{InvId}]].
-func (h *Handler) serveDistribution(w http.ResponseWriter, r *http.Request, segs []string) {
-	id := segs[0]
-
-	switch {
-	case len(segs) == 1:
-		h.serveDistributionRoot(w, r, id)
-	case len(segs) == 2 && segs[1] == configSeg:
-		h.serveDistributionConfig(w, r, id)
-	case len(segs) == 2 && segs[1] == invalidationSeg:
-		h.serveInvalidationCollection(w, r, id)
-	case len(segs) == 3 && segs[1] == invalidationSeg:
-		h.serveInvalidationItem(w, r, id, segs[2])
+// serveSubOp runs op when it is an invalidation or tagging operation.
+func (h *Handler) serveSubOp(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) bool {
+	switch op {
+	case opCreateInvalidation:
+		h.createInvalidation(w, r, a.id)
+	case opListInvalidations:
+		h.listInvalidations(w, r, a.id)
+	case opGetInvalidation:
+		h.getInvalidation(w, r, a.id, a.invalidationID)
+	case opListTagsForResource:
+		h.listTagsForResource(w, r, a.resource)
+	case opTagResource:
+		h.tagResource(w, r, a.resource)
+	case opUntagResource:
+		h.untagResource(w, r, a.resource)
 	default:
+		return false
+	}
+
+	return true
+}
+
+// writeUnknown writes the error of a request classify cannot name. None of
+// these branches reads or changes state.
+func writeUnknown(w http.ResponseWriter, a *opArgs) {
+	switch a.fail {
+	case failPath:
 		writeError(w, http.StatusNotFound, "NoSuchResource", "the specified resource does not exist")
-	}
-}
-
-func (h *Handler) serveDistributionRoot(w http.ResponseWriter, r *http.Request, id string) {
-	switch r.Method {
-	case http.MethodGet:
-		h.getDistribution(w, r, id)
-	case http.MethodDelete:
-		h.deleteDistribution(w, r, id)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-	}
-}
-
-func (h *Handler) serveDistributionConfig(w http.ResponseWriter, r *http.Request, id string) {
-	switch r.Method {
-	case http.MethodGet:
-		h.getDistributionConfig(w, r, id)
-	case http.MethodPut:
-		h.updateDistribution(w, r, id)
-	default:
+	case failTagging:
+		writeError(w, http.StatusBadRequest, "InvalidArgument", "unsupported tagging operation")
+	case failMethod:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
 }

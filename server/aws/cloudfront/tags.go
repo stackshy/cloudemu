@@ -7,23 +7,6 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/wire"
 )
 
-// serveTagging handles /2020-05-31/tagging: ListTagsForResource (GET) and the
-// Tag/Untag operations (POST, distinguished by the Operation query parameter).
-func (h *Handler) serveTagging(w http.ResponseWriter, r *http.Request) {
-	arn := r.URL.Query().Get("Resource")
-
-	switch {
-	case r.Method == http.MethodGet:
-		h.listTagsForResource(w, r, arn)
-	case r.Method == http.MethodPost && r.URL.Query().Get("Operation") == "Tag":
-		h.tagResource(w, r, arn)
-	case r.Method == http.MethodPost && r.URL.Query().Get("Operation") == "Untag":
-		h.untagResource(w, r, arn)
-	default:
-		writeError(w, http.StatusBadRequest, "InvalidArgument", "unsupported tagging operation")
-	}
-}
-
 func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request, arn string) {
 	tags, err := h.cf.ListTagsForResource(r.Context(), arn)
 	if err != nil {
