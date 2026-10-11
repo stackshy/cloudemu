@@ -27,6 +27,10 @@ func (m *Mock) PublishVersion(_ context.Context, functionName, description strin
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
 	}
 
+	if m.engineBusy(functionName) {
+		return nil, updateInProgress(fd.info.ARN)
+	}
+
 	// AWS Lambda doesn't publish a new version if the function's configuration and
 	// code haven't changed since the last version. It returns that existing
 	// version instead. Every configuration/code update mints a fresh $LATEST
@@ -159,10 +163,7 @@ func (m *Mock) DeleteVersion(_ context.Context, name, qualifier string) error {
 	fd.versions = removeVersionEntry(fd.versions, qualifier)
 
 	// Drop the per-version resource state AWS also removes with the version.
-	delete(fd.policies, qualifier)
-	delete(fd.urlConfigs, qualifier)
-	delete(fd.eventInvokeConfigs, qualifier)
-	delete(fd.provisionedConcurrencyConfigs, qualifier)
+	dropQualifierState(&fd, qualifier)
 
 	m.funcs.Set(name, fd)
 

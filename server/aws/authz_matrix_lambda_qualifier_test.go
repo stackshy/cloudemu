@@ -166,3 +166,37 @@ func TestAuthzMatrixLambdaForeignARN(t *testing.T) {
 		t.Fatalf("CreateFunction by local ARN: %d %s, want 201 creating g", status, body)
 	}
 }
+
+// TestAuthzMatrixLambdaRecreatedAliasGrant checks a resource-policy grant on
+// an alias does not outlive the alias: after DeleteAlias and a CreateAlias of
+// the same name, the principal the old alias named can no longer invoke it.
+func TestAuthzMatrixLambdaRecreatedAliasGrant(t *testing.T) {
+	ts, cloud := matrixServer(t, nil)
+	newFunction(t, cloud, "f", nil)
+
+	boot := userWithPolicy(t, cloud, "boot", "")
+	named := userWithPolicy(t, cloud, "named", allow("dynamodb:ListTables"))
+
+	if err := cloud.Lambda.AddPermission(context.Background(), "f", "prod", sdrv.PermissionStatement{
+		StatementID: "named", Action: "lambda:InvokeFunction", Principal: "arn:aws:iam::" + acctID + ":user/named",
+	}); err != nil {
+		t.Fatalf("AddPermission: %v", err)
+	}
+
+	status, body := doSigned(t, ts, named, invokeReq("f:prod"))
+	wantNotDenied(t, status, body)
+
+	status, body = doSigned(t, ts, boot, sreq{method: http.MethodDelete, path: lambdaPath + "/f/aliases/prod", service: "lambda"})
+	if status != http.StatusNoContent {
+		t.Fatalf("DeleteAlias: %d %s, want 204", status, body)
+	}
+
+	status, body = doSigned(t, ts, boot, sreq{path: lambdaPath + "/f/aliases", ctype: "application/json",
+		body: `{"Name":"prod","FunctionVersion":"1"}`, service: "lambda"})
+	if status != http.StatusCreated {
+		t.Fatalf("CreateAlias: %d %s, want 201", status, body)
+	}
+
+	status, body = doSigned(t, ts, named, invokeReq("f:prod"))
+	wantDenied(t, status, body, "lambda:InvokeFunction on resource: "+fnARN+"f:prod")
+}

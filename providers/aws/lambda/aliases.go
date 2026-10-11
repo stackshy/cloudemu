@@ -2,6 +2,7 @@ package lambda
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -11,6 +12,9 @@ import (
 
 // CreateAlias creates a new alias pointing to a specific function version.
 func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.Alias, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
@@ -53,6 +57,9 @@ func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 
 // UpdateAlias updates an existing alias configuration.
 func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.Alias, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
@@ -109,8 +116,15 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 	return &result, nil
 }
 
-// DeleteAlias removes an alias from a function.
+// DeleteAlias removes an alias from a function together with the state scoped
+// to the alias qualifier: its resource-based policy, function URL config,
+// provisioned concurrency config and event invoke config. Real Lambda keeps
+// these as sub-resources of the alias ARN, so a later alias with the same name
+// starts with none of them instead of inheriting the old grants.
 func (m *Mock) DeleteAlias(_ context.Context, functionName, aliasName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
@@ -121,8 +135,34 @@ func (m *Mock) DeleteAlias(_ context.Context, functionName, aliasName string) er
 	}
 
 	fd.aliases.Delete(aliasName)
+	dropQualifierState(&fd, aliasName)
+	m.funcs.Set(functionName, fd)
 
 	return nil
+}
+
+// dropQualifierState removes everything keyed by a version or alias qualifier:
+// the resource-based policy, function URL config, event invoke config and
+// provisioned concurrency config. The maps are replaced rather than edited so a
+// reader holding an earlier funcData copy is unaffected. Callers hold m.mu.
+func dropQualifierState(fd *funcData, qualifier string) {
+	fd.policies = withoutKey(fd.policies, qualifier)
+	fd.urlConfigs = withoutKey(fd.urlConfigs, qualifier)
+	fd.eventInvokeConfigs = withoutKey(fd.eventInvokeConfigs, qualifier)
+	fd.provisionedConcurrencyConfigs = withoutKey(fd.provisionedConcurrencyConfigs, qualifier)
+}
+
+// withoutKey returns src unchanged when key is absent, otherwise a copy of src
+// without key.
+func withoutKey[V any](src map[string]V, key string) map[string]V {
+	if _, ok := src[key]; !ok {
+		return src
+	}
+
+	next := maps.Clone(src)
+	delete(next, key)
+
+	return next
 }
 
 // GetAlias retrieves a specific alias for a function.
