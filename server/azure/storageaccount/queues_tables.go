@@ -159,7 +159,10 @@ func (h *Handler) putARMQueue(w http.ResponseWriter, r *http.Request, rp *azurea
 			return
 		}
 
-		url, _ = h.queueURL(r.Context(), key)
+		if url, exists = h.queueURL(r.Context(), key); !exists {
+			azurearm.WriteError(w, http.StatusNotFound, "QueueNotFound", "The specified queue does not exist.")
+			return
+		}
 	}
 
 	// PATCH leaves metadata alone unless the body carries it.
