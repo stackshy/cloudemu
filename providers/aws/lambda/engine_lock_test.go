@@ -157,8 +157,12 @@ func TestEngineDeployDoesNotHoldLock(t *testing.T) {
 		t.Fatalf("UpdateFunction during a code deploy err = %v, want AlreadyExists (ResourceConflict)", err)
 	}
 
-	if err := m.DeleteFunction(ctx, "real-fn"); !errors.IsAlreadyExists(err) {
-		t.Fatalf("DeleteFunction during a code deploy err = %v, want AlreadyExists (ResourceConflict)", err)
+	if _, err := m.PublishVersion(ctx, "real-fn", ""); !errors.IsAlreadyExists(err) {
+		t.Fatalf("PublishVersion during a code deploy err = %v, want AlreadyExists (ResourceConflict)", err)
+	}
+
+	if err := m.TagFunction(ctx, "real-fn", map[string]string{"k": "v"}); !errors.IsAlreadyExists(err) {
+		t.Fatalf("TagFunction during a code deploy err = %v, want AlreadyExists (ResourceConflict)", err)
 	}
 
 	if err := m.AddPermission(ctx, "real-fn", "", driver.PermissionStatement{

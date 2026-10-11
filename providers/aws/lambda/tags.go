@@ -17,6 +17,10 @@ func (m *Mock) TagFunction(_ context.Context, name string, tags map[string]strin
 		return cerrors.Newf(cerrors.NotFound, "function %s not found", name)
 	}
 
+	if m.engineBusy(name) {
+		return updateInProgress(fd.info.ARN)
+	}
+
 	// Copy before editing: GetFunction and ListFunctionTags read the stored
 	// map without mu.
 	next := make(map[string]string, len(fd.info.Tags)+len(tags))

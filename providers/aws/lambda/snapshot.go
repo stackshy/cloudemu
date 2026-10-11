@@ -192,6 +192,10 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	}
 
 	m.mu.Lock()
+	// In-flight engine calls belong to the replaced state: their finalize sees
+	// its reservation gone and does not write over a restored entry.
+	clear(m.engineOps)
+
 	for name, fs := range snap.Funcs {
 		m.funcs.Set(name, m.restoreFunc(name, fs))
 	}

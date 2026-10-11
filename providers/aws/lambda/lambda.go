@@ -270,12 +270,13 @@ type Mock struct {
 	// Every method that writes funcs takes it; helpers called under it must not.
 	//
 	// Function-engine calls (Deploy/Remove) can take seconds, so they never run
-	// under mu. The name is marked in engineOps (under mu) for the duration of
-	// the call instead: a create, update or delete of that name is refused with
-	// ResourceConflictException meanwhile, and the result is applied to the
-	// entry re-read under mu afterwards.
-	mu        sync.Mutex
-	engineOps map[string]bool
+	// under mu: the name is reserved in engineOps for the duration of the call
+	// and the result is applied to the entry re-read under mu afterwards.
+	mu sync.Mutex
+	// engineOps maps a function name to the token of its in-flight engine
+	// call (see engine_ops.go); engineSeq mints the tokens. Both under mu.
+	engineOps map[string]uint64
+	engineSeq uint64
 	// inflightMu guards inflight, the number of invocations currently executing
 	// per function name. It backs reserved-concurrency enforcement on Invoke.
 	inflightMu sync.Mutex
@@ -326,7 +327,7 @@ func New(opts *config.Options) *Mock {
 		opts:      opts,
 		handlers:  make(map[string]driver.HandlerFunc),
 		inflight:  make(map[string]int),
-		engineOps: make(map[string]bool),
+		engineOps: make(map[string]uint64),
 	}
 }
 
@@ -366,37 +367,25 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 		Version: latestVersion, RevisionID: newRevisionID(),
 	}
 
-	if err := m.reserveNewName(cfg.Name); err != nil {
-		return nil, err
-	}
+	return m.deployNewFunction(ctx, &cfg, info)
+}
 
-	engineBacked, err := funcengine.Deploy(ctx, m.opts.FunctionEngine, &cfg)
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	delete(m.engineOps, cfg.Name)
-
-	if err != nil {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "deploy function %s: %v", cfg.Name, err)
-	}
-
+// newFuncData is the stored state of a just-created function.
+//
+//nolint:gocritic // hugeParam: info is copied into the entry.
+func (m *Mock) newFuncData(info driver.FunctionInfo, engineBacked bool) funcData {
 	m.handlersMu.RLock()
-	h := m.handlers[cfg.Name]
+	h := m.handlers[info.Name]
 	m.handlersMu.RUnlock()
 
-	m.funcs.Set(cfg.Name, funcData{
+	return funcData{
 		info: info, handler: h, engineBacked: engineBacked,
 		nextVersion: initialVersion,
 		aliases:     memstore.New[*aliasData](),
 		// AWS always reports a TracingConfig, defaulting to PassThrough when the
 		// client omits it.
 		awsConfig: driver.AWSFunctionConfig{TracingConfig: &driver.TracingConfig{Mode: tracingModePassThrough}},
-	})
-
-	result := info
-
-	return &result, nil
+	}
 }
 
 // validateFunctionLimits enforces the AWS MemorySize (128-10240 MB) and Timeout
@@ -414,68 +403,6 @@ func validateFunctionLimits(memory, timeout int) error {
 	}
 
 	return nil
-}
-
-// DeleteFunction removes the function, then tears down its engine deployment
-// outside mu. The name stays reserved until the engine call returns, so a
-// CreateFunction of the same name cannot deploy while the old one is removed.
-func (m *Mock) DeleteFunction(ctx context.Context, name string) error {
-	m.mu.Lock()
-
-	fd, ok := m.funcs.Get(name)
-	if !ok {
-		m.mu.Unlock()
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", name)
-	}
-
-	if m.engineOps[name] {
-		m.mu.Unlock()
-		return updateInProgress(fd.info.ARN)
-	}
-
-	m.funcs.Delete(name)
-
-	if !fd.engineBacked {
-		m.mu.Unlock()
-		return nil
-	}
-
-	m.engineOps[name] = true
-	m.mu.Unlock()
-
-	err := funcengine.Remove(ctx, m.opts.FunctionEngine, name)
-
-	m.mu.Lock()
-	delete(m.engineOps, name)
-	m.mu.Unlock()
-
-	if err != nil {
-		return cerrors.Newf(cerrors.Internal, "remove function %s: %v", name, err)
-	}
-
-	return nil
-}
-
-// reserveNewName marks name as being created, refusing a name that exists or
-// has an engine call in flight.
-func (m *Mock) reserveNewName(name string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, ok := m.funcs.Get(name); ok || m.engineOps[name] {
-		return cerrors.Newf(cerrors.AlreadyExists, "function %s already exists", name)
-	}
-
-	m.engineOps[name] = true
-
-	return nil
-}
-
-// updateInProgress is the ResourceConflictException Lambda returns for a
-// change to a function whose previous update has not finished.
-func updateInProgress(arn string) error {
-	return cerrors.Newf(cerrors.AlreadyExists,
-		"The operation cannot be performed at this time. An update is in progress for resource: %s", arn)
 }
 
 func (m *Mock) GetFunction(_ context.Context, name string) (*driver.FunctionInfo, error) {
@@ -502,69 +429,6 @@ func (m *Mock) ListFunctions(_ context.Context) ([]driver.FunctionInfo, error) {
 	return infos, nil
 }
 
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.FunctionConfig) (*driver.FunctionInfo, error) {
-	if len(cfg.Code) == 0 {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-
-		return m.commitUpdate(name, cfg, nil)
-	}
-
-	// A code update re-deploys to the engine using the post-merge runtime/handler
-	// so the function runs the new code, not the stale deployment. The deploy
-	// runs outside mu with the function reserved; the update is then applied to
-	// the entry as it is after the deploy, never to the copy read before it.
-	info, err := m.reserveCodeUpdate(name, cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	backed, err := funcengine.Deploy(ctx, m.opts.FunctionEngine, &driver.FunctionConfig{
-		Name: name, Runtime: info.Runtime, Handler: info.Handler,
-		Code: cfg.Code, Environment: info.Environment, Timeout: info.Timeout,
-	})
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	delete(m.engineOps, name)
-
-	if err != nil {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "deploy function %s: %v", name, err)
-	}
-
-	return m.commitUpdate(name, cfg, &backed)
-}
-
-// reserveCodeUpdate validates a code update against the current function and
-// marks the function busy for the engine deploy. It returns the merged
-// configuration to deploy.
-//
-//nolint:gocritic // hugeParam: cfg is the by-value driver config.
-func (m *Mock) reserveCodeUpdate(name string, cfg driver.FunctionConfig) (driver.FunctionInfo, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	fd, ok := m.funcs.Get(name)
-	if !ok {
-		return driver.FunctionInfo{}, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
-	}
-
-	if m.engineOps[name] {
-		return driver.FunctionInfo{}, updateInProgress(fd.info.ARN)
-	}
-
-	info, err := m.mergeUpdate(fd.info, cfg)
-	if err != nil {
-		return driver.FunctionInfo{}, err
-	}
-
-	m.engineOps[name] = true
-
-	return info, nil
-}
-
 // commitUpdate applies cfg to the stored function and writes it back. backed,
 // when set, is the engine state after a code deploy. Callers hold mu.
 //
@@ -575,7 +439,7 @@ func (m *Mock) commitUpdate(name string, cfg driver.FunctionConfig, backed *bool
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
 	}
 
-	if backed == nil && m.engineOps[name] {
+	if backed == nil && m.engineBusy(name) {
 		return nil, updateInProgress(fd.info.ARN)
 	}
 
