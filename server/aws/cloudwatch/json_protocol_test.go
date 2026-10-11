@@ -357,7 +357,7 @@ func TestJSONProtocolErrors(t *testing.T) {
 	}{
 		{
 			name: "dashboard not found", op: "GetDashboard", body: `{"DashboardName":"nope"}`,
-			status: http.StatusNotFound, errType: "ResourceNotFound", queryError: "ResourceNotFound;Sender",
+			status: http.StatusNotFound, errType: "DashboardNotFoundError", queryError: "ResourceNotFound;Sender",
 		},
 		{
 			name: "invalid parameter value", op: "SetAlarmState", body: `{"AlarmName":"x","StateValue":"BOGUS","StateReason":"r"}`,

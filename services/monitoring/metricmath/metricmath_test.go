@@ -173,7 +173,7 @@ func TestReferences(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, []string{"m1"}, ids)
 
-	_, ok = metricmath.References("FILL(m1, 0)")
+	_, ok = metricmath.References("RATE(m1)")
 	assert.False(t, ok)
 
 	_, ok = metricmath.References("m1 +")

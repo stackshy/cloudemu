@@ -1,10 +1,14 @@
 package cloudwatch_test
 
 import (
+	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awscw "github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 )
 
 // TestSDKDashboardLifecycle drives the aws-sdk-go-v2 client through the
@@ -96,5 +100,50 @@ func TestSDKGetDashboardNotFound(t *testing.T) {
 		DashboardName: aws.String("missing"),
 	}); err == nil {
 		t.Fatal("GetDashboard for unknown name: expected error, got nil")
+	}
+}
+
+// assertDashboardNotFound checks err is the model's DashboardNotFoundError:
+// the SDK maps it to types.DashboardNotFoundError, its code is the awsQuery
+// code ResourceNotFound and the status is 404, as in the CloudWatch API
+// reference and the service model (error code ResourceNotFound, 404).
+func assertDashboardNotFound(t *testing.T, op string, err error) {
+	t.Helper()
+
+	var nf *cwtypes.DashboardNotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatalf("%s: error %T (%v) is not *types.DashboardNotFoundError", op, err, err)
+	}
+
+	if code := nf.ErrorCode(); code != "ResourceNotFound" {
+		t.Fatalf("%s: ErrorCode = %q, want ResourceNotFound", op, code)
+	}
+
+	var re *awshttp.ResponseError
+	if !errors.As(err, &re) || re.HTTPStatusCode() != http.StatusNotFound {
+		t.Fatalf("%s: want HTTP 404, got %v", op, err)
+	}
+}
+
+// TestSDKDashboardNotFoundShape covers GetDashboard and DeleteDashboards on an
+// unknown dashboard. DeleteDashboards is all-or-nothing, so the existing
+// dashboard named with the missing one must survive.
+func TestSDKDashboardNotFoundShape(t *testing.T) {
+	client, ctx := newCWClient(t)
+
+	_, err := client.GetDashboard(ctx, &awscw.GetDashboardInput{DashboardName: aws.String("missing")})
+	assertDashboardNotFound(t, "GetDashboard", err)
+
+	if _, err := client.PutDashboard(ctx, &awscw.PutDashboardInput{
+		DashboardName: aws.String("keep"), DashboardBody: aws.String(`{}`),
+	}); err != nil {
+		t.Fatalf("PutDashboard: %v", err)
+	}
+
+	_, err = client.DeleteDashboards(ctx, &awscw.DeleteDashboardsInput{DashboardNames: []string{"keep", "missing"}})
+	assertDashboardNotFound(t, "DeleteDashboards", err)
+
+	if _, err := client.GetDashboard(ctx, &awscw.GetDashboardInput{DashboardName: aws.String("keep")}); err != nil {
+		t.Fatalf("GetDashboard keep after failed delete: %v", err)
 	}
 }
