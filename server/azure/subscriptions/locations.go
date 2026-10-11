@@ -96,6 +96,18 @@ var regionTable = []region{
 		"newzealandnorth", "New Zealand North", "(Asia Pacific) New Zealand North",
 		"Asia Pacific", "APAC", "-36.8485", "174.7633", "Auckland", "australiaeast",
 	},
+	{
+		"brazilsoutheast", "Brazil Southeast", "(South America) Brazil Southeast",
+		"South America", "BR", "-22.9028", "-43.2075", "Rio", "brazilsouth",
+	},
+	{"chilecentral", "Chile Central", "(South America) Chile Central", "South America", "CL", "-33.4489", "-70.6693", "Santiago", ""},
+	{"indonesiacentral", "Indonesia Central", "(Asia Pacific) Indonesia Central", "Asia Pacific", "ID", "-6.2088", "106.8456", "Jakarta", ""},
+	{"malaysiawest", "Malaysia West", "(Asia Pacific) Malaysia West", "Asia Pacific", "MY", "3.139", "101.6869", "Kuala Lumpur", ""},
+	{"jioindiawest", "Jio India West", "(Asia Pacific) Jio India West", "Asia Pacific", "IN", "22.4707", "70.0577", "Jamnagar", ""},
+	{"belgiumcentral", "Belgium Central", "(Europe) Belgium Central", "Europe", "BE", "50.8503", "4.3517", "Brussels", ""},
+	{"austriaeast", "Austria East", "(Europe) Austria East", "Europe", "AT", "48.2082", "16.3738", "Vienna", ""},
+	{"denmarkeast", "Denmark East", "(Europe) Denmark East", "Europe", "DK", "55.6761", "12.5683", "Copenhagen", ""},
+	{"taiwannorth", "Taiwan North", "(Asia Pacific) Taiwan North", "Asia Pacific", "TW", "25.033", "121.5654", "Taipei", ""},
 }
 
 // locations renders the geo-location list for subscription id in the ARM shape
