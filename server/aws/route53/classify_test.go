@@ -53,6 +53,7 @@ func TestClassify(t *testing.T) {
 		{method: "GET", target: "/2013-04-01/tags/healthcheck/h1", op: opListTagsForResource, id: "h1", tagType: "healthcheck"},
 		{method: "DELETE", target: "/2013-04-01/tags/hostedzone/Z1", op: opUnknown, id: "Z1", tagType: "hostedzone", fail: failTags},
 		{method: "GET", target: "/2013-04-01/tags/hostedzone", op: opUnknown, tagType: "hostedzone", fail: failTags},
+		{method: "GET", target: "/2013-04-01/tags/bucket/Z1", op: opUnknown, id: "Z1", tagType: "bucket", fail: failTagType},
 	}
 
 	for _, tc := range cases {

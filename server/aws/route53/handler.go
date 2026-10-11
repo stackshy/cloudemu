@@ -178,6 +178,10 @@ func (h *Handler) writeUnknown(w http.ResponseWriter, a *opArgs) {
 		writeError(w, http.StatusNotFound, "NoSuchHostedZone", "unrecognized Route 53 path")
 	case failTags:
 		h.writeTagsFailure(w, a)
+	case failTagType:
+		writeError(w, http.StatusBadRequest, "InvalidInput",
+			"Value '"+a.tagType+"' at 'resourceType' failed to satisfy constraint: "+
+				"Member must satisfy enum value set: [healthcheck, hostedzone]")
 	case failMethod:
 		writeMethodNotAllowed(w)
 	}

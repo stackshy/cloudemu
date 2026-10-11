@@ -49,6 +49,15 @@ const (
 	// failTags is a tagging request with no resource id, or with a method the
 	// tagging API does not serve.
 	failTags
+	// failTagType is a tagging request whose {ResourceType} is neither
+	// hostedzone nor healthcheck (400 InvalidInput).
+	failTagType
+)
+
+// The {ResourceType} values of the tagging API.
+const (
+	tagTypeHostedZone  = "hostedzone"
+	tagTypeHealthCheck = "healthcheck"
 )
 
 // opArgs is what classify extracts from the request.
@@ -170,6 +179,11 @@ func classifyTags(method, tail string) (opID, opArgs) {
 	a := opArgs{id: resourceID, tagType: resourceType, fail: failTags}
 
 	if resourceID == "" {
+		return opUnknown, a
+	}
+
+	if resourceType != tagTypeHostedZone && resourceType != tagTypeHealthCheck {
+		a.fail = failTagType
 		return opUnknown, a
 	}
 

@@ -50,6 +50,10 @@ func (h *Handler) serveTags(w http.ResponseWriter, r *http.Request, op opID, a *
 		return
 	}
 
+	if !h.taggedResourceExists(w, r, a) {
+		return
+	}
+
 	if op == opListTagsForResource {
 		h.listTags(w, r, tagger, a)
 		return
@@ -86,6 +90,29 @@ func (*Handler) listTags(w http.ResponseWriter, r *http.Request, tagger resource
 	}
 
 	wire.WriteXML(w, http.StatusOK, listTagsForResourceResponse{ResourceTagSet: set})
+}
+
+// taggedResourceExists reports whether the hosted zone or health check a
+// tagging request names exists, and writes NoSuchHostedZone or
+// NoSuchHealthCheck when it does not. The tag store is keyed by id alone, so
+// without this a request naming one resource type would tag a resource of the
+// other type, or an id that names nothing.
+func (h *Handler) taggedResourceExists(w http.ResponseWriter, r *http.Request, a *opArgs) bool {
+	if a.tagType == tagTypeHealthCheck {
+		if _, err := h.dns.GetHealthCheck(r.Context(), a.id); err != nil {
+			writeHealthCheckErr(w, err)
+			return false
+		}
+
+		return true
+	}
+
+	if _, err := h.dns.GetZone(r.Context(), a.id); err != nil {
+		writeErr(w, err)
+		return false
+	}
+
+	return true
 }
 
 // writeTagsFailure answers a tagging request classify cannot name: no
