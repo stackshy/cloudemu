@@ -106,6 +106,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/server/azure/vnet"
 	webpubsubsrv "github.com/stackshy/cloudemu/v2/server/azure/webpubsub"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	agdriver "github.com/stackshy/cloudemu/v2/services/applicationgateway/driver"
 	azureaidriver "github.com/stackshy/cloudemu/v2/services/azureai/driver"
 	fwdriver "github.com/stackshy/cloudemu/v2/services/azurefirewall/driver"
@@ -1285,6 +1286,10 @@ func New(d Drivers) http.Handler {
 		authGate = newAuthGate(config.RealClock{})
 	}
 
+	srv.SetNotImplemented(func(w http.ResponseWriter, r *http.Request) {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
+			"cloudemu does not implement "+r.Method+" "+r.URL.Path+".")
+	})
 	srv.SetPreDispatch(composePreDispatch(authGate, newResourceGroupGate(rgHandler), newLockGate(locksHandler)))
 
 	// When the monitoring backend can record Activity Log events, observe every

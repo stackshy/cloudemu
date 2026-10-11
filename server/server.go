@@ -44,6 +44,10 @@ type Server struct {
 	// proceed=false it has already written the response. Nil by default, so it
 	// adds no behavior; the default request path is byte-for-byte unchanged.
 	preDispatch func(http.ResponseWriter, *http.Request) (*http.Request, bool)
+	// notImplemented, when set, writes the response for a request no handler
+	// matches, so each cloud can answer in its own error format. Nil keeps the
+	// plain-text 501.
+	notImplemented http.HandlerFunc
 }
 
 // New creates a Server preloaded with the given handlers. Additional handlers
@@ -82,6 +86,12 @@ func (s *Server) SetPreDispatch(fn func(http.ResponseWriter, *http.Request) (*ht
 	s.preDispatch = fn
 }
 
+// SetNotImplemented installs the writer for requests no handler matches.
+// Passing nil restores the plain-text 501.
+func (s *Server) SetNotImplemented(fn http.HandlerFunc) {
+	s.notImplemented = fn
+}
+
 // ServeHTTP dispatches to the first handler whose Matches returns true, or
 // responds 501 Not Implemented if no handler matches.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -99,6 +109,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.observer(r)
 		}
 
+		return
+	}
+
+	if s.notImplemented != nil {
+		s.notImplemented(w, r)
 		return
 	}
 

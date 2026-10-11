@@ -405,6 +405,10 @@ func New(d Drivers) *server.Server {
 	// An opt-in /<api>.googleapis.com/ path alias names the API for paths more
 	// than one service serves (see sharedpath). Any other path is untouched.
 	srv.SetPreDispatch(sharedpath.Rewrite)
+	srv.SetNotImplemented(func(w http.ResponseWriter, r *http.Request) {
+		gcprest.WriteError(w, http.StatusNotImplemented, "notImplemented",
+			"cloudemu does not implement "+r.Method+" "+r.URL.Path+".")
+	})
 
 	iamStore := d.ResourceIAM
 	if iamStore == nil {
