@@ -181,8 +181,6 @@ func locations(subscriptionID string) []map[string]any {
 	return out
 }
 
-// IsRegion reports whether name is a known Azure region. The comparison is
-// case-insensitive and ignores spaces, so "West US 2" matches "westus2".
 // pairedRegions is a region's pair list; regions without a pair report an
 // empty list, as ARM does.
 func pairedRegions(base, paired string) []map[string]any {
@@ -207,6 +205,8 @@ func CanonicalLocation(name string) string {
 	return name
 }
 
+// IsRegion reports whether name is a known Azure region. The comparison is
+// case-insensitive and ignores spaces, so "West US 2" matches "westus2".
 func IsRegion(name string) bool {
 	want := NormalizeLocation(name)
 
