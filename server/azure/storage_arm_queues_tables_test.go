@@ -170,3 +170,28 @@ func TestStorageAccountDeleteCascadesQueuesAndTables(t *testing.T) {
 		})
 	}
 }
+
+// TestARMQueuePatchKeepsMetadata checks that a PATCH without metadata keeps the
+// queue's metadata and that the ARM list carries each queue's metadata.
+func TestARMQueuePatchKeepsMetadata(t *testing.T) {
+	ts := newARMQTServer(t)
+	jsonHdr := map[string]string{"Content-Type": "application/json"}
+
+	st, body, _ := storageDo(t, ts, "", "", http.MethodPut, qtQueueURL, `{"properties":{"metadata":{"team":"ops"}}}`, jsonHdr)
+	expectStatus(t, "ARM put queue", st, http.StatusOK, body)
+
+	st, body, _ = storageDo(t, ts, "", "", http.MethodPatch, qtQueueURL, `{"properties":{}}`, jsonHdr)
+	if st != http.StatusOK || !strings.Contains(body, `"team":"ops"`) {
+		t.Fatalf("ARM patch queue = %d %s, want metadata kept", st, body)
+	}
+
+	_, body, _ = storageDo(t, ts, "", "", http.MethodGet, armQTAcct+"/queueServices/default/queues"+armVer, "", nil)
+	if !strings.Contains(body, `"team":"ops"`) {
+		t.Fatalf("ARM list queues = %s, want metadata", body)
+	}
+
+	st, body, _ = storageDo(t, ts, "", "", http.MethodPut, qtQueueURL, `{"properties":{}}`, jsonHdr)
+	if st != http.StatusOK || strings.Contains(body, `"team"`) {
+		t.Fatalf("ARM put queue without metadata = %d %s, want metadata cleared", st, body)
+	}
+}

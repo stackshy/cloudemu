@@ -147,11 +147,28 @@ func (h *Handler) putARMQueue(w http.ResponseWriter, r *http.Request, rp *azurea
 
 	url, exists := h.queueURL(r.Context(), key)
 	if !exists {
-		if _, err := h.queues.CreateQueue(r.Context(), mqdriver.QueueConfig{Name: key, Metadata: body.Properties.Metadata}); err != nil {
+		_, err := h.queues.CreateQueue(r.Context(), mqdriver.QueueConfig{Name: key, Metadata: body.Properties.Metadata})
+		if err == nil {
+			h.writeARMQueue(w, r, rp, key)
+			return
+		}
+
+		// A concurrent PUT created it first; update it like any existing queue.
+		if !cerrors.IsAlreadyExists(err) {
 			azurearm.WriteCErr(w, err)
 			return
 		}
-	} else if svc, ok := h.queues.(mqdriver.AzureQueueStorage); ok {
+
+		url, _ = h.queueURL(r.Context(), key)
+	}
+
+	// PATCH leaves metadata alone unless the body carries it.
+	if r.Method == http.MethodPatch && body.Properties.Metadata == nil {
+		h.writeARMQueue(w, r, rp, key)
+		return
+	}
+
+	if svc, ok := h.queues.(mqdriver.AzureQueueStorage); ok {
 		if err := svc.SetQueueMetadata(r.Context(), url, body.Properties.Metadata); err != nil {
 			azurearm.WriteCErr(w, err)
 			return
@@ -195,11 +212,19 @@ func (h *Handler) listARMQueues(w http.ResponseWriter, r *http.Request, rp *azur
 
 	for _, qi := range queues {
 		if name, ok := inAccount(qi.Name, rp.ResourceName); ok {
-			out = append(out, armQueue{
+			q := armQueue{
 				ID:   childID(rp, "queueServices/default/queues", name),
 				Name: name,
 				Type: providerName + "/" + resourceType + "/queueServices/queues",
-			})
+			}
+
+			if svc, isAzure := h.queues.(mqdriver.AzureQueueStorage); isAzure {
+				if meta, err := svc.GetQueueMetadata(r.Context(), qi.URL); err == nil {
+					q.Properties = armQueueProperties{Metadata: meta.Metadata}
+				}
+			}
+
+			out = append(out, q)
 		}
 	}
 
@@ -273,10 +298,17 @@ func (h *Handler) putARMTable(w http.ResponseWriter, r *http.Request, rp *azurea
 	}
 
 	if !h.tableExists(r.Context(), key) {
-		if err := h.tables.CreateTable(r.Context(), key); err != nil {
+		// AlreadyExists means a concurrent PUT created it first.
+		if err := h.tables.CreateTable(r.Context(), key); err != nil && !cerrors.IsAlreadyExists(err) {
 			azurearm.WriteCErr(w, err)
 			return
 		}
+	}
+
+	// PATCH leaves the stored access policies alone unless the body carries them.
+	if r.Method == http.MethodPatch && body.Properties.SignedIdentifiers == nil {
+		h.writeARMTable(w, r, rp, key)
+		return
 	}
 
 	acl, _ := json.Marshal(toStoredACL(body.Properties.SignedIdentifiers))
