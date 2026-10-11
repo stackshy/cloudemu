@@ -2,11 +2,13 @@ package vnet
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
@@ -157,6 +159,12 @@ func (h *Handler) createNIC(w http.ResponseWriter, r *http.Request, rp azurearm.
 
 	ipConfigs, err := h.buildIPConfigs(r.Context(), rp.ResourceGroup, rp.ResourceName, req.Properties.IPConfigurations)
 	if err != nil {
+		var refErr *refError
+		if errors.As(err, &refErr) {
+			azurearm.WriteError(w, http.StatusBadRequest, "InvalidResourceReference", refErr.Error())
+			return
+		}
+
 		if cerrors.IsFailedPrecondition(err) {
 			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeAssignedToMultipleIpConfigs", cerrors.Message(err))
 			return
@@ -277,6 +285,10 @@ func (h *Handler) buildIPConfigs(
 			Primary:          p.Primary,
 			LBBackendPoolIDs: refIDs(p.LoadBalancerBackendAddressPools),
 			ASGIDs:           refIDs(p.ApplicationSecurityGroups),
+		}
+
+		if err := h.checkPoolRefs(ctx, cfg.LBBackendPoolIDs); err != nil {
+			return nil, err
 		}
 
 		if p.Subnet != nil {
@@ -549,4 +561,62 @@ func toNICResponse(nic *netdriver.AzureNIC, rp azurearm.ResourcePath) nicRespons
 	}
 
 	return out
+}
+
+// checkPoolRefs verifies every referenced load balancer backend pool exists.
+// It is a no-op when no load balancer lookup is wired.
+func (h *Handler) checkPoolRefs(ctx context.Context, poolIDs []string) error {
+	if h.lbs == nil {
+		return nil
+	}
+
+	for _, id := range poolIDs {
+		rp, ok := azurearm.ParsePath(id)
+		if !ok || !strings.EqualFold(rp.ResourceType, "loadBalancers") ||
+			!strings.EqualFold(rp.SubResource, "backendAddressPools") || rp.SubResourceName == "" {
+			return cerrors.Newf(cerrors.InvalidArgument, "malformed loadBalancerBackendAddressPools id %q", id)
+		}
+
+		lb, err := h.lbs.GetAzureLoadBalancer(ctx, rp.ResourceGroup, rp.ResourceName)
+		if err != nil || !hasPool(lb.BackendPools, rp.SubResourceName) {
+			return &refError{id: id}
+		}
+	}
+
+	return nil
+}
+
+func hasPool(pools []string, name string) bool {
+	for _, p := range pools {
+		if strings.EqualFold(p, name) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// refError marks a reference to a resource that does not exist.
+type refError struct{ id string }
+
+func (e *refError) Error() string {
+	return "Resource " + e.id + " referenced by resource was not found."
+}
+
+// VNetExists reports whether the virtual network with the given ARM id exists.
+func (h *Handler) VNetExists(ctx context.Context, id string) bool {
+	rp, ok := azurearm.ParsePath(id)
+	if !ok || !strings.EqualFold(rp.ResourceType, typeVNet) {
+		return false
+	}
+
+	_, err := findVNetInGroup(ctx, h.net, rp.ResourceGroup, rp.ResourceName)
+
+	return err == nil
+}
+
+// SetLBResolver wires the load balancer lookup used to validate NIC backend
+// pool references.
+func (h *Handler) SetLBResolver(lbs lbdriver.AzureLoadBalancers) {
+	h.lbs = lbs
 }

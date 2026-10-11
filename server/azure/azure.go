@@ -470,6 +470,12 @@ func New(d Drivers) http.Handler {
 	if d.LB != nil {
 		lbHandler = lbsrv.New(d.LB)
 
+		if vnetHandler != nil {
+			if az, ok := d.LB.(lbdriver.AzureLoadBalancers); ok {
+				vnetHandler.SetLBResolver(az)
+			}
+		}
+
 		// Project a backend address pool's read-only backendIPConfigurations from
 		// the NIC side of the association, so NIC↔LB pool membership reflects on
 		// both sides. Only wired when the networking driver exposes NICs.
@@ -510,6 +516,10 @@ func New(d Drivers) http.Handler {
 	// cascade. Registered further below.
 	if d.PrivateDNS != nil {
 		privateDNS = privatednssrv.New(d.PrivateDNS)
+
+		if vnetHandler != nil {
+			privateDNS.SetVNetResolver(vnetHandler.VNetExists)
+		}
 	}
 
 	if d.BlobStorage != nil {

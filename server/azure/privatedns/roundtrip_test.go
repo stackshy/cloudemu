@@ -195,6 +195,13 @@ func TestLinkRegistrationFalseRoundTrips(t *testing.T) {
 		"/providers/Microsoft.Network/virtualNetworks/vnet-1"
 	linkPath := zonePath(zoneName) + "/virtualNetworkLinks/link-1"
 
+	if code, _ := doJSON(t, ts, http.MethodPut, vnetID, map[string]any{
+		"location":   "eastus",
+		"properties": map[string]any{"addressSpace": map[string]any{"addressPrefixes": []string{"10.0.0.0/16"}}},
+	}); code/100 != 2 {
+		t.Fatalf("vnet create: %d", code)
+	}
+
 	status, created := doJSON(t, ts, http.MethodPut, linkPath, map[string]any{
 		"location": "Global",
 		"properties": map[string]any{

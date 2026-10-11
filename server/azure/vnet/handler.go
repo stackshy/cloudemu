@@ -30,6 +30,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
@@ -124,6 +125,7 @@ type Handler struct {
 	// not atomic). It guards only that get-modify-put window.
 	patchMu sync.Mutex
 	net     netdriver.Networking
+	lbs     lbdriver.AzureLoadBalancers
 }
 
 // New returns a network handler.

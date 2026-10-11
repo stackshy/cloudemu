@@ -19,6 +19,12 @@ func (h *Handler) createOrUpdateLink(w http.ResponseWriter, r *http.Request, rp 
 
 	link := buildLink(&body)
 
+	if h.vnetExists != nil && link.VirtualNetworkID != "" && !h.vnetExists(r.Context(), link.VirtualNetworkID) {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidResourceReference",
+			"Resource "+link.VirtualNetworkID+" referenced by resource was not found.")
+		return
+	}
+
 	stored, created, err := h.pdns.CreateOrUpdateVirtualNetworkLink(
 		r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResourceName, link)
 	if err != nil {
