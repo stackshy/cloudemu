@@ -239,6 +239,11 @@ func (m *Mock) resolveIPConfigs(configs []driver.AzureIPConfig, selfKey string) 
 					"a Static ipConfiguration requires privateIPAddress")
 			}
 
+			if cfg.SubnetID != "" && m.usedPrivateIPs(cfg.SubnetID, selfKey)[cfg.PrivateIP] {
+				return nil, cerrors.Newf(cerrors.InvalidArgument,
+					"PrivateIPAddressInUse: IP address %s is already in use in subnet %s", cfg.PrivateIP, cfg.SubnetID)
+			}
+
 			out = append(out, cfg)
 
 			continue

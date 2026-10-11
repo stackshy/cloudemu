@@ -28,7 +28,7 @@ func (h *Handler) listEffectiveNSGs(w http.ResponseWriter, r *http.Request, rp a
 
 	nicID := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeNIC, rp.ResourceName)
 
-	out := effectiveNSGListResponse{}
+	out := effectiveNSGListResponse{Value: []effectiveNSG{}}
 
 	if nic.NetworkSecurityGroupID != "" {
 		if entry, ok := h.effectiveNSGEntry(r.Context(), nic.NetworkSecurityGroupID,

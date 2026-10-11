@@ -1612,6 +1612,15 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		skuTier = req.SKU.Tier
 	}
 
+	// Standard SKU public IPs only support static allocation.
+	if strings.EqualFold(sku, "Standard") && strings.EqualFold(req.Properties.PublicIPAllocationMethod, "Dynamic") {
+		azurearm.WriteError(w, http.StatusBadRequest, "StandardSkuPublicIPAddressesCannotBeDynamic",
+			"Standard sku publicIp /subscriptions/"+rp.Subscription+"/resourceGroups/"+rp.ResourceGroup+
+				"/providers/Microsoft.Network/publicIPAddresses/"+rp.ResourceName+" must have AllocationMethod set to Static.")
+
+		return
+	}
+
 	tags := mergeTags(req.Tags, armPublicIPTag, rp.ResourceName)
 	tags = mergeTags(tags, armPublicIPRGTag, rp.ResourceGroup)
 
