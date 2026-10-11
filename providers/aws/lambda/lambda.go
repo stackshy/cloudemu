@@ -268,7 +268,14 @@ type Mock struct {
 	// unguarded writer can put back a stale copy and undo a concurrent change
 	// (for example resurrect the policy of an alias DeleteAlias just removed).
 	// Every method that writes funcs takes it; helpers called under it must not.
-	mu sync.Mutex
+	//
+	// Function-engine calls (Deploy/Remove) can take seconds, so they never run
+	// under mu. The name is marked in engineOps (under mu) for the duration of
+	// the call instead: a create, update or delete of that name is refused with
+	// ResourceConflictException meanwhile, and the result is applied to the
+	// entry re-read under mu afterwards.
+	mu        sync.Mutex
+	engineOps map[string]bool
 	// inflightMu guards inflight, the number of invocations currently executing
 	// per function name. It backs reserved-concurrency enforcement on Invoke.
 	inflightMu sync.Mutex
@@ -313,24 +320,18 @@ func lambdaMetricUnit(metricName string) string {
 // New creates a new Lambda mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		funcs:    memstore.New[funcData](),
-		layers:   memstore.New[*layerData](),
-		mappings: memstore.New[*driver.EventSourceMappingInfo](),
-		opts:     opts,
-		handlers: make(map[string]driver.HandlerFunc),
-		inflight: make(map[string]int),
+		funcs:     memstore.New[funcData](),
+		layers:    memstore.New[*layerData](),
+		mappings:  memstore.New[*driver.EventSourceMappingInfo](),
+		opts:      opts,
+		handlers:  make(map[string]driver.HandlerFunc),
+		inflight:  make(map[string]int),
+		engineOps: make(map[string]bool),
 	}
 }
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*driver.FunctionInfo, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, ok := m.funcs.Get(cfg.Name); ok {
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "function %s already exists", cfg.Name)
-	}
-
 	// AWS applies documented create-time defaults when the client omits these:
 	// MemorySize -> 128 MB, Timeout -> 3 s. Terraform/CDK read these back and see
 	// a perpetual diff if the response reports 0.
@@ -365,14 +366,24 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 		Version: latestVersion, RevisionID: newRevisionID(),
 	}
 
-	m.handlersMu.RLock()
-	h := m.handlers[cfg.Name]
-	m.handlersMu.RUnlock()
+	if err := m.reserveNewName(cfg.Name); err != nil {
+		return nil, err
+	}
 
 	engineBacked, err := funcengine.Deploy(ctx, m.opts.FunctionEngine, &cfg)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.engineOps, cfg.Name)
+
 	if err != nil {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "deploy function %s: %v", cfg.Name, err)
 	}
+
+	m.handlersMu.RLock()
+	h := m.handlers[cfg.Name]
+	m.handlersMu.RUnlock()
 
 	m.funcs.Set(cfg.Name, funcData{
 		info: info, handler: h, engineBacked: engineBacked,
@@ -405,24 +416,66 @@ func validateFunctionLimits(memory, timeout int) error {
 	return nil
 }
 
+// DeleteFunction removes the function, then tears down its engine deployment
+// outside mu. The name stays reserved until the engine call returns, so a
+// CreateFunction of the same name cannot deploy while the old one is removed.
 func (m *Mock) DeleteFunction(ctx context.Context, name string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(name)
 	if !ok {
+		m.mu.Unlock()
 		return cerrors.Newf(cerrors.NotFound, "function %s not found", name)
 	}
 
-	if fd.engineBacked {
-		if err := funcengine.Remove(ctx, m.opts.FunctionEngine, name); err != nil {
-			return cerrors.Newf(cerrors.Internal, "remove function %s: %v", name, err)
-		}
+	if m.engineOps[name] {
+		m.mu.Unlock()
+		return updateInProgress(fd.info.ARN)
 	}
 
 	m.funcs.Delete(name)
 
+	if !fd.engineBacked {
+		m.mu.Unlock()
+		return nil
+	}
+
+	m.engineOps[name] = true
+	m.mu.Unlock()
+
+	err := funcengine.Remove(ctx, m.opts.FunctionEngine, name)
+
+	m.mu.Lock()
+	delete(m.engineOps, name)
+	m.mu.Unlock()
+
+	if err != nil {
+		return cerrors.Newf(cerrors.Internal, "remove function %s: %v", name, err)
+	}
+
 	return nil
+}
+
+// reserveNewName marks name as being created, refusing a name that exists or
+// has an engine call in flight.
+func (m *Mock) reserveNewName(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.funcs.Get(name); ok || m.engineOps[name] {
+		return cerrors.Newf(cerrors.AlreadyExists, "function %s already exists", name)
+	}
+
+	m.engineOps[name] = true
+
+	return nil
+}
+
+// updateInProgress is the ResourceConflictException Lambda returns for a
+// change to a function whose previous update has not finished.
+func updateInProgress(arn string) error {
+	return cerrors.Newf(cerrors.AlreadyExists,
+		"The operation cannot be performed at this time. An update is in progress for resource: %s", arn)
 }
 
 func (m *Mock) GetFunction(_ context.Context, name string) (*driver.FunctionInfo, error) {
@@ -451,57 +504,90 @@ func (m *Mock) ListFunctions(_ context.Context) ([]driver.FunctionInfo, error) {
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.FunctionConfig) (*driver.FunctionInfo, error) {
+	if len(cfg.Code) == 0 {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
+		return m.commitUpdate(name, cfg, nil)
+	}
+
+	// A code update re-deploys to the engine using the post-merge runtime/handler
+	// so the function runs the new code, not the stale deployment. The deploy
+	// runs outside mu with the function reserved; the update is then applied to
+	// the entry as it is after the deploy, never to the copy read before it.
+	info, err := m.reserveCodeUpdate(name, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	backed, err := funcengine.Deploy(ctx, m.opts.FunctionEngine, &driver.FunctionConfig{
+		Name: name, Runtime: info.Runtime, Handler: info.Handler,
+		Code: cfg.Code, Environment: info.Environment, Timeout: info.Timeout,
+	})
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.engineOps, name)
+
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "deploy function %s: %v", name, err)
+	}
+
+	return m.commitUpdate(name, cfg, &backed)
+}
+
+// reserveCodeUpdate validates a code update against the current function and
+// marks the function busy for the engine deploy. It returns the merged
+// configuration to deploy.
+//
+//nolint:gocritic // hugeParam: cfg is the by-value driver config.
+func (m *Mock) reserveCodeUpdate(name string, cfg driver.FunctionConfig) (driver.FunctionInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(name)
 	if !ok {
+		return driver.FunctionInfo{}, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+	}
+
+	if m.engineOps[name] {
+		return driver.FunctionInfo{}, updateInProgress(fd.info.ARN)
+	}
+
+	info, err := m.mergeUpdate(fd.info, cfg)
+	if err != nil {
+		return driver.FunctionInfo{}, err
+	}
+
+	m.engineOps[name] = true
+
+	return info, nil
+}
+
+// commitUpdate applies cfg to the stored function and writes it back. backed,
+// when set, is the engine state after a code deploy. Callers hold mu.
+//
+//nolint:gocritic // hugeParam: cfg is the by-value driver config.
+func (m *Mock) commitUpdate(name string, cfg driver.FunctionConfig, backed *bool) (*driver.FunctionInfo, error) {
+	fd, ok := m.funcs.Get(name)
+	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
 	}
 
-	info := fd.info
-	applyConfigUpdates(&info, cfg)
-
-	// Validate the merged (existing + requested) Memory/Timeout/Runtime against
-	// the same real-Lambda constraints CreateFunction enforces before committing
-	// anything, so a rejected update leaves the function's prior configuration
-	// untouched rather than partially applying an invalid value.
-	if err := validateFunctionLimits(info.Memory, info.Timeout); err != nil {
-		return nil, err
+	if backed == nil && m.engineOps[name] {
+		return nil, updateInProgress(fd.info.ARN)
 	}
 
-	if err := validateRuntime(info.Runtime); err != nil {
+	info, err := m.mergeUpdate(fd.info, cfg)
+	if err != nil {
 		return nil, err
-	}
-
-	if err := validateEnvironment(info.Environment); err != nil {
-		return nil, err
-	}
-
-	info.LastModified = m.opts.Clock.Now().UTC().Format(time.RFC3339)
-	// Every update, configuration or code, mints a new revision, matching the
-	// RevisionId Terraform reads to detect drift.
-	info.RevisionID = newRevisionID()
-
-	if len(cfg.Code) > 0 {
-		info.CodeSHA256 = codeHash(cfg.Code)
-		info.CodeSize = int64(len(cfg.Code))
 	}
 
 	fd.info = info
 
-	// A code update re-deploys to the engine using the post-merge runtime/handler
-	// so the function runs the new code, not the stale deployment.
-	if len(cfg.Code) > 0 {
-		backed, err := funcengine.Deploy(ctx, m.opts.FunctionEngine, &driver.FunctionConfig{
-			Name: name, Runtime: info.Runtime, Handler: info.Handler,
-			Code: cfg.Code, Environment: info.Environment, Timeout: info.Timeout,
-		})
-		if err != nil {
-			return nil, cerrors.Newf(cerrors.InvalidArgument, "deploy function %s: %v", name, err)
-		}
-
-		fd.engineBacked = backed
+	if backed != nil {
+		fd.engineBacked = *backed
 	}
 
 	m.funcs.Set(name, fd)
@@ -509,6 +595,40 @@ func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.Funct
 	result := info
 
 	return &result, nil
+}
+
+// mergeUpdate returns cur with cfg's non-zero fields applied, validated against
+// the same real-Lambda constraints CreateFunction enforces, so a rejected
+// update leaves the function's prior configuration untouched. Every update,
+// configuration or code, mints a new revision, matching the RevisionId
+// Terraform reads to detect drift.
+//
+//nolint:gocritic // hugeParam: cur and cfg are copied on purpose.
+func (m *Mock) mergeUpdate(cur driver.FunctionInfo, cfg driver.FunctionConfig) (driver.FunctionInfo, error) {
+	info := cur
+	applyConfigUpdates(&info, cfg)
+
+	if err := validateFunctionLimits(info.Memory, info.Timeout); err != nil {
+		return driver.FunctionInfo{}, err
+	}
+
+	if err := validateRuntime(info.Runtime); err != nil {
+		return driver.FunctionInfo{}, err
+	}
+
+	if err := validateEnvironment(info.Environment); err != nil {
+		return driver.FunctionInfo{}, err
+	}
+
+	info.LastModified = m.opts.Clock.Now().UTC().Format(time.RFC3339)
+	info.RevisionID = newRevisionID()
+
+	if len(cfg.Code) > 0 {
+		info.CodeSHA256 = codeHash(cfg.Code)
+		info.CodeSize = int64(len(cfg.Code))
+	}
+
+	return info, nil
 }
 
 func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.InvokeOutput, error) {
