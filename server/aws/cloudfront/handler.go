@@ -48,11 +48,27 @@ const (
 // Handler serves CloudFront REST requests against a cloudfront driver.
 type Handler struct {
 	cf cfdriver.CloudFront
+	// accountID is the account this handler serves; a tagging ARN of another
+	// account names no resource here. Empty skips that check.
+	accountID string
+}
+
+// Option configures a Handler.
+type Option func(*Handler)
+
+// WithAccount sets the account this handler serves.
+func WithAccount(accountID string) Option {
+	return func(h *Handler) { h.accountID = accountID }
 }
 
 // New returns a CloudFront handler backed by d.
-func New(d cfdriver.CloudFront) *Handler {
-	return &Handler{cf: d}
+func New(d cfdriver.CloudFront, opts ...Option) *Handler {
+	h := &Handler{cf: d}
+	for _, o := range opts {
+		o(h)
+	}
+
+	return h
 }
 
 // Matches claims CloudFront's own REST path space, which is disjoint from every
@@ -103,12 +119,8 @@ func (h *Handler) serveSubOp(w http.ResponseWriter, r *http.Request, op opID, a 
 		h.listInvalidations(w, r, a.id)
 	case opGetInvalidation:
 		h.getInvalidation(w, r, a.id, a.invalidationID)
-	case opListTagsForResource:
-		h.listTagsForResource(w, r, a.resource)
-	case opTagResource:
-		h.tagResource(w, r, a.resource)
-	case opUntagResource:
-		h.untagResource(w, r, a.resource)
+	case opListTagsForResource, opTagResource, opUntagResource:
+		h.serveTagging(w, r, op, a)
 	default:
 		return false
 	}
@@ -131,7 +143,7 @@ func writeUnknown(w http.ResponseWriter, a *opArgs) {
 
 // IAMService returns the IAM service prefix of the operations this handler
 // serves.
-func (*Handler) IAMService() string { return "cloudfront" }
+func (*Handler) IAMService() string { return serviceName }
 
 // WriteAccessDenied writes the 403 this service returns when IAM denies a
 // call, in its own XML error shape.

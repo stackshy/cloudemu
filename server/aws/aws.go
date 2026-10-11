@@ -1275,7 +1275,7 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 	// handler. It must register before S3 because S3 is the permissive REST
 	// fallback that would otherwise claim those paths.
 	if d.CloudFront != nil {
-		srv.Register(cloudfrontsrv.New(d.CloudFront))
+		srv.Register(cloudfrontsrv.New(d.CloudFront, cloudfrontsrv.WithAccount(d.AccountID)))
 	}
 
 	if d.S3 != nil {

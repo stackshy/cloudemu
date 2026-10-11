@@ -7,6 +7,27 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/wire"
 )
 
+// serveTagging runs a tagging operation on the distribution its Resource ARN
+// names. An ARN that is not a distribution ARN of this account names no
+// resource here: the driver resolves a distribution by the id at the end of
+// any ARN, so without this check an ARN of another account would act on this
+// account's distribution of the same id.
+func (h *Handler) serveTagging(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) {
+	if a.id == "" || (h.accountID != "" && a.resourceAccount != h.accountID) {
+		writeError(w, http.StatusNotFound, "NoSuchResource", "The specified resource does not exist.")
+		return
+	}
+
+	switch op {
+	case opTagResource:
+		h.tagResource(w, r, a.resource)
+	case opUntagResource:
+		h.untagResource(w, r, a.resource)
+	default:
+		h.listTagsForResource(w, r, a.resource)
+	}
+}
+
 func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request, arn string) {
 	tags, err := h.cf.ListTagsForResource(r.Context(), arn)
 	if err != nil {

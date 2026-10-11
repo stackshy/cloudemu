@@ -30,6 +30,13 @@ const (
 	opUntagResource              opID = "UntagResource"
 )
 
+// serviceName is the IAM service prefix of CloudFront actions and the service
+// field of CloudFront ARNs.
+const serviceName = "cloudfront"
+
+// arnDistributionPrefix is the resource part of a distribution ARN.
+const arnDistributionPrefix = "distribution/"
+
 // failure is the error ServeHTTP writes for a request classify cannot name.
 type failure int
 
@@ -50,6 +57,10 @@ type opArgs struct {
 	invalidationID string
 	// resource is the Resource ARN of a tagging request.
 	resource string
+	// resourceAccount is the account a tagging ARN names, and id the
+	// distribution id it names; both are empty when it is not a distribution
+	// ARN.
+	resourceAccount string
 	// fail is the error branch of an opUnknown request.
 	fail failure
 }
@@ -74,6 +85,7 @@ func classify(r *http.Request) (opID, opArgs) {
 func classifyTagging(r *http.Request) (opID, opArgs) {
 	q := r.URL.Query()
 	a := opArgs{resource: q.Get("Resource")}
+	a.resourceAccount, a.id = parseDistributionARN(a.resource)
 
 	switch {
 	case r.Method == http.MethodGet:
@@ -138,4 +150,24 @@ func classifyDistribution(method string, segs []string) (opID, opArgs) {
 	a.fail = failMethod
 
 	return opUnknown, a
+}
+
+// parseDistributionARN returns the account and distribution id of
+// arn:<partition>:cloudfront::<account>:distribution/<id>, or two empty
+// strings when arn is not a distribution ARN.
+func parseDistributionARN(arn string) (account, id string) {
+	const fields = 6 // arn, partition, service, region, account, resource
+
+	parts := strings.SplitN(arn, ":", fields)
+	if len(parts) != fields || parts[0] != "arn" || parts[1] == "" || parts[2] != serviceName ||
+		parts[3] != "" || parts[4] == "" {
+		return "", ""
+	}
+
+	id, ok := strings.CutPrefix(parts[5], arnDistributionPrefix)
+	if !ok || id == "" || strings.ContainsAny(id, "/:") {
+		return "", ""
+	}
+
+	return parts[4], id
 }
