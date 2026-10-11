@@ -218,8 +218,22 @@ actually run the request, so neither the SigV4 signing scope nor a forged
   `cloudfront:TagResource`, checked on `distribution/*` since the id is not
   known yet. The `aws:RequestTag`, `aws:TagKeys` and `aws:ResourceTag` keys are
   set.
-- The other REST services (API Gateway, EKS and the rest) are checked at
-  service level for now. A request passes only when the
+- EKS is checked per operation. Cluster operations, and creating or listing
+  nodegroups, Fargate profiles, add-ons and access entries, act on the cluster
+  ARN; nodegroup, Fargate profile and add-on operations on
+  `arn:aws:eks:<region>:<account>:<kind>/<cluster>/<name>` (cloudemu's ARNs
+  have no trailing id); access entry operations on the entry's ARN, or
+  `access-entry/<cluster>/*` when it does not exist. `ListUpdates` and
+  `DescribeUpdate` act on the nodegroup or add-on named by `nodegroupName` or
+  `addonName`, else the cluster. The `eks:` keys the requests carry are set
+  (`eks:kubernetesVersion`, `eks:endpointPublicAccess`,
+  `eks:endpointPrivateAccess`, `eks:authenticationMode`,
+  `eks:bootstrapClusterCreatorAdminPermissions`, `eks:loggingType/<type>`, the
+  access entry and access policy keys), with the tag keys. `iam:PassRole` for
+  the cluster and node roles is not checked yet. The Kubernetes API of a
+  cluster is not IAM-authorized here.
+- The other REST services (API Gateway and the rest) are checked at service
+  level for now. A request passes only when the
   caller's policies allow every action of that service on every resource, such
   as `eks:*` on `*` or `AdministratorAccess`. **A fine-grained or
   resource-scoped policy on one of these services is denied until that service
