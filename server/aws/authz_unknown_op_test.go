@@ -120,3 +120,51 @@ func TestUnknownQueryActionHasNoSideEffect(t *testing.T) {
 		wantDenied(t, status, body, "ec2:UnknownOperation")
 	})
 }
+
+// TestUnknownRESTOpHasNoSideEffect is the REST counterpart: a path or method
+// an op-level REST handler cannot name is let through for unrestricted
+// callers only because the handler then answers with an error and changes
+// nothing, and a restricted caller is denied it.
+func TestUnknownRESTOpHasNoSideEffect(t *testing.T) {
+	cloud := cloudemu.NewAWS()
+	d := DriversFrom(cloud)
+	d.EnforceAuth = true
+
+	srv, _ := newServer(d)
+
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	boot := userWithPolicy(t, cloud, "boot", "")
+	limited := userWithPolicy(t, cloud, "limited", allow("route53:GetHostedZone", "cloudfront:GetDistribution"))
+
+	for _, rq := range []sreq{
+		{method: http.MethodGet, path: r53Path + "/Z1/other", service: r53Signed},
+		{method: http.MethodPut, path: r53Path + "/Z1", service: r53Signed},
+		{method: http.MethodPatch, path: "/2013-04-01/healthcheck/h1", service: r53Signed},
+		{method: http.MethodPut, path: "/2013-04-01/tags/hostedzone/Z1", service: r53Signed},
+		{method: http.MethodPost, path: "/2013-04-01/tags/bucket/Z1", body: "<ChangeTagsForResourceRequest/>", service: r53Signed},
+		{method: http.MethodPost, path: r53Path, ctype: r53XMLCT, body: "<x", service: r53Signed},
+		{method: http.MethodGet, path: cfPath + "/E1/other", service: cfSigned},
+		{method: http.MethodPatch, path: cfPath + "/E1", service: cfSigned},
+		{method: http.MethodPut, path: "/2020-05-31/tagging?Resource=x", service: cfSigned},
+		{method: http.MethodPost, path: "/2020-05-31/tagging?Operation=Tag&Resource=arn:aws:cloudfront::999999999999:distribution/E1",
+			body: "<Tags/>", service: cfSigned},
+	} {
+		t.Run(rq.method+" "+rq.path, func(t *testing.T) {
+			before := providerState(t, cloud)
+
+			if status, body := doSigned(t, ts, boot, rq); status < http.StatusBadRequest || status >= http.StatusInternalServerError {
+				t.Fatalf("shortcut caller got %d: %s", status, body)
+			}
+
+			if status, body := doSigned(t, ts, limited, rq); status != http.StatusForbidden {
+				t.Fatalf("restricted caller got %d: %s", status, body)
+			}
+
+			if after := providerState(t, cloud); !bytes.Equal(before, after) {
+				t.Fatal("an unknown operation changed backend state")
+			}
+		})
+	}
+}

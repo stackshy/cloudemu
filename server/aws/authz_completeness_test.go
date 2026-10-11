@@ -74,11 +74,12 @@ func TestHandlerIAMServicesMatchTable(t *testing.T) {
 		"*iam.Handler": "iam", "*sts.Handler": "sts", "*rds.Handler": "rds", "*redshift.Handler": "redshift",
 		"*elasticache.Handler": "elasticache", "*elbv2.Handler": "elasticloadbalancing", "*sns.Handler": "sns",
 		"*cloudformation.Handler": "cloudformation", "*cloudwatch.Handler": "cloudwatch", "*ec2.Handler": "ec2",
-		"*sagemaker.Handler": "sagemaker", "*s3.Handler": "s3",
+		"*sagemaker.Handler": "sagemaker", "*s3.Handler": "s3", "*lambda.Handler": "lambda",
+		"*route53.Handler": "route53", "*cloudfront.Handler": "cloudfront",
 		// Tier 0: REST, service level.
-		"*lambda.Handler": "lambda", "*apigateway.Handler": "apigateway",
-		"*apigatewayv2.Handler": "apigateway", "*eks.Handler": "eks", "*route53.Handler": "route53",
-		"*cloudfront.Handler": "cloudfront", "*efs.Handler": "elasticfilesystem", "*batch.Handler": "batch",
+		"*apigateway.Handler": "apigateway",
+		"*apigatewayv2.Handler": "apigateway", "*eks.Handler": "eks",
+		"*efs.Handler": "elasticfilesystem", "*batch.Handler": "batch",
 		"*sesv2.Handler": "ses", "*opensearch.Handler": "es", "*appsync.Handler": "appsync", "*appflow.Handler": "appflow",
 		"*mwaa.Handler": "airflow", "*mq.Handler": "mq", "*codeartifact.Handler": "codeartifact", "*backup.Handler": "backup",
 		"*fis.Handler": "fis", "*grafana.Handler": "grafana", "*eventbridgescheduler.Handler": "scheduler",
@@ -146,5 +147,33 @@ func TestHandlerIAMServicesMatchTable(t *testing.T) {
 		if !matched[h] {
 			t.Errorf("JSON-RPC handler %T has no X-Amz-Target prefix in the table", h)
 		}
+	}
+}
+
+// TestOpLevelRESTHandlersAreResolvers pins the REST handlers that name the IAM
+// action and resource of each operation, so none falls back to service-level
+// authorization unnoticed.
+func TestOpLevelRESTHandlersAreResolvers(t *testing.T) {
+	want := map[string]bool{
+		"*s3.Handler": true, "*lambda.Handler": true, "*route53.Handler": true, "*cloudfront.Handler": true,
+	}
+
+	srv, _ := fullServer(t)
+
+	for _, h := range srv.Handlers() {
+		name := fmt.Sprintf("%T", h)
+		if !want[name] {
+			continue
+		}
+
+		delete(want, name)
+
+		if _, ok := h.(awsauthz.Resolver); !ok {
+			t.Errorf("%s is not a Resolver", name)
+		}
+	}
+
+	for name := range want {
+		t.Errorf("%s is not registered", name)
 	}
 }

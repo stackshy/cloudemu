@@ -193,7 +193,7 @@ func writeMethodNotAllowed(w http.ResponseWriter) {
 
 // IAMService returns the IAM service prefix of the operations this handler
 // serves.
-func (*Handler) IAMService() string { return "route53" }
+func (*Handler) IAMService() string { return serviceName }
 
 // WriteAccessDenied writes the 403 this service returns when IAM denies a
 // call, in its own XML error shape.

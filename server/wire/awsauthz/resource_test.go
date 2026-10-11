@@ -16,6 +16,27 @@ func TestScopeARNs(t *testing.T) {
 
 	assert.Equal(t, "arn:aws:sqs:us-east-1:123456789012:q1", s.ARN("sqs", "q1"))
 	assert.Equal(t, "arn:aws:iam::123456789012:user/a", s.GlobalARN("iam", "user/a"))
+	assert.Equal(t, "arn:aws:route53:::hostedzone/Z1", s.PartitionARN("route53", "hostedzone/Z1"))
+}
+
+func TestXMLBody(t *testing.T) {
+	var v struct {
+		Name string `xml:"Name"`
+	}
+
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`<R><Name>n1</Name></R> trailing`))
+	require.True(t, XMLBody(r, &v))
+	assert.Equal(t, "n1", v.Name)
+
+	rest, err := io.ReadAll(r.Body)
+	require.NoError(t, err)
+	assert.Equal(t, `<R><Name>n1</Name></R> trailing`, string(rest), "the body is put back whole")
+
+	assert.False(t, XMLBody(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`<R>`)), &v))
+
+	r = httptest.NewRequest(http.MethodPost, "/", nil)
+	r.Body = nil
+	assert.False(t, XMLBody(r, &v))
 }
 
 func TestJSONBody(t *testing.T) {
