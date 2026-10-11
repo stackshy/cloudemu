@@ -159,10 +159,7 @@ func (m *Mock) DeleteVersion(_ context.Context, name, qualifier string) error {
 	fd.versions = removeVersionEntry(fd.versions, qualifier)
 
 	// Drop the per-version resource state AWS also removes with the version.
-	delete(fd.policies, qualifier)
-	delete(fd.urlConfigs, qualifier)
-	delete(fd.eventInvokeConfigs, qualifier)
-	delete(fd.provisionedConcurrencyConfigs, qualifier)
+	dropQualifierState(&fd, qualifier)
 
 	m.funcs.Set(name, fd)
 
