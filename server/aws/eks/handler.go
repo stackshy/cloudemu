@@ -101,247 +101,160 @@ func (*Handler) Matches(r *http.Request) bool {
 	return strings.HasPrefix(p, pathPrefix+"/") || strings.HasPrefix(p, tagsPrefix)
 }
 
-// ServeHTTP routes EKS requests by URL shape.
+// ServeHTTP runs the operation classify names, or writes the error of a
+// request it cannot name.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch r.URL.Path {
-	case pathAccessPolicies:
-		h.listAccessPolicies(w, r)
-		return
-	case pathAddonVersions:
-		h.describeAddonVersions(w, r)
-		return
-	case pathAddonSchemas:
-		h.describeAddonConfiguration(w, r)
-		return
-	}
+	op, a := classify(r)
 
-	if strings.HasPrefix(r.URL.Path, tagsPrefix) {
-		h.serveTags(w, r, strings.TrimPrefix(r.URL.Path, tagsPrefix))
-		return
-	}
-
-	parts, ok := splitPath(r.URL.EscapedPath())
-	if !ok {
-		writeError(w, http.StatusBadRequest, "InvalidParameterException", "malformed path: "+r.URL.Path)
-		return
-	}
-
-	h.serveClusterPath(w, r, parts)
-}
-
-// serveClusterPath dispatches /clusters/... by segment count.
-func (h *Handler) serveClusterPath(w http.ResponseWriter, r *http.Request, parts []string) {
-	switch len(parts) {
-	case 0:
-		// /clusters: collection.
-		h.serveClustersCollection(w, r)
-
-	case pathSegsCluster:
-		// /clusters/{name}: cluster resource.
-		h.serveCluster(w, r, parts[0])
-
-	case pathSegsClusterSubresource:
-		// /clusters/{name}/{action}: cluster sub-resource.
-		h.serveClusterSubresource(w, r, parts[0], parts[1])
-
-	case pathSegsChildResource:
-		// /clusters/{name}/{kind}/{child}: child resource.
-		h.serveChildResource(w, r, parts[0], parts[1], parts[2])
-
-	case pathSegsChildAction:
-		// /clusters/{name}/{kind}/{child}/{action}: child action.
-		h.serveChildAction(w, r, parts[0], parts[1], parts[2], parts[3])
-
-	case pathSegsPolicyAssociation:
-		if parts[1] != segAccessEntries || parts[3] != segAccessPolicies {
-			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported path: "+r.URL.Path)
+	for _, serve := range []func(http.ResponseWriter, *http.Request, opID, *opArgs) bool{
+		h.serveClusterOp, h.serveNodegroupOp, h.serveFargateAddonOp, h.serveAccessOp, h.serveAccountOp,
+	} {
+		if serve(w, r, op, &a) {
 			return
 		}
-
-		h.disassociateAccessPolicy(w, r, parts[0], parts[2], parts[4])
-
-	default:
-		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported path: "+r.URL.Path)
 	}
+
+	h.writeUnknown(w, &a)
 }
 
-func (h *Handler) serveClustersCollection(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
+// serveClusterOp runs op when it is a cluster or update operation.
+func (h *Handler) serveClusterOp(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) bool {
+	switch op {
+	case opCreateCluster:
 		h.createCluster(w, r)
-	case http.MethodGet:
+	case opListClusters:
 		h.listClusters(w, r)
+	case opDescribeCluster:
+		h.describeCluster(w, r, a.cluster)
+	case opDeleteCluster:
+		h.deleteCluster(w, r, a.cluster)
+	case opUpdateClusterConfig:
+		h.updateClusterConfig(w, r, a.cluster)
+	case opUpdateClusterVersion:
+		h.updateClusterVersion(w, r, a.cluster)
+	case opListUpdates:
+		h.listUpdates(w, r, a.cluster)
+	case opDescribeUpdate:
+		h.describeUpdate(w, r, a.cluster, a.child)
 	default:
-		methodNotAllowed(w)
+		return false
 	}
+
+	return true
 }
 
-func (h *Handler) serveCluster(w http.ResponseWriter, r *http.Request, name string) {
-	switch r.Method {
-	case http.MethodGet:
-		h.describeCluster(w, r, name)
-	case http.MethodDelete:
-		h.deleteCluster(w, r, name)
+// serveNodegroupOp runs op when it is a nodegroup operation.
+func (h *Handler) serveNodegroupOp(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) bool {
+	switch op {
+	case opCreateNodegroup:
+		h.createNodegroup(w, r, a.cluster)
+	case opListNodegroups:
+		h.listNodegroups(w, r, a.cluster)
+	case opDescribeNodegroup:
+		h.describeNodegroup(w, r, a.cluster, a.child)
+	case opDeleteNodegroup:
+		h.deleteNodegroup(w, r, a.cluster, a.child)
+	case opUpdateNodegroupConfig:
+		h.updateNodegroupConfig(w, r, a.cluster, a.child)
+	case opUpdateNodegroupVersion:
+		h.updateNodegroupVersion(w, r, a.cluster, a.child)
 	default:
-		methodNotAllowed(w)
+		return false
 	}
+
+	return true
 }
 
-func (h *Handler) serveClusterSubresource(w http.ResponseWriter, r *http.Request, name, action string) {
-	switch action {
-	case segUpdateConfig:
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w)
+// serveFargateAddonOp runs op when it is a Fargate profile or add-on
+// operation.
+func (h *Handler) serveFargateAddonOp(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) bool {
+	switch op {
+	case opCreateFargateProfile:
+		h.createFargateProfile(w, r, a.cluster)
+	case opListFargateProfiles:
+		h.listFargateProfiles(w, r, a.cluster)
+	case opDescribeFargateProfile:
+		h.describeFargateProfile(w, r, a.cluster, a.child)
+	case opDeleteFargateProfile:
+		h.deleteFargateProfile(w, r, a.cluster, a.child)
+	case opCreateAddon:
+		h.createAddon(w, r, a.cluster)
+	case opListAddons:
+		h.listAddons(w, r, a.cluster)
+	case opDescribeAddon:
+		h.describeAddon(w, r, a.cluster, a.child)
+	case opDeleteAddon:
+		h.deleteAddon(w, r, a.cluster, a.child)
+	case opUpdateAddon:
+		h.updateAddon(w, r, a.cluster, a.child)
+	default:
+		return false
+	}
 
+	return true
+}
+
+// serveAccessOp runs op when it is an access entry operation.
+func (h *Handler) serveAccessOp(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) bool {
+	switch op {
+	case opCreateAccessEntry:
+		h.createAccessEntry(w, r, a.cluster)
+	case opListAccessEntries:
+		h.listAccessEntries(w, r, a.cluster)
+	case opDescribeAccessEntry:
+		h.describeAccessEntry(w, r, a.cluster, a.child)
+	case opUpdateAccessEntry:
+		h.updateAccessEntry(w, r, a.cluster, a.child)
+	case opDeleteAccessEntry:
+		h.deleteAccessEntry(w, r, a.cluster, a.child)
+	case opAssociateAccessPolicy:
+		h.associateAccessPolicy(w, r, a.cluster, a.child)
+	case opListAssociatedAccessPolicies:
+		h.listAssociatedAccessPolicies(w, r, a.cluster, a.child)
+	case opDisassociateAccessPolicy:
+		h.disassociateAccessPolicy(w, r, a.cluster, a.child, a.policyARN)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// serveAccountOp runs op when it is a tagging or account-level operation.
+func (h *Handler) serveAccountOp(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) bool {
+	switch op {
+	case opListAccessPolicies:
+		h.listAccessPolicies(w, r)
+	case opDescribeAddonVersions:
+		h.describeAddonVersions(w, r)
+	case opDescribeAddonConfiguration:
+		h.describeAddonConfiguration(w, r)
+	case opTagResource, opUntagResource, opListTagsForResource:
+		h.serveTags(w, r, op, a.tagARN)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// writeUnknown writes the error of a request classify cannot name. None of
+// these branches reads or changes state.
+func (h *Handler) writeUnknown(w http.ResponseWriter, a *opArgs) {
+	switch a.fail {
+	case failNotFound:
+		writeError(w, http.StatusNotFound, "ResourceNotFoundException", a.failMsg)
+	case failMalformed:
+		writeError(w, http.StatusBadRequest, "InvalidParameterException", a.failMsg)
+	case failTagsMethod:
+		if _, ok := h.eks.(clusterTagger); !ok {
+			writeError(w, http.StatusNotImplemented, "InvalidRequestException", "tagging not supported")
 			return
 		}
 
-		h.updateClusterConfig(w, r, name)
-
-	case segUpdates:
-		// The SDK posts to /clusters/{n}/updates for UpdateClusterVersion and
-		// GETs the same path for ListUpdates.
-		switch r.Method {
-		case http.MethodPost:
-			h.updateClusterVersion(w, r, name)
-		case http.MethodGet:
-			h.listUpdates(w, r, name)
-		default:
-			methodNotAllowed(w)
-		}
-
-	case segNodeGroups:
-		h.serveNodegroupsCollection(w, r, name)
-
-	case segFargateProfiles:
-		h.serveFargateCollection(w, r, name)
-
-	case segAddons:
-		h.serveAddonsCollection(w, r, name)
-
-	case segAccessEntries:
-		h.serveAccessEntriesCollection(w, r, name)
-
-	default:
-		writeError(w, http.StatusNotFound, "ResourceNotFoundException",
-			"unknown cluster sub-resource: "+action)
-	}
-}
-
-func (h *Handler) serveNodegroupsCollection(w http.ResponseWriter, r *http.Request, name string) {
-	switch r.Method {
-	case http.MethodPost:
-		h.createNodegroup(w, r, name)
-	case http.MethodGet:
-		h.listNodegroups(w, r, name)
-	default:
+		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
+	case failMethod:
 		methodNotAllowed(w)
-	}
-}
-
-func (h *Handler) serveFargateCollection(w http.ResponseWriter, r *http.Request, name string) {
-	switch r.Method {
-	case http.MethodPost:
-		h.createFargateProfile(w, r, name)
-	case http.MethodGet:
-		h.listFargateProfiles(w, r, name)
-	default:
-		methodNotAllowed(w)
-	}
-}
-
-func (h *Handler) serveAddonsCollection(w http.ResponseWriter, r *http.Request, name string) {
-	switch r.Method {
-	case http.MethodPost:
-		h.createAddon(w, r, name)
-	case http.MethodGet:
-		h.listAddons(w, r, name)
-	default:
-		methodNotAllowed(w)
-	}
-}
-
-func (h *Handler) serveChildResource(w http.ResponseWriter, r *http.Request, clusterName, kind, child string) {
-	switch kind {
-	case segNodeGroups:
-		h.serveNodegroup(w, r, clusterName, child)
-	case segFargateProfiles:
-		h.serveFargateProfile(w, r, clusterName, child)
-	case segAddons:
-		h.serveAddon(w, r, clusterName, child)
-	case segAccessEntries:
-		h.serveAccessEntry(w, r, clusterName, child)
-	case segUpdates:
-		// /clusters/{name}/updates/{updateId}: DescribeUpdate.
-		if r.Method != http.MethodGet {
-			methodNotAllowed(w)
-
-			return
-		}
-
-		h.describeUpdate(w, r, clusterName, child)
-	default:
-		writeError(w, http.StatusNotFound, "ResourceNotFoundException",
-			"unknown child resource: "+kind)
-	}
-}
-
-func (h *Handler) serveNodegroup(w http.ResponseWriter, r *http.Request, clusterName, ngName string) {
-	switch r.Method {
-	case http.MethodGet:
-		h.describeNodegroup(w, r, clusterName, ngName)
-	case http.MethodDelete:
-		h.deleteNodegroup(w, r, clusterName, ngName)
-	default:
-		methodNotAllowed(w)
-	}
-}
-
-func (h *Handler) serveFargateProfile(w http.ResponseWriter, r *http.Request, clusterName, profileName string) {
-	switch r.Method {
-	case http.MethodGet:
-		h.describeFargateProfile(w, r, clusterName, profileName)
-	case http.MethodDelete:
-		h.deleteFargateProfile(w, r, clusterName, profileName)
-	default:
-		methodNotAllowed(w)
-	}
-}
-
-func (h *Handler) serveAddon(w http.ResponseWriter, r *http.Request, clusterName, addonName string) {
-	switch r.Method {
-	case http.MethodGet:
-		h.describeAddon(w, r, clusterName, addonName)
-	case http.MethodDelete:
-		h.deleteAddon(w, r, clusterName, addonName)
-	default:
-		methodNotAllowed(w)
-	}
-}
-
-func (h *Handler) serveChildAction(w http.ResponseWriter, r *http.Request, clusterName, kind, child, action string) {
-	if kind == segAccessEntries && action == segAccessPolicies {
-		h.serveEntryPolicies(w, r, clusterName, child)
-
-		return
-	}
-
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w)
-
-		return
-	}
-
-	switch {
-	case kind == segNodeGroups && action == segUpdateConfig:
-		h.updateNodegroupConfig(w, r, clusterName, child)
-	case kind == segNodeGroups && action == segUpdateVersion:
-		h.updateNodegroupVersion(w, r, clusterName, child)
-	case kind == segAddons && action == segUpdate:
-		h.updateAddon(w, r, clusterName, child)
-	default:
-		writeError(w, http.StatusNotFound, "ResourceNotFoundException",
-			"unknown child action: "+kind+"/"+action)
 	}
 }
 
