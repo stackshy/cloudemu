@@ -12,7 +12,7 @@ import (
 )
 
 // TestSDKPublicIPDeleteInUseNamesResource checks the error for deleting a
-// NAT-gateway-bound public IP is a 400 PublicIPAddressInUse naming the ARM
+// NAT-gateway-bound public IP is a 400 PublicIPAddressCannotBeDeleted naming the ARM
 // resource id, not the internal allocation id.
 func TestSDKPublicIPDeleteInUseNamesResource(t *testing.T) {
 	ts := newVNetServer(t)
@@ -64,8 +64,8 @@ func TestSDKPublicIPDeleteInUseNamesResource(t *testing.T) {
 		t.Fatalf("want ResponseError, got %v", err)
 	}
 
-	if respErr.StatusCode != 400 || respErr.ErrorCode != "PublicIPAddressInUse" {
-		t.Errorf("got %d %s, want 400 PublicIPAddressInUse", respErr.StatusCode, respErr.ErrorCode)
+	if respErr.StatusCode != 400 || respErr.ErrorCode != "PublicIPAddressCannotBeDeleted" {
+		t.Errorf("got %d %s, want 400 PublicIPAddressCannotBeDeleted", respErr.StatusCode, respErr.ErrorCode)
 	}
 
 	if strings.Contains(respErr.Error(), "ipalloc-") || !strings.Contains(respErr.Error(), pipID) {

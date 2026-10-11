@@ -1708,8 +1708,8 @@ func (h *Handler) deletePublicIP(w http.ResponseWriter, r *http.Request, rp azur
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typePublicIP, rp.ResourceName)
 
 	if h.publicIPConfigurationRef(r.Context(), rp.Subscription, id) != nil {
-		azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressInUse",
-			"Public IP address "+id+" is in use by a network interface ipConfiguration and cannot be deleted.")
+		azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeDeleted",
+			"Public IP address "+id+" can not be deleted since it is still allocated to a network interface ipConfiguration.")
 
 		return
 	}
@@ -1719,8 +1719,8 @@ func (h *Handler) deletePublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		// this specific code, naming the ARM resource id (never the internal
 		// allocation id), not the generic 409 WriteCErr would emit.
 		if cerrors.IsFailedPrecondition(err) {
-			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressInUse",
-				"Public IP address "+id+" is still in use and cannot be deleted.")
+			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeDeleted",
+				"Public IP address "+id+" can not be deleted since it is still allocated to a resource.")
 			return
 		}
 
