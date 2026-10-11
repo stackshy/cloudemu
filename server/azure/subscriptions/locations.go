@@ -1,5 +1,7 @@
 package subscriptions
 
+import "strings"
+
 // region is one row of the static geo-location table the emulator reports for
 // the ListLocations endpoint. Real Azure returns the full public-cloud region
 // set; a representative subset is enough for a caller validating a region name
@@ -20,7 +22,7 @@ type region struct {
 // mirror the real Azure public-cloud metadata so a client that inspects them
 // (geography grouping, paired region) sees plausible data.
 //
-//nolint:gochecknoglobals // static reference table
+//nolint:gochecknoglobals,goconst // static reference table
 var regionTable = []region{
 	{"eastus", "East US", "(US) East US", "United States", "US", "37.3719", "-79.8164", "Virginia", "westus"},
 	{"eastus2", "East US 2", "(US) East US 2", "United States", "US", "36.6681", "-78.3889", "Virginia", "centralus"},
@@ -30,13 +32,70 @@ var regionTable = []region{
 	{"northeurope", "North Europe", "(Europe) North Europe", "Europe", "EU", "53.3478", "-6.2597", "Ireland", "westeurope"},
 	{"westeurope", "West Europe", "(Europe) West Europe", "Europe", "EU", "52.3667", "4.9", "Netherlands", "northeurope"},
 	{"uksouth", "UK South", "(Europe) UK South", "United Kingdom", "UK", "50.941", "-0.799", "London", "ukwest"},
-	{"southeastasia", "Southeast Asia", "(Asia Pacific) Southeast Asia", "Asia Pacific", "APAC", "1.283", "103.833", "Singapore", "eastasia"},
+	{
+		"southeastasia", "Southeast Asia", "(Asia Pacific) Southeast Asia",
+		"Asia Pacific", "APAC", "1.283", "103.833", "Singapore", "eastasia",
+	},
 	{"eastasia", "East Asia", "(Asia Pacific) East Asia", "Asia Pacific", "APAC", "22.267", "114.188", "Hong Kong", "southeastasia"},
 	{
 		"australiaeast", "Australia East", "(Asia Pacific) Australia East", "Asia Pacific",
 		"APAC", "-33.86", "151.2094", "New South Wales", "australiasoutheast",
 	},
 	{"japaneast", "Japan East", "(Asia Pacific) Japan East", "Asia Pacific", "APAC", "35.68", "139.77", "Tokyo", "japanwest"},
+	{"westcentralus", "West Central US", "(US) West Central US", "United States", "US", "40.89", "-110.234", "Wyoming", "westus2"},
+	{"southcentralus", "South Central US", "(US) South Central US", "United States", "US", "29.4167", "-98.5", "Texas", "northcentralus"},
+	{
+		"northcentralus", "North Central US", "(US) North Central US",
+		"United States", "US", "41.8819", "-87.6278", "Illinois", "southcentralus",
+	},
+	{"westus3", "West US 3", "(US) West US 3", "United States", "US", "33.448376", "-112.074036", "Arizona", "eastus"},
+	{"canadacentral", "Canada Central", "(Canada) Canada Central", "Canada", "CA", "43.653", "-79.383", "Toronto", "canadaeast"},
+	{"canadaeast", "Canada East", "(Canada) Canada East", "Canada", "CA", "46.817", "-71.217", "Quebec", "canadacentral"},
+	{
+		"brazilsouth", "Brazil South", "(South America) Brazil South",
+		"Brazil", "BR", "-23.55", "-46.633", "Sao Paulo State", "southcentralus",
+	},
+	{"ukwest", "UK West", "(Europe) UK West", "United Kingdom", "UK", "53.427", "-3.084", "Cardiff", "uksouth"},
+	{"francecentral", "France Central", "(Europe) France Central", "France", "FR", "46.3772", "2.373", "Paris", "francesouth"},
+	{
+		"germanywestcentral", "Germany West Central", "(Europe) Germany West Central",
+		"Germany", "DE", "50.1109", "8.6821", "Frankfurt", "germanynorth",
+	},
+	{
+		"switzerlandnorth", "Switzerland North", "(Europe) Switzerland North",
+		"Switzerland", "CH", "47.451542", "8.564572", "Zurich", "switzerlandwest",
+	},
+	{"norwayeast", "Norway East", "(Europe) Norway East", "Norway", "NO", "59.913868", "10.752245", "Oslo", "norwaywest"},
+	{"swedencentral", "Sweden Central", "(Europe) Sweden Central", "Sweden", "SE", "60.67488", "17.14127", "Gavle", "swedensouth"},
+	{"italynorth", "Italy North", "(Europe) Italy North", "Italy", "IT", "45.46427", "9.18951", "Milan", "swedencentral"},
+	{"polandcentral", "Poland Central", "(Europe) Poland Central", "Poland", "PL", "52.23", "21.01", "Warsaw", "northeurope"},
+	{"spaincentral", "Spain Central", "(Europe) Spain Central", "Spain", "ES", "40.4168", "-3.7038", "Madrid", "northeurope"},
+	{
+		"australiasoutheast", "Australia Southeast", "(Asia Pacific) Australia Southeast",
+		"Asia Pacific", "APAC", "-37.8136", "144.9631", "Victoria", "australiaeast",
+	},
+	{
+		"australiacentral", "Australia Central", "(Asia Pacific) Australia Central",
+		"Asia Pacific", "APAC", "-35.3075", "149.1244", "Canberra", "australiacentral2",
+	},
+	{"japanwest", "Japan West", "(Asia Pacific) Japan West", "Asia Pacific", "APAC", "34.6939", "135.5022", "Osaka", "japaneast"},
+	{"koreacentral", "Korea Central", "(Asia Pacific) Korea Central", "Asia Pacific", "APAC", "37.5665", "126.9780", "Seoul", "koreasouth"},
+	{"koreasouth", "Korea South", "(Asia Pacific) Korea South", "Asia Pacific", "APAC", "35.1796", "129.0756", "Busan", "koreacentral"},
+	{"centralindia", "Central India", "(Asia Pacific) Central India", "India", "IN", "18.5822", "73.9197", "Pune", "southindia"},
+	{"southindia", "South India", "(Asia Pacific) South India", "India", "IN", "12.9822", "80.1636", "Chennai", "centralindia"},
+	{"westindia", "West India", "(Asia Pacific) West India", "India", "IN", "19.088", "72.868", "Mumbai", "southindia"},
+	{"uaenorth", "UAE North", "(Middle East) UAE North", "UAE", "AE", "25.266666", "55.316666", "Dubai", "uaecentral"},
+	{
+		"southafricanorth", "South Africa North", "(Africa) South Africa North",
+		"South Africa", "ZA", "-25.731340", "28.218370", "Johannesburg", "southafricawest",
+	},
+	{"qatarcentral", "Qatar Central", "(Middle East) Qatar Central", "Qatar", "QA", "25.3548", "51.1839", "Doha", "westeurope"},
+	{"israelcentral", "Israel Central", "(Middle East) Israel Central", "Israel", "IL", "31.0461", "34.8516", "Israel", "northeurope"},
+	{"mexicocentral", "Mexico Central", "(Mexico) Mexico Central", "Mexico", "MX", "20.5888", "-100.3899", "Queretaro", "southcentralus"},
+	{
+		"newzealandnorth", "New Zealand North", "(Asia Pacific) New Zealand North",
+		"Asia Pacific", "APAC", "-36.8485", "174.7633", "Auckland", "australiaeast",
+	},
 }
 
 // locations renders the geo-location list for subscription id in the ARM shape
@@ -71,4 +130,24 @@ func locations(subscriptionID string) []map[string]any {
 	}
 
 	return out
+}
+
+// IsRegion reports whether name is a known Azure region. The comparison is
+// case-insensitive and ignores spaces, so "West US 2" matches "westus2".
+func IsRegion(name string) bool {
+	want := NormalizeLocation(name)
+
+	for i := range regionTable {
+		if regionTable[i].name == want {
+			return true
+		}
+	}
+
+	return false
+}
+
+// NormalizeLocation lowercases a location and removes spaces, the form ARM
+// compares regions in.
+func NormalizeLocation(name string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(name), " ", ""))
 }
