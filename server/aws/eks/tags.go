@@ -13,17 +13,35 @@ type clusterTagger interface {
 	ListResourceTags(ctx context.Context, arn string) (map[string]string, error)
 }
 
-// serveTags handles the EKS tagging API at /tags/{resourceArn}:
-// POST=TagResource, DELETE=UntagResource (?tagKeys=...), GET=ListTagsForResource.
-func (h *Handler) serveTags(w http.ResponseWriter, r *http.Request, arn string) {
+// serveTags runs the EKS tagging API at /tags/{resourceArn}:
+// TagResource (POST), UntagResource (DELETE, ?tagKeys=...) and
+// ListTagsForResource (GET).
+//
+// The ARN must be an EKS resource ARN of this account and region. The provider
+// resolves a resource by the names in the ARN alone, so without this check an
+// ARN of another account would act on the resource of the same name here, and
+// a bare name would act on a cluster.
+func (h *Handler) serveTags(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) {
 	tagger, ok := h.eks.(clusterTagger)
 	if !ok {
 		writeError(w, http.StatusNotImplemented, "InvalidRequestException", "tagging not supported")
 		return
 	}
 
-	switch r.Method {
-	case http.MethodPost:
+	if a.tag.kind == "" {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid ARN: "+a.tagARN)
+		return
+	}
+
+	if a.tag.foreign(h.accountID, h.region) {
+		writeError(w, http.StatusNotFound, "NotFoundException", "Resource not found: "+a.tagARN)
+		return
+	}
+
+	arn := a.tagARN
+
+	switch op {
+	case opTagResource:
 		var req struct {
 			Tags map[string]string `json:"tags"`
 		}
@@ -38,14 +56,14 @@ func (h *Handler) serveTags(w http.ResponseWriter, r *http.Request, arn string) 
 		}
 
 		writeJSON(w, struct{}{})
-	case http.MethodDelete:
+	case opUntagResource:
 		if err := tagger.UntagResource(r.Context(), arn, r.URL.Query()["tagKeys"]); err != nil {
 			writeErr(w, err)
 			return
 		}
 
 		writeJSON(w, struct{}{})
-	case http.MethodGet:
+	default:
 		tags, err := tagger.ListResourceTags(r.Context(), arn)
 		if err != nil {
 			writeErr(w, err)
@@ -53,7 +71,5 @@ func (h *Handler) serveTags(w http.ResponseWriter, r *http.Request, arn string) 
 		}
 
 		writeJSON(w, map[string]any{"tags": tags})
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 	}
 }

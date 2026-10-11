@@ -2,6 +2,7 @@ package eks_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -187,5 +188,84 @@ func TestSDKEKSListClustersPagination(t *testing.T) {
 
 	if len(second.Clusters) != 1 || aws.ToString(second.NextToken) != "" {
 		t.Fatalf("page2: got %d clusters, nextToken=%q", len(second.Clusters), aws.ToString(second.NextToken))
+	}
+}
+
+// TestSDKEKSDescribeUpdateNamesItsResource locks that DescribeUpdate finds a
+// nodegroup update only through its nodegroupName, and a cluster update only
+// without one, so reading an update needs the resource it belongs to.
+func TestSDKEKSDescribeUpdateNamesItsResource(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateCluster(ctx, &awseks.CreateClusterInput{
+		Name:               aws.String("du"),
+		Version:            aws.String("1.35"),
+		RoleArn:            aws.String("arn:aws:iam::123456789012:role/eks"),
+		ResourcesVpcConfig: &ekstypes.VpcConfigRequest{SubnetIds: []string{"subnet-1"}},
+	}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	if _, err := client.CreateNodegroup(ctx, &awseks.CreateNodegroupInput{
+		ClusterName:   aws.String("du"),
+		NodegroupName: aws.String("ng"),
+		NodeRole:      aws.String("arn:aws:iam::123456789012:role/node"),
+		Subnets:       []string{"subnet-1"},
+	}); err != nil {
+		t.Fatalf("CreateNodegroup: %v", err)
+	}
+
+	ngUpd, err := client.UpdateNodegroupConfig(ctx, &awseks.UpdateNodegroupConfigInput{
+		ClusterName:   aws.String("du"),
+		NodegroupName: aws.String("ng"),
+		Labels:        &ekstypes.UpdateLabelsPayload{AddOrUpdateLabels: map[string]string{"k": "v"}},
+	})
+	if err != nil {
+		t.Fatalf("UpdateNodegroupConfig: %v", err)
+	}
+
+	clUpd, err := client.UpdateClusterVersion(ctx, &awseks.UpdateClusterVersionInput{
+		Name: aws.String("du"), Version: aws.String("1.36"),
+	})
+	if err != nil {
+		t.Fatalf("UpdateClusterVersion: %v", err)
+	}
+
+	describe := func(id, nodegroup string) error {
+		in := &awseks.DescribeUpdateInput{Name: aws.String("du"), UpdateId: ngUpd.Update.Id}
+		if id != "" {
+			in.UpdateId = aws.String(id)
+		}
+
+		if nodegroup != "" {
+			in.NodegroupName = aws.String(nodegroup)
+		}
+
+		_, err := client.DescribeUpdate(ctx, in)
+
+		return err
+	}
+
+	ngID, clID := aws.ToString(ngUpd.Update.Id), aws.ToString(clUpd.Update.Id)
+
+	if err := describe(ngID, "ng"); err != nil {
+		t.Fatalf("nodegroup update with its nodegroupName: %v", err)
+	}
+
+	if err := describe(clID, ""); err != nil {
+		t.Fatalf("cluster update: %v", err)
+	}
+
+	var nf *ekstypes.ResourceNotFoundException
+
+	for _, tc := range []struct{ name, id, nodegroup string }{
+		{"nodegroup update without nodegroupName", ngID, ""},
+		{"nodegroup update under another nodegroup", ngID, "other"},
+		{"cluster update under a nodegroup", clID, "ng"},
+	} {
+		if err := describe(tc.id, tc.nodegroup); !errors.As(err, &nf) {
+			t.Errorf("%s: err = %v, want ResourceNotFoundException", tc.name, err)
+		}
 	}
 }

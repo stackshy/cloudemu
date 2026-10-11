@@ -450,7 +450,8 @@ type Drivers struct {
 	// only when that policy grants public access. Route 53 is checked per
 	// operation on hosted zone, health check and change ARNs, with the record
 	// set and VPC condition keys; CloudFront per operation on distribution
-	// ARNs. The other REST services are checked at service level for now: only a grant covering
+	// ARNs; EKS per operation on cluster, nodegroup, Fargate profile, add-on and
+	// access entry ARNs. The other REST services are checked at service level for now: only a grant covering
 	// every action of the service (such as s3:* or AdministratorAccess) lets a
 	// request through, so a fine-grained or resource-scoped REST policy fails
 	// closed until that service gets per-operation checks. The account root and
@@ -1219,7 +1220,7 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 	// otherwise claim the same path. EKS's Matches predicate is rooted
 	// at /clusters specifically so it doesn't shadow other REST URLs.
 	if d.EKS != nil {
-		eksHandler := eks.New(d.EKS)
+		eksHandler := eks.New(d.EKS, eks.WithScope(d.AccountID, d.Region))
 		eksHandler.SetIdentities(identities)
 		srv.Register(eksHandler)
 	}

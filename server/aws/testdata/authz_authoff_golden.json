@@ -235,6 +235,66 @@
     "body": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003cErrorResponse xmlns=\"http://cloudfront.amazonaws.com/doc/2020-05-31/\"\u003e\u003cError\u003e\u003cType\u003eSender\u003c/Type\u003e\u003cCode\u003eInvalidArgument\u003c/Code\u003e\u003cMessage\u003eunsupported tagging operation\u003c/Message\u003e\u003c/Error\u003e\u003c/ErrorResponse\u003e"
   },
   {
+    "name": "eks ListClusters",
+    "status": 200,
+    "body": "{\"clusters\":[]}\n"
+  },
+  {
+    "name": "eks DescribeCluster missing",
+    "status": 404,
+    "body": "{\"code\":\"ResourceNotFoundException\",\"message\":\"cluster \\\"none\\\" not found\"}\n"
+  },
+  {
+    "name": "eks wrong method",
+    "status": 405,
+    "body": "{\"code\":\"MethodNotAllowed\",\"message\":\"method not allowed\"}\n"
+  },
+  {
+    "name": "eks unknown sub-resource",
+    "status": 404,
+    "body": "{\"code\":\"ResourceNotFoundException\",\"message\":\"unknown cluster sub-resource: other\"}\n"
+  },
+  {
+    "name": "eks unknown child",
+    "status": 404,
+    "body": "{\"code\":\"ResourceNotFoundException\",\"message\":\"unknown child resource: other\"}\n"
+  },
+  {
+    "name": "eks unknown child action",
+    "status": 404,
+    "body": "{\"code\":\"ResourceNotFoundException\",\"message\":\"unknown child action: node-groups/other\"}\n"
+  },
+  {
+    "name": "eks child action GET",
+    "status": 405,
+    "body": "{\"code\":\"MethodNotAllowed\",\"message\":\"method not allowed\"}\n"
+  },
+  {
+    "name": "eks too deep",
+    "status": 404,
+    "body": "{\"code\":\"ResourceNotFoundException\",\"message\":\"unsupported path: /clusters/a/b/c/d/e/f\"}\n"
+  },
+  {
+    "name": "eks bad create body",
+    "status": 400,
+    "body": "{\"code\":\"InvalidParameterException\",\"message\":\"invalid JSON: unexpected EOF\"}\n"
+  },
+  {
+    "name": "eks DescribeNodegroup missing",
+    "status": 404,
+    "body": "{\"code\":\"ResourceNotFoundException\",\"message\":\"nodegroup \\\"ng\\\" not found in cluster \\\"none\\\"\"}\n"
+  },
+  {
+    "name": "eks tags wrong method",
+    "status": 405,
+    "body": "{\"code\":\"InvalidRequestException\",\"message\":\"method not allowed\"}\n"
+  },
+  {
+    "name": "eks ListAccessPolicies",
+    "status": 200,
+    "body": "{\"accessPolicies\":[{\"name\":\"AWSBackupFullAccessPolicyForBackup\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AWSBackupFullAccessPolicyForBackup\"},{\"name\":\"AWSBackupFullAccessPolicyForRestore\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AWSBackupFullAccessPolicyForRestore\"},{\"name\":\"AmazonAIOpsAssistantPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonAIOpsAssistantPolicy\"},{\"name\":\"AmazonARCRegionSwitchScalingPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonARCRegionSwitchScalingPolicy\"},{\"name\":\"AmazonEKSACKPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSACKPolicy\"},{\"name\":\"AmazonEKSAdminPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminPolicy\"},{\"name\":\"AmazonEKSAdminViewPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminViewPolicy\"},{\"name\":\"AmazonEKSArgoCDClusterPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSArgoCDClusterPolicy\"},{\"name\":\"AmazonEKSArgoCDPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSArgoCDPolicy\"},{\"name\":\"AmazonEKSAutoNodePolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSAutoNodePolicy\"},{\"name\":\"AmazonEKSBlockStorageClusterPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSBlockStorageClusterPolicy\"},{\"name\":\"AmazonEKSBlockStoragePolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSBlockStoragePolicy\"},{\"name\":\"AmazonEKSClusterAdminPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy\"},{\"name\":\"AmazonEKSClusterInsightsPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterInsightsPolicy\"},{\"name\":\"AmazonEKSComputeClusterPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSComputeClusterPolicy\"},{\"name\":\"AmazonEKSComputePolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSComputePolicy\"},{\"name\":\"AmazonEKSEditPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy\"},{\"name\":\"AmazonEKSHybridPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSHybridPolicy\"},{\"name\":\"AmazonEKSKROPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSKROPolicy\"},{\"name\":\"AmazonEKSLoadBalancingClusterPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSLoadBalancingClusterPolicy\"},{\"name\":\"AmazonEKSLoadBalancingPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSLoadBalancingPolicy\"},{\"name\":\"AmazonEKSNetworkingClusterPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSNetworkingClusterPolicy\"},{\"name\":\"AmazonEKSNetworkingPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSNetworkingPolicy\"},{\"name\":\"AmazonEKSPodIdentityPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSPodIdentityPolicy\"},{\"name\":\"AmazonEKSSecretAdminPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSSecretAdminPolicy\"},{\"name\":\"AmazonEKSSecretReaderPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSSecretReaderPolicy\"},{\"name\":\"AmazonEKSViewPolicy\",\"arn\":\"arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy\"}]}\n"
+  },
+  {
     "name": "unknown target",
     "status": 501,
     "body": "no handler registered for this request\n"

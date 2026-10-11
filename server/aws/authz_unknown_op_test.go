@@ -136,7 +136,7 @@ func TestUnknownRESTOpHasNoSideEffect(t *testing.T) {
 	defer ts.Close()
 
 	boot := userWithPolicy(t, cloud, "boot", "")
-	limited := userWithPolicy(t, cloud, "limited", allow("route53:GetHostedZone", "cloudfront:GetDistribution"))
+	limited := userWithPolicy(t, cloud, "limited", allow("route53:GetHostedZone", "cloudfront:GetDistribution", "eks:DescribeCluster"))
 
 	for _, rq := range []sreq{
 		{method: http.MethodGet, path: r53Path + "/Z1/other", service: r53Signed},
@@ -150,6 +150,14 @@ func TestUnknownRESTOpHasNoSideEffect(t *testing.T) {
 		{method: http.MethodPut, path: "/2020-05-31/tagging?Resource=x", service: cfSigned},
 		{method: http.MethodPost, path: "/2020-05-31/tagging?Operation=Tag&Resource=arn:aws:cloudfront::999999999999:distribution/E1",
 			body: "<Tags/>", service: cfSigned},
+		{method: http.MethodGet, path: eksPath + "/c1/other", service: eksSigned},
+		{method: http.MethodPut, path: eksPath + "/c1", service: eksSigned},
+		{method: http.MethodGet, path: eksPath + "/c1/node-groups/ng/update-config", service: eksSigned},
+		{method: http.MethodPost, path: eksPath, ctype: jsonCT, body: "{", service: eksSigned},
+		{method: http.MethodPut, path: "/tags/" + eksARN + "cluster/c1", service: eksSigned},
+		{method: http.MethodPost, path: "/tags/arn:aws:eks:us-east-1:999999999999:cluster/c1", ctype: jsonCT,
+			body: `{"tags":{"k":"v"}}`, service: eksSigned},
+		{method: http.MethodPost, path: "/tags/c1", ctype: jsonCT, body: `{"tags":{"k":"v"}}`, service: eksSigned},
 	} {
 		t.Run(rq.method+" "+rq.path, func(t *testing.T) {
 			before := providerState(t, cloud)

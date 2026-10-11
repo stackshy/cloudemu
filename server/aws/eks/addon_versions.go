@@ -51,12 +51,6 @@ type describeAddonConfigurationResponse struct {
 
 // describeAddonVersions serves GET /addons/supported-versions.
 func (h *Handler) describeAddonVersions(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		methodNotAllowed(w)
-
-		return
-	}
-
 	q := r.URL.Query()
 
 	addons, err := h.eks.DescribeAddonVersions(r.Context(), eksdriver.AddonVersionFilter{
@@ -87,12 +81,6 @@ func (h *Handler) describeAddonVersions(w http.ResponseWriter, r *http.Request) 
 
 // describeAddonConfiguration serves GET /addons/configuration-schemas.
 func (h *Handler) describeAddonConfiguration(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		methodNotAllowed(w)
-
-		return
-	}
-
 	q := r.URL.Query()
 
 	cfg, err := h.eks.DescribeAddonConfiguration(r.Context(), q.Get("addonName"), q.Get("addonVersion"))
