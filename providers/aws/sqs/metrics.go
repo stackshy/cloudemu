@@ -42,9 +42,7 @@ type queueGauges struct {
 	hasOldest bool
 }
 
-// sampleGauges reads the queue's state gauges as of now. A message that has
-// never been received and whose visibility lies in the future is delayed; one
-// that has been received and is still hidden is in flight. Caller holds qd.mu.
+// sampleGauges reads the queue's state gauges as of now. Caller holds qd.mu.
 func sampleGauges(qd *queueData, now time.Time) queueGauges {
 	var (
 		g      queueGauges
@@ -53,31 +51,15 @@ func sampleGauges(qd *queueData, now time.Time) queueGauges {
 	)
 
 	for _, msg := range qd.messages {
-		switch {
-		case !msg.VisibleAt.After(now):
-			g.visible++
-		case msg.ReceiveCount == 0:
-			g.delayed++
-		default:
-			g.notVisible++
-
-			if qd.info.FIFO && msg.GroupID != "" {
-				if groups == nil {
-					groups = make(map[string]struct{})
-				}
-
-				groups[msg.GroupID] = struct{}{}
+		if g.countState(msg, now) && qd.info.FIFO && msg.GroupID != "" {
+			if groups == nil {
+				groups = make(map[string]struct{})
 			}
+
+			groups[msg.GroupID] = struct{}{}
 		}
 
-		// A standard queue leaves poison-pill messages (received three or more
-		// times without being deleted) out of the age. FIFO queues keep order,
-		// so every message counts.
-		if !qd.info.FIFO && msg.ReceiveCount >= poisonPillReceiveCount {
-			continue
-		}
-
-		if !g.hasOldest || msg.SentAt.Before(oldest) {
+		if countsForAge(qd.info.FIFO, msg) && (!g.hasOldest || msg.SentAt.Before(oldest)) {
 			oldest = msg.SentAt
 			g.hasOldest = true
 		}
@@ -90,6 +72,32 @@ func sampleGauges(qd *queueData, now time.Time) queueGauges {
 	}
 
 	return g
+}
+
+// countState adds msg to the visible, delayed or in-flight count and reports
+// whether it is in flight. A message that has never been received and whose
+// visibility lies in the future is delayed; one that has been received and is
+// still hidden is in flight.
+func (g *queueGauges) countState(msg *sqsMessage, now time.Time) (inFlight bool) {
+	switch {
+	case !msg.VisibleAt.After(now):
+		g.visible++
+	case msg.ReceiveCount == 0:
+		g.delayed++
+	default:
+		g.notVisible++
+		return true
+	}
+
+	return false
+}
+
+// countsForAge reports whether msg counts toward ApproximateAgeOfOldestMessage.
+// A standard queue leaves out poison-pill messages (received three or more
+// times without being deleted); FIFO queues keep order, so every message
+// counts.
+func countsForAge(fifo bool, msg *sqsMessage) bool {
+	return fifo || msg.ReceiveCount < poisonPillReceiveCount
 }
 
 // emitQueueGauges publishes the current state gauges of qd. It takes qd.mu
