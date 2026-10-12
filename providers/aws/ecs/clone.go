@@ -200,7 +200,7 @@ func cloneTask(t *driver.Task) driver.Task {
 }
 
 // cloneContainers deep-copies a slice of containers and each container's
-// NetworkBindings slice.
+// NetworkBindings, NetworkInterfaces and ManagedAgents slices.
 func cloneContainers(in []driver.Container) []driver.Container {
 	if len(in) == 0 {
 		return nil
@@ -211,6 +211,8 @@ func cloneContainers(in []driver.Container) []driver.Container {
 	for i := range in {
 		c := in[i]
 		c.NetworkBindings = append([]driver.NetworkBinding(nil), in[i].NetworkBindings...)
+		c.NetworkInterfaces = append([]driver.ContainerNetworkInterface(nil), in[i].NetworkInterfaces...)
+		c.ManagedAgents = append([]driver.ManagedAgent(nil), in[i].ManagedAgents...)
 		out[i] = c
 	}
 
@@ -250,6 +252,7 @@ func cloneService(s *driver.Service) driver.Service {
 	out.DeploymentConfiguration = cloneDeploymentConfig(s.DeploymentConfiguration)
 	out.NetworkConfiguration = cloneNetworkConfig(s.NetworkConfiguration)
 	out.HealthCheckGracePeriodSeconds = cloneIntPtr(s.HealthCheckGracePeriodSeconds)
+	out.ServiceConnect = cloneServiceConnect(s.ServiceConnect)
 
 	return out
 }
@@ -330,4 +333,51 @@ func cloneManagedScaling(in *driver.ManagedScaling) *driver.ManagedScaling {
 	out.InstanceWarmupPeriod = cloneIntPtr(in.InstanceWarmupPeriod)
 
 	return &out
+}
+
+// cloneTaskSet deep-copies a task set's slice and pointer fields.
+func cloneTaskSet(ts *driver.TaskSet) driver.TaskSet {
+	out := *ts
+	out.CapacityProviderStrategy = append([]driver.CapacityProviderStrategyItem(nil), ts.CapacityProviderStrategy...)
+	out.NetworkConfiguration = cloneNetworkConfig(ts.NetworkConfiguration)
+	out.LoadBalancers = append([]driver.LoadBalancer(nil), ts.LoadBalancers...)
+	out.ServiceRegistries = append([]driver.ServiceRegistry(nil), ts.ServiceRegistries...)
+	out.Tags = copyTags(ts.Tags)
+
+	return out
+}
+
+// cloneServiceConnect deep-copies a Service Connect configuration.
+func cloneServiceConnect(in *driver.ServiceConnectConfiguration) *driver.ServiceConnectConfiguration {
+	if in == nil {
+		return nil
+	}
+
+	return &driver.ServiceConnectConfiguration{Namespace: in.Namespace, Raw: append([]byte(nil), in.Raw...)}
+}
+
+// cloneServiceDeployment deep-copies a service deployment.
+func cloneServiceDeployment(d *driver.ServiceDeployment) driver.ServiceDeployment {
+	out := *d
+	out.SourceServiceRevisions = append([]driver.ServiceRevisionSummary(nil), d.SourceServiceRevisions...)
+	out.DeploymentConfiguration = cloneDeploymentConfig(d.DeploymentConfiguration)
+
+	if d.Rollback != nil {
+		rollback := *d.Rollback
+		out.Rollback = &rollback
+	}
+
+	return out
+}
+
+// cloneServiceRevision deep-copies a service revision.
+func cloneServiceRevision(r *driver.ServiceRevision) driver.ServiceRevision {
+	out := *r
+	out.CapacityProviderStrategy = append([]driver.CapacityProviderStrategyItem(nil), r.CapacityProviderStrategy...)
+	out.NetworkConfiguration = cloneNetworkConfig(r.NetworkConfiguration)
+	out.LoadBalancers = append([]driver.LoadBalancer(nil), r.LoadBalancers...)
+	out.ServiceRegistries = append([]driver.ServiceRegistry(nil), r.ServiceRegistries...)
+	out.ServiceConnect = cloneServiceConnect(r.ServiceConnect)
+
+	return out
 }

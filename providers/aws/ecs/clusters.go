@@ -8,7 +8,8 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/ecs/driver"
 )
 
-// CreateCluster creates a cluster, defaulting the name to "default".
+// CreateCluster creates a cluster, defaulting the name to "default". Creating a
+// cluster whose name is already ACTIVE returns the existing cluster, as AWS does.
 func (m *Mock) CreateCluster(ctx context.Context, in driver.CreateClusterInput) (*driver.Cluster, error) {
 	name := in.Name
 	if name == "" {
@@ -23,21 +24,24 @@ func (m *Mock) CreateCluster(ctx context.Context, in driver.CreateClusterInput) 
 		Settings: append([]driver.Setting(nil), in.Settings...),
 	}
 
-	// Serialize the reject-if-ACTIVE / create-or-reuse compare-and-set so two
-	// concurrent creates of the same name can't both succeed. Only an ACTIVE
-	// cluster of the same name is a conflict; a previously deleted (INACTIVE)
+	// Serialize the return-if-ACTIVE / create-or-reuse compare-and-set so two
+	// concurrent creates of the same name can't both create. CreateCluster is
+	// idempotent: an ACTIVE cluster of the same name is returned unchanged (the
+	// new tags and settings are ignored), while a previously deleted (INACTIVE)
 	// tombstone is overwritten, so a deleted cluster name can be recreated.
-	// Real ECS lets the name be reused once the old cluster is gone.
 	m.clusterMu.Lock()
 	if existing, ok := m.clusters.Get(name); ok && existing.Status == statusActive {
+		out := cloneCluster(existing)
 		m.clusterMu.Unlock()
-		return nil, errors.Newf(errors.AlreadyExists, "cluster %q already exists", name)
+
+		return &out, nil
 	}
 
 	m.clusters.Set(name, c)
 	m.clusterMu.Unlock()
 
 	m.recordTags(c.ARN, in.Tags)
+	m.publishClusterMetrics(name)
 
 	out := cloneCluster(c)
 
@@ -182,6 +186,7 @@ func (m *Mock) mutateCluster(id string, fn func(*driver.Cluster)) (*driver.Clust
 	}
 
 	out := m.describeCluster(&updated)
+	m.publishClusterMetrics(name)
 
 	return &out, nil
 }

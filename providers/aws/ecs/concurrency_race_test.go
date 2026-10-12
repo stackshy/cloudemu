@@ -122,3 +122,105 @@ func TestConcurrentServiceAccessRace(t *testing.T) {
 
 	wg.Wait()
 }
+
+// fargateRaceFixture registers a Fargate awsvpc task definition in a fresh
+// "prod" cluster and returns its network configuration.
+func fargateRaceFixture(t *testing.T, m *Mock) *driver.NetworkConfiguration {
+	t.Helper()
+
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, driver.CreateClusterInput{Name: "prod"})
+	require.NoError(t, err)
+
+	_, err = m.RegisterTaskDefinition(ctx, driver.RegisterTaskDefinitionInput{
+		Family: "web", NetworkMode: networkModeAwsvpc, RequiresCompatibilities: []string{launchFargate},
+		CPU: "256", Memory: "512",
+		ContainerDefinitions: []driver.ContainerDefinition{{Name: "c", Image: "img", Essential: true}},
+	})
+	require.NoError(t, err)
+
+	return &driver.NetworkConfiguration{AwsVpcConfiguration: &driver.AwsVpcConfiguration{Subnets: []string{"subnet-1"}}}
+}
+
+// readTasksUntil starts readers that list and describe every task of "prod"
+// until stop closes, and returns a func that waits for them.
+func readTasksUntil(m *Mock, stop <-chan struct{}) func() {
+	var wg sync.WaitGroup
+
+	for range 4 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+
+				tasks, _ := m.ListTasks(context.Background(), "prod", "", "", "")
+
+				arns := make([]string, 0, len(tasks))
+				for i := range tasks {
+					arns = append(arns, tasks[i].ARN)
+				}
+
+				if len(arns) > 0 && len(arns) <= 100 {
+					_, _, _ = m.DescribeTasks(context.Background(), "prod", arns)
+				}
+			}
+		}()
+	}
+
+	return wg.Wait
+}
+
+// TestConcurrentFargateRunTaskVsReadRace guards launchTask publishing a Fargate
+// task to the store before stampLaunch finished writing it: a concurrent
+// List/DescribeTasks clone then raced those writes under `go test -race`.
+func TestConcurrentFargateRunTaskVsReadRace(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	netCfg := fargateRaceFixture(t, m)
+
+	stop := make(chan struct{})
+	wait := readTasksUntil(m, stop)
+
+	for range 50 {
+		_, _, err := m.RunTask(ctx, driver.RunTaskInput{
+			Cluster: "prod", TaskDefinition: "web", LaunchType: launchFargate, NetworkConfiguration: netCfg, Count: 1,
+		})
+		require.NoError(t, err)
+	}
+
+	close(stop)
+	wait()
+}
+
+// TestConcurrentFargateForceDeployVsReadRace is the same race reached through
+// UpdateService ForceNewDeployment launching replacement Fargate tasks.
+func TestConcurrentFargateForceDeployVsReadRace(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	netCfg := fargateRaceFixture(t, m)
+
+	_, err := m.CreateService(ctx, driver.CreateServiceInput{
+		ServiceName: "svc", Cluster: "prod", TaskDefinition: "web", LaunchType: launchFargate,
+		NetworkConfiguration: netCfg, DesiredCount: 2,
+	})
+	require.NoError(t, err)
+
+	stop := make(chan struct{})
+	wait := readTasksUntil(m, stop)
+
+	for range 50 {
+		_, err = m.UpdateService(ctx, driver.UpdateServiceInput{Cluster: "prod", Service: "svc", ForceNewDeployment: true})
+		require.NoError(t, err)
+	}
+
+	close(stop)
+	wait()
+}

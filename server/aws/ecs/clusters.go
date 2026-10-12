@@ -124,7 +124,7 @@ func (h *Handler) describeClusters(w http.ResponseWriter, r *http.Request) {
 		out = append(out, wc)
 	}
 
-	wire.WriteJSON(w, map[string]any{"clusters": out, "failures": fromFailures(failures)})
+	wire.WriteJSON(w, map[string]any{"clusters": out, keyFailures: fromFailures(failures)})
 }
 
 // includes reports whether field (case-insensitive) is present in the request's

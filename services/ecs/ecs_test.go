@@ -177,11 +177,13 @@ func TestWrapperWave4bFlow(t *testing.T) {
 	require.NoError(t, err)
 	mock2.SeedContainerInstance("prod", "i-exec")
 
-	tasks, _, err := e2.RunTask(ctx, driver.RunTaskInput{Cluster: "prod", TaskDefinition: "web"})
+	tasks, _, err := e2.RunTask(ctx, driver.RunTaskInput{Cluster: "prod", TaskDefinition: "web", EnableExecuteCommand: true})
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 
-	exec, err := e2.ExecuteCommand(ctx, driver.ExecuteCommandInput{Cluster: "prod", Task: tasks[0].ARN, Command: "ls"})
+	exec, err := e2.ExecuteCommand(ctx, driver.ExecuteCommandInput{
+		Cluster: "prod", Task: tasks[0].ARN, Command: "ls", Interactive: true,
+	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, exec.Session.SessionID)
 
@@ -227,4 +229,118 @@ func TestWrapperCapacityProviderFlow(t *testing.T) {
 	for _, op := range []string{"CreateCapacityProvider", "DescribeCapacityProviders", "UpdateCapacityProvider", "DeleteCapacityProvider"} {
 		assert.Positive(t, rec.CallCountFor("ecs", op), op)
 	}
+}
+
+// TestWrapperOptionalCapabilities drives every optional capability through the
+// portable wrapper and checks each call is recorded.
+func TestWrapperOptionalCapabilities(t *testing.T) {
+	e, _, rec := newWrapper(t)
+	ctx := context.Background()
+
+	_, err := e.CreateCluster(ctx, driver.CreateClusterInput{Name: "prod"})
+	require.NoError(t, err)
+
+	_, err = e.RegisterTaskDefinition(ctx, driver.RegisterTaskDefinitionInput{
+		Family:                  "fg",
+		ContainerDefinitions:    []driver.ContainerDefinition{{Name: "c", Image: "img", Essential: true}},
+		CPU:                     "256",
+		Memory:                  "512",
+		NetworkMode:             "awsvpc",
+		RequiresCompatibilities: []string{"FARGATE"},
+	})
+	require.NoError(t, err)
+
+	netCfg := &driver.NetworkConfiguration{AwsVpcConfiguration: &driver.AwsVpcConfiguration{Subnets: []string{"subnet-1"}}}
+
+	_, err = e.CreateService(ctx, driver.CreateServiceInput{
+		ServiceName: "ext", Cluster: "prod", DeploymentController: "EXTERNAL", DesiredCount: 2,
+	})
+	require.NoError(t, err)
+
+	ts, err := e.CreateTaskSet(ctx, driver.CreateTaskSetInput{
+		Cluster: "prod", Service: "ext", TaskDefinition: "fg", LaunchType: "FARGATE", NetworkConfiguration: netCfg,
+	})
+	require.NoError(t, err)
+
+	half := driver.Scale{Unit: driver.ScaleUnitPercent, Value: 50}
+	_, err = e.UpdateTaskSet(ctx, driver.UpdateTaskSetInput{Cluster: "prod", Service: "ext", TaskSet: ts.ID, Scale: half})
+	require.NoError(t, err)
+
+	sets, failures, err := e.DescribeTaskSets(ctx, "prod", "ext", []string{ts.ID})
+	require.NoError(t, err)
+	require.Empty(t, failures)
+	require.Len(t, sets, 1)
+
+	_, err = e.UpdateServicePrimaryTaskSet(ctx, "prod", "ext", ts.ID)
+	require.NoError(t, err)
+
+	_, err = e.DeleteTaskSet(ctx, driver.DeleteTaskSetInput{Cluster: "prod", Service: "ext", TaskSet: ts.ID, Force: true})
+	require.NoError(t, err)
+
+	_, err = e.CreateService(ctx, driver.CreateServiceInput{
+		ServiceName: "web", Cluster: "prod", TaskDefinition: "fg", LaunchType: "FARGATE", NetworkConfiguration: netCfg, DesiredCount: 1,
+		ServiceConnect: &driver.ServiceConnectConfiguration{Namespace: "mesh"},
+	})
+	require.NoError(t, err)
+
+	tasks, err := e.ListTasks(ctx, "prod", "", "", "web")
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+
+	_, _, err = e.UpdateTaskProtection(ctx, driver.UpdateTaskProtectionInput{Cluster: "prod", Tasks: []string{tasks[0].ARN}, ProtectionEnabled: true})
+	require.NoError(t, err)
+
+	got, _, err := e.GetTaskProtection(ctx, "prod", []string{tasks[0].ARN})
+	require.NoError(t, err)
+	assert.True(t, got[0].ProtectionEnabled)
+
+	deps, next, err := e.ListServiceDeployments(ctx, driver.ListServiceDeploymentsInput{Cluster: "prod", Service: "web"})
+	require.NoError(t, err)
+	require.Len(t, deps, 1)
+	assert.Empty(t, next)
+
+	described, _, err := e.DescribeServiceDeployments(ctx, []string{deps[0].ARN})
+	require.NoError(t, err)
+	assert.Len(t, described, 1)
+
+	revs, _, err := e.DescribeServiceRevisions(ctx, []string{deps[0].TargetServiceRevision.ARN})
+	require.NoError(t, err)
+	assert.Len(t, revs, 1)
+
+	_, err = e.StopServiceDeployment(ctx, deps[0].ARN, driver.StopTypeRollback)
+	require.Error(t, err, "a completed deployment cannot be stopped")
+
+	arns, _, err := e.ListServicesByNamespace(ctx, "mesh", 0, "")
+	require.NoError(t, err)
+	assert.Len(t, arns, 1)
+
+	for _, op := range []string{
+		"CreateTaskSet", "UpdateTaskSet", "DescribeTaskSets", "UpdateServicePrimaryTaskSet", "DeleteTaskSet",
+		"UpdateTaskProtection", "GetTaskProtection", "ListServiceDeployments", "DescribeServiceDeployments",
+		"DescribeServiceRevisions", "StopServiceDeployment", "ListServicesByNamespace",
+	} {
+		assert.Equal(t, 1, rec.CallCountFor("ecs", op), op)
+	}
+}
+
+// bareDriver satisfies driver.ECS without any optional capability.
+type bareDriver struct{ driver.ECS }
+
+// TestWrapperCapabilityMissing pins that a driver without a capability gets a
+// typed FailedPrecondition, not a panic.
+func TestWrapperCapabilityMissing(t *testing.T) {
+	e := ecs.NewECS(bareDriver{})
+	ctx := context.Background()
+
+	_, _, err := e.GetTaskProtection(ctx, "prod", []string{"t"})
+	require.Error(t, err)
+
+	_, err = e.CreateTaskSet(ctx, driver.CreateTaskSetInput{})
+	require.Error(t, err)
+
+	_, _, err = e.ListServiceDeployments(ctx, driver.ListServiceDeploymentsInput{})
+	require.Error(t, err)
+
+	_, _, err = e.ListServicesByNamespace(ctx, "ns", 0, "")
+	require.Error(t, err)
 }

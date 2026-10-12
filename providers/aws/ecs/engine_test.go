@@ -72,6 +72,13 @@ func newEngineTestMock(eng config.ContainerEngine) *Mock {
 func registerAndRun(t *testing.T, m *Mock, cd driver.ContainerDefinition) driver.Task {
 	t.Helper()
 
+	return registerAndRunExec(t, m, cd, false)
+}
+
+// registerAndRunExec is registerAndRun with ECS Exec enabled or not on the task.
+func registerAndRunExec(t *testing.T, m *Mock, cd driver.ContainerDefinition, enableExec bool) driver.Task {
+	t.Helper()
+
 	ctx := context.Background()
 
 	_, err := m.RegisterTaskDefinition(ctx, driver.RegisterTaskDefinitionInput{
@@ -81,7 +88,7 @@ func registerAndRun(t *testing.T, m *Mock, cd driver.ContainerDefinition) driver
 	require.NoError(t, err)
 
 	tasks, failures, err := m.RunTask(ctx, driver.RunTaskInput{
-		TaskDefinition: "web", LaunchType: "EXTERNAL", Count: 1,
+		TaskDefinition: "web", LaunchType: "EXTERNAL", Count: 1, EnableExecuteCommand: enableExec,
 	})
 	require.NoError(t, err)
 	require.Empty(t, failures)
@@ -258,7 +265,7 @@ func TestExecuteCommandExecsEngine(t *testing.T) {
 	m := newEngineTestMock(eng)
 	ctx := context.Background()
 
-	task := registerAndRun(t, m, driver.ContainerDefinition{Name: "app", Image: "img"})
+	task := registerAndRunExec(t, m, driver.ContainerDefinition{Name: "app", Image: "img"}, true)
 
 	res, err := m.ExecuteCommand(ctx, driver.ExecuteCommandInput{
 		Task: task.ARN, Container: "app", Command: "ls -la /tmp", Interactive: true,
@@ -273,7 +280,7 @@ func TestExecuteCommandExecsEngine(t *testing.T) {
 func TestNilEngineLeavesTaskSynthetic(t *testing.T) {
 	m := newTestMock()
 
-	task := registerAndRun(t, m, driver.ContainerDefinition{Name: "app", Image: "img"})
+	task := registerAndRunExec(t, m, driver.ContainerDefinition{Name: "app", Image: "img"}, true)
 
 	require.Len(t, task.Containers, 1)
 	assert.Equal(t, statusRunning, task.Containers[0].LastStatus)
@@ -282,7 +289,7 @@ func TestNilEngineLeavesTaskSynthetic(t *testing.T) {
 	assert.Equal(t, statusRunning, task.LastStatus)
 
 	// ExecuteCommand stays purely synthetic with no engine wired.
-	res, err := m.ExecuteCommand(context.Background(), driver.ExecuteCommandInput{Task: task.ARN})
+	res, err := m.ExecuteCommand(context.Background(), driver.ExecuteCommandInput{Task: task.ARN, Interactive: true})
 	require.NoError(t, err)
 	assert.NotEmpty(t, res.Session.SessionID)
 }
