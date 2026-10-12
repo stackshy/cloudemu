@@ -171,8 +171,16 @@ func (m *Mock) MoveGroup(_ context.Context, id, compartmentID string) error {
 
 	g.CompartmentID = compartmentID
 	g.TimeLastModified = m.now()
+	m.moveLogsOf(id, compartmentID)
 
-	for _, rec := range m.logsIn(id) {
+	return nil
+}
+
+// moveLogsOf carries a group's logs into its new compartment, replacing each
+// configuration rather than writing through a pointer a reader may hold.
+// Callers hold m.mu.
+func (m *Mock) moveLogsOf(groupID, compartmentID string) {
+	for _, rec := range m.logsIn(groupID) {
 		rec.Log.CompartmentID = compartmentID
 
 		if rec.Log.Configuration != nil {
@@ -181,6 +189,4 @@ func (m *Mock) MoveGroup(_ context.Context, id, compartmentID string) error {
 			rec.Log.Configuration = &cfg
 		}
 	}
-
-	return nil
 }

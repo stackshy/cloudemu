@@ -522,12 +522,12 @@ func TestPortableLogGroupCRUD(t *testing.T) {
 
 	info, err := m.CreateLogGroup(ctx, driver.LogGroupConfig{
 		Name:          "portable",
-		RetentionDays: 14,
+		RetentionDays: 30,
 		Tags:          map[string]string{"env": "dev"},
 		Scope:         scope.Scope{Compartment: compartmentB},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 14, info.RetentionDays)
+	assert.Equal(t, 30, info.RetentionDays)
 	assert.Equal(t, compartmentB, info.Scope.Compartment)
 	assert.True(t, strings.HasPrefix(info.ResourceID, "ocid1.loggroup."))
 
@@ -743,6 +743,50 @@ func TestPortableUpdateLogGroupMoveCollides(t *testing.T) {
 
 	_, err = m.UpdateLogGroup(ctx, driver.LogGroupConfig{Name: "shared2"})
 	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err), "an ambiguous name is rejected")
+}
+
+func TestPortableUpdateLogGroupMoveCarriesItsLogs(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+	g := newGroup(t, m, compartmentA, "moving")
+	l := newCustomLog(t, m, g.ID, "stdout")
+
+	_, err := m.UpdateLogGroup(ctx, driver.LogGroupConfig{
+		Name:  "moving",
+		Scope: scope.Scope{Compartment: compartmentB},
+	})
+	require.NoError(t, err)
+
+	movedLog, err := m.GetLog(ctx, g.ID, l.ID)
+	require.NoError(t, err)
+	assert.Equal(t, compartmentB, movedLog.CompartmentID)
+}
+
+func TestPortableRetentionIsValidated(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	_, err := m.CreateLogGroup(ctx, driver.LogGroupConfig{
+		Name:          "bad",
+		RetentionDays: 14,
+		Scope:         scope.Scope{Compartment: compartmentA},
+	})
+	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+
+	g := newGroup(t, m, compartmentA, "kept")
+
+	_, err = m.UpdateLogGroup(ctx, driver.LogGroupConfig{
+		Name:          "kept",
+		RetentionDays: 45,
+		Tags:          map[string]string{"env": "prod"},
+		Scope:         scope.Scope{Compartment: compartmentB},
+	})
+	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+
+	got, err := m.GetGroup(ctx, g.ID)
+	require.NoError(t, err)
+	assert.Equal(t, compartmentA, got.CompartmentID, "a refused update applies nothing")
+	assert.Empty(t, got.FreeformTags)
 }
 
 // Read limits.

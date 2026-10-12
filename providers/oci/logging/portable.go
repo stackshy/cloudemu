@@ -44,6 +44,12 @@ func (m *Mock) CreateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if cfg.RetentionDays != 0 {
+		if err := validateRetention(cfg.RetentionDays); err != nil {
+			return nil, err
+		}
+	}
+
 	g, err := m.createGroup(LogGroupSpec{
 		CompartmentID: cfg.Scope.Compartment,
 		DisplayName:   cfg.Name,
@@ -71,6 +77,11 @@ func (m *Mock) UpdateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 		return nil, err
 	}
 
+	moving, err := m.checkPortableUpdate(g, cfg.RetentionDays, cfg.Scope.Compartment)
+	if err != nil {
+		return nil, err
+	}
+
 	if cfg.RetentionDays != 0 {
 		g.RetentionDays = cfg.RetentionDays
 	}
@@ -79,13 +90,9 @@ func (m *Mock) UpdateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 		g.FreeformTags = copyTags(cfg.Tags)
 	}
 
-	if cfg.Scope.Compartment != "" && cfg.Scope.Compartment != g.CompartmentID {
-		if other, taken := m.groupByName(cfg.Scope.Compartment, g.DisplayName); taken && other.ID != g.ID {
-			return nil, cerrors.Newf(cerrors.AlreadyExists,
-				"log group %q already exists in compartment %s", g.DisplayName, cfg.Scope.Compartment)
-		}
-
+	if moving {
 		g.CompartmentID = cfg.Scope.Compartment
+		m.moveLogsOf(g.ID, cfg.Scope.Compartment)
 	}
 
 	g.TimeLastModified = m.now()
@@ -93,6 +100,27 @@ func (m *Mock) UpdateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 	info := m.toLogGroupInfo(g)
 
 	return &info, nil
+}
+
+// checkPortableUpdate validates a portable update before any of it is applied
+// and reports whether the group changes compartment.
+func (m *Mock) checkPortableUpdate(g *LogGroup, retentionDays int, compartmentID string) (bool, error) {
+	if retentionDays != 0 {
+		if err := validateRetention(retentionDays); err != nil {
+			return false, err
+		}
+	}
+
+	if compartmentID == "" || compartmentID == g.CompartmentID {
+		return false, nil
+	}
+
+	if other, taken := m.groupByName(compartmentID, g.DisplayName); taken && other.ID != g.ID {
+		return false, cerrors.Newf(cerrors.AlreadyExists,
+			"log group %q already exists in compartment %s", g.DisplayName, compartmentID)
+	}
+
+	return true, nil
 }
 
 // DeleteLogGroup deletes a log group by display name.
