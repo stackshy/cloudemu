@@ -522,12 +522,17 @@ func TestResendConfirmation(t *testing.T) {
 	topicID := f.newTopic("alerts", compartment)
 	subID, token := f.newSubscription(topicID, "ops@example.com")
 
-	w := f.do(http.MethodPost, "/20181201/subscriptions/"+subID+"/actions/resendConfirmation", nil)
+	w := f.do(http.MethodPost, "/20181201/subscriptions/"+subID+"/resendConfirmation", nil)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	fresh, _ := decode(t, w)["confirmationToken"].(string)
+	body := decode(t, w)
+	fresh, _ := body["confirmationToken"].(string)
 	require.NotEmpty(t, fresh)
 	assert.NotEqual(t, token, fresh)
+	assert.Equal(t, body["etag"], w.Header().Get("ETag"))
+
+	old := f.do(http.MethodPost, "/20181201/subscriptions/"+subID+"/actions/resendConfirmation", nil)
+	assert.Equal(t, http.StatusNotFound, old.Code, "the SDK path has no actions segment")
 }
 
 func TestUnsubscribeEndpoints(t *testing.T) {
@@ -583,13 +588,17 @@ func TestUpdateAndMoveSubscription(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
-	// Update and Get return ONS's Subscription, which carries the policy as a
-	// JSON string in deliverPolicy; there is no deliveryPolicy object.
+	// Get returns ONS's Subscription, which carries the policy as a JSON string
+	// in deliverPolicy. The SDK decodes Update as UpdateSubscriptionDetails,
+	// which reads the deliveryPolicy object, so Update carries both.
 	wantPolicy := `{"backoffRetryPolicy":{"maxRetryDuration":7200,"policyType":"EXPONENTIAL"}}`
 
 	updated := decode(t, w)
 	assert.JSONEq(t, wantPolicy, updated["deliverPolicy"].(string))
-	assert.NotContains(t, updated, "deliveryPolicy")
+
+	updatedPolicy, err := json.Marshal(updated["deliveryPolicy"])
+	require.NoError(t, err)
+	assert.JSONEq(t, wantPolicy, string(updatedPolicy))
 
 	got := decode(t, f.do(http.MethodGet, "/20181201/subscriptions/"+subID, nil))
 	assert.JSONEq(t, wantPolicy, got["deliverPolicy"].(string))

@@ -90,6 +90,15 @@ type subscriptionResponse struct {
 	DeliverPolicy string `json:"deliverPolicy,omitempty"`
 }
 
+// updateSubscriptionResponse answers UpdateSubscription. The SDK decodes it as
+// UpdateSubscriptionDetails, which reads the policy from the deliveryPolicy
+// object, so it carries both forms.
+type updateSubscriptionResponse struct {
+	subscriptionResponse
+
+	DeliveryPolicy *deliveryPolicy `json:"deliveryPolicy,omitempty"`
+}
+
 // subscriptionSummary is ONS's SubscriptionSummary, returned by List. Unlike
 // Subscription it carries the delivery policy as an object in deliveryPolicy.
 type subscriptionSummary struct {

@@ -17,12 +17,24 @@ func (h *Handler) serveSubscriptions(w http.ResponseWriter, r *http.Request, rt 
 		h.serveSubscriptionCollection(w, r)
 	case rt.Sub == "":
 		h.serveSubscription(w, r, rt.ID)
-	case rt.Sub == subConfirmation && rt.Action == "":
-		h.confirmSubscription(w, r, rt.ID)
-	case rt.Sub == subUnsubscription && rt.Action == "":
-		h.unsubscribeByToken(w, r, rt.ID)
 	case rt.Sub == subActions:
 		h.serveSubscriptionAction(w, r, rt)
+	case rt.Action == "":
+		h.serveSubscriptionSub(w, r, rt)
+	default:
+		notFound(w, r)
+	}
+}
+
+// serveSubscriptionSub routes /subscriptions/{id}/{sub}.
+func (h *Handler) serveSubscriptionSub(w http.ResponseWriter, r *http.Request, rt route) {
+	switch rt.Sub {
+	case subConfirmation:
+		h.confirmSubscription(w, r, rt.ID)
+	case subUnsubscription:
+		h.unsubscribeByToken(w, r, rt.ID)
+	case subResendConfirm:
+		h.resendConfirmation(w, r, rt.ID)
 	default:
 		notFound(w, r)
 	}
@@ -33,8 +45,6 @@ func (h *Handler) serveSubscriptionAction(w http.ResponseWriter, r *http.Request
 	switch rt.Action {
 	case actionChangeCompartment:
 		h.changeSubscriptionCompartment(w, r, rt.ID)
-	case actionResendConfirm:
-		h.resendConfirmation(w, r, rt.ID)
 	default:
 		notFound(w, r)
 	}
@@ -152,9 +162,7 @@ func (h *Handler) listSubscriptions(w http.ResponseWriter, r *http.Request) {
 	ocirest.WriteJSON(w, r, http.StatusOK, page)
 }
 
-// updateSubscription replaces a subscription's delivery policy and tags. The
-// full subscription is returned; ONS's UpdateSubscriptionDetails is a subset
-// of it, so an SDK decoding either sees the fields it expects.
+// updateSubscription replaces a subscription's delivery policy and tags.
 func (h *Handler) updateSubscription(w http.ResponseWriter, r *http.Request, id string) {
 	var req updateSubscriptionRequest
 
@@ -176,7 +184,11 @@ func (h *Handler) updateSubscription(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 
-	writeSubscription(w, r, http.StatusOK, sub)
+	setEtag(w, sub.Etag)
+	ocirest.WriteJSON(w, r, http.StatusOK, updateSubscriptionResponse{
+		subscriptionResponse: subscriptionWire(sub),
+		DeliveryPolicy:       toWirePolicy(sub.DeliveryPolicy),
+	})
 }
 
 func (h *Handler) deleteSubscription(w http.ResponseWriter, r *http.Request, id string) {
@@ -251,7 +263,7 @@ func (h *Handler) resendConfirmation(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusOK, subscriptionWire(sub))
+	writeSubscription(w, r, http.StatusOK, sub)
 }
 
 // changeSubscriptionCompartment moves a subscription. ONS runs it
@@ -272,8 +284,8 @@ func (h *Handler) changeSubscriptionCompartment(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if err := h.extras.ChangeSubscriptionCompartment(r.Context(), id, req.CompartmentID); err != nil {
-		ocirest.WriteDriverError(w, r, err)
+	if err := h.extras.ChangeSubscriptionCompartment(r.Context(), id, req.CompartmentID, ifMatch(r)); err != nil {
+		writeError(w, r, err)
 		return
 	}
 

@@ -513,7 +513,7 @@ func TestUpdateAndMoveSubscription(t *testing.T) {
 	assert.Equal(t, 7200, updated.DeliveryPolicy.BackoffRetryPolicy.MaxRetryDuration)
 	assert.Equal(t, map[string]string{"team": "sre"}, updated.FreeformTags)
 
-	require.NoError(t, m.ChangeSubscriptionCompartment(t.Context(), sub.ID, otherCompartment))
+	require.NoError(t, m.ChangeSubscriptionCompartment(t.Context(), sub.ID, otherCompartment, ""))
 
 	moved, err := m.GetSubscription(t.Context(), sub.ID)
 	require.NoError(t, err)

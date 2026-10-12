@@ -23,7 +23,7 @@ func TestSubscriptionMethodNotAllowed(t *testing.T) {
 		"confirmation":   {http.MethodPost, "/20181201/subscriptions/" + id + "/confirmation"},
 		"unsubscription": {http.MethodPost, "/20181201/subscriptions/" + id + "/unsubscription"},
 		"move":           {http.MethodGet, "/20181201/subscriptions/" + id + "/actions/changeCompartment"},
-		"resend":         {http.MethodGet, "/20181201/subscriptions/" + id + "/actions/resendConfirmation"},
+		"resend":         {http.MethodGet, "/20181201/subscriptions/" + id + "/resendConfirmation"},
 	}
 
 	for name, tc := range cases {
@@ -132,7 +132,7 @@ func TestSubscriptionActionsOnAnUnknownSubscription(t *testing.T) {
 	f := newFixture(t)
 
 	resend := f.do(http.MethodPost,
-		"/20181201/subscriptions/"+missingSubscription+"/actions/resendConfirmation", nil)
+		"/20181201/subscriptions/"+missingSubscription+"/resendConfirmation", nil)
 	assert.Equal(t, http.StatusNotFound, resend.Code, resend.Body.String())
 
 	move := f.do(http.MethodPost,
@@ -318,4 +318,25 @@ func TestListSubscriptionsRejectsABadPageToken(t *testing.T) {
 
 	w := f.do(http.MethodGet, "/20181201/subscriptions?compartmentId="+compartment+"&page=garbage", nil)
 	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
+// ChangeSubscriptionCompartment carries if-match like the topic move.
+func TestMoveSubscriptionHonoursIfMatch(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	topicID := f.newTopic("alerts", compartment)
+	id, _ := f.newSubscription(topicID, "ops@example.com")
+	target := "/20181201/subscriptions/" + id + "/actions/changeCompartment"
+	body := map[string]any{"compartmentId": otherCompartment}
+
+	stale := f.doIfMatch(http.MethodPost, target, "stale", body)
+	assert.Equal(t, http.StatusPreconditionFailed, stale.Code, stale.Body.String())
+
+	got := decode(t, f.do(http.MethodGet, "/20181201/subscriptions/"+id, nil))
+	assert.Equal(t, compartment, got["compartmentId"])
+
+	etag, _ := got["etag"].(string)
+	moved := f.doIfMatch(http.MethodPost, target, etag, body)
+	assert.Equal(t, http.StatusNoContent, moved.Code, moved.Body.String())
 }

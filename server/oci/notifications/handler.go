@@ -11,7 +11,8 @@
 //	GET/PUT/DELETE       /20181201/subscriptions/{id}                    - get, update, delete
 //	GET                  /20181201/subscriptions/{id}/confirmation       - ConfirmSubscription
 //	GET                  /20181201/subscriptions/{id}/unsubscription     - UnsubscribeSubscription
-//	POST                 /20181201/subscriptions/{id}/actions/{changeCompartment,resendConfirmation}
+//	POST                 /20181201/subscriptions/{id}/resendConfirmation - ResendSubscriptionConfirmation
+//	POST                 /20181201/subscriptions/{id}/actions/changeCompartment
 //
 // Real ONS splits the control plane from the data plane by host, not by
 // prefix: PublishMessage goes to the topic's own apiEndpoint. CloudEmu serves
@@ -56,10 +57,10 @@ const (
 	subMessages       = "messages"
 	subConfirmation   = "confirmation"
 	subUnsubscription = "unsubscription"
+	subResendConfirm  = "resendConfirmation"
 	subActions        = "actions"
 
 	actionChangeCompartment = "changeCompartment"
-	actionResendConfirm     = "resendConfirmation"
 )
 
 // Error codes the handler raises itself.
@@ -98,7 +99,7 @@ type Extras interface {
 	ConfirmSubscription(ctx context.Context, id, token, protocol string) (*notifprovider.ConfirmationResult, error)
 	UnsubscribeByToken(ctx context.Context, id, token, protocol string) error
 	ResendSubscriptionConfirmation(ctx context.Context, id string) (*notifprovider.Subscription, error)
-	ChangeSubscriptionCompartment(ctx context.Context, id, compartmentID string) error
+	ChangeSubscriptionCompartment(ctx context.Context, id, compartmentID, ifMatch string) error
 	DeleteSubscription(ctx context.Context, id, ifMatch string) error
 
 	PublishMessage(
@@ -254,7 +255,7 @@ func ifMatch(r *http.Request) string { return r.Header.Get("If-Match") }
 // setEtag stamps the etag response header the SDK maps a response's Etag from.
 func setEtag(w http.ResponseWriter, etag string) {
 	if etag != "" {
-		w.Header().Set("Etag", etag)
+		w.Header().Set("ETag", etag)
 	}
 }
 

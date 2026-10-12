@@ -382,8 +382,9 @@ func (m *Mock) ResendSubscriptionConfirmation(_ context.Context, id string) (*Su
 	return cloneSubscription(sub), nil
 }
 
-// ChangeSubscriptionCompartment moves a subscription to another compartment.
-func (m *Mock) ChangeSubscriptionCompartment(_ context.Context, id, compartmentID string) error {
+// ChangeSubscriptionCompartment moves a subscription to another compartment
+// under an if-match precondition. An empty ifMatch is unconditional.
+func (m *Mock) ChangeSubscriptionCompartment(_ context.Context, id, compartmentID, ifMatch string) error {
 	if compartmentID == "" {
 		return cerrors.New(cerrors.InvalidArgument, "compartmentId is required")
 	}
@@ -394,6 +395,10 @@ func (m *Mock) ChangeSubscriptionCompartment(_ context.Context, id, compartmentI
 	sub, ok := m.subs.Get(id)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "subscription %q not found", id)
+	}
+
+	if err := checkEtag(sub.Etag, ifMatch); err != nil {
+		return err
 	}
 
 	sub.CompartmentID = compartmentID

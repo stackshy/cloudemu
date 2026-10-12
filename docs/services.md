@@ -1611,7 +1611,7 @@ implement `Extras` is served `501` for every path the handler claims.
 | `GetConfirmSubscription` | `GET /20181201/subscriptions/{id}/confirmation` |
 | `GetUnsubscription` | `GET /20181201/subscriptions/{id}/unsubscription` |
 | `ChangeSubscriptionCompartment` | `POST /20181201/subscriptions/{id}/actions/changeCompartment` |
-| `ResendSubscriptionConfirmation` | `POST /20181201/subscriptions/{id}/actions/resendConfirmation` |
+| `ResendSubscriptionConfirmation` | `POST /20181201/subscriptions/{id}/resendConfirmation` |
 
 Both list routes require `compartmentId` and paginate with `limit` / `page`,
 returning the cursor as `opc-next-page`. `ListTopics` also honours `sortBy`

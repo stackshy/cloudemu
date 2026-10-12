@@ -106,13 +106,22 @@ func TestChangeSubscriptionCompartmentErrors(t *testing.T) {
 	topicID := newTopic(t, m, "alpha", compartment)
 	sub := newPendingSubscription(t, m, topicID)
 
-	require.Error(t, m.ChangeSubscriptionCompartment(ctx, sub.ID, ""))
+	require.Error(t, m.ChangeSubscriptionCompartment(ctx, sub.ID, "", ""))
 	assert.Equal(t, cerrors.InvalidArgument,
-		cerrors.GetCode(m.ChangeSubscriptionCompartment(ctx, sub.ID, "")))
+		cerrors.GetCode(m.ChangeSubscriptionCompartment(ctx, sub.ID, "", "")))
 
-	err := m.ChangeSubscriptionCompartment(ctx, "ocid1.onssubscription.oc1..missing", otherCompartment)
+	err := m.ChangeSubscriptionCompartment(ctx, "ocid1.onssubscription.oc1..missing", otherCompartment, "")
 	require.Error(t, err)
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
+
+	err = m.ChangeSubscriptionCompartment(ctx, sub.ID, otherCompartment, "stale")
+	require.ErrorIs(t, err, notifications.ErrNoEtagMatch)
+
+	got, err := m.GetSubscription(ctx, sub.ID)
+	require.NoError(t, err)
+	assert.Equal(t, compartment, got.CompartmentID, "a refused move leaves it in place")
+
+	require.NoError(t, m.ChangeSubscriptionCompartment(ctx, sub.ID, otherCompartment, got.Etag))
 }
 
 // The endpoint shape each protocol delivers to is checked at create, naming
