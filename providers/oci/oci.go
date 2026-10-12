@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/oci/nosql"
 	notifprovider "github.com/stackshy/cloudemu/v2/providers/oci/notifications"
 	"github.com/stackshy/cloudemu/v2/providers/oci/objectstorage"
+	vaultprovider "github.com/stackshy/cloudemu/v2/providers/oci/vault"
 	vcnprovider "github.com/stackshy/cloudemu/v2/providers/oci/vcn"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
@@ -85,6 +86,7 @@ func New(opts ...config.Option) *Provider {
 	p.Compute = computeprovider.New(o)
 	p.Notifications = notifprovider.New(o)
 	p.NoSQL = nosql.New(o)
+	p.Vault = vaultprovider.New(o)
 
 	p.Monitoring = monitoring.New(o)
 	p.Logging = logprovider.New(o)

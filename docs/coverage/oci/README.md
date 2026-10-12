@@ -13,4 +13,5 @@ Services cloudemu emulates for OCI, by native name. Back to the [cross-provider 
 | [Notifications](./notifications.md) | `notification` | 9 |
 | [ObjectStorage](./objectstorage.md) | `storage` | 35 |
 | [VCN](./vcn.md) | `networking` | 57 |
+| [Vault](./vault.md) | `secrets` | 7 |
 | [Workrequest](./workrequest.md) | (provider-native) | 4 |

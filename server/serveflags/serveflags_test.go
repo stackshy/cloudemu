@@ -26,7 +26,8 @@ var commonFlagNames = []string{
 	"account-id", "admin", "admin-token", "admin-token-file", "advertise-host", "async-settle",
 	"aws-port", "azure-port", "azure-subscription",
 	"endpoints-file", "enforce-auth", "gcp-grpc-port", "gcp-port", "host", "init-dir", "k8s-nodes", "k8s-port",
-	"k8s-progression", "k8s-progression-interval", "latency", "log-requests", "oci-port", "oci-tenancy",
+	"k8s-progression", "k8s-progression-interval", "latency", "log-requests", "oci-kms-endpoint-domain",
+	"oci-port", "oci-tenancy",
 	"persist", "persist-interval", "persist-metadata-only", "persist-strategy", "project-id",
 	"providers", "quiet", "region", "shutdown-timeout", "state-file", "tick-interval", "tls-cert", "tls-host",
 	"tls-key", "vcr", "vcr-cassette", "vcr-strict",
@@ -75,6 +76,7 @@ func TestRegisterCommonDefaults(t *testing.T) {
 		"aws-port":                 "4566",
 		"shutdown-timeout":         defaultShutdownTimeout.String(),
 		"tick-interval":            time.Second.String(),
+		"oci-kms-endpoint-domain":  "",
 	}
 
 	for name, want := range cases {
@@ -98,6 +100,7 @@ func TestRegisterCommonEnvFallback(t *testing.T) {
 		"CLOUDEMU_K8S_PROGRESSION":          "true",
 		"CLOUDEMU_K8S_PROGRESSION_INTERVAL": "5s",
 		"CLOUDEMU_TICK_INTERVAL":            "250ms",
+		"CLOUDEMU_OCI_KMS_ENDPOINT_DOMAIN":  "kms.localhost",
 	}
 	getenv := func(k string) string { return env[k] }
 
@@ -128,6 +131,10 @@ func TestRegisterCommonEnvFallback(t *testing.T) {
 
 	if c.TickInterval != 250*time.Millisecond {
 		t.Fatalf("tick-interval = %v, want 250ms (env)", c.TickInterval)
+	}
+
+	if c.OCIKMSEndpointDomain != "kms.localhost" {
+		t.Fatalf("oci-kms-endpoint-domain = %q, want kms.localhost (env)", c.OCIKMSEndpointDomain)
 	}
 }
 
@@ -181,7 +188,7 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 		"--persist-strategy", "manual", "--persist-interval", "7s",
 		"--init-dir", "/seeds",
 		"--k8s-progression", "--k8s-progression-interval", "4s", "--k8s-nodes", "3",
-		"--tick-interval", "2s",
+		"--tick-interval", "2s", "--oci-kms-endpoint-domain", "kms.test",
 		"--vcr", "record", "--vcr-cassette", "/c.json", "--vcr-strict=false",
 	}
 	if err := fs.Parse(args); err != nil {
@@ -229,6 +236,7 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 	assertEqual(t, "k8s-progression-interval", sk.K8sProgressionInterval, 4*time.Second)
 	assertEqual(t, "k8s-nodes", sk.K8sNodes, 3)
 	assertEqual(t, "tick-interval", sk.TickInterval, 2*time.Second)
+	assertEqual(t, "oci-kms-endpoint-domain", sk.OCIKMSEndpointDomain, "kms.test")
 	assertEqual(t, "vcr", sk.VCRMode, "record")
 	assertEqual(t, "vcr-cassette", sk.VCRCassette, "/c.json")
 	assertEqual(t, "vcr-strict", sk.VCRStrict, false)

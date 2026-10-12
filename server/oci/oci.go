@@ -18,6 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/oci/nosql"
 	"github.com/stackshy/cloudemu/v2/server/oci/notifications"
 	"github.com/stackshy/cloudemu/v2/server/oci/objectstorage"
+	"github.com/stackshy/cloudemu/v2/server/oci/vault"
 	"github.com/stackshy/cloudemu/v2/server/oci/vcn"
 	"github.com/stackshy/cloudemu/v2/server/oci/workrequest"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
@@ -74,6 +75,10 @@ type Drivers struct {
 	CompartmentID string
 	Realm         string
 	Region        string
+
+	// KMSEndpointDomain opts a vault's KMS endpoints in to per-vault hosts
+	// under this domain. Empty keeps them on the emulator's own address.
+	KMSEndpointDomain string
 }
 
 // New returns a server that speaks OCI's REST JSON wire protocol for every
@@ -86,6 +91,7 @@ func New(d Drivers) *server.Server {
 	}
 
 	srv := server.New()
+	checker := compartmentChecker(d.Identity)
 
 	// Registered first so it owns every work request poll uniformly, rather
 	// than a service handler greedily claiming polls it did not create.
@@ -101,42 +107,21 @@ func New(d Drivers) *server.Server {
 
 	if d.Logging != nil {
 		logHandler := ocilogging.New(d.Logging, d.WorkRequests)
-
-		if comps, ok := d.Identity.(identity.Compartments); ok {
-			logHandler.SetCompartmentChecker(func(id string) bool {
-				_, err := comps.GetCompartment(context.Background(), id)
-
-				return err == nil
-			})
-		}
+		logHandler.SetCompartmentChecker(checker)
 
 		srv.Register(logHandler)
 	}
 
 	if d.ObjectStorage != nil {
 		osHandler := objectstorage.New(d.ObjectStorage, d.WorkRequests)
-
-		if comps, ok := d.Identity.(identity.Compartments); ok {
-			osHandler.SetCompartmentChecker(func(id string) bool {
-				_, err := comps.GetCompartment(context.Background(), id)
-
-				return err == nil
-			})
-		}
+		osHandler.SetCompartmentChecker(checker)
 
 		srv.Register(osHandler)
 	}
 
 	if d.VCN != nil {
 		vcnHandler := vcn.New(d.VCN, d.WorkRequests)
-
-		if comps, ok := d.Identity.(identity.Compartments); ok {
-			vcnHandler.SetCompartmentChecker(func(id string) bool {
-				_, err := comps.GetCompartment(context.Background(), id)
-
-				return err == nil
-			})
-		}
+		vcnHandler.SetCompartmentChecker(checker)
 
 		srv.Register(vcnHandler)
 	}
@@ -145,47 +130,50 @@ func New(d Drivers) *server.Server {
 	// collections, so registration order between them does not matter.
 	if d.Compute != nil {
 		computeHandler := compute.New(d.Compute, d.WorkRequests)
-
-		if comps, ok := d.Identity.(identity.Compartments); ok {
-			computeHandler.SetCompartmentChecker(func(id string) bool {
-				_, err := comps.GetCompartment(context.Background(), id)
-
-				return err == nil
-			})
-		}
+		computeHandler.SetCompartmentChecker(checker)
 
 		srv.Register(computeHandler)
 	}
 
 	if d.Notifications != nil {
 		notifHandler := notifications.New(d.Notifications, d.WorkRequests)
-
-		if comps, ok := d.Identity.(identity.Compartments); ok {
-			notifHandler.SetCompartmentChecker(func(id string) bool {
-				_, err := comps.GetCompartment(context.Background(), id)
-
-				return err == nil
-			})
-		}
+		notifHandler.SetCompartmentChecker(checker)
 
 		srv.Register(notifHandler)
 	}
 
 	if d.NoSQL != nil {
 		nosqlHandler := nosql.New(d.NoSQL, d.WorkRequests)
-
-		if comps, ok := d.Identity.(identity.Compartments); ok {
-			nosqlHandler.SetCompartmentChecker(func(id string) bool {
-				_, err := comps.GetCompartment(context.Background(), id)
-
-				return err == nil
-			})
-		}
+		nosqlHandler.SetCompartmentChecker(checker)
 
 		srv.Register(nosqlHandler)
 	}
 
+	if d.Vault != nil {
+		vaultHandler := vault.New(d.Vault, d.WorkRequests)
+		vaultHandler.SetEndpointDomain(d.KMSEndpointDomain)
+		vaultHandler.SetCompartmentChecker(checker)
+
+		srv.Register(vaultHandler)
+	}
+
 	return srv
+}
+
+// compartmentChecker reports whether a compartment exists in the wired
+// Identity service, or is nil when there is none to ask, which handlers take
+// as "skip the check".
+func compartmentChecker(id iamdriver.IAM) func(string) bool {
+	comps, ok := id.(identity.Compartments)
+	if !ok {
+		return nil
+	}
+
+	return func(compartmentID string) bool {
+		_, err := comps.GetCompartment(context.Background(), compartmentID)
+
+		return err == nil
+	}
 }
 
 // identityOptions turns the bundle's identity fields into config options,

@@ -119,6 +119,8 @@ type Config struct {
 
 	AzureSubscription string // Azure subscription GUID reported by the emulator (last-wins WithAccountID)
 
+	OCIKMSEndpointDomain string // domain for per-vault OCI KMS endpoint hosts; empty keeps the plain address
+
 	Admin bool // mount the /_cloudemu control plane
 
 	// AdminToken is the bearer token the /_cloudemu endpoints (all but health)
@@ -671,6 +673,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 		cloud := cloudemu.NewOCI(a.baseOpts...)
 		d := ociserver.DriversFrom(cloud)
 		d.K8sAPI = k8s
+		d.KMSEndpointDomain = a.cfg.OCIKMSEndpointDomain
 		// OCI has no managed-Kubernetes service, so no SetK8sAPI here, and its
 		// *Provider carries no engines to close.
 		return builtProvider{

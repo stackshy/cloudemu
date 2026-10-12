@@ -1703,7 +1703,8 @@ a source cluster and detach on promote; clone-on-read on every path.
 ## 12. Secrets
 
 **Driver interface:** `services/secrets/driver/driver.go`
-**AWS:** Secrets Manager | **Azure:** Key Vault | **GCP:** Secret Manager
+**AWS:** Secrets Manager | **Azure:** Key Vault | **GCP:** Secret Manager |
+**OCI:** Vault
 
 ### Secret Operations
 
@@ -1723,6 +1724,173 @@ a source cluster and detach on promote; clone-on-read on every path.
 | `ListSecretVersions` | `(ctx, name) ([]SecretVersion, error)` |
 
 **Total: 7 operations**
+
+### OCI Vault
+
+**Optional capability:** `server/oci/vault.Extras` — OCI keeps secret storage
+and key management in one service, addresses everything by OCID, scopes it to a
+compartment and a vault, and only ever *schedules* a deletion. None of that fits
+the portable seven. Its value types live in `providers/oci/vault`.
+**Provider:** `providers/oci/vault` | **Wire:** `server/oci/vault`
+
+OCI publishes Vault under two API versions and CloudEmu claims both, because one
+HTTP server stands in for every OCI endpoint: `/20180608` carries KMS and secret
+management, `/20190301` the secret-retrieval data plane.
+
+#### Vaults (`/20180608`)
+
+| Operation | Route |
+|-----------|-------|
+| `CreateVault` | `POST /vaults` |
+| `ListVaults` | `GET /vaults` |
+| `GetVault` | `GET /vaults/{vaultId}` |
+| `UpdateVault` | `PUT /vaults/{vaultId}` |
+| `ScheduleVaultDeletion` | `POST /vaults/{vaultId}/actions/scheduleDeletion` |
+| `CancelVaultDeletion` | `POST /vaults/{vaultId}/actions/cancelDeletion` |
+| `ChangeVaultCompartment` | `POST /vaults/{vaultId}/actions/changeCompartment` |
+
+#### Master encryption keys (`/20180608`)
+
+| Operation | Route |
+|-----------|-------|
+| `CreateKey` | `POST /keys` |
+| `ListKeys` | `GET /keys` |
+| `GetKey` | `GET /keys/{keyId}` |
+| `UpdateKey` | `PUT /keys/{keyId}` |
+| `ScheduleKeyDeletion` | `POST /keys/{keyId}/actions/scheduleDeletion` |
+| `CancelKeyDeletion` | `POST /keys/{keyId}/actions/cancelDeletion` |
+| `ChangeKeyCompartment` | `POST /keys/{keyId}/actions/changeCompartment` |
+| `CreateKeyVersion` | `POST /keys/{keyId}/keyVersions` |
+| `ListKeyVersions` | `GET /keys/{keyId}/keyVersions` |
+| `GetKeyVersion` | `GET /keys/{keyId}/keyVersions/{keyVersionId}` |
+
+The KMS management endpoint is per-vault in real OCI, where the vault is
+addressed by host and `CreateKey` / `ListKeys` send no `vaultId`. By default a
+vault here reports its `managementEndpoint` and `cryptoEndpoint` as the plain
+emulator address the request came in on (e.g. `http://127.0.0.1:4571`), which
+always resolves. Every vault shares that address and the SDK sends no
+`vaultId`, so on it the emulator can route `CreateKey` and `ListKeys` only
+while the tenancy has a single vault, counted across every compartment and
+lifecycle state. With exactly one vault, `/keys` means that vault: a key may
+sit in a different compartment from it, `ListKeys` lists its keys even while
+it is pending deletion, and `CreateKey` on a pending vault is a
+`409 IncorrectState`. With two or more vaults (or none), `/keys` on the plain
+address is a `400` rather than a guess, so a stock SDK, CLI or Terraform client
+cannot create or list keys there. Raw HTTP callers can name the vault with
+`?vaultId=`, which is checked the same way (`409` for a vault that is not
+active).
+
+With several vaults, turn on label hosts with `--oci-kms-endpoint-domain` (env
+`CLOUDEMU_OCI_KMS_ENDPOINT_DOMAIN`), e.g. `kms.localhost`. The endpoints then
+become `http://<label>-management.<domain>:<port>` and `…-crypto…`, with a short
+per-vault label, and `/keys` reads the vault from the request's host label.
+Those hosts must resolve to the emulator: macOS, Go clients and slim Linux
+images do not resolve `*.localhost`, so add an `/etc/hosts` entry such as
+`127.0.0.1 <label>-management.kms.localhost` for each vault, or use a domain
+your DNS points at the emulator.
+
+#### Secrets (`/20180608`)
+
+| Operation | Route |
+|-----------|-------|
+| `CreateSecret` | `POST /secrets` |
+| `ListSecrets` | `GET /secrets` |
+| `GetSecret` | `GET /secrets/{secretId}` |
+| `UpdateSecret` | `PUT /secrets/{secretId}` |
+| `ScheduleSecretDeletion` | `POST /secrets/{secretId}/actions/scheduleDeletion` |
+| `CancelSecretDeletion` | `POST /secrets/{secretId}/actions/cancelDeletion` |
+| `ChangeSecretCompartment` | `POST /secrets/{secretId}/actions/changeCompartment` |
+| `ListSecretVersions` | `GET /secrets/{secretId}/versions` |
+| `GetSecretVersion` | `GET /secrets/{secretId}/version/{versionNumber}` |
+| `ScheduleSecretVersionDeletion` | `POST /secrets/{secretId}/version/{n}/actions/scheduleDeletion` |
+| `CancelSecretVersionDeletion` | `POST /secrets/{secretId}/version/{n}/actions/cancelDeletion` |
+
+Only the list is plural: a single version is addressed under `/version/{n}`, as
+the Vaults API does. There is no `GetSecretByName` on this surface; a name
+lookup is `ListSecrets?name=` or the bundle-side `getByName` below.
+
+#### Secret bundles — the retrieval data plane (`/20190301`)
+
+| Operation | Route |
+|-----------|-------|
+| `GetSecretBundle` | `GET /secretbundles/{secretId}` |
+| `ListSecretBundleVersions` | `GET /secretbundles/{secretId}/versions` |
+| `GetSecretBundleByName` | `POST /secretbundles/actions/getByName` |
+
+A bundle read is the only way to get a secret's *value* back; the management
+routes above return metadata only. The version is named by exactly one of
+`versionNumber`, `secretVersionName` or `stage` — more than one is rejected
+rather than silently ranked.
+
+**Total: 31 operations**
+
+#### Behavior
+
+There is no secret outside a vault, and no secret without a master encryption
+key, so the portable `CreateSecret` mints a default vault and AES key on first
+use and puts every portable secret there. Portable *reads*, though, reach every
+vault, so a secret created through the OCI-shaped surface is addressable
+portably too.
+
+OCI scopes secret names to the vault, so the same name in two vaults is two
+different secrets and that reach makes a bare name ambiguous. Rather than
+silently picking one, every portable operation that keys by name fails with
+`InvalidArgument` naming both vaults, and `CreateSecret` refuses to mint a name
+another vault already holds. `ListSecrets` is unaffected — it addresses nothing
+by name. With one vault in play, which is all the AWS, Azure and GCP secret
+mocks can have, none of this is observable.
+
+The KMS surface and the secret surface report different live states, as real
+OCI does: a key or key version is `ENABLED` and never `ACTIVE`, while a vault or
+secret is `ACTIVE` and never `ENABLED`. This matters to consumers —
+`terraform-provider-oci`'s `oci_kms_key` waits for `ENABLED` after a create or
+rotate. `enableKey` / `disableKey` and the `ENABLING` / `DISABLING` / `DISABLED`
+states are not served, so a key's lifecycle here is `ENABLED ⇄ PENDING_DELETION`.
+
+With an identity service wired, creating a vault, key or secret in a
+compartment that does not exist, or moving one into such a compartment, is
+`404 NotAuthorizedOrNotFound`.
+
+Deletion is scheduled, never immediate. A vault, key, secret or secret version
+moves to `PENDING_DELETION` and stays there — nothing reaps it — until the
+deletion is cancelled. Scheduling a vault's deletion moves every key in it that
+is not already pending to `PENDING_DELETION` with the vault's `timeOfDeletion`,
+and is refused with `409` if a key is already due after the vault; cancelling it
+restores exactly the keys it moved. A secret pending deletion keeps its name, so
+creating the same name in that vault is `400 InvalidParameter`, and neither
+`GetSecretBundle` nor `GetSecretBundleByName` serves it. The portable
+`DeleteSecret` schedules at the soonest OCI permits, one day out; the portable
+operations treat the secret as gone from that moment and `CreateSecret` of the
+name fails with `FailedPrecondition`, which is the same soft-delete the AWS
+Secrets Manager mock exposes.
+
+A secret's key must be `ENABLED` at `CreateSecret`, and is fixed from then on:
+`UpdateSecret` refuses a `keyId` with `400`, as `UpdateSecretDetails` has none. If the portable driver's default vault or key is no longer usable,
+for example after its deletion is scheduled, the next portable `CreateSecret`
+mints a fresh default. Each vault reports a stable `wrappingkeyId`, and each
+secret version reports `contentType` `BASE64`.
+
+Secret versions are numbered, and each carries a stage: `CURRENT`, `PENDING`,
+`PREVIOUS`, `LATEST` or `DEPRECATED`. Adding a version stages it, and promoting
+one to `CURRENT` — via `UpdateSecret`'s `currentVersionNumber` — is how OCI
+finishes a rotation staged as `PENDING`. The portable version identifier is
+OCI's version number, so a non-numeric one is rejected.
+
+Every list route requires `compartmentId` except the key-version, secret-version
+and bundle routes, whose parent already names one. All paginate with `limit` /
+`page`, returning the cursor as `opc-next-page`. The mutations real OCI runs
+asynchronously record a work request and stamp `opc-work-request-id`;
+`changeCompartment` answers `202` with nothing else, so a waiter must poll.
+
+`definedTags` is rejected rather than accepted and dropped, since CloudEmu
+models no tag namespaces — use `freeformTags`. `autoKeyRotationDetails`,
+`externalKeyReference` and `desiredState` are rejected the same way.
+
+The KMS crypto endpoint — `encrypt`, `decrypt`, `sign`, `verify`, `exportKey`
+and `generateDataEncryptionKey` — is claimed only to answer `501` naming the
+gap rather than leaving a caller with a bare `404`. CloudEmu records master
+encryption keys but stores no key material, so there is no ciphertext to invent.
+Real crypto is tracked in #1552.
 
 ---
 
