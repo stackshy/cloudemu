@@ -177,11 +177,7 @@ func (h *Handler) updateTopic(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
-	info, err := h.extras.UpdateTopicIfMatch(r.Context(), notifdriver.TopicConfig{
-		Name:        id,
-		DisplayName: req.Description,
-		Tags:        req.FreeformTags,
-	}, ifMatch(r))
+	info, err := h.extras.UpdateTopicAttributes(r.Context(), id, req.Description, req.FreeformTags, ifMatch(r))
 	if err != nil {
 		writeError(w, r, err)
 		return

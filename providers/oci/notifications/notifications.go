@@ -214,7 +214,7 @@ func (m *Mock) UpdateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return m.updateTopic(&cfg, "")
+	return m.updateTopic(&cfg, nil, "")
 }
 
 // UpdateTopicIfMatch is UpdateTopic under an if-match precondition, compared
@@ -228,11 +228,23 @@ func (m *Mock) UpdateTopicIfMatch(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return m.updateTopic(&cfg, ifMatch)
+	return m.updateTopic(&cfg, nil, ifMatch)
+}
+
+// UpdateTopicAttributes is ONS's UpdateTopic: description is mandatory there,
+// so a non-nil one replaces the stored text even when it is empty. Portable
+// UpdateTopic keeps "empty leaves it alone".
+func (m *Mock) UpdateTopicAttributes(
+	_ context.Context, id string, description *string, tags map[string]string, ifMatch string,
+) (*driver.TopicInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.updateTopic(&driver.TopicConfig{Name: id, Tags: tags}, description, ifMatch)
 }
 
 // updateTopic applies a topic update. The caller holds mu.
-func (m *Mock) updateTopic(cfg *driver.TopicConfig, ifMatch string) (*driver.TopicInfo, error) {
+func (m *Mock) updateTopic(cfg *driver.TopicConfig, description *string, ifMatch string) (*driver.TopicInfo, error) {
 	td := m.resolveTopic(cfg.Name)
 	if td == nil {
 		return nil, cerrors.Newf(cerrors.NotFound, "topic %q not found", cfg.Name)
@@ -242,7 +254,10 @@ func (m *Mock) updateTopic(cfg *driver.TopicConfig, ifMatch string) (*driver.Top
 		return nil, err
 	}
 
-	if cfg.DisplayName != "" {
+	switch {
+	case description != nil:
+		td.Description = *description
+	case cfg.DisplayName != "":
 		td.Description = cfg.DisplayName
 	}
 

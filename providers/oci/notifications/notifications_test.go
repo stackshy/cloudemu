@@ -278,8 +278,13 @@ func TestCreateSubscription(t *testing.T) {
 		code     cerrors.Code
 	}{
 		{name: "email", protocol: "EMAIL", endpoint: "ops@example.com", expect: notifications.ProtocolEmail},
-		{name: "lowercase alias", protocol: "email", endpoint: "a@example.com", expect: notifications.ProtocolEmail},
-		{name: "https alias", protocol: "https", endpoint: "https://hook", expect: notifications.ProtocolHTTPS},
+		{name: "custom https", protocol: "CUSTOM_HTTPS", endpoint: "https://hook", expect: notifications.ProtocolHTTPS},
+		{name: "legacy https is stored as sent", protocol: "HTTPS", endpoint: "https://events.pagerduty.com/x",
+			expect: notifications.ProtocolLegacyHTTPS},
+		{name: "lowercase is refused", protocol: "email", endpoint: "a@example.com", code: cerrors.InvalidArgument},
+		{name: "query string on https", protocol: "CUSTOM_HTTPS", endpoint: "https://hook?x=1", code: cerrors.InvalidArgument},
+		{name: "endpoint over 512 characters", protocol: "CUSTOM_HTTPS",
+			endpoint: "https://hook/" + strings.Repeat("a", 600), code: cerrors.InvalidArgument},
 		{name: "sms", protocol: "SMS", endpoint: "+15550100", expect: notifications.ProtocolSMS},
 		{name: "unknown protocol", protocol: "sqs", endpoint: "q", code: cerrors.InvalidArgument},
 		{name: "missing protocol", protocol: "", endpoint: "q", code: cerrors.InvalidArgument},
@@ -498,9 +503,19 @@ func TestUpdateAndMoveSubscription(t *testing.T) {
 	topicID := newTopic(t, m, "alerts", compartment)
 
 	sub, err := m.CreateSubscription(t.Context(), notifications.SubscriptionSpec{
-		TopicID: topicID, Protocol: "https", Endpoint: "https://hook",
+		TopicID: topicID, Protocol: "CUSTOM_HTTPS", Endpoint: "https://hook",
 	})
 	require.NoError(t, err)
+
+	for _, bad := range []notifications.BackoffRetryPolicy{
+		{MaxRetryDuration: 60000, PolicyType: "LINEAR"},
+		{MaxRetryDuration: -5, PolicyType: "EXPONENTIAL"},
+	} {
+		_, err = m.UpdateSubscription(t.Context(), sub.ID, notifications.SubscriptionPatch{
+			DeliveryPolicy: &notifications.DeliveryPolicy{BackoffRetryPolicy: &bad},
+		})
+		assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err), bad.PolicyType)
+	}
 
 	updated, err := m.UpdateSubscription(t.Context(), sub.ID, notifications.SubscriptionPatch{
 		DeliveryPolicy: &notifications.DeliveryPolicy{

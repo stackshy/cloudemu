@@ -12,17 +12,20 @@ import (
 
 // Protocols ONS delivers over.
 const (
-	ProtocolEmail     = "EMAIL"
-	ProtocolSMS       = "SMS"
-	ProtocolHTTPS     = "CUSTOM_HTTPS"
-	ProtocolSlack     = "SLACK"
-	ProtocolPagerDuty = "PAGERDUTY"
-	ProtocolFunctions = "ORACLE_FUNCTIONS"
+	ProtocolEmail = "EMAIL"
+	ProtocolSMS   = "SMS"
+	ProtocolHTTPS = "CUSTOM_HTTPS"
+	// ProtocolLegacyHTTPS is ONS's deprecated HTTPS, still accepted for
+	// PagerDuty endpoints and stored as sent.
+	ProtocolLegacyHTTPS = "HTTPS"
+	ProtocolSlack       = "SLACK"
+	ProtocolPagerDuty   = "PAGERDUTY"
+	ProtocolFunctions   = "ORACLE_FUNCTIONS"
 )
 
-// protocolAliases maps the lowercase names portable callers use onto the ONS
-// protocol they name. "http" and "https" are both CUSTOM_HTTPS, the one
-// webhook protocol ONS has.
+// protocolAliases maps the names portable callers use onto the ONS protocol
+// they name. "http" and "https" are both CUSTOM_HTTPS, the webhook protocol
+// ONS has. The OCI path takes ONS's own names verbatim instead.
 var protocolAliases = map[string]string{ //nolint:gochecknoglobals // lookup table
 	"EMAIL":            ProtocolEmail,
 	"SMS":              ProtocolSMS,
@@ -96,9 +99,14 @@ type ConfirmationResult struct {
 // Subscribe creates a subscription in the default compartment. It is the
 // portable entry point onto CreateSubscription.
 func (m *Mock) Subscribe(ctx context.Context, cfg driver.SubscriptionConfig) (*driver.SubscriptionInfo, error) {
+	protocol, err := normalizeProtocol(cfg.Protocol)
+	if err != nil {
+		return nil, err
+	}
+
 	sub, err := m.CreateSubscription(ctx, SubscriptionSpec{
 		TopicID:  cfg.TopicID,
-		Protocol: cfg.Protocol,
+		Protocol: protocol,
 		Endpoint: cfg.Endpoint,
 	})
 	if err != nil {
@@ -113,7 +121,7 @@ func (m *Mock) Subscribe(ctx context.Context, cfg driver.SubscriptionConfig) (*d
 //
 //nolint:gocritic // hugeParam: spec is the subscription's full definition.
 func (m *Mock) CreateSubscription(_ context.Context, spec SubscriptionSpec) (*Subscription, error) {
-	protocol, err := normalizeProtocol(spec.Protocol)
+	protocol, err := onsProtocol(spec.Protocol)
 	if err != nil {
 		return nil, err
 	}
@@ -240,6 +248,10 @@ func (m *Mock) UpdateSubscription(_ context.Context, id string, patch Subscripti
 	}
 
 	if err := checkEtag(sub.Etag, patch.IfMatch); err != nil {
+		return nil, err
+	}
+
+	if err := validateDeliveryPolicy(patch.DeliveryPolicy); err != nil {
 		return nil, err
 	}
 
@@ -416,6 +428,10 @@ func checkToken(sub *Subscription, token, protocol string) error {
 		return cerrors.Newf(cerrors.InvalidArgument, "token does not match subscription %q", sub.ID)
 	}
 
+	if protocol == sub.Protocol {
+		return nil
+	}
+
 	want, err := normalizeProtocol(protocol)
 	if err != nil {
 		return err
@@ -456,11 +472,73 @@ func validateEndpoint(protocol, endpoint string) error {
 			return cerrors.Newf(cerrors.InvalidArgument,
 				"endpoint %q is not an email address; an %s endpoint must hold an @", endpoint, ProtocolEmail)
 		}
-	case ProtocolHTTPS, ProtocolSlack, ProtocolPagerDuty:
-		if !strings.HasPrefix(strings.ToLower(endpoint), "https://") {
-			return cerrors.Newf(cerrors.InvalidArgument,
-				"endpoint %q is not https; a %s endpoint must be an https URL", endpoint, protocol)
-		}
+	case ProtocolHTTPS, ProtocolLegacyHTTPS, ProtocolSlack, ProtocolPagerDuty:
+		return validateURLEndpoint(protocol, endpoint)
+	}
+
+	return nil
+}
+
+// maxEndpointURLLen is ONS's cap on an endpoint URL.
+const maxEndpointURLLen = 512
+
+// validateURLEndpoint checks a webhook endpoint: https, at most 512
+// characters, and for the HTTPS protocols no query string, which ONS refuses.
+func validateURLEndpoint(protocol, endpoint string) error {
+	switch {
+	case !strings.HasPrefix(strings.ToLower(endpoint), "https://"):
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"endpoint %q is not https; a %s endpoint must be an https URL", endpoint, protocol)
+	case len(endpoint) > maxEndpointURLLen:
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"endpoint is %d characters; ONS allows at most %d", len(endpoint), maxEndpointURLLen)
+	case (protocol == ProtocolHTTPS || protocol == ProtocolLegacyHTTPS) && strings.Contains(endpoint, "?"):
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"endpoint %q has a query string; a %s endpoint takes none", endpoint, protocol)
+	}
+
+	return nil
+}
+
+// onsProtocols are the protocol names ONS accepts on the wire, stored as sent.
+var onsProtocols = map[string]bool{ //nolint:gochecknoglobals // lookup table
+	ProtocolEmail: true, ProtocolSMS: true, ProtocolHTTPS: true, ProtocolLegacyHTTPS: true,
+	ProtocolSlack: true, ProtocolPagerDuty: true, ProtocolFunctions: true,
+}
+
+// onsProtocol accepts one of ONS's own protocol names verbatim, so a
+// subscription reads back with the protocol it was created with.
+func onsProtocol(protocol string) (string, error) {
+	if protocol == "" {
+		return "", cerrors.New(cerrors.InvalidArgument, "protocol is required")
+	}
+
+	if !onsProtocols[protocol] {
+		return "", cerrors.Newf(cerrors.InvalidArgument,
+			"protocol %q is not an OCI Notifications protocol; want one of EMAIL, SMS, CUSTOM_HTTPS, "+
+				"HTTPS, SLACK, PAGERDUTY, ORACLE_FUNCTIONS", protocol)
+	}
+
+	return protocol, nil
+}
+
+// backoffPolicyExponential is the only retry policy type ONS defines.
+const backoffPolicyExponential = "EXPONENTIAL"
+
+// validateDeliveryPolicy applies ONS's BackoffRetryPolicy rules: both fields
+// are mandatory, the type is EXPONENTIAL, and the duration is positive.
+func validateDeliveryPolicy(p *DeliveryPolicy) error {
+	if p == nil || p.BackoffRetryPolicy == nil {
+		return nil
+	}
+
+	switch b := p.BackoffRetryPolicy; {
+	case b.PolicyType != backoffPolicyExponential:
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"backoffRetryPolicy.policyType %q is not %s", b.PolicyType, backoffPolicyExponential)
+	case b.MaxRetryDuration <= 0:
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"backoffRetryPolicy.maxRetryDuration %d must be positive", b.MaxRetryDuration)
 	}
 
 	return nil

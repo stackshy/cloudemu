@@ -86,6 +86,9 @@ type Extras interface {
 	UpdateTopicIfMatch(
 		ctx context.Context, cfg notifdriver.TopicConfig, ifMatch string,
 	) (*notifdriver.TopicInfo, error)
+	UpdateTopicAttributes(
+		ctx context.Context, id string, description *string, tags map[string]string, ifMatch string,
+	) (*notifdriver.TopicInfo, error)
 	DeleteTopicIfMatch(ctx context.Context, id, ifMatch string) error
 
 	CreateSubscription(

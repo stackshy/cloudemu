@@ -15,7 +15,7 @@ type createTopicRequest struct {
 }
 
 type updateTopicRequest struct {
-	Description  string            `json:"description,omitempty"`
+	Description  *string           `json:"description"`
 	FreeformTags map[string]string `json:"freeformTags,omitempty"`
 	DefinedTags  definedTags       `json:"definedTags,omitempty"`
 }

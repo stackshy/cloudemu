@@ -688,3 +688,41 @@ func TestDriverWithoutExtrasAnswers501(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, "NotImplemented", body.Code)
 }
+
+// An explicitly sent empty description clears it; omitting it leaves it.
+func TestUpdateTopicClearsAnEmptyDescription(t *testing.T) {
+	f := newFixture(t)
+	topicID := f.newTopic("alerts", compartment)
+
+	w := f.do(http.MethodPut, "/20181201/topics/"+topicID, map[string]any{"description": "second"})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	w = f.do(http.MethodPut, "/20181201/topics/"+topicID, map[string]any{"freeformTags": map[string]string{"a": "b"}})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "second", decode(t, w)["description"])
+
+	w = f.do(http.MethodPut, "/20181201/topics/"+topicID, map[string]any{"description": ""})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	got := decode(t, f.do(http.MethodGet, "/20181201/topics/"+topicID, nil))
+	assert.Empty(t, got["description"])
+}
+
+// HTTPS is a protocol of its own in ONS and reads back as sent, so a config
+// naming it does not drift.
+func TestLegacyHTTPSProtocolReadsBackAsSent(t *testing.T) {
+	f := newFixture(t)
+	topicID := f.newTopic("alerts", compartment)
+
+	w := f.do(http.MethodPost, "/20181201/subscriptions", map[string]any{
+		"topicId": topicID, "compartmentId": compartment,
+		"protocol": "HTTPS", "endpoint": "https://events.pagerduty.com/integration/x/enqueue",
+	})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	assert.Equal(t, "HTTPS", decode(t, w)["protocol"])
+
+	w = f.do(http.MethodPost, "/20181201/subscriptions", map[string]any{
+		"topicId": topicID, "compartmentId": compartment, "protocol": "email", "endpoint": "a@example.com",
+	})
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}

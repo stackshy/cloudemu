@@ -1659,11 +1659,16 @@ and removes the subscription. Both `token` and `protocol` are mandatory on
 these two endpoints; either missing is a `400`. The exception is
 `ORACLE_FUNCTIONS`: ONS does not ask a function to confirm, so that
 subscription is created `ACTIVE` with no token. Protocols are `EMAIL`, `SMS`, `CUSTOM_HTTPS`,
-`SLACK`, `PAGERDUTY` and `ORACLE_FUNCTIONS` (`HTTP` / `HTTPS` alias onto
-`CUSTOM_HTTPS`); anything else is rejected rather than stored unused. The
-endpoint is checked against the protocol at create rather than at first
-delivery: an `EMAIL` endpoint must hold an `@`, and a `CUSTOM_HTTPS`, `SLACK`
-or `PAGERDUTY` endpoint must be an `https` URL. Message bodies are `RAW_TEXT`
+the deprecated `HTTPS`, `SLACK`, `PAGERDUTY` and `ORACLE_FUNCTIONS`, taken
+verbatim and read back as sent; anything else, a lowercase name included, is
+rejected rather than stored unused. Only the portable `Subscribe` maps
+lowercase names and `http` / `https` onto them. The endpoint is checked against
+the protocol at create rather than at first delivery: an `EMAIL` endpoint must
+hold an `@`, and a webhook endpoint must be an `https` URL of at most 512
+characters, with no query string for `CUSTOM_HTTPS` / `HTTPS`. A delivery
+policy's `backoffRetryPolicy` must be `EXPONENTIAL` with a positive
+`maxRetryDuration`. On `UpdateTopic` a sent `description`, even an empty one,
+replaces the stored text. Message bodies are `RAW_TEXT`
 or `JSON`, declared in the `messageType` **header** as the SDK sends it (a
 `messageType` query parameter is accepted as a fallback), and are capped at
 ONS's 64 KB.
