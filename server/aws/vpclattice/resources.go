@@ -138,12 +138,7 @@ func (h *Handler) listResourceConfigs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]wireResourceConfig, 0, len(cs))
-	for i := range cs {
-		items = append(items, resourceConfigToWire(&cs[i]))
-	}
-
-	writeJSON(w, map[string]any{"items": items})
+	writeItems(w, r, cs, resourceConfigToWire)
 }
 
 // --- resource gateways ---
@@ -260,12 +255,7 @@ func (h *Handler) listResourceGateways(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]wireResourceGateway, 0, len(gs))
-	for i := range gs {
-		items = append(items, resourceGatewayToWire(&gs[i]))
-	}
-
-	writeJSON(w, map[string]any{"items": items})
+	writeItems(w, r, gs, resourceGatewayToWire)
 }
 
 // --- resource endpoint associations ---

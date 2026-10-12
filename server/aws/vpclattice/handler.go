@@ -30,8 +30,8 @@ func New(d driver.VPCLattice) *Handler {
 	h := &Handler{lattice: d}
 	h.routes = map[string]segmentHandler{
 		"servicenetworks":                       h.serveServiceNetworks,
-		"services":                              h.serveServices,
-		"targetgroups":                          h.serveTargetGroups,
+		rootServices:                            h.serveServices,
+		rootTargetGroups:                        h.serveTargetGroups,
 		"servicenetworkvpcassociations":         h.serveSNVpcAssociations,
 		"servicenetworkvpcendpointassociations": h.serveSNVpcEndpointAssociations,
 		"servicenetworkserviceassociations":     h.serveSNServiceAssociations,
@@ -40,10 +40,10 @@ func New(d driver.VPCLattice) *Handler {
 		"resourcegateways":                      h.serveResourceGateways,
 		"resourceendpointassociations":          h.serveResourceEndpointAssociations,
 		"accesslogsubscriptions":                h.serveAccessLogSubs,
-		"authpolicy":                            h.serveAuthPolicy,
-		"resourcepolicy":                        h.serveResourcePolicy,
-		"domainverifications":                   h.serveDomainVerifications,
-		"tags":                                  h.serveTags,
+		rootAuthPolicy:                          h.serveAuthPolicy,
+		rootResourcePolicy:                      h.serveResourcePolicy,
+		rootDomainVerifications:                 h.serveDomainVerifications,
+		rootTags:                                h.serveTags,
 	}
 
 	return h
@@ -82,9 +82,9 @@ func latticeClaims(method string, segs []string) bool {
 	rest := segs[1:]
 
 	switch segs[0] {
-	case "authpolicy", "resourcepolicy":
+	case rootAuthPolicy, rootResourcePolicy:
 		return claimsPolicyRoot(method, rest)
-	case "tags":
+	case rootTags:
 		return claimsTagsRoot(method, rest)
 	default:
 		return claimsResourceRoot(method, rest)

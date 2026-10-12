@@ -41,6 +41,11 @@ func (m *Mock) CreateListener(_ context.Context, in *driver.CreateListenerInput)
 		return nil, err
 	}
 
+	port, err := validateListener(in.Protocol, in.Port)
+	if err != nil {
+		return nil, err
+	}
+
 	sid := idFromIdentifier(in.ServiceID)
 
 	id, err := idgen.GenerateLongID("listener-")
@@ -55,7 +60,7 @@ func (m *Mock) CreateListener(_ context.Context, in *driver.CreateListenerInput)
 		ServiceID:     sid,
 		ServiceARN:    serviceARN,
 		Protocol:      in.Protocol,
-		Port:          in.Port,
+		Port:          port,
 		DefaultAction: append([]byte(nil), in.DefaultAction...),
 		CreatedAt:     m.now(),
 		LastUpdatedAt: m.now(),

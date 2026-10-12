@@ -2,6 +2,8 @@ package vpclattice
 
 import (
 	"context"
+	"sort"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -10,6 +12,73 @@ import (
 
 func ruleNotFound(id string) error {
 	return errors.Newf(errors.NotFound, "rule %q not found", id)
+}
+
+const defaultRuleName = "default"
+
+// defaultRuleID is the stable id of a listener's synthesized default rule.
+func defaultRuleID(listenerID string) string {
+	return "rule-" + strings.TrimPrefix(listenerID, "listener-")
+}
+
+// defaultRule builds the default rule every listener has in real VPC Lattice.
+// It is derived from the listener on read and never stored.
+func (m *Mock) defaultRule(l *driver.Listener) driver.Rule {
+	id := defaultRuleID(l.ID)
+
+	return driver.Rule{
+		ID:            id,
+		ARN:           m.arn("service/" + l.ServiceID + "/listener/" + l.ID + "/rule/" + id),
+		Name:          defaultRuleName,
+		ServiceID:     l.ServiceID,
+		ListenerID:    l.ID,
+		IsDefault:     true,
+		Action:        append([]byte(nil), l.DefaultAction...),
+		CreatedAt:     l.CreatedAt,
+		LastUpdatedAt: l.LastUpdatedAt,
+	}
+}
+
+// defaultRuleListener returns the listener when ruleID names its default rule.
+// Caller holds m.mu.
+func (m *Mock) defaultRuleListener(serviceID, listenerID, ruleID string) (*driver.Listener, bool) {
+	l, err := m.getListenerLocked(serviceID, listenerID)
+	if err != nil || idFromIdentifier(ruleID) != defaultRuleID(l.ID) {
+		return nil, false
+	}
+
+	return l, true
+}
+
+// updateDefaultRule applies a rule update to the listener's default action; the
+// default rule has no priority or match to change.
+func (m *Mock) updateDefaultRule(l *driver.Listener, priority int32, match, action []byte) (*driver.Rule, error) {
+	if priority != 0 || len(match) > 0 {
+		return nil, invalidf("the default rule's priority and match cannot be changed")
+	}
+
+	if len(action) > 0 {
+		l.DefaultAction = append([]byte(nil), action...)
+		l.LastUpdatedAt = m.now()
+	}
+
+	out := m.defaultRule(l)
+
+	return &out, nil
+}
+
+// failureCodeFor maps an error to the per-item failure code BatchUpdateRule reports.
+func failureCodeFor(err error) string {
+	switch {
+	case errors.IsNotFound(err):
+		return "ResourceNotFoundException"
+	case errors.IsAlreadyExists(err), errors.IsFailedPrecondition(err):
+		return "ConflictException"
+	case errors.IsInvalidArgument(err):
+		return "ValidationException"
+	default:
+		return "InternalServerException"
+	}
 }
 
 func cloneRule(r *driver.Rule) driver.Rule {
@@ -27,6 +96,14 @@ func (m *Mock) CreateRule(_ context.Context, in *driver.CreateRuleInput) (*drive
 	l, err := m.getListenerLocked(in.ServiceID, in.ListenerID)
 	if err != nil {
 		return nil, err
+	}
+
+	if perr := validateRulePriority(in.Priority); perr != nil {
+		return nil, perr
+	}
+
+	if m.rulePriorityTaken(l.ID, in.Priority, "") {
+		return nil, conflictf("priority %d is already used by another rule on listener %q", in.Priority, l.ID)
 	}
 
 	id, err := idgen.GenerateLongID("rule-")
@@ -72,6 +149,12 @@ func (m *Mock) GetRule(_ context.Context, serviceID, listenerID, ruleID string) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if l, ok := m.defaultRuleListener(serviceID, listenerID, ruleID); ok {
+		out := m.defaultRule(l)
+
+		return &out, nil
+	}
+
 	rule, err := m.getRuleLocked(serviceID, listenerID, ruleID)
 	if err != nil {
 		return nil, err
@@ -82,10 +165,19 @@ func (m *Mock) GetRule(_ context.Context, serviceID, listenerID, ruleID string) 
 	return &out, nil
 }
 
-// applyRuleUpdate mutates a stored rule with non-zero update fields. Caller
+// applyRuleUpdate mutates a stored rule with non-zero update fields after
+// validating the new priority. Nothing changes when it returns an error. Caller
 // holds m.mu.
-func (m *Mock) applyRuleUpdate(rule *driver.Rule, priority int32, match, action []byte) {
+func (m *Mock) applyRuleUpdate(rule *driver.Rule, priority int32, match, action []byte) error {
 	if priority != 0 {
+		if err := validateRulePriority(priority); err != nil {
+			return err
+		}
+
+		if m.rulePriorityTaken(rule.ListenerID, priority, rule.ID) {
+			return conflictf("priority %d is already used by another rule on listener %q", priority, rule.ListenerID)
+		}
+
 		rule.Priority = priority
 	}
 
@@ -98,6 +190,8 @@ func (m *Mock) applyRuleUpdate(rule *driver.Rule, priority int32, match, action 
 	}
 
 	rule.LastUpdatedAt = m.now()
+
+	return nil
 }
 
 func (m *Mock) UpdateRule(
@@ -106,12 +200,18 @@ func (m *Mock) UpdateRule(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if l, ok := m.defaultRuleListener(serviceID, listenerID, ruleID); ok {
+		return m.updateDefaultRule(l, priority, match, action)
+	}
+
 	rule, err := m.getRuleLocked(serviceID, listenerID, ruleID)
 	if err != nil {
 		return nil, err
 	}
 
-	m.applyRuleUpdate(rule, priority, match, action)
+	if uerr := m.applyRuleUpdate(rule, priority, match, action); uerr != nil {
+		return nil, uerr
+	}
 
 	out := cloneRule(rule)
 
@@ -121,6 +221,10 @@ func (m *Mock) UpdateRule(
 func (m *Mock) DeleteRule(_ context.Context, serviceID, listenerID, ruleID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if _, ok := m.defaultRuleListener(serviceID, listenerID, ruleID); ok {
+		return invalidf("the default rule cannot be deleted")
+	}
 
 	rule, err := m.getRuleLocked(serviceID, listenerID, ruleID)
 	if err != nil {
@@ -139,17 +243,24 @@ func (m *Mock) ListRules(_ context.Context, serviceID, listenerID string) ([]dri
 	sid := idFromIdentifier(serviceID)
 	lid := idFromIdentifier(listenerID)
 
+	l, err := m.getListenerLocked(sid, lid)
+	if err != nil {
+		return nil, err
+	}
+
 	all := sortedValues(m.rules.All(), cloneRule)
 
-	out := make([]driver.Rule, 0, len(all))
+	custom := make([]driver.Rule, 0, len(all))
 
 	for i := range all {
-		if all[i].ServiceID == sid && all[i].ListenerID == lid {
-			out = append(out, all[i])
+		if all[i].ServiceID == l.ServiceID && all[i].ListenerID == l.ID {
+			custom = append(custom, all[i])
 		}
 	}
 
-	return out, nil
+	sort.SliceStable(custom, func(i, j int) bool { return custom[i].Priority < custom[j].Priority })
+
+	return append([]driver.Rule{m.defaultRule(l)}, custom...), nil
 }
 
 func (m *Mock) BatchUpdateRules(
@@ -164,18 +275,37 @@ func (m *Mock) BatchUpdateRules(
 	for i := range updates {
 		u := updates[i]
 
-		rule, err := m.getRuleLocked(serviceID, listenerID, u.RuleID)
+		updated, err := m.batchUpdateOne(serviceID, listenerID, u)
 		if err != nil {
 			fail = append(fail, driver.RuleUpdateFailure{
-				RuleID: u.RuleID, FailureCode: "ResourceNotFoundException", FailureMessage: err.Error(),
+				RuleID: u.RuleID, FailureCode: failureCodeFor(err), FailureMessage: errors.Message(err),
 			})
 
 			continue
 		}
 
-		m.applyRuleUpdate(rule, u.Priority, u.Match, u.Action)
-		ok = append(ok, cloneRule(rule))
+		ok = append(ok, *updated)
 	}
 
 	return ok, fail, nil
+}
+
+// batchUpdateOne applies one BatchUpdateRule entry. Caller holds m.mu.
+func (m *Mock) batchUpdateOne(serviceID, listenerID string, u driver.RuleUpdate) (*driver.Rule, error) {
+	if l, isDefault := m.defaultRuleListener(serviceID, listenerID, u.RuleID); isDefault {
+		return m.updateDefaultRule(l, u.Priority, u.Match, u.Action)
+	}
+
+	rule, err := m.getRuleLocked(serviceID, listenerID, u.RuleID)
+	if err != nil {
+		return nil, err
+	}
+
+	if uerr := m.applyRuleUpdate(rule, u.Priority, u.Match, u.Action); uerr != nil {
+		return nil, uerr
+	}
+
+	out := cloneRule(rule)
+
+	return &out, nil
 }

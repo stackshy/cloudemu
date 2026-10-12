@@ -73,11 +73,11 @@ func (h *Handler) serveTargetAction(w http.ResponseWriter, r *http.Request, id, 
 	}
 
 	switch action {
-	case "registertargets":
+	case pathRegisterTargets:
 		h.registerTargets(w, r, id)
-	case "deregistertargets":
+	case pathDeregisterTargets:
 		h.deregisterTargets(w, r, id)
-	case "listtargets":
+	case pathListTargets:
 		h.listTargets(w, r, id)
 	default:
 		notFound(w, r.URL.Path)
@@ -156,12 +156,7 @@ func (h *Handler) listTargetGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]wireTargetGroup, 0, len(tgs))
-	for i := range tgs {
-		items = append(items, targetGroupToSummary(&tgs[i]))
-	}
-
-	writeJSON(w, map[string]any{"items": items})
+	writeItems(w, r, tgs, targetGroupToSummary)
 }
 
 // --- targets ---
@@ -188,6 +183,10 @@ func decodeTargets(w http.ResponseWriter, r *http.Request) ([]driver.RegisteredT
 	}
 
 	return out, true
+}
+
+func targetToWire(t *driver.RegisteredTarget) wireTarget {
+	return wireTarget{ID: t.ID, Port: t.Port, Status: t.Status, ReasonCode: t.ReasonCode}
 }
 
 func targetsToWire(ts []driver.RegisteredTarget) []wireTarget {
@@ -253,5 +252,5 @@ func (h *Handler) listTargets(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
-	writeJSON(w, map[string]any{"items": targetsToWire(ts)})
+	writeItems(w, r, ts, targetToWire)
 }

@@ -35,15 +35,16 @@ func (m *Mock) resolveSN(identifier string) (snRef, error) {
 
 // ---- SN ↔ VPC ----
 
-func cloneSNVpc(a *driver.SNVpcAssociation) driver.SNVpcAssociation {
+func (m *Mock) cloneSNVpc(a *driver.SNVpcAssociation) driver.SNVpcAssociation {
 	out := *a
+	out.Status = m.observe(a.ID, a.Status)
 	out.SecurityGroupIDs = append([]string(nil), a.SecurityGroupIDs...)
 
 	return out
 }
 
 func (m *Mock) CreateSNVpcAssociation(
-	_ context.Context, in *driver.CreateSNVpcAssociationInput,
+	ctx context.Context, in *driver.CreateSNVpcAssociationInput,
 ) (*driver.SNVpcAssociation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -51,6 +52,12 @@ func (m *Mock) CreateSNVpcAssociation(
 	sn, err := m.resolveSN(in.ServiceNetworkID)
 	if err != nil {
 		return nil, err
+	}
+
+	if m.networking != nil {
+		if _, err = m.networking.DescribeVPCs(ctx, []string{in.VpcID}); err != nil {
+			return nil, err
+		}
 	}
 
 	id, err := idgen.GenerateLongID("snva-")
@@ -74,8 +81,9 @@ func (m *Mock) CreateSNVpcAssociation(
 	}
 	m.snVpcAssocs.Set(id, a)
 	m.writeTags(a.ARN, in.Tags)
+	m.beginSettle(id)
 
-	out := cloneSNVpc(a)
+	out := m.cloneSNVpc(a)
 
 	return &out, nil
 }
@@ -89,7 +97,7 @@ func (m *Mock) GetSNVpcAssociation(_ context.Context, id string) (*driver.SNVpcA
 		return nil, assocNotFound(idFromIdentifier(id))
 	}
 
-	out := cloneSNVpc(a)
+	out := m.cloneSNVpc(a)
 
 	return &out, nil
 }
@@ -111,7 +119,7 @@ func (m *Mock) UpdateSNVpcAssociation(
 
 	a.LastUpdatedAt = m.now()
 
-	out := cloneSNVpc(a)
+	out := m.cloneSNVpc(a)
 
 	return &out, nil
 }
@@ -125,6 +133,7 @@ func (m *Mock) DeleteSNVpcAssociation(_ context.Context, id string) error {
 		return assocNotFound(rid)
 	}
 
+	m.statusSettle.Clear(rid)
 	m.snVpcAssocs.Delete(rid)
 
 	return nil
@@ -134,7 +143,7 @@ func (m *Mock) ListSNVpcAssociations(_ context.Context) ([]driver.SNVpcAssociati
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return sortedValues(m.snVpcAssocs.All(), cloneSNVpc), nil
+	return sortedValues(m.snVpcAssocs.All(), m.cloneSNVpc), nil
 }
 
 func (*Mock) ListSNVpcEndpointAssociations(
@@ -147,7 +156,12 @@ func (*Mock) ListSNVpcEndpointAssociations(
 
 // ---- SN ↔ Service ----
 
-func cloneSNSvc(a *driver.SNServiceAssociation) driver.SNServiceAssociation { return *a }
+func (m *Mock) cloneSNSvc(a *driver.SNServiceAssociation) driver.SNServiceAssociation {
+	out := *a
+	out.Status = m.observe(a.ID, a.Status)
+
+	return out
+}
 
 func (m *Mock) CreateSNServiceAssociation(
 	_ context.Context, serviceNetworkID, serviceID string, tags map[string]string,
@@ -163,6 +177,10 @@ func (m *Mock) CreateSNServiceAssociation(
 	svc, ok := m.services.Get(idFromIdentifier(serviceID))
 	if !ok {
 		return nil, serviceNotFound(idFromIdentifier(serviceID))
+	}
+
+	if m.serviceAssociationExists(sn.id, svc.ID) {
+		return nil, conflictf("service %q is already associated with service network %q", svc.ID, sn.id)
 	}
 
 	id, err := idgen.GenerateLongID("snsa-")
@@ -188,8 +206,9 @@ func (m *Mock) CreateSNServiceAssociation(
 	}
 	m.snSvcAssocs.Set(id, a)
 	m.writeTags(a.ARN, tags)
+	m.beginSettle(id)
 
-	out := cloneSNSvc(a)
+	out := m.cloneSNSvc(a)
 
 	return &out, nil
 }
@@ -203,7 +222,7 @@ func (m *Mock) GetSNServiceAssociation(_ context.Context, id string) (*driver.SN
 		return nil, assocNotFound(idFromIdentifier(id))
 	}
 
-	out := cloneSNSvc(a)
+	out := m.cloneSNSvc(a)
 
 	return &out, nil
 }
@@ -217,6 +236,7 @@ func (m *Mock) DeleteSNServiceAssociation(_ context.Context, id string) error {
 		return assocNotFound(rid)
 	}
 
+	m.statusSettle.Clear(rid)
 	m.snSvcAssocs.Delete(rid)
 
 	return nil
@@ -226,12 +246,17 @@ func (m *Mock) ListSNServiceAssociations(_ context.Context) ([]driver.SNServiceA
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return sortedValues(m.snSvcAssocs.All(), cloneSNSvc), nil
+	return sortedValues(m.snSvcAssocs.All(), m.cloneSNSvc), nil
 }
 
 // ---- SN ↔ Resource ----
 
-func cloneSNRes(a *driver.SNResourceAssociation) driver.SNResourceAssociation { return *a }
+func (m *Mock) cloneSNRes(a *driver.SNResourceAssociation) driver.SNResourceAssociation {
+	out := *a
+	out.Status = m.observe(a.ID, a.Status)
+
+	return out
+}
 
 func (m *Mock) CreateSNResourceAssociation(
 	_ context.Context, serviceNetworkID, resourceConfigID string, privateDNS bool, tags map[string]string,
@@ -267,8 +292,9 @@ func (m *Mock) CreateSNResourceAssociation(
 	}
 	m.snResAssocs.Set(id, a)
 	m.writeTags(a.ARN, tags)
+	m.beginSettle(id)
 
-	out := cloneSNRes(a)
+	out := m.cloneSNRes(a)
 
 	return &out, nil
 }
@@ -282,7 +308,7 @@ func (m *Mock) GetSNResourceAssociation(_ context.Context, id string) (*driver.S
 		return nil, assocNotFound(idFromIdentifier(id))
 	}
 
-	out := cloneSNRes(a)
+	out := m.cloneSNRes(a)
 
 	return &out, nil
 }
@@ -296,6 +322,7 @@ func (m *Mock) DeleteSNResourceAssociation(_ context.Context, id string) error {
 		return assocNotFound(rid)
 	}
 
+	m.statusSettle.Clear(rid)
 	m.snResAssocs.Delete(rid)
 
 	return nil
@@ -305,5 +332,5 @@ func (m *Mock) ListSNResourceAssociations(_ context.Context) ([]driver.SNResourc
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return sortedValues(m.snResAssocs.All(), cloneSNRes), nil
+	return sortedValues(m.snResAssocs.All(), m.cloneSNRes), nil
 }

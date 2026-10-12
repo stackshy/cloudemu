@@ -58,6 +58,8 @@ const (
 
 	DefaultStackSettle = 5 * time.Second // CloudFormation stack *_IN_PROGRESS->*_COMPLETE
 
+	DefaultLatticeSettle = 2 * time.Second // VPC Lattice resource CREATE_IN_PROGRESS->ACTIVE
+
 	// S3 RestoreObject ongoing-request="true"->"false", by retrieval tier.
 	DefaultRestoreExpeditedSettle = 1 * time.Second
 	DefaultRestoreStandardSettle  = 3 * time.Second

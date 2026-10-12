@@ -12,8 +12,9 @@ func resourceGatewayNotFound(id string) error {
 	return errors.Newf(errors.NotFound, "resource gateway %q not found", id)
 }
 
-func cloneResourceGateway(g *driver.ResourceGateway) driver.ResourceGateway {
+func (m *Mock) cloneResourceGateway(g *driver.ResourceGateway) driver.ResourceGateway {
 	out := *g
+	out.Status = m.observe(g.ID, g.Status)
 	out.SecurityGroupIDs = append([]string(nil), g.SecurityGroupIDs...)
 	out.SubnetIDs = append([]string(nil), g.SubnetIDs...)
 
@@ -47,8 +48,9 @@ func (m *Mock) CreateResourceGateway(
 	}
 	m.resourceGws.Set(id, g)
 	m.writeTags(g.ARN, in.Tags)
+	m.beginSettle(id)
 
-	out := cloneResourceGateway(g)
+	out := m.cloneResourceGateway(g)
 
 	return &out, nil
 }
@@ -64,7 +66,7 @@ func (m *Mock) GetResourceGateway(_ context.Context, identifier string) (*driver
 		return nil, resourceGatewayNotFound(id)
 	}
 
-	out := cloneResourceGateway(g)
+	out := m.cloneResourceGateway(g)
 
 	return &out, nil
 }
@@ -88,7 +90,7 @@ func (m *Mock) UpdateResourceGateway(
 
 	g.LastUpdatedAt = m.now()
 
-	out := cloneResourceGateway(g)
+	out := m.cloneResourceGateway(g)
 
 	return &out, nil
 }
@@ -103,6 +105,12 @@ func (m *Mock) DeleteResourceGateway(_ context.Context, identifier string) error
 		return resourceGatewayNotFound(id)
 	}
 
+	// A gateway a resource configuration still references cannot be deleted.
+	if m.resourceGatewayInUse(id) {
+		return inUsef("resource gateway %q is in use by a resource configuration", id)
+	}
+
+	m.statusSettle.Clear(id)
 	m.resourceGws.Delete(id)
 
 	return nil
@@ -112,7 +120,7 @@ func (m *Mock) ListResourceGateways(_ context.Context) ([]driver.ResourceGateway
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return sortedValues(m.resourceGws.All(), cloneResourceGateway), nil
+	return sortedValues(m.resourceGws.All(), m.cloneResourceGateway), nil
 }
 
 // ---- Resource Endpoint Associations (not modeled; empty/no-op) ----

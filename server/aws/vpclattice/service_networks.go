@@ -126,10 +126,5 @@ func (h *Handler) listServiceNetworks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]wireServiceNetwork, 0, len(sns))
-	for i := range sns {
-		items = append(items, serviceNetworkToWire(&sns[i]))
-	}
-
-	writeJSON(w, map[string]any{"items": items})
+	writeItems(w, r, sns, serviceNetworkToWire)
 }

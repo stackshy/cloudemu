@@ -12,6 +12,10 @@ const (
 )
 
 func (m *Mock) PutAuthPolicy(_ context.Context, resourceID, policy string) (*driver.AuthPolicy, error) {
+	if err := validatePolicyJSON(policy); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

@@ -5,10 +5,12 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/vpclattice/driver"
 )
 
 const (
+	targetStatusInitial  = "INITIAL"
 	targetStatusHealthy  = "HEALTHY"
 	targetStatusDraining = "DRAINING"
 )
@@ -16,6 +18,11 @@ const (
 // targetKey uniquely identifies a target within a group by id+port.
 func targetKey(t driver.RegisteredTarget) string {
 	return t.ID + "|" + strconv.Itoa(int(t.Port))
+}
+
+// targetSettleKey identifies a target's health window.
+func targetSettleKey(tgID string, t driver.RegisteredTarget) string {
+	return tgID + "|" + targetKey(t)
 }
 
 func (m *Mock) RegisterTargets(
@@ -47,6 +54,9 @@ func (m *Mock) RegisterTargets(
 		} else {
 			index[targetKey(t)] = len(cur)
 			cur = append(cur, t)
+
+			m.statusSettle.Begin(targetSettleKey(id, t), targetStatusInitial, m.opts.Clock.Now(),
+				m.opts.SettleDuration(settle.DefaultTargetHealthSettle))
 		}
 
 		ok = append(ok, t)
@@ -72,6 +82,8 @@ func (m *Mock) DeregisterTargets(
 	drop := make(map[string]struct{}, len(in))
 	for _, t := range in {
 		drop[targetKey(t)] = struct{}{}
+
+		m.statusSettle.Clear(targetSettleKey(id, t))
 	}
 
 	cur, _ := m.targets.Get(id)
@@ -109,6 +121,10 @@ func (m *Mock) ListTargets(_ context.Context, tgID string) ([]driver.RegisteredT
 	cur, _ := m.targets.Get(id)
 
 	out := append([]driver.RegisteredTarget(nil), cur...)
+	for i := range out {
+		out[i].Status = m.statusSettle.State(targetSettleKey(id, out[i]), m.opts.Clock.Now(), out[i].Status)
+	}
+
 	sort.Slice(out, func(i, j int) bool {
 		return targetKey(out[i]) < targetKey(out[j])
 	})

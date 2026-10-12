@@ -20,6 +20,10 @@ func (m *Mock) CreateAccessLogSubscription(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if !m.loggableResourceExists(resourceIdentifier) {
+		return nil, errors.Newf(errors.NotFound, "resource %q not found", resourceIdentifier)
+	}
+
 	id, err := idgen.GenerateLongID("als-")
 	if err != nil {
 		return nil, err

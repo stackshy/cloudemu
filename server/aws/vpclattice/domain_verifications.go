@@ -77,10 +77,5 @@ func (h *Handler) listDomainVerifications(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	items := make([]wireDomainVerification, 0, len(ds))
-	for i := range ds {
-		items = append(items, domainVerificationToWire(&ds[i]))
-	}
-
-	writeJSON(w, map[string]any{"items": items})
+	writeItems(w, r, ds, domainVerificationToWire)
 }

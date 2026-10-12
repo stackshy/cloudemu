@@ -437,6 +437,8 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	// TerminateInstances releases it. That's why a running instance's interface
 	// blocks DeleteSubnet / DeleteSecurityGroup the way real EC2 does.
 	p.EC2.SetNetworking(p.VPC)
+	// VPC Lattice refuses a service-network VPC association for a VPC that does not exist.
+	p.VPCLattice.SetNetworking(p.VPC)
 	// A load balancer's VpcId is derived from its subnets, matching ELBv2.
 	p.ELB.SetSubnetResolver(p.VPC)
 	// EFS mount targets derive their VpcId and AZ from the subnet, so all mount
