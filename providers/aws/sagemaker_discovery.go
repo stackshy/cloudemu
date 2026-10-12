@@ -21,14 +21,14 @@ type sagemakerDiscovery struct{ m smMock }
 type smMock interface {
 	ListModels(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.Model], error)
 	ListEndpoints(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.Endpoint], error)
-	ListNotebookInstances(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.NotebookInstance], error)
-	ListEndpointConfigs(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.EndpointConfig], error)
-	ListModelPackageGroups(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.ModelPackageGroup], error)
+	ListNotebookInstances(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.NotebookInstance], error)   //nolint:lll // SDK-shaped; see nongoals/standards
+	ListEndpointConfigs(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.EndpointConfig], error)       //nolint:lll // SDK-shaped; see nongoals/standards
+	ListModelPackageGroups(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.ModelPackageGroup], error) //nolint:lll // SDK-shaped; see nongoals/standards
 	ListPipelines(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.Pipeline], error)
 	ListFeatureGroups(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.FeatureGroup], error)
 	ListClusters(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.Cluster], error)
 	ListProjects(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.Project], error)
-	ListMonitoringSchedules(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.MonitoringSchedule], error)
+	ListMonitoringSchedules(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.MonitoringSchedule], error) //nolint:lll // SDK-shaped; see nongoals/standards
 	ListImages(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.Image], error)
 	ListWorkteams(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.Workteam], error)
 	ListTags(ctx context.Context, resourceARN string) ([]sagemakerdriver.Tag, error)
@@ -66,6 +66,8 @@ func smItems[T any](page sagemakerdriver.ListPage[T], err error, project func(*T
 
 // DiscoverResources projects the standing, taggable resources. Transient runs
 // (jobs, executions, trials, lineage entities) are deliberately absent.
+//
+//nolint:funlen // static table
 func (a sagemakerDiscovery) DiscoverResources(
 	ctx context.Context,
 ) ([]resourcediscovery.DiscoveredResource, error) {

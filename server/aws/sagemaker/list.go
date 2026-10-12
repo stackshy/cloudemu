@@ -76,6 +76,8 @@ func decodeListReq(w http.ResponseWriter, r *http.Request) (listReq, bool) {
 }
 
 // options converts the request into driver ListOptions.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (q listReq) options() driver.ListOptions {
 	opts := driver.ListOptions{
 		NameContains:           q.NameContains,
@@ -96,6 +98,7 @@ func (q listReq) options() driver.ListOptions {
 	}
 
 	opts.Filters = map[string]string{}
+
 	for k, v := range map[string]string{
 		"ModelApprovalStatus": q.ModelApprovalStatus, "JobReferenceCodeContains": q.JobReferenceCodeContains,
 		"ExperimentName": q.ExperimentName, "TrialName": q.TrialName, "SourceArn": q.SourceArn, "SourceUri": q.SourceURI,

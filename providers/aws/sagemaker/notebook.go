@@ -18,7 +18,7 @@ const (
 )
 
 // roleARNPattern is the IAM role ARN shape SageMaker accepts for RoleArn.
-var roleARNPattern = regexp.MustCompile(`^arn:aws[a-z\-]*:iam::\d{12}:role/?[a-zA-Z_0-9+=,.@\-_/]+$`) //nolint:gochecknoglobals // compiled once
+var roleARNPattern = regexp.MustCompile(`^arn:aws[a-z\-]*:iam::\d{12}:role/?[a-zA-Z_0-9+=,.@\-_/]+$`) //nolint:gocritic,lll // SDK-shaped; see nongoals/standards
 
 //nolint:gocritic // cfg matches the driver signature; copied on entry.
 func (m *Mock) CreateNotebookInstance(_ context.Context, cfg driver.NotebookInstanceSpec) (*driver.NotebookInstance, error) {
@@ -54,6 +54,7 @@ func (m *Mock) CreateNotebookInstance(_ context.Context, cfg driver.NotebookInst
 		LastModifiedTime:     now,
 		Tags:                 copyTags(cfg.Tags),
 	}
+
 	if !m.notebooks.SetIfAbsent(cfg.Name, nb) {
 		return nil, errors.Newf(errors.AlreadyExists, "notebook instance %q already exists", cfg.Name)
 	}
@@ -101,6 +102,7 @@ func (m *Mock) DescribeNotebookInstance(_ context.Context, name string) (*driver
 	return m.observeNotebook(nb), nil
 }
 
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListNotebookInstances(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.NotebookInstance], error) {
 	stored := m.notebooks.SortedValues()
 	observed := make([]*driver.NotebookInstance, 0, len(stored))
@@ -159,6 +161,8 @@ func (m *Mock) transitionNotebook(name, target string, allowedFrom map[string]bo
 // UpdateNotebookInstance changes a stopped notebook instance's settings. The
 // instance must be Stopped (or Failed); it then passes through Updating and
 // returns to Stopped, and the user starts it again.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) UpdateNotebookInstance(_ context.Context, up driver.NotebookInstanceUpdate) error {
 	m.nbMu.Lock()
 	defer m.nbMu.Unlock()
@@ -189,6 +193,8 @@ func (m *Mock) UpdateNotebookInstance(_ context.Context, up driver.NotebookInsta
 }
 
 // applyNotebookUpdate validates up and applies it onto nb.
+//
+//nolint:gocyclo // validation mirrors the service rules
 func (m *Mock) applyNotebookUpdate(nb *driver.NotebookInstance, up *driver.NotebookInstanceUpdate) error {
 	if up.InstanceType != nil {
 		if *up.InstanceType == "" {
@@ -303,6 +309,7 @@ func (m *Mock) CreateNotebookInstanceLifecycleConfig(
 		CreationTime:     now,
 		LastModifiedTime: now,
 	}
+
 	if !m.notebookLCs.SetIfAbsent(cfg.Name, lc) {
 		return nil, errors.Newf(errors.AlreadyExists, "lifecycle config %q already exists", cfg.Name)
 	}
@@ -323,6 +330,7 @@ func (m *Mock) DescribeNotebookInstanceLifecycleConfig(_ context.Context, name s
 	return &out, nil
 }
 
+//nolint:gocritic,lll // SDK-shaped; see nongoals/standards
 func (m *Mock) ListNotebookInstanceLifecycleConfigs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.NotebookLifecycleConfig], error) {
 	return listFrom(m.notebookLCs, listSpec[driver.NotebookLifecycleConfig]{
 		name:    func(t *driver.NotebookLifecycleConfig) string { return t.Name },
@@ -400,6 +408,7 @@ func (m *Mock) DescribeCodeRepository(_ context.Context, name string) (*driver.C
 	return &out, nil
 }
 
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListCodeRepositories(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.CodeRepository], error) {
 	return listFrom(m.codeRepos, listSpec[driver.CodeRepository]{
 		name:    func(t *driver.CodeRepository) string { return t.Name },

@@ -25,6 +25,7 @@ func (m *Mock) CreateModel(_ context.Context, cfg driver.ModelConfig) (*driver.M
 		CreationTime: m.now(),
 		Tags:         copyTags(cfg.Tags),
 	}
+
 	if !m.models.SetIfAbsent(cfg.ModelName, model) {
 		return nil, errors.Newf(errors.AlreadyExists, "model %q already exists", cfg.ModelName)
 	}
@@ -51,6 +52,7 @@ func (m *Mock) DescribeModel(_ context.Context, name string) (*driver.Model, err
 	return cloneModel(model), nil
 }
 
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListModels(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Model], error) {
 	return listFrom(m.models, listSpec[driver.Model]{
 		name:    func(t *driver.Model) string { return t.ModelName },
@@ -88,6 +90,7 @@ func (m *Mock) CreateEndpointConfig(_ context.Context, cfg driver.EndpointConfig
 		CreationTime:       m.now(),
 		Tags:               copyTags(cfg.Tags),
 	}
+
 	if !m.endpointConfigs.SetIfAbsent(cfg.ConfigName, ec) {
 		return nil, errors.Newf(errors.AlreadyExists, "endpoint config %q already exists", cfg.ConfigName)
 	}
@@ -115,6 +118,7 @@ func (m *Mock) DescribeEndpointConfig(_ context.Context, name string) (*driver.E
 	return cloneEndpointConfig(ec), nil
 }
 
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListEndpointConfigs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.EndpointConfig], error) {
 	return listFrom(m.endpointConfigs, listSpec[driver.EndpointConfig]{
 		name:    func(t *driver.EndpointConfig) string { return t.ConfigName },
@@ -160,6 +164,7 @@ func (m *Mock) CreateInferenceComponent(_ context.Context, cfg driver.InferenceC
 		LastModifiedTime: now,
 		Tags:             copyTags(cfg.Tags),
 	}
+
 	if !m.inferenceComponents.SetIfAbsent(cfg.Name, ic) {
 		return nil, errors.Newf(errors.AlreadyExists, "inference component %q already exists", cfg.Name)
 	}
@@ -181,6 +186,7 @@ func (m *Mock) DescribeInferenceComponent(_ context.Context, name string) (*driv
 	return &out, nil
 }
 
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListInferenceComponents(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.InferenceComponent], error) {
 	return listFrom(m.inferenceComponents, listSpec[driver.InferenceComponent]{
 		name:     func(t *driver.InferenceComponent) string { return t.Name },

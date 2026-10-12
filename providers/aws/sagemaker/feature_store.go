@@ -36,6 +36,7 @@ func (m *Mock) CreateFeatureGroup(_ context.Context, cfg driver.FeatureGroupSpec
 		CreationTime:         m.now(),
 		Tags:                 copyTags(cfg.Tags),
 	}
+
 	if !m.featureGroups.SetIfAbsent(cfg.GroupName, fg) {
 		return nil, errors.Newf(errors.AlreadyExists, "feature group %q already exists", cfg.GroupName)
 	}
@@ -57,6 +58,7 @@ func (m *Mock) DescribeFeatureGroup(_ context.Context, name string) (*driver.Fea
 	return &out, nil
 }
 
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListFeatureGroups(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.FeatureGroup], error) {
 	return listFrom(m.featureGroups, listSpec[driver.FeatureGroup]{
 		name:    func(t *driver.FeatureGroup) string { return t.GroupName },

@@ -27,6 +27,7 @@ func (m *Mock) CreateModelPackageGroup(_ context.Context, cfg driver.ModelPackag
 		CreationTime: m.now(),
 		Tags:         copyTags(cfg.Tags),
 	}
+
 	if !m.packageGroups.SetIfAbsent(cfg.GroupName, g) {
 		return nil, errors.Newf(errors.AlreadyExists, "model package group %q already exists", cfg.GroupName)
 	}
@@ -51,6 +52,7 @@ func (m *Mock) DescribeModelPackageGroup(_ context.Context, name string) (*drive
 	return cloneGroup(g), nil
 }
 
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListModelPackageGroups(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.ModelPackageGroup], error) {
 	return listFrom(m.packageGroups, listSpec[driver.ModelPackageGroup]{
 		clone:   func(t *driver.ModelPackageGroup) driver.ModelPackageGroup { return *cloneGroup(t) },
@@ -103,6 +105,8 @@ func (m *Mock) CreateModelPackage(ctx context.Context, cfg driver.ModelPackageSp
 
 // createModelPackage holds pkgMu for the whole create, so the event is
 // published by the caller after it is released.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) createModelPackage(cfg driver.ModelPackageSpec) (*driver.ModelPackage, error) {
 	if cfg.GroupName == "" {
 		return nil, errors.New(errors.InvalidArgument, "modelPackageGroupName is required")
@@ -159,6 +163,7 @@ func (m *Mock) DescribeModelPackage(_ context.Context, arn string) (*driver.Mode
 	return clonePackage(p), nil
 }
 
+//nolint:gocritic,lll // SDK-shaped; see nongoals/standards
 func (m *Mock) ListModelPackages(_ context.Context, groupName string, opts driver.ListOptions) (driver.ListPage[driver.ModelPackage], error) {
 	return listFrom(m.packages, listSpec[driver.ModelPackage]{
 		clone:   func(t *driver.ModelPackage) driver.ModelPackage { return *clonePackage(t) },
@@ -216,7 +221,7 @@ const maxPackageARNLen = 2048
 
 // packageARNPattern is the model package ARN shape BatchDescribeModelPackage
 // accepts.
-var packageARNPattern = regexp.MustCompile(`^arn:aws[a-z\-]*:sagemaker:[a-z0-9\-]{9,16}:[0-9]{12}:model-package/\S+$`) //nolint:gochecknoglobals // compiled once
+var packageARNPattern = regexp.MustCompile(`^arn:aws[a-z\-]*:sagemaker:[a-z0-9\-]{9,16}:[0-9]{12}:model-package/\S+$`)
 
 // BatchDescribeModelPackage describes up to 100 model packages. A package that
 // does not exist is reported in the per-ARN error map; it never fails the call.

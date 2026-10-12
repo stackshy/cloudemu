@@ -51,7 +51,7 @@ func (h *Handler) describeEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(ep.LastDeploymentConfig) > 0 {
-		resp["LastDeploymentConfig"] = json.RawMessage(ep.LastDeploymentConfig)
+		resp["LastDeploymentConfig"] = ep.LastDeploymentConfig
 	}
 
 	wire.WriteJSON(w, resp)

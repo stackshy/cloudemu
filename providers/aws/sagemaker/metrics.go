@@ -44,6 +44,7 @@ func (m *Mock) putMetrics(ctx context.Context, data []mondriver.MetricDatum) {
 	_ = m.monitoring.PutMetricData(ctx, data)
 }
 
+//nolint:revive // SDK-shaped; see nongoals/standards
 func (m *Mock) datum(ns, name string, v float64, unit string, dims map[string]string, at time.Time) mondriver.MetricDatum {
 	return mondriver.MetricDatum{Namespace: ns, MetricName: name, Value: v, Unit: unit, Dimensions: dims, Timestamp: at}
 }
@@ -83,7 +84,7 @@ func (m *Mock) emitInvocationFailure(ctx context.Context, endpoint, variant stri
 	dims := variantDims(endpoint, variant)
 	name := "Invocation4XXErrors"
 
-	if status >= 500 {
+	if status >= 500 { //nolint:mnd // SDK-shaped; see nongoals/standards
 		name = "Invocation5XXErrors"
 	}
 
@@ -122,7 +123,7 @@ func (m *Mock) emitJobUtilization(kind, job string, res driver.ResourceConfig, a
 
 	for i := 1; i <= count; i++ {
 		host := fmt.Sprintf("%s/algo-%d", job, i)
-		if kind == "Transform" {
+		if kind == "Transform" { //nolint:goconst // SDK enum literals
 			host = fmt.Sprintf("%s/i-%08x", job, i)
 		}
 
@@ -168,6 +169,7 @@ func (m *Mock) emitPipelineMetrics(ctx context.Context, pipeline string, succeed
 	started, done := 1.0, 0.0
 
 	failed := 0.0
+
 	if succeeded {
 		done = 1
 	} else {

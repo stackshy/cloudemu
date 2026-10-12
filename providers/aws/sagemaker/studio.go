@@ -60,6 +60,7 @@ func (m *Mock) DescribeDomain(_ context.Context, domainID string) (*driver.Domai
 	return &out, nil
 }
 
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListDomains(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Domain], error) {
 	return listFrom(m.domains, listSpec[driver.Domain]{
 		name:    func(t *driver.Domain) string { return t.DomainName },
@@ -101,6 +102,7 @@ func (m *Mock) CreateUserProfile(_ context.Context, cfg driver.UserProfileSpec) 
 		CreationTime:     m.now(),
 		Tags:             copyTags(cfg.Tags),
 	}
+
 	if !m.userProfiles.SetIfAbsent(key, up) {
 		return nil, errors.Newf(errors.AlreadyExists, "user profile %q already exists", cfg.UserProfileName)
 	}
@@ -122,6 +124,7 @@ func (m *Mock) DescribeUserProfile(_ context.Context, domainID, name string) (*d
 	return &out, nil
 }
 
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListUserProfiles(_ context.Context, domainID string, opts driver.ListOptions) (driver.ListPage[driver.UserProfile], error) {
 	return listFrom(m.userProfiles, listSpec[driver.UserProfile]{
 		name:    func(t *driver.UserProfile) string { return t.UserProfileName },
@@ -164,6 +167,7 @@ func (m *Mock) CreateSpace(_ context.Context, cfg driver.SpaceSpec) (*driver.Spa
 		CreationTime: m.now(),
 		Tags:         copyTags(cfg.Tags),
 	}
+
 	if !m.spaces.SetIfAbsent(key, sp) {
 		return nil, errors.Newf(errors.AlreadyExists, "space %q already exists", cfg.SpaceName)
 	}
@@ -185,6 +189,7 @@ func (m *Mock) DescribeSpace(_ context.Context, domainID, name string) (*driver.
 	return &out, nil
 }
 
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListSpaces(_ context.Context, domainID string, opts driver.ListOptions) (driver.ListPage[driver.Space], error) {
 	return listFrom(m.spaces, listSpec[driver.Space]{
 		name:    func(t *driver.Space) string { return t.SpaceName },
@@ -230,6 +235,7 @@ func (m *Mock) CreateApp(_ context.Context, in driver.AppSpec) (*driver.App, err
 		Status:          driver.AppInService,
 		CreationTime:    m.now(),
 	}
+
 	if !m.apps.SetIfAbsent(key, app) {
 		return nil, errors.Newf(errors.AlreadyExists, "app %q already exists", in.AppName)
 	}
@@ -251,6 +257,7 @@ func (m *Mock) DescribeApp(_ context.Context, in driver.AppSpec) (*driver.App, e
 	return &out, nil
 }
 
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListApps(_ context.Context, domainID string, opts driver.ListOptions) (driver.ListPage[driver.App], error) {
 	return listFrom(m.apps, listSpec[driver.App]{
 		name:    func(t *driver.App) string { return t.AppName },

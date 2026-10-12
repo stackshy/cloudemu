@@ -155,6 +155,7 @@ func (h *Handler) describeWorkteam(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{"Workteam": workteamToWire(t)})
 }
 
+//nolint:dupl // per-resource shim mirrors the SDK shape
 func (h *Handler) listWorkteams(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeListReq(w, r)
 	if !ok {
@@ -378,7 +379,7 @@ func workforceToWire(f *driver.Workforce) map[string]any {
 	}
 
 	if v := f.VPC; v != nil {
-		out["WorkforceVpcConfig"] = wireWorkforceVPC{VpcID: v.VPCID, SecurityGroupIDs: v.SecurityGroupIDs, Subnets: v.Subnets, VpcEndpointID: v.VPCEndpointID}
+		out["WorkforceVpcConfig"] = wireWorkforceVPC{VpcID: v.VPCID, SecurityGroupIDs: v.SecurityGroupIDs, Subnets: v.Subnets, VpcEndpointID: v.VPCEndpointID} //nolint:lll // SDK-shaped; see nongoals/standards
 	}
 
 	return out
@@ -440,6 +441,7 @@ func (h *Handler) describeWorkforce(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{"Workforce": workforceToWire(f)})
 }
 
+//nolint:dupl // per-resource shim mirrors the SDK shape
 func (h *Handler) listWorkforces(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeListReq(w, r)
 	if !ok {

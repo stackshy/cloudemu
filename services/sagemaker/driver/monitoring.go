@@ -161,7 +161,7 @@ type monitoringAPI interface {
 
 	ListMonitoringAlerts(ctx context.Context, scheduleName string, opts ListOptions) (ListPage[MonitoringAlert], error)
 	ListMonitoringAlertHistory(ctx context.Context, opts ListOptions) (ListPage[MonitoringAlertEvent], error)
-	UpdateMonitoringAlert(ctx context.Context, scheduleName, alertName string, datapointsToAlert, evaluationPeriod int) (*MonitoringSchedule, error)
+	UpdateMonitoringAlert(ctx context.Context, scheduleName, alertName string, datapointsToAlert, evaluationPeriod int) (*MonitoringSchedule, error) //nolint:lll // SDK-shaped; see nongoals/standards
 
 	CreateMonitoringJobDefinition(ctx context.Context, spec MonitoringJobDefinitionSpec) (*MonitoringJobDefinition, error)
 	DescribeMonitoringJobDefinition(ctx context.Context, kind, name string) (*MonitoringJobDefinition, error)

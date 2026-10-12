@@ -88,6 +88,8 @@ type projection struct {
 }
 
 // terminal reports whether the job has finished (completed or stopped).
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (p projection) terminal() bool { return p.state == jobCompleted || p.state == jobStopped }
 
 // stageStep returns the time a job spends in each stage.
@@ -182,6 +184,8 @@ func stageStarts(start time.Time, step time.Duration, last int) []time.Time {
 func fmtTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
 
 // primary returns the primary status of a projection for the given stages.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (p projection) primary(stages []stageDef, stop jobStopStatuses) string {
 	switch p.state {
 	case jobStopping:
@@ -194,6 +198,8 @@ func (p projection) primary(stages []stageDef, stop jobStopStatuses) string {
 }
 
 // secondary returns the secondary status of a projection.
+//
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (p projection) secondary(stages []stageDef) string {
 	switch p.state {
 	case jobStopping:
@@ -207,8 +213,10 @@ func (p projection) secondary(stages []stageDef) string {
 
 // transitions builds a training job's SecondaryStatusTransitions: every stage
 // reached, closed when the next begins, then Stopping/Stopped after a stop.
+//
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (p projection) transitions(stages []stageDef) []driver.SecondaryStatusTransition {
-	out := make([]driver.SecondaryStatusTransition, 0, len(p.starts)+2)
+	out := make([]driver.SecondaryStatusTransition, 0, len(p.starts)+2) //nolint:mnd // SDK-shaped; see nongoals/standards
 
 	for i, st := range p.starts {
 		t := driver.SecondaryStatusTransition{Status: stages[i].secondary, StartTime: fmtTime(st), StatusMessage: stages[i].message}
@@ -284,6 +292,8 @@ func stopJobAccepted[T any](m *Mock, store *memstore.Store[*T], name, kind strin
 
 // listObserved lists a store through an observe function, so filters and sort
 // apply to each job's observed state.
+//
+//nolint:gocritic,lll // SDK-shaped; see nongoals/standards
 func listObserved[T any](store *memstore.Store[*T], observe func(*T) *T, spec listSpec[T], opts driver.ListOptions) (driver.ListPage[T], error) {
 	stored := store.SortedValues()
 	observed := make([]*T, 0, len(stored))

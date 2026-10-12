@@ -17,7 +17,7 @@ const (
 	maxRemoveKeyLen          = 256
 )
 
-var trialComponentNamePattern = regexp.MustCompile(`^[a-zA-Z0-9](-*[a-zA-Z0-9]){0,119}$`) //nolint:gochecknoglobals // compiled once
+var trialComponentNamePattern = regexp.MustCompile(`^[a-zA-Z0-9](-*[a-zA-Z0-9]){0,119}$`)
 
 // tcKey is the store key of a trial component: names are not case-sensitive.
 func tcKey(name string) string { return strings.ToLower(name) }
@@ -93,7 +93,7 @@ func validateStatus(s *driver.TrialComponentStatus) error {
 		driver.TrialComponentStopping, driver.TrialComponentStopped:
 		return nil
 	default:
-		return errors.Newf(errors.InvalidArgument, "status.primaryStatus %q is not one of InProgress, Completed, Failed, Stopping, Stopped", s.PrimaryStatus)
+		return errors.Newf(errors.InvalidArgument, "status.primaryStatus %q is not one of InProgress, Completed, Failed, Stopping, Stopped", s.PrimaryStatus) //nolint:lll // SDK-shaped literal
 	}
 }
 
@@ -133,7 +133,7 @@ func validateTrialComponentFields(name, display string, status *driver.TrialComp
 	params map[string]driver.TrialComponentParameter, in, out map[string]driver.TrialComponentArtifact,
 ) error {
 	if name != "" && (len(name) > maxTrialComponentNameLen || !trialComponentNamePattern.MatchString(name)) {
-		return errors.Newf(errors.InvalidArgument, "trialComponentName %q must be 1-%d letters, digits and hyphens", name, maxTrialComponentNameLen)
+		return errors.Newf(errors.InvalidArgument, "trialComponentName %q must be 1-%d letters, digits and hyphens", name, maxTrialComponentNameLen) //nolint:lll // SDK-shaped literal
 	}
 
 	if display != "" && (len(display) > maxTrialComponentNameLen || !trialComponentNamePattern.MatchString(display)) {
@@ -157,12 +157,14 @@ func validateTrialComponentFields(name, display string, status *driver.TrialComp
 
 // CreateTrialComponent creates a trial component. Names are unique per account
 // and not case-sensitive.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) CreateTrialComponent(_ context.Context, spec driver.TrialComponentSpec) (*driver.TrialComponent, error) {
 	if spec.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "trialComponentName is required")
 	}
 
-	if err := validateTrialComponentFields(spec.Name, spec.DisplayName, spec.Status, spec.Parameters, spec.InputArtifacts, spec.OutputArtifacts); err != nil {
+	if err := validateTrialComponentFields(spec.Name, spec.DisplayName, spec.Status, spec.Parameters, spec.InputArtifacts, spec.OutputArtifacts); err != nil { //nolint:lll // SDK-shaped literal
 		return nil, err
 	}
 
@@ -203,6 +205,8 @@ func (m *Mock) DescribeTrialComponent(_ context.Context, name string) (*driver.T
 // ListTrialComponents lists trial components, optionally those of one trial,
 // one experiment (through its trials) or one source. The three filters are
 // mutually exclusive.
+//
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListTrialComponents(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.TrialComponent], error) {
 	exp, trial, source := opts.Filters["ExperimentName"], opts.Filters["TrialName"], opts.Filters["SourceArn"]
 
@@ -287,6 +291,8 @@ func keysOf(names []string) map[string]bool {
 // UpdateTrialComponent merges the given parameters and artifacts into the
 // component by key, removes the keys listed for removal and bumps
 // LastModifiedTime.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) UpdateTrialComponent(_ context.Context, up driver.TrialComponentUpdate) (*driver.TrialComponent, error) {
 	display := ""
 	if up.DisplayName != nil {
@@ -297,7 +303,7 @@ func (m *Mock) UpdateTrialComponent(_ context.Context, up driver.TrialComponentU
 		return nil, err
 	}
 
-	for _, k := range append(append(append([]string(nil), up.ParametersToRemove...), up.InputArtifactsToRemove...), up.OutputArtifactsToRemove...) {
+	for _, k := range append(append(append([]string(nil), up.ParametersToRemove...), up.InputArtifactsToRemove...), up.OutputArtifactsToRemove...) { //nolint:lll // SDK-shaped literal
 		if len(k) > maxRemoveKeyLen {
 			return nil, errors.Newf(errors.InvalidArgument, "keys to remove must be at most %d characters", maxRemoveKeyLen)
 		}
@@ -405,6 +411,8 @@ func (m *Mock) DeleteTrialComponent(_ context.Context, name string) (*driver.Tri
 
 // AssociateTrialComponent links a component to a trial (both ends are kept in
 // step). Associating an already-associated pair succeeds.
+//
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) AssociateTrialComponent(_ context.Context, componentName, trialName string) (string, string, error) {
 	m.entityMu.Lock()
 	defer m.entityMu.Unlock()
@@ -418,6 +426,7 @@ func (m *Mock) AssociateTrialComponent(_ context.Context, componentName, trialNa
 	updatedTC.TrialNames = addSorted(tc.TrialNames, trial.TrialName)
 	updatedTrial.TrialComponentNames = addSorted(trial.TrialComponentNames, tc.Name)
 	updatedTrial.Tags = copyTags(trial.Tags)
+
 	m.trialComponents.Set(tcKey(componentName), updatedTC)
 	m.trials.Set(trialName, &updatedTrial)
 
@@ -425,6 +434,8 @@ func (m *Mock) AssociateTrialComponent(_ context.Context, componentName, trialNa
 }
 
 // DisassociateTrialComponent removes the link; a missing link is a no-op.
+//
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) DisassociateTrialComponent(_ context.Context, componentName, trialName string) (string, string, error) {
 	m.entityMu.Lock()
 	defer m.entityMu.Unlock()
@@ -438,6 +449,7 @@ func (m *Mock) DisassociateTrialComponent(_ context.Context, componentName, tria
 	updatedTC.TrialNames = removeName(tc.TrialNames, trial.TrialName)
 	updatedTrial.TrialComponentNames = removeName(trial.TrialComponentNames, tc.Name)
 	updatedTrial.Tags = copyTags(trial.Tags)
+
 	m.trialComponents.Set(tcKey(componentName), updatedTC)
 	m.trials.Set(trialName, &updatedTrial)
 

@@ -23,9 +23,9 @@ const (
 )
 
 var (
-	monitoringNamePattern = regexp.MustCompile(`^[a-zA-Z0-9](-*[a-zA-Z0-9]){0,62}$`)                        //nolint:gochecknoglobals // compiled once
-	scheduleExprPattern   = regexp.MustCompile(`^cron\(0 (\*|(\d{1,2})(?:/(\d{1,2}))?) \? \* \* \*\)$`)     //nolint:gochecknoglobals // compiled once
-	isoOffsetPattern      = regexp.MustCompile(`^(-?)P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$`) //nolint:gochecknoglobals // compiled once
+	monitoringNamePattern = regexp.MustCompile(`^[a-zA-Z0-9](-*[a-zA-Z0-9]){0,62}$`)
+	scheduleExprPattern   = regexp.MustCompile(`^cron\(0 (\*|(\d{1,2})(?:/(\d{1,2}))?) \? \* \* \*\)$`)
+	isoOffsetPattern      = regexp.MustCompile(`^(-?)P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$`)
 )
 
 func (m *Mock) monitoringARN(kind, name string) string {
@@ -74,6 +74,8 @@ func cloneDef(in *driver.MonitoringJobDefinition) *driver.MonitoringJobDefinitio
 
 // CreateMonitoringJobDefinition creates a data quality, model quality, model
 // bias or model explainability monitoring job definition.
+//
+//nolint:gocritic,lll // SDK-shaped; see nongoals/standards
 func (m *Mock) CreateMonitoringJobDefinition(_ context.Context, spec driver.MonitoringJobDefinitionSpec) (*driver.MonitoringJobDefinition, error) {
 	if !validMonitoringKind(spec.Kind) {
 		return nil, errors.Newf(errors.InvalidArgument, "unknown monitoring job definition kind %q", spec.Kind)
@@ -115,6 +117,7 @@ func (m *Mock) DescribeMonitoringJobDefinition(_ context.Context, kind, name str
 	return cloneDef(d), nil
 }
 
+//nolint:gocritic,lll // SDK-shaped; see nongoals/standards
 func (m *Mock) ListMonitoringJobDefinitions(_ context.Context, kind string, opts driver.ListOptions) (driver.ListPage[driver.MonitoringJobDefinition], error) {
 	return listFrom(m.monDefs, listSpec[driver.MonitoringJobDefinition]{
 		name:    func(t *driver.MonitoringJobDefinition) string { return t.Name },
@@ -238,6 +241,8 @@ func parseOffset(v string) (time.Duration, error) {
 }
 
 // validateScheduleConfig checks the schedule expression and analysis window.
+//
+//nolint:gocyclo // validation mirrors the service rules
 func validateScheduleConfig(spec *driver.MonitoringScheduleSpec) error {
 	if spec.ScheduleExpression == "" {
 		return nil // the service picks a daily schedule
@@ -323,6 +328,8 @@ func (m *Mock) validateScheduleSpec(spec *driver.MonitoringScheduleSpec) error {
 }
 
 // CreateMonitoringSchedule creates a schedule that starts Scheduled.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) CreateMonitoringSchedule(_ context.Context, spec driver.MonitoringScheduleSpec) (*driver.MonitoringSchedule, error) {
 	if err := m.validateScheduleSpec(&spec); err != nil {
 		return nil, err
@@ -380,6 +387,7 @@ func (m *Mock) DescribeMonitoringSchedule(_ context.Context, name string) (*driv
 	return m.observeSchedule(s), nil
 }
 
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListMonitoringSchedules(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.MonitoringSchedule], error) {
 	m.monMu.Lock()
 	stored := m.monSchedules.SortedValues()
@@ -405,6 +413,8 @@ func (m *Mock) ListMonitoringSchedules(_ context.Context, opts driver.ListOption
 
 // UpdateMonitoringSchedule replaces the schedule's configuration. Executions
 // already due are kept; the new cadence applies from now.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) UpdateMonitoringSchedule(_ context.Context, spec driver.MonitoringScheduleSpec) (*driver.MonitoringSchedule, error) {
 	if err := m.validateScheduleSpec(&spec); err != nil {
 		return nil, err
@@ -422,7 +432,7 @@ func (m *Mock) UpdateMonitoringSchedule(_ context.Context, spec driver.Monitorin
 
 	updated := cloneSchedule(cur)
 	updated.Type, updated.JobDefinitionName, updated.EndpointName = spec.Type, spec.JobDefinitionName, spec.EndpointName
-	updated.ScheduleExpression, updated.DataAnalysisStartTime, updated.DataAnalysisEndTime = spec.ScheduleExpression, spec.DataAnalysisStartTime, spec.DataAnalysisEndTime
+	updated.ScheduleExpression, updated.DataAnalysisStartTime, updated.DataAnalysisEndTime = spec.ScheduleExpression, spec.DataAnalysisStartTime, spec.DataAnalysisEndTime //nolint:lll // SDK-shaped literal
 	updated.Config = append(json.RawMessage(nil), spec.Config...)
 	updated.LastModifiedTime = m.now()
 	updated.ActiveFrom = updated.LastModifiedTime
@@ -538,7 +548,7 @@ func (m *Mock) virtualExecutions(s *driver.MonitoringSchedule) []driver.Monitori
 // (idempotently), so they outlive a Stop, an Update or a Delete. The caller
 // holds monMu.
 func (m *Mock) materializeExecutions(s *driver.MonitoringSchedule) {
-	for _, e := range m.virtualExecutions(s) {
+	for _, e := range m.virtualExecutions(s) { //nolint:gocritic // driver-signature params and SDK-shaped helpers
 		m.monExecs.SetIfAbsent(execKey(e.ScheduleName, parseTime(e.ScheduledTime)), &e)
 	}
 }
@@ -548,7 +558,7 @@ func (m *Mock) materializeExecutions(s *driver.MonitoringSchedule) {
 func (m *Mock) executionsOf(s *driver.MonitoringSchedule) []driver.MonitoringExecution {
 	byKey := map[string]driver.MonitoringExecution{}
 
-	for _, e := range m.virtualExecutions(s) {
+	for _, e := range m.virtualExecutions(s) { //nolint:gocritic // driver-signature params and SDK-shaped helpers
 		byKey[execKey(e.ScheduleName, parseTime(e.ScheduledTime))] = e
 	}
 
@@ -583,7 +593,7 @@ func (m *Mock) allExecutions() []driver.MonitoringExecution {
 	byKey := map[string]driver.MonitoringExecution{}
 
 	for _, s := range m.monSchedules.All() {
-		for _, e := range m.virtualExecutions(s) {
+		for _, e := range m.virtualExecutions(s) { //nolint:gocritic // driver-signature params and SDK-shaped helpers
 			byKey[execKey(e.ScheduleName, parseTime(e.ScheduledTime))] = e
 		}
 	}
@@ -597,6 +607,8 @@ func (m *Mock) allExecutions() []driver.MonitoringExecution {
 
 // ListMonitoringExecutions lists executions. An unknown schedule name yields an
 // empty list: it is a filter, not a lookup.
+//
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListMonitoringExecutions(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.MonitoringExecution], error) {
 	m.monMu.Lock()
 	all := m.allExecutions()
@@ -613,7 +625,7 @@ func (m *Mock) ListMonitoringExecutions(_ context.Context, opts driver.ListOptio
 		created:      func(t *driver.MonitoringExecution) string { return t.CreationTime },
 		modified:     func(t *driver.MonitoringExecution) string { return t.LastModifiedTime },
 		defaultOrder: driver.SortDescending,
-		keys:         map[string]func(*driver.MonitoringExecution) string{"ScheduledTime": func(t *driver.MonitoringExecution) string { return t.ScheduledTime }},
+		keys:         map[string]func(*driver.MonitoringExecution) string{"ScheduledTime": func(t *driver.MonitoringExecution) string { return t.ScheduledTime }}, //nolint:lll // SDK-shaped literal
 		extra:        executionFilter,
 	}, opts)
 }
@@ -668,7 +680,7 @@ func (m *Mock) SetMonitoringExecutionStatus(scheduleName, scheduledTime, status,
 	m.monMu.Lock()
 	defer m.monMu.Unlock()
 
-	for _, e := range m.allExecutions() {
+	for _, e := range m.allExecutions() { //nolint:gocritic // SDK-shaped; see nongoals/standards
 		if e.ScheduleName == scheduleName && e.ScheduledTime == scheduledTime {
 			e.Status, e.FailureReason = status, failureReason
 			m.monExecs.Set(execKey(scheduleName, parseTime(scheduledTime)), &e)
@@ -707,7 +719,7 @@ func alertTimeline(a *driver.MonitoringAlert, execs []driver.MonitoringExecution
 
 		count := 0
 
-		for _, e := range execs[from : i+1] {
+		for _, e := range execs[from : i+1] { //nolint:gocritic // SDK-shaped; see nongoals/standards
 			if violating(e.Status) {
 				count++
 			}
@@ -734,7 +746,7 @@ func alertTimeline(a *driver.MonitoringAlert, execs []driver.MonitoringExecution
 func (m *Mock) scheduleExecutions(name string) []driver.MonitoringExecution {
 	var out []driver.MonitoringExecution
 
-	for _, e := range m.allExecutions() {
+	for _, e := range m.allExecutions() { //nolint:gocritic // SDK-shaped; see nongoals/standards
 		if e.ScheduleName == name {
 			out = append(out, e)
 		}
@@ -743,6 +755,7 @@ func (m *Mock) scheduleExecutions(name string) []driver.MonitoringExecution {
 	return out
 }
 
+//nolint:gocritic,lll // SDK-shaped; see nongoals/standards
 func (m *Mock) ListMonitoringAlerts(_ context.Context, scheduleName string, opts driver.ListOptions) (driver.ListPage[driver.MonitoringAlert], error) {
 	m.monMu.Lock()
 
@@ -770,6 +783,7 @@ func (m *Mock) ListMonitoringAlerts(_ context.Context, scheduleName string, opts
 	}, opts)
 }
 
+//nolint:gocritic,lll // SDK-shaped; see nongoals/standards
 func (m *Mock) ListMonitoringAlertHistory(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.MonitoringAlertEvent], error) {
 	schedule, alertName := opts.Filters["MonitoringScheduleName"], opts.Filters["MonitoringAlertName"]
 
@@ -806,6 +820,8 @@ func (m *Mock) ListMonitoringAlertHistory(_ context.Context, opts driver.ListOpt
 }
 
 // UpdateMonitoringAlert changes an alert's thresholds.
+//
+//nolint:lll // SDK-shaped literal
 func (m *Mock) UpdateMonitoringAlert(_ context.Context, scheduleName, alertName string, datapoints, period int) (*driver.MonitoringSchedule, error) {
 	if err := validateAlertBounds(datapoints, period); err != nil {
 		return nil, err

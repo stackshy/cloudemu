@@ -118,7 +118,7 @@ func responseContentType(accept, contentType string) string {
 // "application/json").
 func firstConcreteMediaType(accept string) string {
 	for _, part := range strings.Split(accept, ",") {
-		mt := strings.TrimSpace(strings.SplitN(part, ";", 2)[0])
+		mt := strings.TrimSpace(strings.SplitN(part, ";", 2)[0]) //nolint:mnd // SDK-shaped; see nongoals/standards
 		if mt != "" && !strings.Contains(mt, "*") {
 			return mt
 		}

@@ -27,9 +27,11 @@ func (m *Mock) CreatePipeline(_ context.Context, cfg driver.PipelineSpec) (*driv
 		LastModifiedTime: now,
 		Tags:             copyTags(cfg.Tags),
 	}
+
 	if !m.pipelines.SetIfAbsent(cfg.PipelineName, p) {
 		return nil, errors.Newf(errors.AlreadyExists, "pipeline %q already exists", cfg.PipelineName)
 	}
+
 	m.setTags(arn, cfg.Tags)
 
 	return clonePipeline(p), nil
@@ -44,6 +46,7 @@ func (m *Mock) DescribePipeline(_ context.Context, name string) (*driver.Pipelin
 	return clonePipeline(p), nil
 }
 
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListPipelines(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Pipeline], error) {
 	return listFrom(m.pipelines, listSpec[driver.Pipeline]{
 		clone:    func(t *driver.Pipeline) driver.Pipeline { return *clonePipeline(t) },
@@ -122,6 +125,7 @@ func (m *Mock) DescribePipelineExecution(_ context.Context, executionARN string)
 	return &out, nil
 }
 
+//nolint:dupl,gocritic,lll // per-resource shim mirrors the SDK shape
 func (m *Mock) ListPipelineExecutions(_ context.Context, pipelineName string, opts driver.ListOptions) (driver.ListPage[driver.PipelineExecution], error) {
 	return listFrom(m.executions, listSpec[driver.PipelineExecution]{
 		name:    func(t *driver.PipelineExecution) string { return t.ExecutionARN },
@@ -167,9 +171,11 @@ func (m *Mock) CreateExperiment(_ context.Context, cfg driver.ExperimentSpec) (*
 		CreationTime:   m.now(),
 		Tags:           copyTags(cfg.Tags),
 	}
+
 	if !m.experiments.SetIfAbsent(cfg.ExperimentName, e) {
 		return nil, errors.Newf(errors.AlreadyExists, "experiment %q already exists", cfg.ExperimentName)
 	}
+
 	m.setTags(arn, cfg.Tags)
 
 	return cloneExperiment(e), nil
@@ -184,6 +190,7 @@ func (m *Mock) DescribeExperiment(_ context.Context, name string) (*driver.Exper
 	return cloneExperiment(e), nil
 }
 
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListExperiments(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Experiment], error) {
 	return listFrom(m.experiments, listSpec[driver.Experiment]{
 		clone:   func(t *driver.Experiment) driver.Experiment { return *cloneExperiment(t) },
@@ -240,6 +247,7 @@ func (m *Mock) CreateTrial(_ context.Context, cfg driver.TrialSpec) (*driver.Tri
 		CreationTime:   m.now(),
 		Tags:           copyTags(cfg.Tags),
 	}
+
 	if !m.trials.SetIfAbsent(cfg.TrialName, t) {
 		return nil, errors.Newf(errors.AlreadyExists, "trial %q already exists", cfg.TrialName)
 	}
@@ -265,6 +273,7 @@ func (m *Mock) DescribeTrial(_ context.Context, name string) (*driver.Trial, err
 	return cloneTrial(t), nil
 }
 
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListTrials(_ context.Context, experimentName string, opts driver.ListOptions) (driver.ListPage[driver.Trial], error) {
 	return listFrom(m.trials, listSpec[driver.Trial]{
 		name:    func(t *driver.Trial) string { return t.TrialName },

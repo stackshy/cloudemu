@@ -23,14 +23,14 @@ const (
 )
 
 var (
-	lineageNamePattern = regexp.MustCompile(`^[a-zA-Z0-9](-*[a-zA-Z0-9]){0,119}$`)    //nolint:gochecknoglobals // compiled once
-	contextNamePattern = regexp.MustCompile(`^[a-zA-Z0-9]([-_]*[a-zA-Z0-9]){0,119}$`) //nolint:gochecknoglobals // compiled once
+	lineageNamePattern = regexp.MustCompile(`^[a-zA-Z0-9](-*[a-zA-Z0-9]){0,119}$`)
+	contextNamePattern = regexp.MustCompile(`^[a-zA-Z0-9]([-_]*[a-zA-Z0-9]){0,119}$`)
 )
 
 var (
-	sourceIDTypes = map[string]bool{"MD5Hash": true, "S3ETag": true, "S3Version": true, "Custom": true}                                                                                                                             //nolint:gochecknoglobals // static table
-	actionStatus  = map[string]bool{"": true, "Unknown": true, "InProgress": true, "Completed": true, "Failed": true, "Stopping": true, "Stopped": true}                                                                            //nolint:gochecknoglobals // static table
-	assocTypes    = map[string]bool{"": true, driver.AssociationContributedTo: true, driver.AssociationAssociatedWith: true, driver.AssociationDerivedFrom: true, driver.AssociationProduced: true, driver.AssociationSameAs: true} //nolint:gochecknoglobals // static table
+	sourceIDTypes = map[string]bool{"MD5Hash": true, "S3ETag": true, "S3Version": true, "Custom": true}                                                                                                                             //nolint:gochecknoglobals,lll // static table
+	actionStatus  = map[string]bool{"": true, "Unknown": true, "InProgress": true, "Completed": true, "Failed": true, "Stopping": true, "Stopped": true}                                                                            //nolint:gochecknoglobals,lll // static table
+	assocTypes    = map[string]bool{"": true, driver.AssociationContributedTo: true, driver.AssociationAssociatedWith: true, driver.AssociationDerivedFrom: true, driver.AssociationProduced: true, driver.AssociationSameAs: true} //nolint:gochecknoglobals,lll // static table
 )
 
 func (m *Mock) entityARN(kind, name string) string {
@@ -56,6 +56,7 @@ func (m *Mock) ensureLineageGroup() {
 	m.lineageGroup.SetIfAbsent("default", m.now())
 }
 
+//nolint:gocyclo // validation mirrors the service rules
 func validateEntitySpec(kind string, spec *driver.LineageEntitySpec) error {
 	pattern := lineageNamePattern
 	if kind == driver.LineageContext {
@@ -120,7 +121,7 @@ func (m *Mock) createEntity(kind string, spec *driver.LineageEntitySpec) (*drive
 
 	var arn string
 
-	if kind == driver.LineageArtifact {
+	if kind == driver.LineageArtifact { //nolint:nestif // validation
 		id, err := idgen.GenerateLongID("")
 		if err != nil {
 			return nil, errors.Newf(errors.Internal, "could not mint an artifact id: %v", err)
@@ -173,6 +174,7 @@ func (m *Mock) describeEntity(kind, arn string) (*driver.LineageEntity, error) {
 	return cloneEntity(e), nil
 }
 
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) listEntities(kind string, opts driver.ListOptions) (driver.ListPage[driver.LineageEntity], error) {
 	typeKey := kind + "Type"
 
@@ -196,6 +198,8 @@ func (m *Mock) listEntities(kind string, opts driver.ListOptions) (driver.ListPa
 }
 
 // updateEntity updates an entity by key (ARN for artifacts, name otherwise).
+//
+//nolint:gocyclo // validation mirrors the service rules
 func (m *Mock) updateEntity(kind string, up *driver.LineageEntityUpdate) (*driver.LineageEntity, error) {
 	if up.Description != nil && len(*up.Description) > maxLineageDescLen {
 		return nil, errors.Newf(errors.InvalidArgument, "description must be at most %d characters", maxLineageDescLen)
@@ -281,6 +285,7 @@ func (m *Mock) deleteEntity(kind, arn string) (string, error) {
 
 // --- Artifact ---
 
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) CreateArtifact(_ context.Context, spec driver.LineageEntitySpec) (*driver.LineageEntity, error) {
 	return m.createEntity(driver.LineageArtifact, &spec)
 }
@@ -293,6 +298,7 @@ func (m *Mock) DescribeArtifact(_ context.Context, arn string) (*driver.LineageE
 	return m.describeEntity(driver.LineageArtifact, arn)
 }
 
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListArtifacts(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.LineageEntity], error) {
 	return m.listEntities(driver.LineageArtifact, opts)
 }
@@ -334,6 +340,7 @@ func (m *Mock) DeleteArtifact(_ context.Context, arn, sourceURI string) (string,
 
 // --- Action ---
 
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) CreateAction(_ context.Context, spec driver.LineageEntitySpec) (*driver.LineageEntity, error) {
 	return m.createEntity(driver.LineageAction, &spec)
 }
@@ -342,6 +349,7 @@ func (m *Mock) DescribeAction(_ context.Context, name string) (*driver.LineageEn
 	return m.describeEntity(driver.LineageAction, m.entityARN(driver.LineageAction, name))
 }
 
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListActions(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.LineageEntity], error) {
 	return m.listEntities(driver.LineageAction, opts)
 }
@@ -356,6 +364,7 @@ func (m *Mock) DeleteAction(_ context.Context, name string) (string, error) {
 
 // --- Context ---
 
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) CreateContext(_ context.Context, spec driver.LineageEntitySpec) (*driver.LineageEntity, error) {
 	return m.createEntity(driver.LineageContext, &spec)
 }
@@ -364,6 +373,7 @@ func (m *Mock) DescribeContext(_ context.Context, name string) (*driver.LineageE
 	return m.describeEntity(driver.LineageContext, m.entityARN(driver.LineageContext, name))
 }
 
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListContexts(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.LineageEntity], error) {
 	return m.listEntities(driver.LineageContext, opts)
 }
@@ -405,9 +415,9 @@ func (m *Mock) endpoint(arn string) (kind, name, typ string, err error) {
 		if m.experiments.Has(rest) {
 			return kind, rest, "Experiment", nil
 		}
-	case "experiment-trial-component":
+	case "experiment-trial-component": //nolint:goconst // SDK enum literals
 		if tc, found := m.trialComponents.Get(tcKey(rest)); found {
-			return kind, tc.Name, "TrialComponent", nil
+			return kind, tc.Name, "TrialComponent", nil //nolint:goconst // SDK enum literals
 		}
 	default:
 		if e, found := m.lineageEntities.Get(arn); found {
@@ -422,7 +432,7 @@ func (m *Mock) endpoint(arn string) (kind, name, typ string, err error) {
 // and keeps the original.
 func (m *Mock) AddAssociation(_ context.Context, sourceARN, destinationARN, associationType string) error {
 	if !assocTypes[associationType] {
-		return errors.Newf(errors.InvalidArgument, "associationType %q must be ContributedTo, AssociatedWith, DerivedFrom, Produced or SameAs", associationType)
+		return errors.Newf(errors.InvalidArgument, "associationType %q must be ContributedTo, AssociatedWith, DerivedFrom, Produced or SameAs", associationType) //nolint:lll // SDK-shaped literal
 	}
 
 	for field, a := range map[string]string{"sourceArn": sourceARN, "destinationArn": destinationARN} {
@@ -471,6 +481,8 @@ func (m *Mock) removeAssociationsOf(arn string) {
 }
 
 // ListAssociations lists associations with their endpoints resolved.
+//
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListAssociations(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.AssociationSummary], error) {
 	m.entityMu.Lock()
 	items := make([]*driver.AssociationSummary, 0, m.associations.Len())
@@ -519,6 +531,8 @@ type lineageNode struct {
 }
 
 // QueryLineage walks the association graph from one start entity.
+//
+//nolint:gocritic,gocyclo // validation mirrors the service rules
 func (m *Mock) QueryLineage(_ context.Context, q driver.LineageQuery) (*driver.LineageResult, error) {
 	if len(q.StartARNs) != 1 {
 		return nil, errors.New(errors.InvalidArgument, "startArns must contain exactly 1 item")
@@ -628,6 +642,7 @@ func traverse(assocs []*driver.Association, start, dir string, maxDepth int) (or
 
 				if !visited[other] {
 					visited[other] = true
+
 					next = append(next, other)
 				}
 			}
@@ -649,6 +664,7 @@ func dedupeEdges(in []driver.LineageEdge) []driver.LineageEdge {
 		k := assocKey(e.SourceARN, e.DestinationARN)
 		if !seen[k] {
 			seen[k] = true
+
 			out = append(out, e)
 		}
 	}
@@ -657,6 +673,8 @@ func dedupeEdges(in []driver.LineageEdge) []driver.LineageEdge {
 }
 
 // pageLineage applies the query filters and pages the vertices.
+//
+//nolint:gocritic,lll // driver-signature params and SDK-shaped helpers
 func pageLineage(q driver.LineageQuery, order []string, edges []driver.LineageEdge, nodes map[string]lineageNode) (*driver.LineageResult, error) {
 	matched := make([]driver.LineageVertex, 0, len(order))
 	keep := map[string]bool{}
@@ -763,6 +781,8 @@ func (m *Mock) DescribeLineageGroup(_ context.Context, nameOrARN string) (*drive
 }
 
 // ListLineageGroups lists the account's single, auto-created lineage group.
+//
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListLineageGroups(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.LineageGroup], error) {
 	items := make([]*driver.LineageGroup, 0, 1)
 
@@ -778,6 +798,8 @@ func (m *Mock) ListLineageGroups(_ context.Context, opts driver.ListOptions) (dr
 
 // GetLineageGroupPolicy returns the group ARN; a resource policy can only be
 // attached through AWS RAM, which the emulator does not model, so none is set.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) GetLineageGroupPolicy(_ context.Context, nameOrARN string) (string, string, error) {
 	g, err := m.lineageGroupOf(nameOrARN)
 	if err != nil {

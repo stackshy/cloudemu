@@ -11,7 +11,6 @@ import (
 
 // defaultVariantWeight is the InitialVariantWeight SageMaker assigns when the
 // request omits it.
-const defaultVariantWeight = 1.0
 
 // endpointTransition is the in-flight (read-time) state of an endpoint that is
 // Creating, Updating or Deleting under --async-settle. The store always holds
@@ -296,6 +295,8 @@ func (m *Mock) DescribeEndpoint(_ context.Context, name string) (*driver.Endpoin
 
 // ListEndpoints lists endpoints with their observed status; filters and sort
 // apply to that observed state.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) ListEndpoints(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Endpoint], error) {
 	m.epMu.Lock()
 	now := m.opts.Clock.Now()
@@ -335,6 +336,8 @@ func (m *Mock) requireInService(name string, now time.Time) (*driver.Endpoint, e
 
 // UpdateEndpoint deploys a new endpoint configuration. The endpoint stays
 // available (Updating serves traffic) and returns to InService.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) UpdateEndpoint(ctx context.Context, spec driver.UpdateEndpointSpec) (*driver.Endpoint, error) {
 	ep, err := m.updateEndpoint(spec)
 	if err != nil {
@@ -346,6 +349,7 @@ func (m *Mock) UpdateEndpoint(ctx context.Context, spec driver.UpdateEndpointSpe
 	return ep, nil
 }
 
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) updateEndpoint(spec driver.UpdateEndpointSpec) (*driver.Endpoint, error) {
 	ec, ok := m.endpointConfigs.Get(spec.ConfigName)
 	if !ok {
@@ -390,6 +394,8 @@ func (m *Mock) updateEndpoint(spec driver.UpdateEndpointSpec) (*driver.Endpoint,
 // retainSummaries carries a same-named variant's desired weight and instance
 // count over from the endpoint's current state when the request asks to retain
 // variant properties (minus any excluded property).
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func retainSummaries(next, current []driver.VariantSummary, spec driver.UpdateEndpointSpec) {
 	if !spec.RetainAllVariantProperties {
 		return

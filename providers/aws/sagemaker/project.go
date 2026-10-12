@@ -17,7 +17,7 @@ const (
 	projectSettleWindow = settle.DefaultProjectSettle
 )
 
-var projectNamePattern = regexp.MustCompile(`^[a-zA-Z0-9](-*[a-zA-Z0-9])*$`) //nolint:gochecknoglobals // compiled once
+var projectNamePattern = regexp.MustCompile(`^[a-zA-Z0-9](-*[a-zA-Z0-9])*$`)
 
 // observeProject overlays an in-flight --async-settle window on a copy of a
 // stored project.
@@ -50,6 +50,8 @@ func cloneProject(in *driver.Project) *driver.Project {
 
 // CreateProject creates a project. At most MaxProjects exist per account and
 // region; the cap and the create are one critical section.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) CreateProject(_ context.Context, spec driver.ProjectSpec) (*driver.Project, error) {
 	if err := validateProject(&spec); err != nil {
 		return nil, err
@@ -93,9 +95,10 @@ func (m *Mock) CreateProject(_ context.Context, spec driver.ProjectSpec) (*drive
 	return m.observeProject(p), nil
 }
 
+//nolint:gocyclo // validation mirrors the service rules
 func validateProject(spec *driver.ProjectSpec) error {
 	if spec.Name == "" || len(spec.Name) > maxProjectNameLen || !projectNamePattern.MatchString(spec.Name) {
-		return errors.Newf(errors.InvalidArgument, "projectName %q must be 1-%d characters of letters, digits and hyphens", spec.Name, maxProjectNameLen)
+		return errors.Newf(errors.InvalidArgument, "projectName %q must be 1-%d characters of letters, digits and hyphens", spec.Name, maxProjectNameLen) //nolint:lll // SDK-shaped; see nongoals/standards
 	}
 
 	if len(spec.Description) > maxProjectDescLen {
@@ -136,6 +139,7 @@ func (m *Mock) DescribeProject(_ context.Context, name string) (*driver.Project,
 	return m.observeProject(p), nil
 }
 
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListProjects(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Project], error) {
 	return listObserved(m.projects, m.observeProject, listSpec[driver.Project]{
 		name:    func(t *driver.Project) string { return t.Name },
@@ -157,6 +161,8 @@ func projectInFlight(status string) bool {
 // UpdateProject updates a project's description, provisioning artifact and
 // parameters, tags and template providers. A project that is being created,
 // updated or deleted cannot be updated (ConflictException).
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) UpdateProject(_ context.Context, up driver.ProjectUpdate) (*driver.Project, error) {
 	m.projMu.Lock()
 	defer m.projMu.Unlock()

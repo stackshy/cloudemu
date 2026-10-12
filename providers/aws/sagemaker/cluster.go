@@ -41,6 +41,7 @@ func (m *Mock) CreateCluster(_ context.Context, cfg driver.ClusterSpec) (*driver
 		CreationTime:   m.now(),
 		Tags:           copyTags(cfg.Tags),
 	}
+
 	if !m.clusters.SetIfAbsent(cfg.ClusterName, c) {
 		return nil, errors.Newf(errors.AlreadyExists, "cluster %q already exists", cfg.ClusterName)
 	}
@@ -168,6 +169,7 @@ func groupFromSpec(g *driver.ClusterInstanceGroupSpec) driver.ClusterInstanceGro
 	}
 
 	var lc *driver.LifeCycleConfig
+
 	if g.LifeCycleConfig != nil {
 		c := *g.LifeCycleConfig
 		lc = &c
@@ -221,6 +223,7 @@ func (m *Mock) DescribeCluster(_ context.Context, name string) (*driver.Cluster,
 	return m.observeCluster(c), nil
 }
 
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) ListClusters(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Cluster], error) {
 	m.clMu.Lock()
 	stored := m.clusters.SortedValues()
@@ -275,6 +278,8 @@ func (m *Mock) UpdateCluster(_ context.Context, up driver.ClusterUpdate) (*drive
 
 // mergeInstanceGroups applies update/add/delete onto the existing groups and
 // validates the result.
+//
+//nolint:gocyclo // validation mirrors the service rules
 func mergeInstanceGroups(existing []driver.ClusterInstanceGroup, up *driver.ClusterUpdate) ([]driver.ClusterInstanceGroup, error) {
 	if err := validateInstanceGroups(up.InstanceGroups); err != nil {
 		return nil, err

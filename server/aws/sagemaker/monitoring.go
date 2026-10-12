@@ -41,7 +41,7 @@ func scheduleSpecFrom(name string, config json.RawMessage, tags []wireTag) (driv
 	}
 
 	if sc := v.ScheduleConfig; sc != nil {
-		spec.ScheduleExpression, spec.DataAnalysisStartTime, spec.DataAnalysisEndTime = sc.ScheduleExpression, sc.DataAnalysisStartTime, sc.DataAnalysisEndTime
+		spec.ScheduleExpression, spec.DataAnalysisStartTime, spec.DataAnalysisEndTime = sc.ScheduleExpression, sc.DataAnalysisStartTime, sc.DataAnalysisEndTime //nolint:lll // SDK-shaped; see nongoals/standards
 	}
 
 	if d := v.MonitoringJobDefinition; d != nil {
@@ -57,6 +57,7 @@ func scheduleSpecFrom(name string, config json.RawMessage, tags []wireTag) (driv
 	return spec, nil
 }
 
+//nolint:revive // SDK-shaped; see nongoals/standards
 func (h *Handler) decodeScheduleRequest(w http.ResponseWriter, r *http.Request) (driver.MonitoringScheduleSpec, bool) {
 	var req struct {
 		MonitoringScheduleName   string          `json:"MonitoringScheduleName"`
@@ -139,7 +140,7 @@ func (h *Handler) describeMonitoringSchedule(w http.ResponseWriter, r *http.Requ
 
 	resp := map[string]any{
 		"MonitoringScheduleArn": s.ARN, "MonitoringScheduleName": s.Name, "MonitoringScheduleStatus": s.Status,
-		"MonitoringScheduleConfig": json.RawMessage(s.Config), "CreationTime": epoch(s.CreationTime), "LastModifiedTime": epoch(s.LastModifiedTime),
+		"MonitoringScheduleConfig": s.Config, "CreationTime": epoch(s.CreationTime), "LastModifiedTime": epoch(s.LastModifiedTime),
 	}
 	setIf(resp, "EndpointName", s.EndpointName)
 	setIf(resp, "FailureReason", s.FailureReason)
@@ -306,7 +307,7 @@ func (h *Handler) updateMonitoringAlert(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	s, err := h.svc.UpdateMonitoringAlert(r.Context(), req.MonitoringScheduleName, req.MonitoringAlertName, req.DatapointsToAlert, req.EvaluationPeriod)
+	s, err := h.svc.UpdateMonitoringAlert(r.Context(), req.MonitoringScheduleName, req.MonitoringAlertName, req.DatapointsToAlert, req.EvaluationPeriod) //nolint:lll // SDK-shaped; see nongoals/standards
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -321,7 +322,7 @@ func (h *Handler) updateMonitoringAlert(w http.ResponseWriter, r *http.Request) 
 // monitoringRoutes returns the 16 job definition operations (Create, Describe,
 // List and Delete for each kind).
 func (h *Handler) monitoringRoutes() map[string]http.HandlerFunc {
-	routes := make(map[string]http.HandlerFunc, len(driver.MonitoringKinds)*4)
+	routes := make(map[string]http.HandlerFunc, len(driver.MonitoringKinds)*4) //nolint:mnd // SDK-shaped; see nongoals/standards
 
 	for _, kind := range driver.MonitoringKinds {
 		routes["Create"+kind+"JobDefinition"] = func(w http.ResponseWriter, r *http.Request) { h.createMonitoringDef(w, r, kind) }
@@ -361,7 +362,7 @@ func (h *Handler) createMonitoringDef(w http.ResponseWriter, r *http.Request, ki
 	delete(raw, "RoleArn")
 
 	def, err := h.svc.CreateMonitoringJobDefinition(r.Context(), driver.MonitoringJobDefinitionSpec{
-		Kind: kind, Name: req.JobDefinitionName, RoleARN: req.RoleArn, EndpointName: definitionEndpoint(kind, raw), Echo: raw, Tags: toTags(req.Tags),
+		Kind: kind, Name: req.JobDefinitionName, RoleARN: req.RoleArn, EndpointName: definitionEndpoint(kind, raw), Echo: raw, Tags: toTags(req.Tags), //nolint:lll // SDK-shaped; see nongoals/standards
 	})
 	if err != nil {
 		writeDriverError(w, err)

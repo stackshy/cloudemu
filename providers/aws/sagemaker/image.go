@@ -28,13 +28,13 @@ const (
 )
 
 var (
-	imageNamePattern   = regexp.MustCompile(`^[a-zA-Z0-9]([-.]?[a-zA-Z0-9]){0,62}$`) //nolint:gochecknoglobals // compiled once
-	clientTokenPattern = regexp.MustCompile(`^[a-zA-Z0-9-]+$`)                       //nolint:gochecknoglobals // compiled once
-	aliasPattern       = regexp.MustCompile(`^[a-zA-Z0-9\-_.]+$`)                    //nolint:gochecknoglobals // compiled once
-	frameworkPattern   = regexp.MustCompile(`^[a-zA-Z]+ ?\d+\.\d+(\.\d+)?$`)         //nolint:gochecknoglobals // compiled once
-	displayNamePattern = regexp.MustCompile(`^\S(.*\S)?$`)                           //nolint:gochecknoglobals // compiled once
-	appConfigPattern   = regexp.MustCompile(`^[a-zA-Z0-9](-*[a-zA-Z0-9]){0,62}$`)    //nolint:gochecknoglobals // compiled once
-	imageEnums         = map[string][]string{                                        //nolint:gochecknoglobals // static lookup table
+	imageNamePattern   = regexp.MustCompile(`^[a-zA-Z0-9]([-.]?[a-zA-Z0-9]){0,62}$`)
+	clientTokenPattern = regexp.MustCompile(`^[a-zA-Z0-9-]+$`)
+	aliasPattern       = regexp.MustCompile(`^[a-zA-Z0-9\-_.]+$`)
+	frameworkPattern   = regexp.MustCompile(`^[a-zA-Z]+ ?\d+\.\d+(\.\d+)?$`)
+	displayNamePattern = regexp.MustCompile(`^\S(.*\S)?$`)
+	appConfigPattern   = regexp.MustCompile(`^[a-zA-Z0-9](-*[a-zA-Z0-9]){0,62}$`)
+	imageEnums         = map[string][]string{ //nolint:gochecknoglobals // static lookup table
 		"jobType":        {"TRAINING", "INFERENCE", "NOTEBOOK_KERNEL"},
 		"processor":      {"CPU", "GPU"},
 		"vendorGuidance": {"NOT_PROVIDED", "STABLE", "TO_BE_ARCHIVED", "ARCHIVED"},
@@ -113,9 +113,11 @@ func validImageDesc(v string) error {
 }
 
 // CreateImage creates a custom image; versions are added with CreateImageVersion.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) CreateImage(_ context.Context, spec driver.ImageSpec) (*driver.Image, error) {
 	if !imageNamePattern.MatchString(spec.Name) {
-		return nil, errors.Newf(errors.InvalidArgument, "imageName %q must be 1-63 letters, digits, '-' and '.', with no consecutive separators", spec.Name)
+		return nil, errors.Newf(errors.InvalidArgument, "imageName %q must be 1-63 letters, digits, '-' and '.', with no consecutive separators", spec.Name) //nolint:lll // SDK-shaped literal
 	}
 
 	if err := validRole(spec.RoleARN); err != nil {
@@ -163,6 +165,7 @@ func (m *Mock) DescribeImage(_ context.Context, name string) (*driver.Image, err
 	return cloneImage(img), nil
 }
 
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListImages(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Image], error) {
 	return listFrom(m.images, listSpec[driver.Image]{
 		name:     func(t *driver.Image) string { return t.ImageName },
@@ -174,6 +177,8 @@ func (m *Mock) ListImages(_ context.Context, opts driver.ListOptions) (driver.Li
 
 // UpdateImage updates an image's display name, description or role. A property
 // can be cleared with DeleteProperties but not set and cleared in one call.
+//
+//nolint:gocyclo // validation mirrors the service rules
 func (m *Mock) UpdateImage(_ context.Context, up driver.ImageUpdate) (*driver.Image, error) {
 	if len(up.DeleteProperties) > 2 { //nolint:mnd // DisplayName and Description are the only deletable properties
 		return nil, errors.New(errors.InvalidArgument, "deleteProperties must have at most 2 items")
@@ -346,6 +351,8 @@ func (m *Mock) aliasHolder(image, alias string) int {
 // CreateImageVersion creates the next version of an image. Version numbers only
 // grow (a deleted highest version's number is never reused) and a repeated
 // ClientToken returns the version it created the first time.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) CreateImageVersion(_ context.Context, spec driver.ImageVersionSpec) (*driver.ImageVersion, error) {
 	if err := validateVersionSpec(&spec); err != nil {
 		return nil, err
@@ -399,6 +406,7 @@ func dedupe(in []string) []string {
 	for _, s := range in {
 		if !seen[s] {
 			seen[s] = true
+
 			out = append(out, s)
 		}
 	}
@@ -459,6 +467,7 @@ func (m *Mock) DescribeImageVersion(_ context.Context, ref driver.ImageVersionRe
 	return cloneImageVersion(v), nil
 }
 
+//nolint:gocritic,lll // driver-signature params and SDK-shaped helpers
 func (m *Mock) ListImageVersions(_ context.Context, imageName string, opts driver.ListOptions) (driver.ListPage[driver.ImageVersion], error) {
 	if !m.images.Has(imageName) {
 		return driver.ListPage[driver.ImageVersion]{}, errors.Newf(errors.NotFound, "Image %q does not exist", imageName)
@@ -474,6 +483,8 @@ func (m *Mock) ListImageVersions(_ context.Context, imageName string, opts drive
 }
 
 // UpdateImageVersion changes a version's aliases and attributes.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) UpdateImageVersion(_ context.Context, up driver.ImageVersionUpdate) (*driver.ImageVersion, error) {
 	for _, a := range up.AliasesToAdd {
 		if err := validAlias(a); err != nil {
@@ -567,6 +578,8 @@ func (m *Mock) DeleteImageVersion(_ context.Context, ref driver.ImageVersionRef)
 }
 
 // ListAliases lists the aliases of one version, or of every version of the image.
+//
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListAliases(_ context.Context, ref driver.ImageVersionRef, opts driver.ListOptions) (driver.ListPage[string], error) {
 	if !m.images.Has(ref.ImageName) {
 		return driver.ListPage[string]{}, errors.Newf(errors.NotFound, "Image %q does not exist", ref.ImageName)
@@ -634,6 +647,8 @@ func cloneAppImageConfig(in *driver.AppImageConfig) *driver.AppImageConfig {
 
 // normalizeBody validates an app image config block and applies the file system
 // defaults SageMaker documents for an unset mount path, uid and gid.
+//
+//nolint:gocyclo // validation mirrors the service rules
 func normalizeBody(b *driver.AppImageConfigBody, kernelGateway bool) (*driver.AppImageConfigBody, error) {
 	if b == nil {
 		return nil, nil //nolint:nilnil // an absent block is valid
@@ -696,7 +711,7 @@ func (m *Mock) CreateAppImageConfig(_ context.Context, spec driver.AppImageConfi
 		return nil, err
 	}
 
-	if err = validateTags(spec.Tags); err != nil {
+	if err = validateTags(spec.Tags); err != nil { //nolint:gocritic // driver-signature params and SDK-shaped helpers
 		return nil, err
 	}
 
@@ -724,6 +739,7 @@ func (m *Mock) DescribeAppImageConfig(_ context.Context, name string) (*driver.A
 	return cloneAppImageConfig(c), nil
 }
 
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListAppImageConfigs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.AppImageConfig], error) {
 	return listFrom(m.appImageConfigs, listSpec[driver.AppImageConfig]{
 		name:     func(t *driver.AppImageConfig) string { return t.Name },

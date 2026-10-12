@@ -333,6 +333,7 @@ func (h *Handler) describeProcessingJob(w http.ResponseWriter, r *http.Request) 
 	wire.WriteJSON(w, describeBody(fallback, job.Echo, computed))
 }
 
+//nolint:dupl // per-resource shim mirrors the SDK shape
 func (h *Handler) listProcessingJobs(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeListReq(w, r)
 	if !ok {
@@ -448,6 +449,7 @@ func (h *Handler) describeTransformJob(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, describeBody(fallback, job.Echo, computed))
 }
 
+//nolint:dupl // per-resource shim mirrors the SDK shape
 func (h *Handler) listTransformJobs(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeListReq(w, r)
 	if !ok {
@@ -942,6 +944,7 @@ func (h *Handler) describeCompilationJob(w http.ResponseWriter, r *http.Request)
 	wire.WriteJSON(w, describeBody(fallback, job.Echo, computed))
 }
 
+//nolint:dupl // per-resource shim mirrors the SDK shape
 func (h *Handler) listCompilationJobs(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeListReq(w, r)
 	if !ok {

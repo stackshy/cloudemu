@@ -98,15 +98,15 @@ type searchAdapter struct {
 func (m *Mock) searchAdapters() map[string]searchAdapter {
 	return map[string]searchAdapter{
 		driver.SearchTrainingJob: {
-			known: []string{"TrainingJobName", "TrainingJobArn", "TrainingJobStatus", "SecondaryStatus", "RoleArn", "FailureReason", "CreationTime", "LastModifiedTime", "TrainingStartTime", "TrainingEndTime"},
+			known: []string{"TrainingJobName", "TrainingJobArn", "TrainingJobStatus", "SecondaryStatus", "RoleArn", "FailureReason", "CreationTime", "LastModifiedTime", "TrainingStartTime", "TrainingEndTime"}, //nolint:lll // SDK-shaped literal
 			list:  m.searchTrainingJobs,
 		},
 		driver.SearchHyperParameterTuningJob: {
-			known: []string{"HyperParameterTuningJobName", "HyperParameterTuningJobArn", "HyperParameterTuningJobStatus", "CreationTime", "LastModifiedTime", "HyperParameterTuningEndTime"},
+			known: []string{"HyperParameterTuningJobName", "HyperParameterTuningJobArn", "HyperParameterTuningJobStatus", "CreationTime", "LastModifiedTime", "HyperParameterTuningEndTime"}, //nolint:lll // SDK-shaped literal
 			list:  m.searchTuningJobs,
 		},
 		driver.SearchEndpoint: {
-			known: []string{"EndpointName", "EndpointArn", "EndpointConfigName", "EndpointStatus", "FailureReason", "CreationTime", "LastModifiedTime"},
+			known: []string{"EndpointName", "EndpointArn", "EndpointConfigName", "EndpointStatus", "FailureReason", "CreationTime", "LastModifiedTime"}, //nolint:lll // SDK-shaped literal
 			list:  m.searchEndpoints,
 		},
 		driver.SearchExperiment: {
@@ -118,15 +118,15 @@ func (m *Mock) searchAdapters() map[string]searchAdapter {
 			list:  m.searchTrials,
 		},
 		driver.SearchExperimentTrialComponent: {
-			known: []string{"TrialComponentName", "TrialComponentArn", "DisplayName", "Status.PrimaryStatus", "StartTime", "EndTime", "CreationTime", "LastModifiedTime"},
+			known: []string{"TrialComponentName", "TrialComponentArn", "DisplayName", "Status.PrimaryStatus", "StartTime", "EndTime", "CreationTime", "LastModifiedTime"}, //nolint:lll // SDK-shaped literal
 			list:  m.searchTrialComponents,
 		},
 		driver.SearchModelPackage: {
-			known: []string{"ModelPackageArn", "ModelPackageGroupName", "ModelPackageVersion", "ModelPackageStatus", "ModelApprovalStatus", "ModelPackageDescription", "CreationTime", "LastModifiedTime"},
+			known: []string{"ModelPackageArn", "ModelPackageGroupName", "ModelPackageVersion", "ModelPackageStatus", "ModelApprovalStatus", "ModelPackageDescription", "CreationTime", "LastModifiedTime"}, //nolint:lll // SDK-shaped literal
 			list:  m.searchModelPackages,
 		},
 		driver.SearchModelPackageGroup: {
-			known: []string{"ModelPackageGroupName", "ModelPackageGroupArn", "ModelPackageGroupStatus", "ModelPackageGroupDescription", "CreationTime", "LastModifiedTime"},
+			known: []string{"ModelPackageGroupName", "ModelPackageGroupArn", "ModelPackageGroupStatus", "ModelPackageGroupDescription", "CreationTime", "LastModifiedTime"}, //nolint:lll // SDK-shaped literal
 			list:  m.searchPackageGroups,
 		},
 		driver.SearchPipeline: {
@@ -138,7 +138,7 @@ func (m *Mock) searchAdapters() map[string]searchAdapter {
 			list:  m.searchExecutions,
 		},
 		driver.SearchFeatureGroup: {
-			known: []string{"FeatureGroupName", "FeatureGroupArn", "RecordIdentifierFeatureName", "EventTimeFeatureName", "FeatureGroupStatus", "FailureReason", "CreationTime", "LastModifiedTime"},
+			known: []string{"FeatureGroupName", "FeatureGroupArn", "RecordIdentifierFeatureName", "EventTimeFeatureName", "FeatureGroupStatus", "FailureReason", "CreationTime", "LastModifiedTime"}, //nolint:lll // SDK-shaped literal
 			list:  m.searchFeatureGroups,
 		},
 		driver.SearchProject: {
@@ -163,7 +163,7 @@ var searchResources = map[string]bool{ //nolint:gochecknoglobals // enum values
 }
 
 func (m *Mock) searchTrainingJobs() []*srec {
-	var out []*srec
+	var out []*srec //nolint:prealloc // SDK-shaped; see nongoals/standards
 
 	for _, j := range m.trainingJobs.SortedValues() {
 		o := m.observeTrainingJob(j)
@@ -180,6 +180,7 @@ func (m *Mock) searchTrainingJobs() []*srec {
 			channels = append(channels, map[string]sprop{
 				"InputDataConfig.ChannelName": {kind: kindText, s: c.Name}, "InputDataConfig.ContentType": {kind: kindText, s: c.ContentType},
 			})
+
 			list = append(list, map[string]any{"ChannelName": c.Name, "ContentType": c.ContentType})
 		}
 
@@ -194,7 +195,7 @@ func (m *Mock) searchTrainingJobs() []*srec {
 }
 
 func (m *Mock) searchTuningJobs() []*srec {
-	var out []*srec
+	var out []*srec //nolint:prealloc // SDK-shaped; see nongoals/standards
 
 	for _, j := range m.tuningJobs.SortedValues() {
 		o := m.observeTuningJob(j)
@@ -224,7 +225,7 @@ func (m *Mock) searchEndpoints() []*srec {
 
 	for _, e := range live {
 		r := newRec(e.EndpointName).str("EndpointName", e.EndpointName).str("EndpointArn", e.EndpointARN).str("EndpointConfigName", e.ConfigName).
-			str("EndpointStatus", e.Status).str("FailureReason", e.FailureReason).at("CreationTime", e.CreationTime).at("LastModifiedTime", e.LastModifiedTime)
+			str("EndpointStatus", e.Status).str("FailureReason", e.FailureReason).at("CreationTime", e.CreationTime).at("LastModifiedTime", e.LastModifiedTime) //nolint:lll // SDK-shaped literal
 		out = append(out, m.withTags(r, e.EndpointARN))
 	}
 
@@ -232,7 +233,7 @@ func (m *Mock) searchEndpoints() []*srec {
 }
 
 func (m *Mock) searchExperiments() []*srec {
-	var out []*srec
+	var out []*srec //nolint:prealloc // SDK-shaped; see nongoals/standards
 
 	for _, e := range m.experiments.SortedValues() {
 		r := newRec(e.ExperimentName).str("ExperimentName", e.ExperimentName).str("ExperimentArn", e.ExperimentARN).
@@ -244,7 +245,7 @@ func (m *Mock) searchExperiments() []*srec {
 }
 
 func (m *Mock) searchTrials() []*srec {
-	var out []*srec
+	var out []*srec //nolint:prealloc // SDK-shaped; see nongoals/standards
 
 	for _, t := range m.trials.SortedValues() {
 		r := newRec(t.TrialName).str("TrialName", t.TrialName).str("TrialArn", t.TrialARN).str("ExperimentName", t.ExperimentName).
@@ -256,7 +257,7 @@ func (m *Mock) searchTrials() []*srec {
 }
 
 func (m *Mock) searchTrialComponents() []*srec {
-	var out []*srec
+	var out []*srec //nolint:prealloc // SDK-shaped; see nongoals/standards
 
 	for _, tc := range m.trialComponents.SortedValues() {
 		r := newRec(tc.Name).str("TrialComponentName", tc.Name).str("TrialComponentArn", tc.ARN).str("DisplayName", tc.DisplayName).
@@ -283,12 +284,12 @@ func (m *Mock) searchTrialComponents() []*srec {
 }
 
 func (m *Mock) searchModelPackages() []*srec {
-	var out []*srec
+	var out []*srec //nolint:prealloc // SDK-shaped; see nongoals/standards
 
 	for _, p := range m.packages.SortedValues() {
-		r := newRec(p.PackageARN).str("ModelPackageArn", p.PackageARN).str("ModelPackageGroupName", p.GroupName).num("ModelPackageVersion", float64(p.Version)).
-			str("ModelPackageStatus", p.Status).str("ModelApprovalStatus", p.ApprovalStatus).str("ModelPackageDescription", p.Description).
-			at("CreationTime", p.CreationTime).at("LastModifiedTime", p.CreationTime)
+		r := newRec(p.PackageARN).str("ModelPackageArn", p.PackageARN).str("ModelPackageGroupName", p.GroupName).num("ModelPackageVersion", float64(p.Version)). //nolint:lll // SDK-shaped literal
+																						str("ModelPackageStatus", p.Status).str("ModelApprovalStatus", p.ApprovalStatus).str("ModelPackageDescription", p.Description). //nolint:lll // SDK-shaped; see nongoals/standards
+																						at("CreationTime", p.CreationTime).at("LastModifiedTime", p.CreationTime)
 		out = append(out, m.withTags(r, p.PackageARN))
 	}
 
@@ -296,11 +297,11 @@ func (m *Mock) searchModelPackages() []*srec {
 }
 
 func (m *Mock) searchPackageGroups() []*srec {
-	var out []*srec
+	var out []*srec //nolint:prealloc // SDK-shaped; see nongoals/standards
 
 	for _, g := range m.packageGroups.SortedValues() {
-		r := newRec(g.GroupName).str("ModelPackageGroupName", g.GroupName).str("ModelPackageGroupArn", g.GroupARN).str("ModelPackageGroupStatus", g.Status).
-			str("ModelPackageGroupDescription", g.Description).at("CreationTime", g.CreationTime).at("LastModifiedTime", g.CreationTime)
+		r := newRec(g.GroupName).str("ModelPackageGroupName", g.GroupName).str("ModelPackageGroupArn", g.GroupARN).str("ModelPackageGroupStatus", g.Status). //nolint:lll // SDK-shaped literal
+																					str("ModelPackageGroupDescription", g.Description).at("CreationTime", g.CreationTime).at("LastModifiedTime", g.CreationTime) //nolint:lll // SDK-shaped; see nongoals/standards
 		out = append(out, m.withTags(r, g.GroupARN))
 	}
 
@@ -308,7 +309,7 @@ func (m *Mock) searchPackageGroups() []*srec {
 }
 
 func (m *Mock) searchPipelines() []*srec {
-	var out []*srec
+	var out []*srec //nolint:prealloc // SDK-shaped; see nongoals/standards
 
 	for _, p := range m.pipelines.SortedValues() {
 		r := newRec(p.PipelineName).str("PipelineName", p.PipelineName).str("PipelineArn", p.PipelineARN).str("PipelineStatus", p.Status).
@@ -320,7 +321,7 @@ func (m *Mock) searchPipelines() []*srec {
 }
 
 func (m *Mock) searchExecutions() []*srec {
-	var out []*srec
+	var out []*srec //nolint:prealloc // SDK-shaped; see nongoals/standards
 
 	for _, e := range m.executions.SortedValues() {
 		modified := e.EndTime
@@ -328,8 +329,8 @@ func (m *Mock) searchExecutions() []*srec {
 			modified = e.StartTime
 		}
 
-		r := newRec(e.ExecutionARN).str("PipelineExecutionArn", e.ExecutionARN).str("PipelineExecutionStatus", e.Status).str("PipelineName", e.PipelineName).
-			at("CreationTime", e.StartTime).at("LastModifiedTime", modified)
+		r := newRec(e.ExecutionARN).str("PipelineExecutionArn", e.ExecutionARN).str("PipelineExecutionStatus", e.Status).str("PipelineName", e.PipelineName). //nolint:lll // SDK-shaped literal
+																					at("CreationTime", e.StartTime).at("LastModifiedTime", modified)
 		out = append(out, m.withTags(r, e.ExecutionARN))
 	}
 
@@ -337,12 +338,12 @@ func (m *Mock) searchExecutions() []*srec {
 }
 
 func (m *Mock) searchFeatureGroups() []*srec {
-	var out []*srec
+	var out []*srec //nolint:prealloc // SDK-shaped; see nongoals/standards
 
 	for _, g := range m.featureGroups.SortedValues() {
-		r := newRec(g.GroupName).str("FeatureGroupName", g.GroupName).str("FeatureGroupArn", g.GroupARN).str("RecordIdentifierFeatureName", g.RecordIdentifierName).
-			str("EventTimeFeatureName", g.EventTimeFeatureName).str("FeatureGroupStatus", g.Status).str("FailureReason", g.FailureReason).
-			at("CreationTime", g.CreationTime).at("LastModifiedTime", g.CreationTime)
+		r := newRec(g.GroupName).str("FeatureGroupName", g.GroupName).str("FeatureGroupArn", g.GroupARN).str("RecordIdentifierFeatureName", g.RecordIdentifierName). //nolint:lll // SDK-shaped literal
+																						str("EventTimeFeatureName", g.EventTimeFeatureName).str("FeatureGroupStatus", g.Status).str("FailureReason", g.FailureReason). //nolint:lll // SDK-shaped; see nongoals/standards
+																						at("CreationTime", g.CreationTime).at("LastModifiedTime", g.CreationTime)
 		out = append(out, m.withTags(r, g.GroupARN))
 	}
 
@@ -350,7 +351,7 @@ func (m *Mock) searchFeatureGroups() []*srec {
 }
 
 func (m *Mock) searchProjects() []*srec {
-	var out []*srec
+	var out []*srec //nolint:prealloc // SDK-shaped; see nongoals/standards
 
 	for _, p := range m.projects.SortedValues() {
 		o := m.observeProject(p)
@@ -363,10 +364,10 @@ func (m *Mock) searchProjects() []*srec {
 }
 
 func (m *Mock) searchModels() []*srec {
-	var out []*srec
+	var out []*srec //nolint:prealloc // SDK-shaped; see nongoals/standards
 
 	for _, md := range m.models.SortedValues() {
-		r := newRec(md.ModelName).str("ModelName", md.ModelName).str("ModelArn", md.ModelARN).at("CreationTime", md.CreationTime).at("LastModifiedTime", md.CreationTime)
+		r := newRec(md.ModelName).str("ModelName", md.ModelName).str("ModelArn", md.ModelARN).at("CreationTime", md.CreationTime).at("LastModifiedTime", md.CreationTime) //nolint:lll // SDK-shaped literal
 		r.record = map[string]any{"Model": r.record}
 		out = append(out, m.withTags(r, md.ModelARN))
 	}
@@ -381,15 +382,17 @@ var filterOperators = map[string]bool{ //nolint:gochecknoglobals // enum values
 	"LessThan": true, "LessThanOrEqualTo": true, "In": true, "Contains": true,
 }
 
-var orderingOperators = map[string]bool{"GreaterThan": true, "GreaterThanOrEqualTo": true, "LessThan": true, "LessThanOrEqualTo": true} //nolint:gochecknoglobals // enum values
+var orderingOperators = map[string]bool{"GreaterThan": true, "GreaterThanOrEqualTo": true, "LessThan": true, "LessThanOrEqualTo": true} //nolint:gochecknoglobals,lll // enum values
 
 // containsExempt lists, per resource, the properties that may use Contains any
 // number of times (every other property is limited to one Contains per
 // expression).
+//
+//nolint:gocyclo // validation mirrors the service rules
 func containsExempt(resource, name string) bool {
 	switch resource {
 	case driver.SearchExperiment:
-		return name == "DisplayName" || name == "ExperimentName" || strings.HasPrefix(name, "Tags")
+		return name == "DisplayName" || name == "ExperimentName" || strings.HasPrefix(name, "Tags") //nolint:goconst // SDK enum literals
 	case driver.SearchExperimentTrial:
 		return name == "DisplayName" || name == "TrialName" || strings.HasPrefix(name, "Tags")
 	case driver.SearchExperimentTrialComponent:
@@ -408,6 +411,7 @@ type searchCtx struct {
 	total    int
 }
 
+//nolint:gocyclo // validation mirrors the service rules
 func (c *searchCtx) validate(e *driver.SearchExpression, depth int) error {
 	if depth > driver.MaxSearchDepth {
 		return errors.Newf(errors.InvalidArgument, "searchExpression nests deeper than %d levels", driver.MaxSearchDepth)
@@ -417,17 +421,17 @@ func (c *searchCtx) validate(e *driver.SearchExpression, depth int) error {
 		return errors.New(errors.InvalidArgument, "a search expression needs at least one of filters, nestedFilters and subExpressions")
 	}
 
-	for name, n := range map[string]int{"filters": len(e.Filters), "nestedFilters": len(e.NestedFilters), "subExpressions": len(e.SubExpressions)} {
+	for name, n := range map[string]int{"filters": len(e.Filters), "nestedFilters": len(e.NestedFilters), "subExpressions": len(e.SubExpressions)} { //nolint:lll // SDK-shaped literal
 		if n > driver.MaxSearchListItems {
 			return errors.Newf(errors.InvalidArgument, "%s must contain at most %d items", name, driver.MaxSearchListItems)
 		}
 	}
 
 	if c.total += len(e.Filters) + len(e.NestedFilters) + len(e.SubExpressions); c.total > driver.MaxSearchExpression {
-		return errors.Newf(errors.InvalidArgument, "a search expression has at most %d filters, nested filters and sub-expressions in total", driver.MaxSearchExpression)
+		return errors.Newf(errors.InvalidArgument, "a search expression has at most %d filters, nested filters and sub-expressions in total", driver.MaxSearchExpression) //nolint:lll // SDK-shaped literal
 	}
 
-	if e.Operator != "" && e.Operator != "And" && e.Operator != "Or" {
+	if e.Operator != "" && e.Operator != "And" && e.Operator != "Or" { //nolint:goconst // SDK enum literals
 		return errors.Newf(errors.InvalidArgument, "operator %q must be And or Or", e.Operator)
 	}
 
@@ -466,6 +470,7 @@ func (c *searchCtx) validateNested(n *driver.SearchNested) error {
 	return nil
 }
 
+//nolint:gocyclo // validation mirrors the service rules
 func (c *searchCtx) validateFilter(f *driver.SearchFilter, nested string) error {
 	if f.Name == "" || len(f.Name) > maxFilterNameLen {
 		return errors.Newf(errors.InvalidArgument, "a filter name must be 1-%d characters", maxFilterNameLen)
@@ -476,7 +481,7 @@ func (c *searchCtx) validateFilter(f *driver.SearchFilter, nested string) error 
 		return errors.Newf(errors.InvalidArgument, "operator %q is not a valid filter operator", f.Operator)
 	}
 
-	if op != "Exists" && op != "NotExists" && (f.Value == "" || len(f.Value) > maxFilterValueLen) {
+	if op != "Exists" && op != "NotExists" && (f.Value == "" || len(f.Value) > maxFilterValueLen) { //nolint:goconst // SDK enum literals
 		return errors.Newf(errors.InvalidArgument, "the value of filter %q must be 1-%d characters", f.Name, maxFilterValueLen)
 	}
 
@@ -484,9 +489,9 @@ func (c *searchCtx) validateFilter(f *driver.SearchFilter, nested string) error 
 		return errors.Newf(errors.InvalidArgument, "Unknown property name: %s", f.Name)
 	}
 
-	if op == "Contains" && !containsExempt(c.resource, f.Name) {
-		if c.contains++; c.contains > 1 {
-			return errors.New(errors.InvalidArgument, "'CONTAINS' operator usage limit of 1 exceeded.")
+	if op == "Contains" && !containsExempt(c.resource, f.Name) { //nolint:goconst // SDK enum literals
+		if c.contains++; c.contains > 1 { //nolint:gocritic // driver-signature params and SDK-shaped helpers
+			return errors.New(errors.InvalidArgument, "'CONTAINS' operator usage limit of 1 exceeded.") //nolint:lll,revive // SDK-shaped; see nongoals/standards
 		}
 	}
 
@@ -557,7 +562,7 @@ func evalFilter(r *srec, f *driver.SearchFilter) (bool, error) {
 		return found, nil
 	case "NotExists":
 		return !found, nil
-	case "NotEquals":
+	case "NotEquals": //nolint:goconst // SDK enum literals
 		if !found {
 			return true, nil
 		}
@@ -570,6 +575,7 @@ func evalFilter(r *srec, f *driver.SearchFilter) (bool, error) {
 	return compareProp(p, op, f)
 }
 
+//nolint:gocyclo // validation mirrors the service rules
 func compareProp(p sprop, op string, f *driver.SearchFilter) (bool, error) {
 	switch {
 	case op == "In" || op == "Contains":
@@ -593,7 +599,7 @@ func compareProp(p sprop, op string, f *driver.SearchFilter) (bool, error) {
 			return false, errors.Newf(errors.InvalidArgument, "operator %s is not supported for text properties (%s)", op, f.Name)
 		}
 
-		return (p.s == f.Value) == (op == "Equals"), nil
+		return (p.s == f.Value) == (op == "Equals"), nil //nolint:goconst // SDK enum literals
 	case p.kind == kindNumber:
 		want, err := strconv.ParseFloat(f.Value, 64)
 		if err != nil {
@@ -678,7 +684,7 @@ func evalNested(r *srec, n *driver.SearchNested) (bool, error) {
 
 	if n.PropertyName == "Tags" {
 		for _, t := range r.tags {
-			items = append(items, map[string]sprop{"Tags.Key": {kind: kindText, s: t.Key}, "Tags.Value": {kind: kindText, s: t.Value}, "Key": {kind: kindText, s: t.Key}, "Value": {kind: kindText, s: t.Value}})
+			items = append(items, map[string]sprop{"Tags.Key": {kind: kindText, s: t.Key}, "Tags.Value": {kind: kindText, s: t.Value}, "Key": {kind: kindText, s: t.Key}, "Value": {kind: kindText, s: t.Value}}) //nolint:lll // SDK-shaped literal
 		}
 	}
 
@@ -709,6 +715,8 @@ func evalNested(r *srec, n *driver.SearchNested) (bool, error) {
 }
 
 // Search finds resources of one type matching an expression, sorted and paged.
+//
+//nolint:gocritic,gocyclo // validation mirrors the service rules
 func (m *Mock) Search(_ context.Context, req driver.SearchRequest) (*driver.SearchResult, error) {
 	if !searchResources[req.Resource] {
 		return nil, errors.Newf(errors.InvalidArgument, "resource %q is not a valid search resource", req.Resource)

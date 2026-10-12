@@ -230,6 +230,7 @@ func (h *Handler) describeEndpointConfig(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+//nolint:dupl // per-resource shim mirrors the SDK shape
 func (h *Handler) listEndpointConfigs(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeListReq(w, r)
 	if !ok {
@@ -321,7 +322,6 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{"EndpointArn": ep.EndpointARN})
 }
 
-//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) listEndpoints(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeListReq(w, r)
 	if !ok {

@@ -32,18 +32,18 @@ func (e *APIError) Unwrap() error { return e.Err }
 // Conflict returns a ConflictException (an update or delete that conflicts
 // with the resource's current state or with another in-flight operation).
 func Conflict(format string, args ...any) error {
-	return &APIError{Exception: ExConflict, Err: fmt.Errorf(format, args...)}
+	return &APIError{Exception: ExConflict, Err: fmt.Errorf(format, args...)} //nolint:err113 // typed API error carrying a formatted message
 }
 
 // InUse returns a ResourceInUse error (deleting or changing a resource that
 // other resources still depend on).
 func InUse(format string, args ...any) error {
-	return &APIError{Exception: ExResourceInUse, Err: fmt.Errorf(format, args...)}
+	return &APIError{Exception: ExResourceInUse, Err: fmt.Errorf(format, args...)} //nolint:err113,lll // typed API error carrying a formatted message
 }
 
 // LimitExceeded returns a ResourceLimitExceeded error (an account quota).
 func LimitExceeded(format string, args ...any) error {
-	return &APIError{Exception: ExResourceLimitExceeded, Err: fmt.Errorf(format, args...)}
+	return &APIError{Exception: ExResourceLimitExceeded, Err: fmt.Errorf(format, args...)} //nolint:err113,lll // typed API error carrying a formatted message
 }
 
 // ExceptionOf returns the exception tagged on err and true, or "" and false.

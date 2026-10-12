@@ -11,7 +11,7 @@ import (
 
 // jobNamePattern is the name rule shared by every SageMaker job: 1-63
 // characters, alphanumerics and hyphens, not starting with a hyphen.
-var jobNamePattern = regexp.MustCompile(`^[a-zA-Z0-9](-*[a-zA-Z0-9]){0,62}$`) //nolint:gochecknoglobals // compiled once
+var jobNamePattern = regexp.MustCompile(`^[a-zA-Z0-9](-*[a-zA-Z0-9]){0,62}$`)
 
 // trainingStartStage is the index of the Training stage in trainingStages.
 const trainingStartStage = 2
@@ -144,6 +144,8 @@ func (m *Mock) DescribeTrainingJob(_ context.Context, name string) (*driver.Trai
 
 // ListTrainingJobs lists training jobs; filters and sort apply to each job's
 // observed state.
+//
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListTrainingJobs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.TrainingJob], error) {
 	return listObserved(m.trainingJobs, m.observeTrainingJob, listSpec[driver.TrainingJob]{
 		name:     func(t *driver.TrainingJob) string { return t.JobName },
@@ -225,6 +227,8 @@ func (m *Mock) observeProcessingJob(j *driver.ProcessingJob) *driver.ProcessingJ
 }
 
 // endTime is the end of a terminal projection, or "" while it is running.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func endTime(p projection) string {
 	if p.terminal() {
 		return fmtTime(p.ended)
@@ -242,6 +246,7 @@ func (m *Mock) DescribeProcessingJob(_ context.Context, name string) (*driver.Pr
 	return m.observeProcessingJob(job), nil
 }
 
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListProcessingJobs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.ProcessingJob], error) {
 	return listObserved(m.processingJobs, m.observeProcessingJob, listSpec[driver.ProcessingJob]{
 		name:     func(t *driver.ProcessingJob) string { return t.JobName },
@@ -334,6 +339,7 @@ func (m *Mock) DescribeTransformJob(_ context.Context, name string) (*driver.Tra
 	return m.observeTransformJob(job), nil
 }
 
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListTransformJobs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.TransformJob], error) {
 	return listObserved(m.transformJobs, m.observeTransformJob, listSpec[driver.TransformJob]{
 		name:     func(t *driver.TransformJob) string { return t.JobName },
@@ -436,6 +442,7 @@ func (m *Mock) DescribeHyperParameterTuningJob(_ context.Context, name string) (
 	return m.observeTuningJob(job), nil
 }
 
+//nolint:dupl,gocritic,lll // per-resource shim mirrors the SDK shape
 func (m *Mock) ListHyperParameterTuningJobs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.HyperParameterTuningJob], error) {
 	return listObserved(m.tuningJobs, m.observeTuningJob, listSpec[driver.HyperParameterTuningJob]{
 		name:     func(t *driver.HyperParameterTuningJob) string { return t.JobName },
@@ -526,6 +533,7 @@ func (m *Mock) DescribeAutoMLJobV2(_ context.Context, name string) (*driver.Auto
 	return m.observeAutoMLJob(job), nil
 }
 
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListAutoMLJobs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.AutoMLJob], error) {
 	return listObserved(m.autoMLJobs, m.observeAutoMLJob, listSpec[driver.AutoMLJob]{
 		name:     func(t *driver.AutoMLJob) string { return t.JobName },
@@ -600,6 +608,7 @@ func (m *Mock) DescribeLabelingJob(_ context.Context, name string) (*driver.Labe
 	return m.observeLabelingJob(job), nil
 }
 
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListLabelingJobs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.LabelingJob], error) {
 	return listObserved(m.labelingJobs, m.observeLabelingJob, listSpec[driver.LabelingJob]{
 		name:     func(t *driver.LabelingJob) string { return t.JobName },
@@ -674,6 +683,7 @@ func (m *Mock) DescribeCompilationJob(_ context.Context, name string) (*driver.C
 	return m.observeCompilationJob(job), nil
 }
 
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListCompilationJobs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.CompilationJob], error) {
 	return listObserved(m.compilationJobs, m.observeCompilationJob, listSpec[driver.CompilationJob]{
 		name:     func(t *driver.CompilationJob) string { return t.JobName },

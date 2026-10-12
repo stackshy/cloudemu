@@ -18,8 +18,8 @@ const (
 )
 
 var (
-	workteamNamePattern  = regexp.MustCompile(`^[a-zA-Z0-9](-*[a-zA-Z0-9]){0,62}$`) //nolint:gochecknoglobals // compiled once
-	workforceNamePattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]){0,62}$`) //nolint:gochecknoglobals // compiled once
+	workteamNamePattern  = regexp.MustCompile(`^[a-zA-Z0-9](-*[a-zA-Z0-9]){0,62}$`)
+	workforceNamePattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]){0,62}$`)
 )
 
 func (m *Mock) workforceARN(name string) string { return m.arn("workforce/" + name) }
@@ -98,7 +98,7 @@ func validateCIDRs(cidrs []string, ipType string) error {
 			return errors.Newf(errors.InvalidArgument, "cidr %q is not a valid CIDR block", c)
 		}
 
-		if ip.To4() == nil && ipType != "dualstack" {
+		if ip.To4() == nil && ipType != "dualstack" { //nolint:goconst // SDK enum literals
 			return errors.Newf(errors.InvalidArgument, "cidr %q is IPv6 and needs ipAddressType dualstack", c)
 		}
 	}
@@ -114,6 +114,7 @@ func validateIPType(t string) error {
 	return nil
 }
 
+//nolint:gocyclo // validation mirrors the service rules
 func validateWorkforceSpec(spec *driver.WorkforceSpec) error {
 	if !workforceNamePattern.MatchString(spec.Name) {
 		return errors.Newf(errors.InvalidArgument, "workforceName %q must be 1-63 letters, digits and hyphens", spec.Name)
@@ -152,6 +153,8 @@ func validateWorkforceSpec(spec *driver.WorkforceSpec) error {
 
 // CreateWorkforce creates the account's private workforce. Only one workforce
 // exists per region and account.
+//
+//nolint:gocritic // driver-signature params and SDK-shaped helpers
 func (m *Mock) CreateWorkforce(_ context.Context, spec driver.WorkforceSpec) (*driver.Workforce, error) {
 	if err := validateWorkforceSpec(&spec); err != nil {
 		return nil, err
@@ -200,6 +203,7 @@ func (m *Mock) DescribeWorkforce(_ context.Context, name string) (*driver.Workfo
 	return m.observeWorkforce(w), nil
 }
 
+//nolint:gocritic // SDK-shaped; see nongoals/standards
 func (m *Mock) ListWorkforces(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Workforce], error) {
 	return listObserved(m.workforces, m.observeWorkforce, listSpec[driver.Workforce]{
 		name:    func(t *driver.Workforce) string { return t.Name },
@@ -210,6 +214,8 @@ func (m *Mock) ListWorkforces(_ context.Context, opts driver.ListOptions) (drive
 // UpdateWorkforce changes a workforce's source IP restriction, OIDC provider,
 // address type or VPC configuration. The OIDC configuration cannot change while
 // workteams exist (ConflictException).
+//
+//nolint:gocyclo // validation mirrors the service rules
 func (m *Mock) UpdateWorkforce(_ context.Context, up driver.WorkforceUpdate) (*driver.Workforce, error) {
 	m.wfMu.Lock()
 	defer m.wfMu.Unlock()
@@ -322,6 +328,8 @@ func cloneMembers(in []driver.MemberDefinition) []driver.MemberDefinition {
 
 // validateMembers checks a workteam's member definitions against the workforce
 // they belong to.
+//
+//nolint:gocyclo // validation mirrors the service rules
 func validateMembers(members []driver.MemberDefinition, wf *driver.Workforce) error {
 	if len(members) == 0 || len(members) > driver.MaxWorkteamMembers {
 		return errors.Newf(errors.InvalidArgument, "memberDefinitions must contain between 1 and %d items", driver.MaxWorkteamMembers)
@@ -342,7 +350,7 @@ func validateMembers(members []driver.MemberDefinition, wf *driver.Workforce) er
 			}
 
 			if d.CognitoClientID != wf.Cognito.ClientID || d.CognitoUserPool != wf.Cognito.UserPool || d.CognitoUserGroup == "" {
-				return errors.New(errors.InvalidArgument, "Cognito member definitions must use the workforce's user pool and client and name a user group")
+				return errors.New(errors.InvalidArgument, "Cognito member definitions must use the workforce's user pool and client and name a user group") //nolint:lll // SDK-shaped literal
 			}
 
 			continue
@@ -372,6 +380,8 @@ func validatePresign(v string) error {
 
 // CreateWorkteam creates a private workteam in a workforce. An account holds at
 // most 25 workteams per region.
+//
+//nolint:gocritic,gocyclo // validation mirrors the service rules
 func (m *Mock) CreateWorkteam(_ context.Context, spec driver.WorkteamSpec) (*driver.Workteam, error) {
 	if !workteamNamePattern.MatchString(spec.Name) {
 		return nil, errors.Newf(errors.InvalidArgument, "workteamName %q must be 1-63 letters, digits and hyphens", spec.Name)
@@ -444,6 +454,7 @@ func (m *Mock) DescribeWorkteam(_ context.Context, name string) (*driver.Worktea
 	return cloneWorkteam(t), nil
 }
 
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
 func (m *Mock) ListWorkteams(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Workteam], error) {
 	return listFrom(m.workteams, listSpec[driver.Workteam]{
 		name:    func(t *driver.Workteam) string { return t.Name },
@@ -454,6 +465,8 @@ func (m *Mock) ListWorkteams(_ context.Context, opts driver.ListOptions) (driver
 
 // UpdateWorkteam updates a workteam's description, members, notification topic
 // or worker access configuration.
+//
+//nolint:gocyclo // validation mirrors the service rules
 func (m *Mock) UpdateWorkteam(_ context.Context, up driver.WorkteamUpdate) (*driver.Workteam, error) {
 	m.wfMu.Lock()
 	defer m.wfMu.Unlock()
@@ -530,6 +543,8 @@ func (m *Mock) DeleteWorkteam(_ context.Context, name string) (bool, error) {
 
 // DescribeSubscribedWorkteam looks up a Marketplace vendor workteam. The
 // emulator has no Marketplace, so none is ever subscribed.
+//
+//nolint:revive // SDK-shaped; see nongoals/standards
 func (m *Mock) DescribeSubscribedWorkteam(_ context.Context, arn string) (*driver.SubscribedWorkteam, error) {
 	if err := validateARN("workteamArn", arn); err != nil {
 		return nil, err
@@ -539,6 +554,8 @@ func (m *Mock) DescribeSubscribedWorkteam(_ context.Context, arn string) (*drive
 }
 
 // ListSubscribedWorkteams lists Marketplace vendor workteams: always empty.
+//
+//nolint:gocritic,revive // SDK-shaped; see nongoals/standards
 func (m *Mock) ListSubscribedWorkteams(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.SubscribedWorkteam], error) {
 	if opts.MaxResults < 0 || opts.MaxResults > driver.MaxListResults {
 		return driver.ListPage[driver.SubscribedWorkteam]{}, errors.New(errors.InvalidArgument, "maxResults must be between 1 and 100")
@@ -549,7 +566,7 @@ func (m *Mock) ListSubscribedWorkteams(_ context.Context, opts driver.ListOption
 
 // ListLabelingJobsForWorkteam lists the labeling jobs assigned to a workteam.
 func (m *Mock) ListLabelingJobsForWorkteam(
-	_ context.Context, workteamARN string, opts driver.ListOptions,
+	_ context.Context, workteamARN string, opts driver.ListOptions, //nolint:gocritic // SDK-shaped; see nongoals/standards
 ) (driver.ListPage[driver.LabelingJobForWorkteam], error) {
 	if !m.hasWorkteamARN(workteamARN) {
 		return driver.ListPage[driver.LabelingJobForWorkteam]{}, errors.Newf(errors.NotFound, "workteam %q not found", workteamARN)
