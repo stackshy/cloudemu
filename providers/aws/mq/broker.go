@@ -3,6 +3,7 @@ package mq
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -33,8 +34,8 @@ func (m *Mock) CreateBroker(_ context.Context, in *driver.CreateBrokerInput) (*d
 	}
 
 	engine := strings.ToUpper(in.EngineType)
-	if engine == "" {
-		return nil, badRequest("engineType is required")
+	if err := validateBrokerInput(engine, in); err != nil {
+		return nil, err
 	}
 
 	if m.brokerNameExists(in.BrokerName) {
@@ -184,4 +185,67 @@ func rawString(raw map[string]json.RawMessage, key string) string {
 	}
 
 	return s
+}
+
+// Engine types and deployment modes Amazon MQ accepts.
+var (
+	engineTypes     = []string{"ACTIVEMQ", "RABBITMQ"}                                           //nolint:gochecknoglobals // enum
+	deploymentModes = []string{"SINGLE_INSTANCE", "ACTIVE_STANDBY_MULTI_AZ", "CLUSTER_MULTI_AZ"} //nolint:gochecknoglobals // enum
+)
+
+// validateBrokerInput applies CreateBroker's request rules: a known engine
+// type and deployment mode, and at least one user with a valid password.
+func validateBrokerInput(engine string, in *driver.CreateBrokerInput) error {
+	if engine == "" {
+		return badRequest("engineType is required")
+	}
+
+	if !slices.Contains(engineTypes, engine) {
+		return badRequest("engineType %s is not one of %s", in.EngineType, strings.Join(engineTypes, ", "))
+	}
+
+	if mode := rawString(in.Config, fieldDeploymentMode); mode != "" && !slices.Contains(deploymentModes, mode) {
+		return badRequest("deploymentMode %s is not one of %s", mode, strings.Join(deploymentModes, ", "))
+	}
+
+	if len(in.Users) == 0 {
+		return badRequest("users is required: a broker needs at least one user")
+	}
+
+	for i := range in.Users {
+		if err := validatePassword(in.Users[i].Password); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// Password rules Amazon MQ applies to broker users.
+const (
+	minPasswordLen    = 12
+	minPasswordUnique = 4
+)
+
+// validatePassword applies Amazon MQ's broker user password rules: at least 12
+// characters, at least 4 of them unique, and none of ',' ':' '='.
+func validatePassword(password string) error {
+	if len([]rune(password)) < minPasswordLen {
+		return badRequest("password must be at least %d characters long", minPasswordLen)
+	}
+
+	if strings.ContainsAny(password, ",:=") {
+		return badRequest("password must not contain commas, colons, or equal signs")
+	}
+
+	unique := map[rune]bool{}
+	for _, r := range password {
+		unique[r] = true
+	}
+
+	if len(unique) < minPasswordUnique {
+		return badRequest("password must contain at least %d unique characters", minPasswordUnique)
+	}
+
+	return nil
 }

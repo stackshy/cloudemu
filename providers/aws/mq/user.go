@@ -14,6 +14,10 @@ func (m *Mock) CreateUser(_ context.Context, brokerID string, user *driver.User)
 		return badRequest("username is required")
 	}
 
+	if err := validatePassword(user.Password); err != nil {
+		return err
+	}
+
 	return m.mutateBrokerUsers(brokerID, func(users []driver.User) ([]driver.User, error) {
 		if findUser(users, user.Username) >= 0 {
 			return nil, conflict("Broker user %s already exists", user.Username)
@@ -50,6 +54,12 @@ func (m *Mock) DescribeUser(_ context.Context, brokerID, username string) (*driv
 // UpdateUser replaces a broker user's attributes. An empty password preserves
 // the stored one, so an update that changes only the groups keeps the password.
 func (m *Mock) UpdateUser(_ context.Context, brokerID string, user *driver.User) error {
+	if user.Password != "" {
+		if err := validatePassword(user.Password); err != nil {
+			return err
+		}
+	}
+
 	return m.mutateBrokerUsers(brokerID, func(users []driver.User) ([]driver.User, error) {
 		i := findUser(users, user.Username)
 		if i < 0 {
