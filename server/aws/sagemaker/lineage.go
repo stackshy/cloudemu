@@ -203,7 +203,7 @@ func (h *Handler) listEntityOp(kind string, list func(*http.Request, driver.List
 			return
 		}
 
-		writeSummaries(w, lineageWire[kind].summaries, page, func(e *driver.LineageEntity) map[string]any { return entitySummary(e) })
+		writeSummaries(w, lineageWire[kind].summaries, page, entitySummary)
 	}
 }
 
@@ -516,7 +516,7 @@ func (h *Handler) listLineageGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeSummaries(w, "LineageGroupSummaries", page, func(g *driver.LineageGroup) map[string]any { return lineageGroupToWire(g) })
+	writeSummaries(w, "LineageGroupSummaries", page, lineageGroupToWire)
 }
 
 func (h *Handler) getLineageGroupPolicy(w http.ResponseWriter, r *http.Request) {

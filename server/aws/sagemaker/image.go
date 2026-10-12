@@ -76,7 +76,7 @@ func (h *Handler) listImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeSummaries(w, "Images", page, func(i *driver.Image) map[string]any { return imageToWire(i) })
+	writeSummaries(w, "Images", page, imageToWire)
 }
 
 func (h *Handler) updateImage(w http.ResponseWriter, r *http.Request) {
@@ -209,7 +209,7 @@ func (h *Handler) listImageVersions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeSummaries(w, "ImageVersions", page, func(v *driver.ImageVersion) map[string]any { return versionToWire(v) })
+	writeSummaries(w, "ImageVersions", page, versionToWire)
 }
 
 func (h *Handler) updateImageVersion(w http.ResponseWriter, r *http.Request) {
@@ -428,7 +428,7 @@ func (h *Handler) listAppImageConfigs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeSummaries(w, "AppImageConfigs", page, func(c *driver.AppImageConfig) map[string]any { return appConfigToWire(c) })
+	writeSummaries(w, "AppImageConfigs", page, appConfigToWire)
 }
 
 func (h *Handler) updateAppImageConfig(w http.ResponseWriter, r *http.Request) {

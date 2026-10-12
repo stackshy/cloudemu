@@ -67,7 +67,8 @@ func validImageEnum(field, v string) error {
 
 func validAlias(a string) error {
 	if a == "" || len(a) > maxAliasLen || !aliasPattern.MatchString(a) || a[0] == '.' || a[0] == '-' {
-		return errors.Newf(errors.InvalidArgument, "alias %q must be 1-%d characters of letters, digits, '-', '_' and '.', not starting with '.' or '-'", a, maxAliasLen)
+		return errors.Newf(errors.InvalidArgument,
+			"alias %q must be 1-%d characters of letters, digits, '-', '_' and '.', not starting with '.' or '-'", a, maxAliasLen)
 	}
 
 	return nil
@@ -95,15 +96,16 @@ func validRole(role string) error {
 }
 
 func validDisplayName(v string) error {
-	if len(v) == 0 || len(v) > maxImageDisplayLen || !displayNamePattern.MatchString(v) {
-		return errors.Newf(errors.InvalidArgument, "displayName must be 1-%d characters without leading or trailing whitespace", maxImageDisplayLen)
+	if v == "" || len(v) > maxImageDisplayLen || !displayNamePattern.MatchString(v) {
+		return errors.Newf(errors.InvalidArgument,
+			"displayName must be 1-%d characters without leading or trailing whitespace", maxImageDisplayLen)
 	}
 
 	return nil
 }
 
 func validImageDesc(v string) error {
-	if len(v) == 0 || len(v) > maxImageDescLen {
+	if v == "" || len(v) > maxImageDescLen {
 		return errors.Newf(errors.InvalidArgument, "description must be 1-%d characters", maxImageDescLen)
 	}
 

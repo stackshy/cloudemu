@@ -206,7 +206,7 @@ func (h *Handler) listTrialComponents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeSummaries(w, "TrialComponentSummaries", page, func(tc *driver.TrialComponent) map[string]any { return tcSummaryToWire(tc) })
+	writeSummaries(w, "TrialComponentSummaries", page, tcSummaryToWire)
 }
 
 func (h *Handler) updateTrialComponent(w http.ResponseWriter, r *http.Request) {

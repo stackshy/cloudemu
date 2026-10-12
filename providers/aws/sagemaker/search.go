@@ -683,7 +683,6 @@ func evalNested(r *srec, n *driver.SearchNested) (bool, error) {
 	}
 
 	for _, item := range items {
-		item := item
 		rec := &srec{props: item}
 
 		match := true

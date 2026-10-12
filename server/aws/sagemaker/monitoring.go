@@ -234,7 +234,7 @@ func (h *Handler) listMonitoringExecutions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	writeSummaries(w, "MonitoringExecutionSummaries", page, func(e *driver.MonitoringExecution) map[string]any { return executionToWire(e) })
+	writeSummaries(w, "MonitoringExecutionSummaries", page, executionToWire)
 }
 
 // --- Alerts ---
@@ -324,7 +324,6 @@ func (h *Handler) monitoringRoutes() map[string]http.HandlerFunc {
 	routes := make(map[string]http.HandlerFunc, len(driver.MonitoringKinds)*4)
 
 	for _, kind := range driver.MonitoringKinds {
-		kind := kind
 		routes["Create"+kind+"JobDefinition"] = func(w http.ResponseWriter, r *http.Request) { h.createMonitoringDef(w, r, kind) }
 		routes["Describe"+kind+"JobDefinition"] = func(w http.ResponseWriter, r *http.Request) { h.describeMonitoringDef(w, r, kind) }
 		routes["List"+kind+"JobDefinitions"] = func(w http.ResponseWriter, r *http.Request) { h.listMonitoringDefs(w, r, kind) }

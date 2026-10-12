@@ -539,7 +539,6 @@ func (m *Mock) virtualExecutions(s *driver.MonitoringSchedule) []driver.Monitori
 // holds monMu.
 func (m *Mock) materializeExecutions(s *driver.MonitoringSchedule) {
 	for _, e := range m.virtualExecutions(s) {
-		e := e
 		m.monExecs.SetIfAbsent(execKey(e.ScheduleName, parseTime(e.ScheduledTime)), &e)
 	}
 }

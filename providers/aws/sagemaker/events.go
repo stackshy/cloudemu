@@ -37,7 +37,7 @@ func (m *Mock) SetEventPublisher(p awsevents.Publisher) {
 // back to back (real SageMaker may send several events per change). Under
 // --async-settle only the first state is published at call time; the later
 // states are not emitted, because the mock has no scheduler to fire them.
-func (m *Mock) emitStates(ctx context.Context, detailType string, resources []string, states []string, detail func(state string) any) {
+func (m *Mock) emitStates(ctx context.Context, detailType string, resources, states []string, detail func(state string) any) {
 	if m.opts.SettleDuration(settle.DefaultJobStageSettle) > 0 || m.opts.SettleDuration(settle.DefaultEndpointSettle) > 0 {
 		states = states[:1]
 	}

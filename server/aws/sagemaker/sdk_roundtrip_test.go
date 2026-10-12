@@ -275,3 +275,33 @@ func TestSDKInvoke_Errors(t *testing.T) { // T45
 	require.NoError(t, err)
 	assert.Len(t, out.Body, 6<<20, "a payload at the limit is echoed whole")
 }
+
+// TestSDKInvoke_ModelError pins the wire shape of a model-container failure:
+// HTTP 424 with the modeled ModelError exception.
+func TestSDKInvoke_ModelError(t *testing.T) { // T132, B6
+	cloud := cloudemu.NewAWS()
+	ts := httptest.NewServer(awsserver.New(awsserver.Drivers{SageMaker: cloud.SageMaker}))
+	t.Cleanup(ts.Close)
+
+	cfg := newCfg(t)
+	c := awssm.NewFromConfig(cfg, func(o *awssm.Options) { o.BaseEndpoint = aws.String(ts.URL) })
+	rt := smrt.NewFromConfig(cfg, func(o *smrt.Options) { o.BaseEndpoint = aws.String(ts.URL) })
+	ctx := context.Background()
+
+	_, err := c.CreateModel(ctx, &awssm.CreateModelInput{ModelName: aws.String("m"), ExecutionRoleArn: aws.String("arn:aws:iam::123456789012:role/r")})
+	require.NoError(t, err)
+	_, err = c.CreateEndpointConfig(ctx, &awssm.CreateEndpointConfigInput{
+		EndpointConfigName: aws.String("c"),
+		ProductionVariants: []smtypes.ProductionVariant{{VariantName: aws.String("v"), ModelName: aws.String("m"), InstanceType: smtypes.ProductionVariantInstanceTypeMlM5Large, InitialInstanceCount: aws.Int32(1)}},
+	})
+	require.NoError(t, err)
+	_, err = c.CreateEndpoint(ctx, &awssm.CreateEndpointInput{EndpointName: aws.String("e"), EndpointConfigName: aws.String("c")})
+	require.NoError(t, err)
+
+	cloud.SageMaker.SetInvocationFailure("e", 500)
+
+	_, err = rt.InvokeEndpoint(ctx, &smrt.InvokeEndpointInput{EndpointName: aws.String("e"), Body: []byte("x")})
+
+	var me *smrttypes.ModelError
+	require.ErrorAs(t, err, &me)
+}
