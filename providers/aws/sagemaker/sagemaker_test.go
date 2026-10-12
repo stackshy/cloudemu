@@ -244,8 +244,7 @@ func TestHyperPodClusterNodes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, driver.ClusterInService, c.Status)
 
-	nodes, err := m.ListClusterNodes(ctx, "cl")
-	require.NoError(t, err)
+	nodes := listNodes(t, m, "cl")
 	assert.Len(t, nodes, 3)
 
 	node, err := m.DescribeClusterNode(ctx, "cl", "workers-0")
@@ -292,9 +291,10 @@ func TestPipelineExecutionAndExperiments(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, driver.ExecutionSucceeded, ex.Status)
 
+	// Every emulated run has already finished, so Stop leaves it as it is.
 	require.NoError(t, m.StopPipelineExecution(ctx, ex.ExecutionARN))
 	got, _ := m.DescribePipelineExecution(ctx, ex.ExecutionARN)
-	assert.Equal(t, driver.ExecutionStopped, got.Status)
+	assert.Equal(t, driver.ExecutionSucceeded, got.Status)
 
 	_, err = m.CreateExperiment(ctx, driver.ExperimentSpec{ExperimentName: "exp"})
 	require.NoError(t, err)
@@ -715,7 +715,7 @@ func TestCreateSameName_Concurrent50(t *testing.T) { // T18
 			return err
 		},
 		"endpoint config": func() error {
-			_, err := m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{ConfigName: "c"})
+			_, err := m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{ConfigName: "c", ProductionVariants: []driver.ProductionVariant{{VariantName: "v"}}})
 			return err
 		},
 		"notebook": func() error {
@@ -1432,8 +1432,7 @@ func TestCluster_InstanceGroupFieldsAndLimits(t *testing.T) { // T47, T50
 	assert.Equal(t, "s3://b/lc", w.LifeCycleConfig.SourceS3URI)
 	assert.Equal(t, driver.DefaultThreadsPerCore, c.InstanceGroups[1].ThreadsPerCore, "ThreadsPerCore defaults to 1")
 
-	nodes, err := m.ListClusterNodes(ctx, "hp")
-	require.NoError(t, err)
+	nodes := listNodes(t, m, "hp")
 	assert.Len(t, nodes, 4, "one node per running instance")
 
 	bad := map[string][]driver.ClusterInstanceGroupSpec{
@@ -1514,8 +1513,7 @@ func TestCluster_CloneIsolationAndAsyncRamp(t *testing.T) { // T49, T52
 	assert.Equal(t, 4, got.InstanceGroups[0].TargetCount)
 	assert.Equal(t, driver.GroupCreating, got.InstanceGroups[0].Status)
 
-	nodes, err := m.ListClusterNodes(ctx, "hp")
-	require.NoError(t, err)
+	nodes := listNodes(t, m, "hp")
 	assert.Empty(t, nodes)
 
 	_, err = m.UpdateCluster(ctx, driver.ClusterUpdate{ClusterName: "hp", InstanceGroupsToDelete: []string{"a"}})
@@ -2310,7 +2308,7 @@ func TestWorkteam_CRUDAndGuards(t *testing.T) { // T105, T106, T107
 
 	err = m.DeleteWorkforce(ctx, "default")
 	require.Error(t, err)
-	assert.Equal(t, driver.ExResourceInUse, exceptionOf(err), "a workforce with workteams cannot be deleted")
+	assert.True(t, errors.IsFailedPrecondition(err), "a workforce with workteams cannot be deleted")
 
 	for name, spec := range map[string]driver.WorkteamSpec{
 		"bad name":     {Name: "-t", Description: "d", Members: []driver.MemberDefinition{cognitoMember("g")}},
@@ -2729,7 +2727,7 @@ func TestAppImageConfig_CRUDAndDefaults(t *testing.T) { // T112
 		"no kernels":    {Name: "x", KernelGateway: &driver.AppImageConfigBody{}},
 		"six kernels":   {Name: "x", KernelGateway: &driver.AppImageConfigBody{KernelSpecs: make([]driver.KernelSpec, 6)}},
 		"unnamed spec":  {Name: "x", KernelGateway: &driver.AppImageConfigBody{KernelSpecs: []driver.KernelSpec{{}}}},
-		"uid too big":   {Name: "x", JupyterLab: &driver.AppImageConfigBody{FileSystemConfig: &driver.FileSystemConfig{DefaultUID: 65536}}},
+		"uid too big":   {Name: "x", JupyterLab: &driver.AppImageConfigBody{FileSystemConfig: &driver.FileSystemConfig{DefaultUID: ptr(65536)}}},
 		"relative path": {Name: "x", CodeEditor: &driver.AppImageConfigBody{FileSystemConfig: &driver.FileSystemConfig{MountPath: "home/x"}}},
 	} {
 		_, err = m.CreateAppImageConfig(ctx, spec)
@@ -4273,4 +4271,285 @@ func TestValidation_LivesInProvider(t *testing.T) { // T25
 	_, err = m.CreateProject(ctx, scSpec("one-too-many"))
 	require.Error(t, err)
 	assert.Equal(t, errors.ResourceExhausted, errors.GetCode(err), "project cap: %v", err)
+}
+
+func TestAppImageConfig_FileSystemDefaults(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	c, err := m.CreateAppImageConfig(ctx, driver.AppImageConfigSpec{
+		Name: "cfg", JupyterLab: &driver.AppImageConfigBody{FileSystemConfig: &driver.FileSystemConfig{MountPath: "/x"}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, c.JupyterLab.FileSystemConfig.DefaultUID)
+	assert.Equal(t, 1000, *c.JupyterLab.FileSystemConfig.DefaultUID)
+	assert.Equal(t, 100, *c.JupyterLab.FileSystemConfig.DefaultGID)
+
+	c, err = m.CreateAppImageConfig(ctx, driver.AppImageConfigSpec{
+		Name: "root", JupyterLab: &driver.AppImageConfigBody{FileSystemConfig: &driver.FileSystemConfig{MountPath: "/x", DefaultUID: ptr(0)}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, *c.JupyterLab.FileSystemConfig.DefaultUID, "an explicit 0 is kept")
+}
+
+func listNodes(t *testing.T, m *Mock, cluster string) []driver.ClusterNode {
+	t.Helper()
+
+	page, err := m.ListClusterNodes(context.Background(), cluster, driver.ListOptions{})
+	require.NoError(t, err)
+
+	return page.Items
+}
+
+func TestListClusterNodes_FiltersAndPaging(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, driver.ClusterSpec{ClusterName: "hp", InstanceGroups: []driver.ClusterInstanceGroupSpec{
+		{GroupName: "workers", InstanceType: "ml.p4d.24xlarge", InstanceCount: 3},
+		{GroupName: "head", InstanceType: "ml.m5.xlarge", InstanceCount: 1},
+	}})
+	require.NoError(t, err)
+
+	page, err := m.ListClusterNodes(ctx, "hp", driver.ListOptions{MaxResults: 2, SortBy: driver.SortByName})
+	require.NoError(t, err)
+	assert.Len(t, page.Items, 2)
+	assert.NotEmpty(t, page.NextToken)
+
+	page, err = m.ListClusterNodes(ctx, "hp", driver.ListOptions{Filters: map[string]string{"InstanceGroupNameContains": "head"}})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, "head", page.Items[0].GroupName)
+}
+
+func TestCreateEndpointConfig_Validation(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateModel(ctx, driver.ModelConfig{ModelName: "m"})
+	require.NoError(t, err)
+
+	v := func(name, model string) driver.ProductionVariant {
+		return driver.ProductionVariant{VariantName: name, ModelName: model, InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: 1}
+	}
+
+	for name, variants := range map[string][]driver.ProductionVariant{
+		"no variants":      nil,
+		"missing model":    {v("a", "ghost")},
+		"duplicate name":   {v("a", "m"), v("a", "m")},
+		"negative count":   {{VariantName: "a", ModelName: "m", InitialInstanceCount: -1}},
+		"negative weight":  {{VariantName: "a", ModelName: "m", InitialVariantWeight: -1}},
+		"too many":         {v("1", "m"), v("2", "m"), v("3", "m"), v("4", "m"), v("5", "m"), v("6", "m"), v("7", "m"), v("8", "m"), v("9", "m"), v("10", "m"), v("11", "m")},
+		"unnamed":          {{ModelName: "m"}},
+		"huge count":       {{VariantName: "a", ModelName: "m", InitialInstanceCount: 100000}},
+		"missing model #2": {v("a", "m"), v("b", "ghost")},
+	} {
+		_, err := m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{ConfigName: "c", ProductionVariants: variants})
+		require.Error(t, err, name)
+		assert.True(t, errors.IsInvalidArgument(err), "%s: %v", name, err)
+	}
+
+	_, err = m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{ConfigName: "ok", ProductionVariants: []driver.ProductionVariant{v("a", "m")}})
+	require.NoError(t, err)
+
+	_, err = m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{
+		ConfigName: "ic", ProductionVariants: []driver.ProductionVariant{{VariantName: "a", InstanceType: "ml.m5.large"}},
+	})
+	require.NoError(t, err, "an inference-component variant names no model")
+}
+
+func TestCreateInferenceComponent_References(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateModel(ctx, driver.ModelConfig{ModelName: "m"})
+	require.NoError(t, err)
+	_, err = m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{
+		ConfigName: "c", ProductionVariants: []driver.ProductionVariant{{VariantName: "v", ModelName: "m", InitialVariantWeight: 1}},
+	})
+	require.NoError(t, err)
+	_, err = m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "e", ConfigName: "c"})
+	require.NoError(t, err)
+
+	_, err = m.CreateInferenceComponent(ctx, driver.InferenceComponentSpec{Name: "ic", EndpointName: "e", ModelName: "ghost", VariantName: "v"})
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalidArgument(err))
+
+	_, err = m.CreateInferenceComponent(ctx, driver.InferenceComponentSpec{Name: "ic", EndpointName: "e", ModelName: "m", VariantName: "nope"})
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalidArgument(err))
+
+	_, err = m.CreateInferenceComponent(ctx, driver.InferenceComponentSpec{Name: "ic", EndpointName: "e", ModelName: "m", VariantName: "v"})
+	require.NoError(t, err)
+}
+
+func TestInvokeEndpointAsync_UsesConfiguredOutputPath(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateModel(ctx, driver.ModelConfig{ModelName: "m"})
+	require.NoError(t, err)
+
+	variants := []driver.ProductionVariant{{VariantName: "v", ModelName: "m", InitialVariantWeight: 1}}
+	_, err = m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{ConfigName: "sync", ProductionVariants: variants})
+	require.NoError(t, err)
+	_, err = m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{ConfigName: "async", ProductionVariants: variants, AsyncOutputS3URI: "s3://out/results/"})
+	require.NoError(t, err)
+	_, err = m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "sync-ep", ConfigName: "sync"})
+	require.NoError(t, err)
+	_, err = m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "async-ep", ConfigName: "async"})
+	require.NoError(t, err)
+
+	_, err = m.InvokeEndpointAsync(ctx, driver.InvokeEndpointAsyncInput{EndpointName: "sync-ep", InputS3URI: "s3://in/x"})
+	require.Error(t, err, "an endpoint without async configuration cannot be invoked asynchronously")
+	assert.True(t, errors.IsInvalidArgument(err))
+
+	_, err = m.InvokeEndpointAsync(ctx, driver.InvokeEndpointAsyncInput{EndpointName: "async-ep"})
+	require.Error(t, err, "InputLocation is required")
+
+	out, err := m.InvokeEndpointAsync(ctx, driver.InvokeEndpointAsyncInput{EndpointName: "async-ep", InputS3URI: "s3://in/x"})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(out.OutputS3URI, "s3://out/results/"+out.InferenceID), out.OutputS3URI)
+}
+
+func TestJobInstanceCount_Bounded(t *testing.T) {
+	r := newMetricsRig()
+
+	for name, create := range map[string]func(n int) error{
+		"training": func(n int) error {
+			_, err := r.m.CreateTrainingJob(r.ctx, driver.TrainingJobConfig{JobName: "t", Resources: driver.ResourceConfig{InstanceCount: n}})
+			return err
+		},
+		"processing": func(n int) error {
+			_, err := r.m.CreateProcessingJob(r.ctx, driver.ProcessingJobConfig{JobName: "p", Resources: driver.ResourceConfig{InstanceCount: n}})
+			return err
+		},
+		"transform": func(n int) error {
+			_, err := r.m.CreateTransformJob(r.ctx, driver.TransformJobConfig{JobName: "x", ModelName: "m", InstanceCount: n})
+			return err
+		},
+	} {
+		for _, n := range []int{-1, driver.MaxJobInstances + 1, 3_000_000} {
+			err := create(n)
+			require.Error(t, err, name)
+			assert.True(t, errors.IsInvalidArgument(err), "%s %d: %v", name, n, err)
+		}
+
+		require.NoError(t, create(driver.MaxJobInstances), name)
+	}
+}
+
+func TestCreate_TagLimitEnforced(t *testing.T) {
+	m := newTestMock()
+
+	tags := make([]driver.Tag, 51)
+	for i := range tags {
+		tags[i] = driver.Tag{Key: "k" + strconv.Itoa(i), Value: "v"}
+	}
+
+	_, err := m.CreateModel(context.Background(), driver.ModelConfig{ModelName: "m", Tags: tags})
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalidArgument(err))
+
+	_, err = m.CreateTrainingJob(context.Background(), driver.TrainingJobConfig{JobName: "j", Tags: tags})
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalidArgument(err))
+}
+
+func TestDeleteWithDependents(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateDomain(ctx, driver.DomainSpec{DomainName: "d"})
+	require.NoError(t, err)
+
+	doms, err := m.ListDomains(ctx, driver.ListOptions{})
+	require.NoError(t, err)
+	id := doms.Items[0].DomainID
+
+	_, err = m.CreateUserProfile(ctx, driver.UserProfileSpec{DomainID: id, UserProfileName: "u"})
+	require.NoError(t, err)
+	require.Error(t, m.DeleteDomain(ctx, id), "a domain with a user profile is in use")
+	require.NoError(t, m.DeleteUserProfile(ctx, id, "u"))
+	require.NoError(t, m.DeleteDomain(ctx, id))
+
+	_, err = m.CreatePipeline(ctx, driver.PipelineSpec{PipelineName: "p"})
+	require.NoError(t, err)
+	ex, err := m.StartPipelineExecution(ctx, "p")
+	require.NoError(t, err)
+	require.NoError(t, m.DeletePipeline(ctx, "p"))
+	_, err = m.DescribePipelineExecution(ctx, ex.ExecutionARN)
+	require.Error(t, err, "deleting a pipeline deletes its executions")
+
+	_, err = m.CreateFeatureGroup(ctx, driver.FeatureGroupSpec{GroupName: "fg", RecordIdentifierName: "id", EventTimeFeatureName: "t",
+		Features: []driver.FeatureDefinition{{Name: "id", Type: "String"}, {Name: "t", Type: "String"}}})
+	require.NoError(t, err)
+	require.NoError(t, m.PutRecord(ctx, "fg", []driver.FeatureValue{{Name: "id", Value: "1"}, {Name: "t", Value: "2026-01-01T00:00:00Z"}}))
+	require.NoError(t, m.DeleteFeatureGroup(ctx, "fg"))
+	_, err = m.CreateFeatureGroup(ctx, driver.FeatureGroupSpec{GroupName: "fg", RecordIdentifierName: "id", EventTimeFeatureName: "t",
+		Features: []driver.FeatureDefinition{{Name: "id", Type: "String"}, {Name: "t", Type: "String"}}})
+	require.NoError(t, err)
+	_, err = m.GetRecord(ctx, "fg", "1")
+	require.Error(t, err, "a re-created feature group starts with no records")
+}
+
+func TestNotebookDelete_RequiresStoppedOrFailed(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateNotebookInstance(ctx, driver.NotebookInstanceSpec{Name: "nb", InstanceType: "ml.t3.medium"})
+	require.NoError(t, err)
+
+	err = m.DeleteNotebookInstance(ctx, "nb")
+	require.Error(t, err)
+	assert.True(t, errors.IsFailedPrecondition(err), "an InService notebook cannot be deleted")
+
+	require.NoError(t, m.StopNotebookInstance(ctx, "nb"))
+	require.NoError(t, m.DeleteNotebookInstance(ctx, "nb"))
+}
+
+func TestEndpointNameReusableAfterDelete_AsyncSettle(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	m := New(config.NewOptions(config.WithClock(fc), config.WithAsyncSettle(), config.WithAccountID("123456789012")))
+	ctx := context.Background()
+
+	_, err := m.CreateModel(ctx, driver.ModelConfig{ModelName: "m"})
+	require.NoError(t, err)
+	_, err = m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{
+		ConfigName: "c", ProductionVariants: []driver.ProductionVariant{{VariantName: "v", ModelName: "m", InitialVariantWeight: 1}},
+	})
+	require.NoError(t, err)
+	_, err = m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "e", ConfigName: "c"})
+	require.NoError(t, err)
+	fc.Advance(time.Minute)
+	require.NoError(t, m.DeleteEndpoint(ctx, "e"))
+	fc.Advance(time.Minute)
+
+	_, err = m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "e", ConfigName: "c"})
+	require.NoError(t, err, "a name whose delete window elapsed is free")
+}
+
+func TestMonitoringExecutions_InFlightFinishOnStop(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	m := New(config.NewOptions(config.WithClock(fc), config.WithAsyncSettle(), config.WithAccountID("123456789012")))
+	ctx := context.Background()
+
+	_, err := m.CreateMonitoringSchedule(ctx, schedSpec("s", hourly()))
+	require.NoError(t, err)
+	fc.Advance(time.Hour + 100*time.Millisecond)
+	require.NoError(t, m.StopMonitoringSchedule(ctx, "s"))
+	fc.Advance(time.Hour)
+
+	for _, e := range execTimes2(t, m, "s") {
+		assert.NotEqual(t, driver.MonitorExecInProgress, e.Status, "a stopped schedule's runs finish")
+	}
+}
+
+func execTimes2(t *testing.T, m *Mock, schedule string) []driver.MonitoringExecution {
+	t.Helper()
+
+	page, err := m.ListMonitoringExecutions(context.Background(), driver.ListOptions{Filters: map[string]string{"MonitoringScheduleName": schedule}})
+	require.NoError(t, err)
+
+	return page.Items
 }

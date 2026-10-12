@@ -36,6 +36,7 @@ import (
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	loggingdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	sagemakerdriver "github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
@@ -9451,5 +9452,54 @@ func TestAlarmStateChangeEventToSQS(t *testing.T) {
 
 	if ev.Detail.State["value"] != "ALARM" || ev.Detail.PreviousState["value"] != "INSUFFICIENT_DATA" || len(ev.Resources) != 1 {
 		t.Fatalf("unexpected detail: %s", msgs[0].Body)
+	}
+}
+
+// TestSageMakerEndpointLifecycle drives the serving stack through the AWS
+// provider the way a Go library user does: model -> endpoint config -> endpoint
+// -> invoke -> delete, with the reference error on the way.
+func TestSageMakerEndpointLifecycle(t *testing.T) {
+	ctx := context.Background()
+	sm := NewAWS().SageMaker
+
+	if _, err := sm.CreateModel(ctx, sagemakerdriver.ModelConfig{ModelName: "m"}); err != nil {
+		t.Fatalf("CreateModel: %v", err)
+	}
+
+	_, err := sm.CreateEndpointConfig(ctx, sagemakerdriver.EndpointConfigSpec{
+		ConfigName:         "bad",
+		ProductionVariants: []sagemakerdriver.ProductionVariant{{VariantName: "v", ModelName: "ghost", InitialVariantWeight: 1}},
+	})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("a variant naming a missing model must be InvalidArgument, got %v", err)
+	}
+
+	if _, err = sm.CreateEndpointConfig(ctx, sagemakerdriver.EndpointConfigSpec{
+		ConfigName:         "c",
+		ProductionVariants: []sagemakerdriver.ProductionVariant{{VariantName: "v", ModelName: "m", InitialInstanceCount: 1, InitialVariantWeight: 1}},
+	}); err != nil {
+		t.Fatalf("CreateEndpointConfig: %v", err)
+	}
+
+	ep, err := sm.CreateEndpoint(ctx, sagemakerdriver.EndpointSpec{EndpointName: "e", ConfigName: "c"})
+	if err != nil {
+		t.Fatalf("CreateEndpoint: %v", err)
+	}
+
+	if ep.Status != sagemakerdriver.EndpointInService || len(ep.VariantSummaries) != 1 {
+		t.Fatalf("endpoint = %s with %d variant summaries", ep.Status, len(ep.VariantSummaries))
+	}
+
+	out, err := sm.InvokeEndpoint(ctx, sagemakerdriver.InvokeEndpointInput{EndpointName: "e", Body: []byte("hello"), ContentType: "text/plain"})
+	if err != nil || string(out.Body) != "hello" || out.InvokedVariant != "v" {
+		t.Fatalf("InvokeEndpoint = %+v, %v", out, err)
+	}
+
+	if err = sm.DeleteEndpoint(ctx, "e"); err != nil {
+		t.Fatalf("DeleteEndpoint: %v", err)
+	}
+
+	if _, err = sm.DescribeEndpoint(ctx, "e"); !cerrors.IsNotFound(err) {
+		t.Fatalf("a deleted endpoint must be NotFound, got %v", err)
 	}
 }

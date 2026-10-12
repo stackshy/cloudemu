@@ -3336,7 +3336,7 @@ delete) is still enforced.
 | Data Integration: AWS Glue | 299 |
 | Threat Detection: Amazon GuardDuty | 87 |
 | Streaming: Amazon MSK | 59 |
-| **Grand Total** | **2753** (+150 optional) |
+| **Grand Total** | **2839** (+150 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

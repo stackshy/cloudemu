@@ -196,19 +196,27 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listClusterNodes(w http.ResponseWriter, r *http.Request) {
-	name, ok := decodeName1(w, r, "ClusterName")
-	if !ok {
+	var req struct {
+		listReq
+		ClusterName               string `json:"ClusterName"`
+		InstanceGroupNameContains string `json:"InstanceGroupNameContains"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) || rejectZeroMaxResults(w, &req.listReq) {
 		return
 	}
 
-	nodes, err := h.svc.ListClusterNodes(r.Context(), name)
+	opts := req.options()
+	opts.Filters["InstanceGroupNameContains"] = req.InstanceGroupNameContains
+
+	nodes, err := h.svc.ListClusterNodes(r.Context(), req.ClusterName, opts)
 	if err != nil {
 		writeDriverError(w, err)
 
 		return
 	}
 
-	writeSummaries(w, "ClusterNodeSummaries", driver.ListPage[driver.ClusterNode]{Items: nodes}, func(n *driver.ClusterNode) map[string]any {
+	writeSummaries(w, "ClusterNodeSummaries", nodes, func(n *driver.ClusterNode) map[string]any {
 		return map[string]any{
 			"InstanceGroupName": n.GroupName,
 			"InstanceId":        n.NodeID,

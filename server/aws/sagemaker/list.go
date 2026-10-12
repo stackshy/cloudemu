@@ -54,30 +54,47 @@ type listReq struct {
 	Version                  *int     `json:"Version"`
 	ModifiedTimeAfter        *float64 `json:"ModifiedTimeAfter"`
 	ModifiedTimeBefore       *float64 `json:"ModifiedTimeBefore"`
+
+	UserProfileNameContains        string `json:"UserProfileNameContains"`
+	SpaceNameContains              string `json:"SpaceNameContains"`
+	UserProfileNameEquals          string `json:"UserProfileNameEquals"`
+	SpaceNameEquals                string `json:"SpaceNameEquals"`
+	EndpointNameEquals             string `json:"EndpointNameEquals"`
+	VariantNameEquals              string `json:"VariantNameEquals"`
+	TrialComponentName             string `json:"TrialComponentName"`
+	NotebookLCNameContains         string `json:"NotebookInstanceLifecycleConfigNameContains"`
+	DefaultCodeRepositoryContains  string `json:"DefaultCodeRepositoryContains"`
+	AdditionalCodeRepositoryEquals string `json:"AdditionalCodeRepositoryEquals"`
 }
 
 // decodeListReq reads a List request body and rejects an explicit MaxResults
 // of zero (the range is 1-100); validation of the rest lives in the provider.
 func decodeListReq(w http.ResponseWriter, r *http.Request) (listReq, bool) {
 	var req listReq
-	if !wire.DecodeJSON(w, r, &req) {
-		return listReq{}, false
-	}
-
-	if req.MaxResults != nil && *req.MaxResults == 0 {
-		writeDriverError(w, errors.New(errors.InvalidArgument,
-			"1 validation error detected: Value '0' at 'maxResults' failed to satisfy constraint: "+
-				"Member must have value between 1 and 100"))
-
+	if !wire.DecodeJSON(w, r, &req) || rejectZeroMaxResults(w, &req) {
 		return listReq{}, false
 	}
 
 	return req, true
 }
 
+// rejectZeroMaxResults answers an explicit MaxResults of 0 (the range is
+// 1-100) with a ValidationException and reports whether it did.
+func rejectZeroMaxResults(w http.ResponseWriter, q *listReq) bool {
+	if q.MaxResults == nil || *q.MaxResults != 0 {
+		return false
+	}
+
+	writeDriverError(w, errors.New(errors.InvalidArgument,
+		"1 validation error detected: Value '0' at 'maxResults' failed to satisfy constraint: "+
+			"Member must have value between 1 and 100"))
+
+	return true
+}
+
 // options converts the request into driver ListOptions.
 //
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (q listReq) options() driver.ListOptions {
 	opts := driver.ListOptions{
 		NameContains:           q.NameContains,
@@ -104,7 +121,13 @@ func (q listReq) options() driver.ListOptions {
 		"ExperimentName": q.ExperimentName, "TrialName": q.TrialName, "SourceArn": q.SourceArn, "SourceUri": q.SourceURI,
 		"ArtifactType": q.ArtifactType, "ActionType": q.ActionType, "ContextType": q.ContextType,
 		"AssociationType": q.AssociationType, "DestinationArn": q.DestinationArn, "SourceType": q.SourceType,
-		"DestinationType": q.DestinationType,
+		"DestinationType": q.DestinationType, "UserProfileNameContains": q.UserProfileNameContains,
+		"SpaceNameContains": q.SpaceNameContains, "UserProfileNameEquals": q.UserProfileNameEquals,
+		"SpaceNameEquals": q.SpaceNameEquals, "EndpointNameEquals": q.EndpointNameEquals,
+		"VariantNameEquals": q.VariantNameEquals, "TrialComponentName": q.TrialComponentName,
+		"NotebookInstanceLifecycleConfigNameContains": q.NotebookLCNameContains,
+		"DefaultCodeRepositoryContains":               q.DefaultCodeRepositoryContains,
+		"AdditionalCodeRepositoryEquals":              q.AdditionalCodeRepositoryEquals,
 	} {
 		if v != "" {
 			opts.Filters[k] = v

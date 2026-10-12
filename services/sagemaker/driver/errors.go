@@ -38,12 +38,12 @@ func Conflict(format string, args ...any) error {
 // InUse returns a ResourceInUse error (deleting or changing a resource that
 // other resources still depend on).
 func InUse(format string, args ...any) error {
-	return &APIError{Exception: ExResourceInUse, Err: fmt.Errorf(format, args...)} //nolint:err113,lll // typed API error carrying a formatted message
+	return &APIError{Exception: ExResourceInUse, Err: fmt.Errorf(format, args...)} //nolint:err113,lll // typed API error carrying a formatted message; SDK-shaped literal
 }
 
 // LimitExceeded returns a ResourceLimitExceeded error (an account quota).
 func LimitExceeded(format string, args ...any) error {
-	return &APIError{Exception: ExResourceLimitExceeded, Err: fmt.Errorf(format, args...)} //nolint:err113,lll // typed API error carrying a formatted message
+	return &APIError{Exception: ExResourceLimitExceeded, Err: fmt.Errorf(format, args...)} //nolint:err113,lll // typed API error carrying a formatted message; SDK-shaped literal
 }
 
 // ExceptionOf returns the exception tagged on err and true, or "" and false.
@@ -61,8 +61,8 @@ func ExceptionOf(err error) (string, bool) {
 const ExModelError = "ModelError"
 
 // ModelError is returned by InvokeEndpoint when the endpoint's model container
-// failed the call. OriginalStatusCode is the status the container returned; it
-// selects whether the invocation counts as a 4XX or a 5XX in CloudWatch.
+// failed the call. OriginalStatusCode is the status the container returned
+// (reported to CloudWatch as a 4XX or a 5XX invocation error).
 type ModelError struct {
 	OriginalStatusCode int
 	Message            string

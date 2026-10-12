@@ -41,7 +41,7 @@ func scheduleSpecFrom(name string, config json.RawMessage, tags []wireTag) (driv
 	}
 
 	if sc := v.ScheduleConfig; sc != nil {
-		spec.ScheduleExpression, spec.DataAnalysisStartTime, spec.DataAnalysisEndTime = sc.ScheduleExpression, sc.DataAnalysisStartTime, sc.DataAnalysisEndTime //nolint:lll // SDK-shaped; see nongoals/standards
+		spec.ScheduleExpression, spec.DataAnalysisStartTime, spec.DataAnalysisEndTime = sc.ScheduleExpression, sc.DataAnalysisStartTime, sc.DataAnalysisEndTime //nolint:lll // SDK-shaped literal
 	}
 
 	if d := v.MonitoringJobDefinition; d != nil {
@@ -57,8 +57,7 @@ func scheduleSpecFrom(name string, config json.RawMessage, tags []wireTag) (driv
 	return spec, nil
 }
 
-//nolint:revive // SDK-shaped; see nongoals/standards
-func (h *Handler) decodeScheduleRequest(w http.ResponseWriter, r *http.Request) (driver.MonitoringScheduleSpec, bool) {
+func (*Handler) decodeScheduleRequest(w http.ResponseWriter, r *http.Request) (driver.MonitoringScheduleSpec, bool) {
 	var req struct {
 		MonitoringScheduleName   string          `json:"MonitoringScheduleName"`
 		MonitoringScheduleConfig json.RawMessage `json:"MonitoringScheduleConfig"`
@@ -161,7 +160,7 @@ func (h *Handler) listMonitoringSchedules(w http.ResponseWriter, r *http.Request
 		MonitoringTypeEquals        string `json:"MonitoringTypeEquals"`
 	}
 
-	if !wire.DecodeJSON(w, r, &req) {
+	if !wire.DecodeJSON(w, r, &req) || rejectZeroMaxResults(w, &req.listReq) {
 		return
 	}
 
@@ -212,7 +211,7 @@ func (h *Handler) listMonitoringExecutions(w http.ResponseWriter, r *http.Reques
 		ScheduledTimeBefore         *float64 `json:"ScheduledTimeBefore"`
 	}
 
-	if !wire.DecodeJSON(w, r, &req) {
+	if !wire.DecodeJSON(w, r, &req) || rejectZeroMaxResults(w, &req.listReq) {
 		return
 	}
 
@@ -246,7 +245,7 @@ func (h *Handler) listMonitoringAlerts(w http.ResponseWriter, r *http.Request) {
 		MonitoringScheduleName string `json:"MonitoringScheduleName"`
 	}
 
-	if !wire.DecodeJSON(w, r, &req) {
+	if !wire.DecodeJSON(w, r, &req) || rejectZeroMaxResults(w, &req.listReq) {
 		return
 	}
 
@@ -273,7 +272,7 @@ func (h *Handler) listMonitoringAlertHistory(w http.ResponseWriter, r *http.Requ
 		MonitoringAlertName    string `json:"MonitoringAlertName"`
 	}
 
-	if !wire.DecodeJSON(w, r, &req) {
+	if !wire.DecodeJSON(w, r, &req) || rejectZeroMaxResults(w, &req.listReq) {
 		return
 	}
 
@@ -307,7 +306,7 @@ func (h *Handler) updateMonitoringAlert(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	s, err := h.svc.UpdateMonitoringAlert(r.Context(), req.MonitoringScheduleName, req.MonitoringAlertName, req.DatapointsToAlert, req.EvaluationPeriod) //nolint:lll // SDK-shaped; see nongoals/standards
+	s, err := h.svc.UpdateMonitoringAlert(r.Context(), req.MonitoringScheduleName, req.MonitoringAlertName, req.DatapointsToAlert, req.EvaluationPeriod) //nolint:lll // SDK-shaped literal
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -322,7 +321,7 @@ func (h *Handler) updateMonitoringAlert(w http.ResponseWriter, r *http.Request) 
 // monitoringRoutes returns the 16 job definition operations (Create, Describe,
 // List and Delete for each kind).
 func (h *Handler) monitoringRoutes() map[string]http.HandlerFunc {
-	routes := make(map[string]http.HandlerFunc, len(driver.MonitoringKinds)*4) //nolint:mnd // SDK-shaped; see nongoals/standards
+	routes := make(map[string]http.HandlerFunc, len(driver.MonitoringKinds)*routesPerKind)
 
 	for _, kind := range driver.MonitoringKinds {
 		routes["Create"+kind+"JobDefinition"] = func(w http.ResponseWriter, r *http.Request) { h.createMonitoringDef(w, r, kind) }
@@ -362,7 +361,7 @@ func (h *Handler) createMonitoringDef(w http.ResponseWriter, r *http.Request, ki
 	delete(raw, "RoleArn")
 
 	def, err := h.svc.CreateMonitoringJobDefinition(r.Context(), driver.MonitoringJobDefinitionSpec{
-		Kind: kind, Name: req.JobDefinitionName, RoleARN: req.RoleArn, EndpointName: definitionEndpoint(kind, raw), Echo: raw, Tags: toTags(req.Tags), //nolint:lll // SDK-shaped; see nongoals/standards
+		Kind: kind, Name: req.JobDefinitionName, RoleARN: req.RoleArn, EndpointName: definitionEndpoint(kind, raw), Echo: raw, Tags: toTags(req.Tags), //nolint:lll // SDK-shaped literal
 	})
 	if err != nil {
 		writeDriverError(w, err)
@@ -413,7 +412,7 @@ func (h *Handler) listMonitoringDefs(w http.ResponseWriter, r *http.Request, kin
 		EndpointName string `json:"EndpointName"`
 	}
 
-	if !wire.DecodeJSON(w, r, &req) {
+	if !wire.DecodeJSON(w, r, &req) || rejectZeroMaxResults(w, &req.listReq) {
 		return
 	}
 
@@ -438,3 +437,6 @@ func (h *Handler) listMonitoringDefs(w http.ResponseWriter, r *http.Request, kin
 		return m
 	})
 }
+
+// routesPerKind is the operations each monitoring job-definition kind serves: create, describe, list, delete.
+const routesPerKind = 4

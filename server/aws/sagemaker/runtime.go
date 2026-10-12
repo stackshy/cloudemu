@@ -1,6 +1,7 @@
 package sagemaker
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -74,8 +75,12 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, endpointName st
 		return
 	}
 
+	// The echoed body is caller-controlled, so a markup type is never served as
+	// markup and the type is not sniffed.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
 	if out.ContentType != "" {
-		w.Header().Set("Content-Type", out.ContentType)
+		w.Header().Set("Content-Type", safeContentType(out.ContentType))
 	}
 
 	if out.InvokedVariant != "" {
@@ -84,6 +89,19 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, endpointName st
 
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(out.Body)
+}
+
+// safeContentType maps a content type a browser would render as active
+// content to application/octet-stream.
+func safeContentType(ct string) string {
+	media := strings.ToLower(strings.TrimSpace(strings.SplitN(ct, ";", 2)[0])) //nolint:mnd // protocol constant
+
+	switch media {
+	case "text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/xml":
+		return "application/octet-stream"
+	default:
+		return ct
+	}
 }
 
 func (h *Handler) invokeAsync(w http.ResponseWriter, r *http.Request, endpointName string) {
@@ -99,8 +117,9 @@ func (h *Handler) invokeAsync(w http.ResponseWriter, r *http.Request, endpointNa
 	}
 
 	w.Header().Set("X-Amzn-Sagemaker-Outputlocation", out.OutputS3URI)
-	w.Header().Set("X-Amzn-Sagemaker-Inferenceid", out.InferenceID)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]string{"InferenceId": out.InferenceID})
 }
 
 // writeRuntimeError maps driver errors for the restJson1 runtime surface.

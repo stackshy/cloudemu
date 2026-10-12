@@ -9,9 +9,6 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
-// defaultVariantWeight is the InitialVariantWeight SageMaker assigns when the
-// request omits it.
-
 // endpointTransition is the in-flight (read-time) state of an endpoint that is
 // Creating, Updating or Deleting under --async-settle. The store always holds
 // the FINAL state; reads overlay this window against the Clock, so no goroutine
@@ -60,6 +57,9 @@ func (m *Mock) createEndpoint(cfg driver.EndpointSpec) (*driver.Endpoint, error)
 	defer m.epMu.Unlock()
 
 	now := m.opts.Clock.Now()
+	// An endpoint whose delete window has elapsed is gone: purge it so its name is free.
+	m.liveEndpoint(cfg.EndpointName, now)
+
 	stamp := m.now()
 	arn := m.arn("endpoint/" + cfg.EndpointName)
 	ep := &driver.Endpoint{
@@ -296,7 +296,7 @@ func (m *Mock) DescribeEndpoint(_ context.Context, name string) (*driver.Endpoin
 // ListEndpoints lists endpoints with their observed status; filters and sort
 // apply to that observed state.
 //
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) ListEndpoints(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Endpoint], error) {
 	m.epMu.Lock()
 	now := m.opts.Clock.Now()
@@ -337,7 +337,7 @@ func (m *Mock) requireInService(name string, now time.Time) (*driver.Endpoint, e
 // UpdateEndpoint deploys a new endpoint configuration. The endpoint stays
 // available (Updating serves traffic) and returns to InService.
 //
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) UpdateEndpoint(ctx context.Context, spec driver.UpdateEndpointSpec) (*driver.Endpoint, error) {
 	ep, err := m.updateEndpoint(spec)
 	if err != nil {
@@ -349,7 +349,7 @@ func (m *Mock) UpdateEndpoint(ctx context.Context, spec driver.UpdateEndpointSpe
 	return ep, nil
 }
 
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) updateEndpoint(spec driver.UpdateEndpointSpec) (*driver.Endpoint, error) {
 	ec, ok := m.endpointConfigs.Get(spec.ConfigName)
 	if !ok {
@@ -395,7 +395,7 @@ func (m *Mock) updateEndpoint(spec driver.UpdateEndpointSpec) (*driver.Endpoint,
 // count over from the endpoint's current state when the request asks to retain
 // variant properties (minus any excluded property).
 //
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func retainSummaries(next, current []driver.VariantSummary, spec driver.UpdateEndpointSpec) {
 	if !spec.RetainAllVariantProperties {
 		return

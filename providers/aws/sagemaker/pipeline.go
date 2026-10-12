@@ -2,6 +2,7 @@ package sagemaker
 
 import (
 	"context"
+	"slices"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -11,6 +12,10 @@ import (
 // --- Pipeline ---
 
 func (m *Mock) CreatePipeline(_ context.Context, cfg driver.PipelineSpec) (*driver.Pipeline, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if cfg.PipelineName == "" {
 		return nil, errors.New(errors.InvalidArgument, "pipelineName is required")
 	}
@@ -46,7 +51,7 @@ func (m *Mock) DescribePipeline(_ context.Context, name string) (*driver.Pipelin
 	return clonePipeline(p), nil
 }
 
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) ListPipelines(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Pipeline], error) {
 	return listFrom(m.pipelines, listSpec[driver.Pipeline]{
 		clone:    func(t *driver.Pipeline) driver.Pipeline { return *clonePipeline(t) },
@@ -58,23 +63,31 @@ func (m *Mock) ListPipelines(_ context.Context, opts driver.ListOptions) (driver
 }
 
 func (m *Mock) UpdatePipeline(_ context.Context, name, definition string) (*driver.Pipeline, error) {
+	m.pipeMu.Lock()
+	defer m.pipeMu.Unlock()
+
 	p, ok := m.pipelines.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "pipeline %q not found", name)
 	}
 
-	updated := *p
+	updated := clonePipeline(p)
 	if definition != "" {
 		updated.Definition = definition
 	}
 
 	updated.LastModifiedTime = m.now()
-	m.pipelines.Set(name, &updated)
+	m.pipelines.Set(name, updated)
 
-	return clonePipeline(&updated), nil
+	return clonePipeline(updated), nil
 }
 
+// DeletePipeline deletes a pipeline together with its executions, so a
+// re-created pipeline of the same name starts with no history.
 func (m *Mock) DeletePipeline(_ context.Context, name string) error {
+	m.pipeMu.Lock()
+	defer m.pipeMu.Unlock()
+
 	if !m.pipelines.Has(name) {
 		return errors.Newf(errors.NotFound, "pipeline %q not found", name)
 	}
@@ -82,12 +95,38 @@ func (m *Mock) DeletePipeline(_ context.Context, name string) error {
 	m.pipelines.Delete(name)
 	m.dropTags(m.arn("pipeline/" + name))
 
+	for arn, ex := range m.executions.All() {
+		if ex.PipelineName == name {
+			m.executions.Delete(arn)
+			m.dropTags(arn)
+		}
+	}
+
 	return nil
 }
 
 // --- Pipeline execution ---
 
 func (m *Mock) StartPipelineExecution(ctx context.Context, pipelineName string) (*driver.PipelineExecution, error) {
+	ex, err := m.startPipelineExecution(pipelineName)
+	if err != nil {
+		return nil, err
+	}
+
+	m.emitPipelineMetrics(ctx, pipelineName, true)
+	m.emitPipelineExecutionEvents(ctx, ex, driver.ExecutionExecuting, driver.ExecutionSucceeded)
+
+	out := *ex
+
+	return &out, nil
+}
+
+// startPipelineExecution records the run under pipeMu, so it cannot land after
+// DeletePipeline has removed the pipeline's executions.
+func (m *Mock) startPipelineExecution(pipelineName string) (*driver.PipelineExecution, error) {
+	m.pipeMu.Lock()
+	defer m.pipeMu.Unlock()
+
 	if !m.pipelines.Has(pipelineName) {
 		return nil, errors.Newf(errors.NotFound, "pipeline %q not found", pipelineName)
 	}
@@ -102,12 +141,8 @@ func (m *Mock) StartPipelineExecution(ctx context.Context, pipelineName string) 
 		EndTime:      now,
 	}
 	m.executions.Set(arn, ex)
-	m.emitPipelineMetrics(ctx, pipelineName, true)
-	m.emitPipelineExecutionEvents(ctx, ex, driver.ExecutionExecuting, driver.ExecutionSucceeded)
 
-	out := *ex
-
-	return &out, nil
+	return ex, nil
 }
 
 func (m *Mock) DescribePipelineExecution(_ context.Context, executionARN string) (*driver.PipelineExecution, error) {
@@ -125,32 +160,49 @@ func (m *Mock) DescribePipelineExecution(_ context.Context, executionARN string)
 	return &out, nil
 }
 
-//nolint:dupl,gocritic,lll // per-resource shim mirrors the SDK shape
+//nolint:gocritic,lll // large value params mirror the driver interface; SDK-shaped literal
 func (m *Mock) ListPipelineExecutions(_ context.Context, pipelineName string, opts driver.ListOptions) (driver.ListPage[driver.PipelineExecution], error) {
 	return listFrom(m.executions, listSpec[driver.PipelineExecution]{
 		name:    func(t *driver.PipelineExecution) string { return t.ExecutionARN },
 		status:  func(t *driver.PipelineExecution) string { return t.Status },
 		created: func(t *driver.PipelineExecution) string { return t.StartTime },
+		keys: map[string]func(*driver.PipelineExecution) string{
+			"PipelineExecutionArn": func(t *driver.PipelineExecution) string { return t.ExecutionARN },
+		},
 		extra: func(t *driver.PipelineExecution, _ map[string]string) bool {
 			return pipelineName == "" || t.PipelineName == pipelineName
 		},
 	}, opts)
 }
 
+// StopPipelineExecution stops an executing run. A run that already finished
+// (every emulated run completes at once) is left as it is, as with job Stop.
 func (m *Mock) StopPipelineExecution(ctx context.Context, executionARN string) error {
 	if err := validateARN("pipelineExecutionArn", executionARN); err != nil {
 		return err
 	}
 
+	m.pipeMu.Lock()
+
 	ex, ok := m.executions.Get(executionARN)
 	if !ok {
+		m.pipeMu.Unlock()
+
 		return errors.Newf(errors.NotFound, "pipeline execution %q not found", executionARN)
+	}
+
+	if ex.Status != driver.ExecutionExecuting {
+		m.pipeMu.Unlock()
+
+		return nil
 	}
 
 	updated := *ex
 	updated.Status = driver.ExecutionStopped
 	updated.EndTime = m.now()
 	m.executions.Set(executionARN, &updated)
+	m.pipeMu.Unlock()
+
 	m.emitPipelineExecutionEvents(ctx, &updated, driver.ExecutionStopping, driver.ExecutionStopped)
 
 	return nil
@@ -159,6 +211,10 @@ func (m *Mock) StopPipelineExecution(ctx context.Context, executionARN string) e
 // --- Experiment ---
 
 func (m *Mock) CreateExperiment(_ context.Context, cfg driver.ExperimentSpec) (*driver.Experiment, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if cfg.ExperimentName == "" {
 		return nil, errors.New(errors.InvalidArgument, "experimentName is required")
 	}
@@ -190,7 +246,7 @@ func (m *Mock) DescribeExperiment(_ context.Context, name string) (*driver.Exper
 	return cloneExperiment(e), nil
 }
 
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) ListExperiments(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Experiment], error) {
 	return listFrom(m.experiments, listSpec[driver.Experiment]{
 		clone:   func(t *driver.Experiment) driver.Experiment { return *cloneExperiment(t) },
@@ -226,6 +282,10 @@ func (m *Mock) DeleteExperiment(_ context.Context, name string) error {
 // --- Trial ---
 
 func (m *Mock) CreateTrial(_ context.Context, cfg driver.TrialSpec) (*driver.Trial, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if cfg.TrialName == "" {
 		return nil, errors.New(errors.InvalidArgument, "trialName is required")
 	}
@@ -273,12 +333,16 @@ func (m *Mock) DescribeTrial(_ context.Context, name string) (*driver.Trial, err
 	return cloneTrial(t), nil
 }
 
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) ListTrials(_ context.Context, experimentName string, opts driver.ListOptions) (driver.ListPage[driver.Trial], error) {
 	return listFrom(m.trials, listSpec[driver.Trial]{
 		name:    func(t *driver.Trial) string { return t.TrialName },
 		created: func(t *driver.Trial) string { return t.CreationTime },
-		extra: func(t *driver.Trial, _ map[string]string) bool {
+		extra: func(t *driver.Trial, f map[string]string) bool {
+			if tc := f["TrialComponentName"]; tc != "" && !slices.Contains(t.TrialComponentNames, tc) {
+				return false
+			}
+
 			return experimentName == "" || t.ExperimentName == experimentName
 		},
 		clone: func(t *driver.Trial) driver.Trial { return *cloneTrial(t) },

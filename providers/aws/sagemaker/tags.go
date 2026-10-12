@@ -42,6 +42,10 @@ func (m *Mock) dropTags(arn string) {
 
 // validateTags enforces the per-tag length limits.
 func validateTags(tags []driver.Tag) error {
+	if len(tags) > maxTagsPerResource {
+		return errors.Newf(errors.InvalidArgument, "tags must have at most %d items", maxTagsPerResource)
+	}
+
 	for _, t := range tags {
 		if t.Key == "" || len(t.Key) > maxTagKeyLen {
 			return errors.Newf(errors.InvalidArgument,

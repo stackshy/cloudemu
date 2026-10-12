@@ -111,9 +111,10 @@ type ImageVersionUpdate struct {
 
 // FileSystemConfig is the file system of an app image.
 type FileSystemConfig struct {
-	MountPath  string
-	DefaultUID int
-	DefaultGID int
+	MountPath string
+	// DefaultUID and DefaultGID are nil when omitted (the service then uses 1000 and 100).
+	DefaultUID *int
+	DefaultGID *int
 }
 
 // KernelSpec names a kernel an app image provides.

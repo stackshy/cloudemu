@@ -2,6 +2,7 @@ package sagemaker
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
@@ -133,6 +134,7 @@ func (h *Handler) describeModelPackage(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]any{
 		"ModelPackageArn":        p.PackageARN,
+		"ModelPackageName":       p.GroupName + "/" + strconv.Itoa(p.Version),
 		"ModelPackageGroupName":  p.GroupName,
 		"ModelPackageVersion":    p.Version,
 		"ModelPackageStatus":     p.Status,

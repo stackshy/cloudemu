@@ -118,7 +118,9 @@ func responseContentType(accept, contentType string) string {
 // "application/json").
 func firstConcreteMediaType(accept string) string {
 	for _, part := range strings.Split(accept, ",") {
-		mt := strings.TrimSpace(strings.SplitN(part, ";", 2)[0]) //nolint:mnd // SDK-shaped; see nongoals/standards
+		mediaRange, _, _ := strings.Cut(part, ";")
+		mt := strings.TrimSpace(mediaRange)
+
 		if mt != "" && !strings.Contains(mt, "*") {
 			return mt
 		}
@@ -128,13 +130,22 @@ func firstConcreteMediaType(accept string) string {
 }
 
 // InvokeEndpointAsync records an asynchronous invocation and returns the S3
-// location where the (echoed) result is considered to have been written.
-//
-
+// location under the endpoint configuration's async output path where the
+// (echoed) result is considered to have been written. An endpoint whose
+// configuration has no async output path cannot be invoked asynchronously.
 func (m *Mock) InvokeEndpointAsync(ctx context.Context, in driver.InvokeEndpointAsyncInput) (*driver.InvokeEndpointAsyncOutput, error) {
 	ep, err := m.servingEndpoint(in.EndpointName)
 	if err != nil {
 		return nil, err
+	}
+
+	if in.InputS3URI == "" {
+		return nil, errors.New(errors.InvalidArgument, "InputLocation is required")
+	}
+
+	ec, ok := m.endpointConfigs.Get(ep.ConfigName)
+	if !ok || ec.AsyncOutputS3URI == "" {
+		return nil, errors.Newf(errors.InvalidArgument, "endpoint %q has no asynchronous inference configuration", in.EndpointName)
 	}
 
 	variant, _ := pickVariant(ep, "")
@@ -143,7 +154,7 @@ func (m *Mock) InvokeEndpointAsync(ctx context.Context, in driver.InvokeEndpoint
 	id := idgen.GenerateID("")
 
 	return &driver.InvokeEndpointAsyncOutput{
-		OutputS3URI: "s3://sagemaker-async-results/" + in.EndpointName + "/" + id + ".out",
+		OutputS3URI: strings.TrimSuffix(ec.AsyncOutputS3URI, "/") + "/" + id + ".out",
 		InferenceID: id,
 	}, nil
 }

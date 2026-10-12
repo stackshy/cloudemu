@@ -15,7 +15,7 @@ func (s *SageMaker) DescribeDomain(ctx context.Context, domainID string) (*drive
 	return cast[*driver.Domain](s.do(ctx, "DescribeDomain", domainID, func() (any, error) { return s.drv.DescribeDomain(ctx, domainID) }))
 }
 
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (s *SageMaker) ListDomains(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.Domain], error) {
 	return cast[driver.ListPage[driver.Domain]](s.do(ctx, "ListDomains", opts, func() (any, error) {
 		return s.drv.ListDomains(ctx, opts)
@@ -38,7 +38,7 @@ func (s *SageMaker) DescribeUserProfile(ctx context.Context, domainID, name stri
 	}))
 }
 
-//nolint:gocritic,lll // SDK-shaped; see nongoals/standards
+//nolint:gocritic,lll // large value params mirror the driver interface; SDK-shaped literal
 func (s *SageMaker) ListUserProfiles(ctx context.Context, domainID string, opts driver.ListOptions) (driver.ListPage[driver.UserProfile], error) {
 	return cast[driver.ListPage[driver.UserProfile]](s.do(ctx, "ListUserProfiles", domainID, func() (any, error) {
 		return s.drv.ListUserProfiles(ctx, domainID, opts)
@@ -59,7 +59,7 @@ func (s *SageMaker) DescribeSpace(ctx context.Context, domainID, name string) (*
 	return cast[*driver.Space](s.do(ctx, "DescribeSpace", name, func() (any, error) { return s.drv.DescribeSpace(ctx, domainID, name) }))
 }
 
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (s *SageMaker) ListSpaces(ctx context.Context, domainID string, opts driver.ListOptions) (driver.ListPage[driver.Space], error) {
 	return cast[driver.ListPage[driver.Space]](s.do(ctx, "ListSpaces", domainID, func() (any, error) {
 		return s.drv.ListSpaces(ctx, domainID, opts)
@@ -82,7 +82,7 @@ func (s *SageMaker) DescribeApp(ctx context.Context, in driver.AppSpec) (*driver
 	return cast[*driver.App](s.do(ctx, "DescribeApp", in, func() (any, error) { return s.drv.DescribeApp(ctx, in) }))
 }
 
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (s *SageMaker) ListApps(ctx context.Context, domainID string, opts driver.ListOptions) (driver.ListPage[driver.App], error) {
 	return cast[driver.ListPage[driver.App]](s.do(ctx, "ListApps", domainID, func() (any, error) {
 		return s.drv.ListApps(ctx, domainID, opts)
@@ -109,7 +109,7 @@ func (s *SageMaker) DescribeNotebookInstance(ctx context.Context, name string) (
 	}))
 }
 
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (s *SageMaker) ListNotebookInstances(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.NotebookInstance], error) {
 	return cast[driver.ListPage[driver.NotebookInstance]](s.do(ctx, "ListNotebookInstances", opts, func() (any, error) {
 		return s.drv.ListNotebookInstances(ctx, opts)
@@ -128,7 +128,7 @@ func (s *SageMaker) StopNotebookInstance(ctx context.Context, name string) error
 	return err
 }
 
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (s *SageMaker) UpdateNotebookInstance(ctx context.Context, update driver.NotebookInstanceUpdate) error {
 	_, err := s.do(ctx, "UpdateNotebookInstance", update, func() (any, error) {
 		return nil, s.drv.UpdateNotebookInstance(ctx, update)
@@ -165,7 +165,7 @@ func (s *SageMaker) DescribeNotebookInstanceLifecycleConfig(ctx context.Context,
 	}))
 }
 
-//nolint:gocritic,lll // SDK-shaped; see nongoals/standards
+//nolint:gocritic,lll // large value params mirror the driver interface; SDK-shaped literal
 func (s *SageMaker) ListNotebookInstanceLifecycleConfigs(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.NotebookLifecycleConfig], error) {
 	return cast[driver.ListPage[driver.NotebookLifecycleConfig]](s.do(ctx, "ListNotebookInstanceLifecycleConfigs", opts, func() (any, error) {
 		return s.drv.ListNotebookInstanceLifecycleConfigs(ctx, opts)
@@ -192,7 +192,7 @@ func (s *SageMaker) DescribeCodeRepository(ctx context.Context, name string) (*d
 	}))
 }
 
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (s *SageMaker) ListCodeRepositories(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.CodeRepository], error) {
 	return cast[driver.ListPage[driver.CodeRepository]](s.do(ctx, "ListCodeRepositories", opts, func() (any, error) {
 		return s.drv.ListCodeRepositories(ctx, opts)

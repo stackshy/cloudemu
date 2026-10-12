@@ -119,6 +119,7 @@ type Mock struct {
 
 	// invMu guards invFailures, the seeded per-endpoint model failures.
 	invMu       sync.Mutex
+	pipeMu      sync.Mutex // serializes pipeline update/delete against execution start/stop
 	invFailures map[string]int
 	epTrans     map[string]*endpointTransition
 

@@ -2,7 +2,9 @@
 // API and the sagemaker-runtime restJson1 InvokeEndpoint data-plane API as a
 // server.Handler. Point the real aws-sdk-go-v2/service/sagemaker and
 // .../sagemakerruntime clients at a Server registered with this handler and
-// the jobs, model/endpoint inference stack and tagging surface work end-to-end
+// the jobs, model/endpoint inference stack, model registry, Studio, notebooks,
+// clusters, Feature Store, pipelines, experiments and lineage, Model Monitor,
+// projects, workforces, images, search and tagging surface work end-to-end
 // against an in-memory SageMaker driver.
 //
 // The control plane is dispatched by the X-Amz-Target header
@@ -57,6 +59,9 @@ func isFeatureStorePath(p string) bool {
 	return strings.HasPrefix(p, "/FeatureGroup/")
 }
 
+// maxControlBodyBytes bounds a control-plane request body (1 MiB).
+const maxControlBodyBytes = 1 << 20
+
 // ServeHTTP dispatches by X-Amz-Target for the control plane, falling back to
 // the runtime and feature-store REST paths.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -73,6 +78,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
+	r.Body = http.MaxBytesReader(w, r.Body, maxControlBodyBytes)
 
 	if handle, ok := h.ops[op]; ok {
 		if validationNotFoundOps[op] {

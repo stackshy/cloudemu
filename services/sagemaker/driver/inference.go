@@ -15,8 +15,9 @@ const (
 	EndpointInService      = "InService"
 	EndpointDeleting       = "Deleting"
 	EndpointFailed         = "Failed"
-	// EndpointUpdateRollbackFailed is reachable only through fault injection:
-	// a rolling deployment and its automatic rollback both failed.
+	// EndpointUpdateRollbackFailed is the SDK EndpointStatus for a rolling
+	// deployment whose automatic rollback also failed. The emulator never
+	// produces it; it is listed so List filters accept the whole SDK enum.
 	EndpointUpdateRollbackFailed = "UpdateRollbackFailed"
 )
 

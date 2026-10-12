@@ -30,7 +30,11 @@ type NotebookInstanceSpec struct {
 	KmsKeyID             string
 	DirectInternetAccess string // Enabled (default) or Disabled
 	PlatformIdentifier   string
-	Tags                 []Tag
+	// IMDSVersion is the minimum instance metadata service version ("1" or "2");
+	// IPAddressType is ipv4 (default) or dualstack.
+	IMDSVersion   string
+	IPAddressType string
+	Tags          []Tag
 }
 
 // Notebook limits and defaults.
@@ -60,6 +64,8 @@ type NotebookInstance struct {
 	KmsKeyID             string
 	DirectInternetAccess string
 	PlatformIdentifier   string
+	IMDSVersion          string
+	IPAddressType        string
 	Status               string
 	URL                  string
 	FailureReason        string
@@ -99,6 +105,8 @@ type NotebookInstanceUpdate struct {
 	AdditionalCodeRepos             []string
 	DisassociateAdditionalCodeRepos bool
 	RootAccess                      *string
+	IMDSVersion                     *string
+	IPAddressType                   *string
 }
 
 // NotebookLifecycleConfigUpdate describes an UpdateNotebookInstanceLifecycleConfig

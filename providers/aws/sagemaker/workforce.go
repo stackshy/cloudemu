@@ -98,7 +98,7 @@ func validateCIDRs(cidrs []string, ipType string) error {
 			return errors.Newf(errors.InvalidArgument, "cidr %q is not a valid CIDR block", c)
 		}
 
-		if ip.To4() == nil && ipType != "dualstack" { //nolint:goconst // SDK enum literals
+		if ip.To4() == nil && ipType != "dualstack" {
 			return errors.Newf(errors.InvalidArgument, "cidr %q is IPv6 and needs ipAddressType dualstack", c)
 		}
 	}
@@ -114,7 +114,7 @@ func validateIPType(t string) error {
 	return nil
 }
 
-//nolint:gocyclo // validation mirrors the service rules
+//nolint:gocyclo // validation branches mirror the service's rules
 func validateWorkforceSpec(spec *driver.WorkforceSpec) error {
 	if !workforceNamePattern.MatchString(spec.Name) {
 		return errors.Newf(errors.InvalidArgument, "workforceName %q must be 1-63 letters, digits and hyphens", spec.Name)
@@ -154,7 +154,7 @@ func validateWorkforceSpec(spec *driver.WorkforceSpec) error {
 // CreateWorkforce creates the account's private workforce. Only one workforce
 // exists per region and account.
 //
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) CreateWorkforce(_ context.Context, spec driver.WorkforceSpec) (*driver.Workforce, error) {
 	if err := validateWorkforceSpec(&spec); err != nil {
 		return nil, err
@@ -175,7 +175,7 @@ func (m *Mock) CreateWorkforce(_ context.Context, spec driver.WorkforceSpec) (*d
 		Status:          driver.WorkforceActive,
 		SubDomain:       spec.Name + ".labeling." + m.opts.Region + ".sagemaker.aws",
 		Cognito:         spec.Cognito,
-		OIDC:            spec.OIDC,
+		OIDC:            storedOIDC(spec.OIDC),
 		SourceCIDRs:     spec.SourceCIDRs,
 		IPAddressType:   orDefault(spec.IPAddressType, "ipv4"),
 		VPC:             spec.VPC,
@@ -189,7 +189,7 @@ func (m *Mock) CreateWorkforce(_ context.Context, spec driver.WorkforceSpec) (*d
 	}
 
 	m.setTags(arn, spec.Tags)
-	m.wfSettle.Begin(spec.Name, driver.WorkforceInitializing, m.opts.Clock.Now(), m.opts.SettleDuration(settle.DefaultProjectSettle))
+	m.wfSettle.Begin(spec.Name, driver.WorkforceInitializing, m.opts.Clock.Now(), m.opts.SettleDuration(settle.DefaultWorkforceSettle))
 
 	return m.observeWorkforce(w), nil
 }
@@ -203,7 +203,7 @@ func (m *Mock) DescribeWorkforce(_ context.Context, name string) (*driver.Workfo
 	return m.observeWorkforce(w), nil
 }
 
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) ListWorkforces(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Workforce], error) {
 	return listObserved(m.workforces, m.observeWorkforce, listSpec[driver.Workforce]{
 		name:    func(t *driver.Workforce) string { return t.Name },
@@ -215,7 +215,7 @@ func (m *Mock) ListWorkforces(_ context.Context, opts driver.ListOptions) (drive
 // address type or VPC configuration. The OIDC configuration cannot change while
 // workteams exist (ConflictException).
 //
-//nolint:gocyclo // validation mirrors the service rules
+//nolint:gocyclo // validation branches mirror the service's rules
 func (m *Mock) UpdateWorkforce(_ context.Context, up driver.WorkforceUpdate) (*driver.Workforce, error) {
 	m.wfMu.Lock()
 	defer m.wfMu.Unlock()
@@ -240,8 +240,7 @@ func (m *Mock) UpdateWorkforce(_ context.Context, up driver.WorkforceUpdate) (*d
 			return nil, driver.Conflict("The OIDC configuration cannot be updated while the workforce has workteams")
 		}
 
-		o := *up.OIDC
-		updated.OIDC = &o
+		updated.OIDC = storedOIDC(up.OIDC)
 	}
 
 	if up.IPAddressType != nil {
@@ -254,6 +253,8 @@ func (m *Mock) UpdateWorkforce(_ context.Context, up driver.WorkforceUpdate) (*d
 
 	if up.VPC != nil {
 		v := *up.VPC
+		v.SecurityGroupIDs = append([]string(nil), up.VPC.SecurityGroupIDs...)
+		v.Subnets = append([]string(nil), up.VPC.Subnets...)
 		updated.VPC = &v
 	}
 
@@ -269,16 +270,26 @@ func (m *Mock) UpdateWorkforce(_ context.Context, up driver.WorkforceUpdate) (*d
 		updated.SourceCIDRs = append([]string(nil), up.SourceCIDRs...)
 	}
 
+	if len(updated.SourceCIDRs) > 0 {
+		if updated.VPC != nil {
+			return nil, errors.New(errors.InvalidArgument, "sourceIpConfig is not supported for a workforce in a VPC")
+		}
+
+		if err := validateCIDRs(updated.SourceCIDRs, updated.IPAddressType); err != nil {
+			return nil, err
+		}
+	}
+
 	updated.Status = driver.WorkforceActive
 	updated.LastUpdatedDate = m.now()
 	m.workforces.Set(up.Name, updated)
-	m.wfSettle.Begin(up.Name, driver.WorkforceUpdating, m.opts.Clock.Now(), m.opts.SettleDuration(settle.DefaultProjectSettle))
+	m.wfSettle.Begin(up.Name, driver.WorkforceUpdating, m.opts.Clock.Now(), m.opts.SettleDuration(settle.DefaultWorkforceSettle))
 
 	return m.observeWorkforce(updated), nil
 }
 
 // DeleteWorkforce deletes the workforce. A workforce that still has workteams is
-// ResourceInUse.
+// refused (DeleteWorkforce models no typed error, so it is a ValidationException).
 func (m *Mock) DeleteWorkforce(_ context.Context, name string) error {
 	m.wfMu.Lock()
 	defer m.wfMu.Unlock()
@@ -290,7 +301,7 @@ func (m *Mock) DeleteWorkforce(_ context.Context, name string) error {
 
 	for _, t := range m.workteams.All() {
 		if t.WorkforceName == name {
-			return driver.InUse("Workforce %q still has workteams; delete them first", name)
+			return errors.Newf(errors.FailedPrecondition, "Workforce %q still has workteams; delete them first", name)
 		}
 	}
 
@@ -329,7 +340,7 @@ func cloneMembers(in []driver.MemberDefinition) []driver.MemberDefinition {
 // validateMembers checks a workteam's member definitions against the workforce
 // they belong to.
 //
-//nolint:gocyclo // validation mirrors the service rules
+//nolint:gocyclo // validation branches mirror the service's rules
 func validateMembers(members []driver.MemberDefinition, wf *driver.Workforce) error {
 	if len(members) == 0 || len(members) > driver.MaxWorkteamMembers {
 		return errors.Newf(errors.InvalidArgument, "memberDefinitions must contain between 1 and %d items", driver.MaxWorkteamMembers)
@@ -381,7 +392,7 @@ func validatePresign(v string) error {
 // CreateWorkteam creates a private workteam in a workforce. An account holds at
 // most 25 workteams per region.
 //
-//nolint:gocritic,gocyclo // validation mirrors the service rules
+//nolint:gocritic,gocyclo // large value params mirror the driver interface; validation branches mirror the service's rules
 func (m *Mock) CreateWorkteam(_ context.Context, spec driver.WorkteamSpec) (*driver.Workteam, error) {
 	if !workteamNamePattern.MatchString(spec.Name) {
 		return nil, errors.Newf(errors.InvalidArgument, "workteamName %q must be 1-63 letters, digits and hyphens", spec.Name)
@@ -413,6 +424,10 @@ func (m *Mock) CreateWorkteam(_ context.Context, spec driver.WorkteamSpec) (*dri
 
 	if err := validateMembers(spec.Members, wf); err != nil {
 		return nil, err
+	}
+
+	if m.workteams.Has(spec.Name) {
+		return nil, driver.InUse("Workteam %q already exists", spec.Name)
 	}
 
 	if m.workteams.Len() >= driver.MaxWorkteams {
@@ -454,7 +469,7 @@ func (m *Mock) DescribeWorkteam(_ context.Context, name string) (*driver.Worktea
 	return cloneWorkteam(t), nil
 }
 
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) ListWorkteams(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Workteam], error) {
 	return listFrom(m.workteams, listSpec[driver.Workteam]{
 		name:    func(t *driver.Workteam) string { return t.Name },
@@ -466,7 +481,7 @@ func (m *Mock) ListWorkteams(_ context.Context, opts driver.ListOptions) (driver
 // UpdateWorkteam updates a workteam's description, members, notification topic
 // or worker access configuration.
 //
-//nolint:gocyclo // validation mirrors the service rules
+//nolint:gocyclo // validation branches mirror the service's rules
 func (m *Mock) UpdateWorkteam(_ context.Context, up driver.WorkteamUpdate) (*driver.Workteam, error) {
 	m.wfMu.Lock()
 	defer m.wfMu.Unlock()
@@ -543,9 +558,7 @@ func (m *Mock) DeleteWorkteam(_ context.Context, name string) (bool, error) {
 
 // DescribeSubscribedWorkteam looks up a Marketplace vendor workteam. The
 // emulator has no Marketplace, so none is ever subscribed.
-//
-//nolint:revive // SDK-shaped; see nongoals/standards
-func (m *Mock) DescribeSubscribedWorkteam(_ context.Context, arn string) (*driver.SubscribedWorkteam, error) {
+func (*Mock) DescribeSubscribedWorkteam(_ context.Context, arn string) (*driver.SubscribedWorkteam, error) {
 	if err := validateARN("workteamArn", arn); err != nil {
 		return nil, err
 	}
@@ -555,8 +568,8 @@ func (m *Mock) DescribeSubscribedWorkteam(_ context.Context, arn string) (*drive
 
 // ListSubscribedWorkteams lists Marketplace vendor workteams: always empty.
 //
-//nolint:gocritic,revive // SDK-shaped; see nongoals/standards
-func (m *Mock) ListSubscribedWorkteams(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.SubscribedWorkteam], error) {
+//nolint:gocritic // opts matches the driver signature
+func (*Mock) ListSubscribedWorkteams(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.SubscribedWorkteam], error) {
 	if opts.MaxResults < 0 || opts.MaxResults > driver.MaxListResults {
 		return driver.ListPage[driver.SubscribedWorkteam]{}, errors.New(errors.InvalidArgument, "maxResults must be between 1 and 100")
 	}
@@ -566,7 +579,7 @@ func (m *Mock) ListSubscribedWorkteams(_ context.Context, opts driver.ListOption
 
 // ListLabelingJobsForWorkteam lists the labeling jobs assigned to a workteam.
 func (m *Mock) ListLabelingJobsForWorkteam(
-	_ context.Context, workteamARN string, opts driver.ListOptions, //nolint:gocritic // SDK-shaped; see nongoals/standards
+	_ context.Context, workteamARN string, opts driver.ListOptions, //nolint:gocritic // large value params mirror the driver interface
 ) (driver.ListPage[driver.LabelingJobForWorkteam], error) {
 	if !m.hasWorkteamARN(workteamARN) {
 		return driver.ListPage[driver.LabelingJobForWorkteam]{}, errors.Newf(errors.NotFound, "workteam %q not found", workteamARN)
@@ -609,4 +622,19 @@ func (m *Mock) hasWorkteamARN(arn string) bool {
 	}
 
 	return false
+}
+
+// storedOIDC copies an OIDC configuration for storage without its client
+// secret: the secret is validated on the way in but never read back (Describe
+// omits it), so the mock does not keep it, and it never reaches a snapshot.
+func storedOIDC(in *driver.OIDCConfig) *driver.OIDCConfig {
+	if in == nil {
+		return nil
+	}
+
+	out := *in
+	out.ClientSecret = ""
+	out.ExtraParams = copyStrMap(in.ExtraParams)
+
+	return &out
 }

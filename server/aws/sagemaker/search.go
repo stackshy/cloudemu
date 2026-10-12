@@ -54,7 +54,7 @@ func toSearchExpression(in *wireSearchExpression) *driver.SearchExpression {
 }
 
 // searchRecordKeys maps a search Resource to its SearchRecord member.
-var searchRecordKeys = map[string]string{ //nolint:gochecknoglobals // static table
+var searchRecordKeys = map[string]string{ //nolint:gochecknoglobals // SDK-shaped
 	driver.SearchExperimentTrial: "Trial", driver.SearchExperimentTrialComponent: "TrialComponent",
 }
 

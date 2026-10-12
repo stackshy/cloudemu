@@ -9,20 +9,24 @@ import (
 
 func (h *Handler) createNotebookInstance(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		NotebookInstanceName  string    `json:"NotebookInstanceName"`
-		InstanceType          string    `json:"InstanceType"`
-		RoleArn               string    `json:"RoleArn"`
-		VolumeSizeInGB        int       `json:"VolumeSizeInGB"`
-		LifecycleConfigName   string    `json:"LifecycleConfigName"`
-		DefaultCodeRepository string    `json:"DefaultCodeRepository"`
-		AdditionalCodeRepos   []string  `json:"AdditionalCodeRepositories"`
-		RootAccess            string    `json:"RootAccess"`
-		SubnetID              string    `json:"SubnetId"`
-		SecurityGroupIDs      []string  `json:"SecurityGroupIds"`
-		KmsKeyID              string    `json:"KmsKeyId"`
-		DirectInternetAccess  string    `json:"DirectInternetAccess"`
-		PlatformIdentifier    string    `json:"PlatformIdentifier"`
-		Tags                  []wireTag `json:"Tags"`
+		NotebookInstanceName  string   `json:"NotebookInstanceName"`
+		InstanceType          string   `json:"InstanceType"`
+		RoleArn               string   `json:"RoleArn"`
+		VolumeSizeInGB        int      `json:"VolumeSizeInGB"`
+		LifecycleConfigName   string   `json:"LifecycleConfigName"`
+		DefaultCodeRepository string   `json:"DefaultCodeRepository"`
+		AdditionalCodeRepos   []string `json:"AdditionalCodeRepositories"`
+		RootAccess            string   `json:"RootAccess"`
+		SubnetID              string   `json:"SubnetId"`
+		SecurityGroupIDs      []string `json:"SecurityGroupIds"`
+		KmsKeyID              string   `json:"KmsKeyId"`
+		DirectInternetAccess  string   `json:"DirectInternetAccess"`
+		IPAddressType         string   `json:"IpAddressType"`
+		IMDS                  *struct {
+			Version string `json:"MinimumInstanceMetadataServiceVersion"`
+		} `json:"InstanceMetadataServiceConfiguration"`
+		PlatformIdentifier string    `json:"PlatformIdentifier"`
+		Tags               []wireTag `json:"Tags"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -42,6 +46,8 @@ func (h *Handler) createNotebookInstance(w http.ResponseWriter, r *http.Request)
 		SecurityGroups:       req.SecurityGroupIDs,
 		KmsKeyID:             req.KmsKeyID,
 		DirectInternetAccess: req.DirectInternetAccess,
+		IMDSVersion:          imdsVersion(req.IMDS),
+		IPAddressType:        req.IPAddressType,
 		PlatformIdentifier:   req.PlatformIdentifier,
 		Tags:                 toTags(req.Tags),
 	})
@@ -78,9 +84,13 @@ func (h *Handler) describeNotebookInstance(w http.ResponseWriter, r *http.Reques
 		"VolumeSizeInGB":         nb.VolumeSizeInGB,
 		"RootAccess":             nb.RootAccess,
 		"DirectInternetAccess":   nb.DirectInternetAccess,
-		"PlatformIdentifier":     nb.PlatformIdentifier,
-		"CreationTime":           epoch(nb.CreationTime),
-		"LastModifiedTime":       epoch(nb.LastModifiedTime),
+		"IpAddressType":          nb.IPAddressType,
+		"InstanceMetadataServiceConfiguration": map[string]any{
+			"MinimumInstanceMetadataServiceVersion": nb.IMDSVersion,
+		},
+		"PlatformIdentifier": nb.PlatformIdentifier,
+		"CreationTime":       epoch(nb.CreationTime),
+		"LastModifiedTime":   epoch(nb.LastModifiedTime),
 	}
 
 	// Optional members are omitted when empty, not sent as "" or null.
@@ -121,6 +131,10 @@ func (h *Handler) updateNotebookInstance(w http.ResponseWriter, r *http.Request)
 		AdditionalCodeRepositories             []string `json:"AdditionalCodeRepositories"`
 		DisassociateAdditionalCodeRepositories bool     `json:"DisassociateAdditionalCodeRepositories"`
 		RootAccess                             *string  `json:"RootAccess"`
+		IPAddressType                          *string  `json:"IpAddressType"`
+		IMDS                                   *struct {
+			Version string `json:"MinimumInstanceMetadataServiceVersion"`
+		} `json:"InstanceMetadataServiceConfiguration"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -139,6 +153,8 @@ func (h *Handler) updateNotebookInstance(w http.ResponseWriter, r *http.Request)
 		AdditionalCodeRepos:             req.AdditionalCodeRepositories,
 		DisassociateAdditionalCodeRepos: req.DisassociateAdditionalCodeRepositories,
 		RootAccess:                      req.RootAccess,
+		IPAddressType:                   req.IPAddressType,
+		IMDSVersion:                     imdsVersionPtr(req.IMDS),
 	})
 	if err != nil {
 		writeDriverError(w, err)
@@ -365,4 +381,24 @@ func (h *Handler) listCodeRepositories(w http.ResponseWriter, r *http.Request) {
 			"CreationTime":       epoch(repo.CreationTime),
 		}
 	})
+}
+
+func imdsVersion(c *struct {
+	Version string `json:"MinimumInstanceMetadataServiceVersion"`
+}) string {
+	if c == nil {
+		return ""
+	}
+
+	return c.Version
+}
+
+func imdsVersionPtr(c *struct {
+	Version string `json:"MinimumInstanceMetadataServiceVersion"`
+}) *string {
+	if c == nil {
+		return nil
+	}
+
+	return &c.Version
 }

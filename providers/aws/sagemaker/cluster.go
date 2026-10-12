@@ -3,6 +3,7 @@ package sagemaker
 import (
 	"context"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -21,6 +22,10 @@ type clusterTransition struct {
 }
 
 func (m *Mock) CreateCluster(_ context.Context, cfg driver.ClusterSpec) (*driver.Cluster, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if cfg.ClusterName == "" {
 		return nil, errors.New(errors.InvalidArgument, "clusterName is required")
 	}
@@ -223,7 +228,7 @@ func (m *Mock) DescribeCluster(_ context.Context, name string) (*driver.Cluster,
 	return m.observeCluster(c), nil
 }
 
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) ListClusters(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Cluster], error) {
 	m.clMu.Lock()
 	stored := m.clusters.SortedValues()
@@ -279,7 +284,7 @@ func (m *Mock) UpdateCluster(_ context.Context, up driver.ClusterUpdate) (*drive
 // mergeInstanceGroups applies update/add/delete onto the existing groups and
 // validates the result.
 //
-//nolint:gocyclo // validation mirrors the service rules
+//nolint:gocyclo // validation branches mirror the service's rules
 func mergeInstanceGroups(existing []driver.ClusterInstanceGroup, up *driver.ClusterUpdate) ([]driver.ClusterInstanceGroup, error) {
 	if err := validateInstanceGroups(up.InstanceGroups); err != nil {
 		return nil, err
@@ -367,9 +372,35 @@ func (m *Mock) DeleteCluster(_ context.Context, name string) error {
 	return nil
 }
 
-// ListClusterNodes synthesizes one node per instance, deterministically, from
-// the cluster's instance-group configuration.
-func (m *Mock) ListClusterNodes(ctx context.Context, clusterName string) ([]driver.ClusterNode, error) {
+// ListClusterNodes lists the cluster's nodes with the SDK's filters (group name
+// contains, creation time), sort and paging.
+//
+//nolint:gocritic // opts matches the driver signature
+func (m *Mock) ListClusterNodes(
+	ctx context.Context, clusterName string, opts driver.ListOptions,
+) (driver.ListPage[driver.ClusterNode], error) {
+	nodes, err := m.clusterNodes(ctx, clusterName)
+	if err != nil {
+		return driver.ListPage[driver.ClusterNode]{}, err
+	}
+
+	items := make([]*driver.ClusterNode, 0, len(nodes))
+	for i := range nodes {
+		items = append(items, &nodes[i])
+	}
+
+	return listItems(items, listSpec[driver.ClusterNode]{
+		name:    func(t *driver.ClusterNode) string { return t.NodeID },
+		created: func(t *driver.ClusterNode) string { return t.LaunchTime },
+		extra: func(t *driver.ClusterNode, f map[string]string) bool {
+			return strings.Contains(t.GroupName, f["InstanceGroupNameContains"])
+		},
+	}, opts)
+}
+
+// clusterNodes synthesizes one node per instance, deterministically, from the
+// cluster's instance-group configuration.
+func (m *Mock) clusterNodes(ctx context.Context, clusterName string) ([]driver.ClusterNode, error) {
 	c, err := m.DescribeCluster(ctx, clusterName)
 	if err != nil {
 		return nil, err
@@ -400,7 +431,7 @@ func (m *Mock) ListClusterNodes(ctx context.Context, clusterName string) ([]driv
 }
 
 func (m *Mock) DescribeClusterNode(ctx context.Context, clusterName, nodeID string) (*driver.ClusterNode, error) {
-	nodes, err := m.ListClusterNodes(ctx, clusterName)
+	nodes, err := m.clusterNodes(ctx, clusterName)
 	if err != nil {
 		return nil, err
 	}

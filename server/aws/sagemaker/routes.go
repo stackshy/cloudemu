@@ -26,7 +26,7 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"CreateFeatureGroup":   h.createFeatureGroup,
 		"DescribeFeatureGroup": h.describeFeatureGroup,
 		"ListFeatureGroups":    h.listFeatureGroups,
-		// handler.go
+		// inference.go and endpoint.go
 		"CreateModel":                        h.createModel,
 		"DescribeModel":                      h.describeModel,
 		"ListModels":                         h.listModels,
@@ -53,7 +53,7 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"DescribeInferenceComponent": h.describeInferenceComponent,
 		"ListInferenceComponents":    h.listInferenceComponents,
 		"DeleteInferenceComponent":   h.deleteInferenceComponent,
-		// jobs_more.go
+		// jobs.go
 		"CreateProcessingJob":             h.createProcessingJob,
 		"DescribeProcessingJob":           h.describeProcessingJob,
 		"ListProcessingJobs":              h.listProcessingJobs,
@@ -219,7 +219,7 @@ func (h *Handler) routes() map[string]http.HandlerFunc {
 		"DeleteDomain":                          h.byName("DomainId", driver.Service.DeleteDomain),
 		"DeleteFeatureGroup":                    h.byName("FeatureGroupName", driver.Service.DeleteFeatureGroup),
 		"DeleteNotebookInstance":                h.byName("NotebookInstanceName", driver.Service.DeleteNotebookInstance),
-		"DeleteNotebookInstanceLifecycleConfig": h.byName("NotebookInstanceLifecycleConfigName", driver.Service.DeleteNotebookInstanceLifecycleConfig), //nolint:lll // SDK-shaped; see nongoals/standards
+		"DeleteNotebookInstanceLifecycleConfig": h.byName("NotebookInstanceLifecycleConfigName", driver.Service.DeleteNotebookInstanceLifecycleConfig), //nolint:lll // SDK-shaped literal
 		"StartNotebookInstance":                 h.byName("NotebookInstanceName", driver.Service.StartNotebookInstance),
 		"StopNotebookInstance":                  h.byName("NotebookInstanceName", driver.Service.StopNotebookInstance),
 	}

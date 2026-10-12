@@ -21,14 +21,14 @@ type sagemakerDiscovery struct{ m smMock }
 type smMock interface {
 	ListModels(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.Model], error)
 	ListEndpoints(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.Endpoint], error)
-	ListNotebookInstances(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.NotebookInstance], error)   //nolint:lll // SDK-shaped; see nongoals/standards
-	ListEndpointConfigs(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.EndpointConfig], error)       //nolint:lll // SDK-shaped; see nongoals/standards
-	ListModelPackageGroups(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.ModelPackageGroup], error) //nolint:lll // SDK-shaped; see nongoals/standards
+	ListNotebookInstances(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.NotebookInstance], error)   //nolint:lll // SDK-shaped literal
+	ListEndpointConfigs(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.EndpointConfig], error)       //nolint:lll // SDK-shaped literal
+	ListModelPackageGroups(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.ModelPackageGroup], error) //nolint:lll // SDK-shaped literal
 	ListPipelines(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.Pipeline], error)
 	ListFeatureGroups(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.FeatureGroup], error)
 	ListClusters(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.Cluster], error)
 	ListProjects(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.Project], error)
-	ListMonitoringSchedules(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.MonitoringSchedule], error) //nolint:lll // SDK-shaped; see nongoals/standards
+	ListMonitoringSchedules(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.MonitoringSchedule], error) //nolint:lll // SDK-shaped literal
 	ListImages(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.Image], error)
 	ListWorkteams(ctx context.Context, opts sagemakerdriver.ListOptions) (sagemakerdriver.ListPage[sagemakerdriver.Workteam], error)
 	ListTags(ctx context.Context, resourceARN string) ([]sagemakerdriver.Tag, error)

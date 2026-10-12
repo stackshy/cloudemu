@@ -51,7 +51,7 @@ func cloneProject(in *driver.Project) *driver.Project {
 // CreateProject creates a project. At most MaxProjects exist per account and
 // region; the cap and the create are one critical section.
 //
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) CreateProject(_ context.Context, spec driver.ProjectSpec) (*driver.Project, error) {
 	if err := validateProject(&spec); err != nil {
 		return nil, err
@@ -59,6 +59,10 @@ func (m *Mock) CreateProject(_ context.Context, spec driver.ProjectSpec) (*drive
 
 	m.projMu.Lock()
 	defer m.projMu.Unlock()
+
+	if m.projects.Has(spec.Name) {
+		return nil, errors.Newf(errors.AlreadyExists, "project %q already exists", spec.Name)
+	}
 
 	if m.projects.Len() >= driver.MaxProjects {
 		return nil, errors.Newf(errors.ResourceExhausted, "the account has reached the limit of %d projects", driver.MaxProjects)
@@ -95,10 +99,10 @@ func (m *Mock) CreateProject(_ context.Context, spec driver.ProjectSpec) (*drive
 	return m.observeProject(p), nil
 }
 
-//nolint:gocyclo // validation mirrors the service rules
+//nolint:gocyclo // validation branches mirror the service's rules
 func validateProject(spec *driver.ProjectSpec) error {
 	if spec.Name == "" || len(spec.Name) > maxProjectNameLen || !projectNamePattern.MatchString(spec.Name) {
-		return errors.Newf(errors.InvalidArgument, "projectName %q must be 1-%d characters of letters, digits and hyphens", spec.Name, maxProjectNameLen) //nolint:lll // SDK-shaped; see nongoals/standards
+		return errors.Newf(errors.InvalidArgument, "projectName %q must be 1-%d characters of letters, digits and hyphens", spec.Name, maxProjectNameLen) //nolint:lll // SDK-shaped literal
 	}
 
 	if len(spec.Description) > maxProjectDescLen {
@@ -139,7 +143,7 @@ func (m *Mock) DescribeProject(_ context.Context, name string) (*driver.Project,
 	return m.observeProject(p), nil
 }
 
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) ListProjects(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Project], error) {
 	return listObserved(m.projects, m.observeProject, listSpec[driver.Project]{
 		name:    func(t *driver.Project) string { return t.Name },
@@ -162,7 +166,7 @@ func projectInFlight(status string) bool {
 // parameters, tags and template providers. A project that is being created,
 // updated or deleted cannot be updated (ConflictException).
 //
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) UpdateProject(_ context.Context, up driver.ProjectUpdate) (*driver.Project, error) {
 	m.projMu.Lock()
 	defer m.projMu.Unlock()
@@ -184,6 +188,10 @@ func (m *Mock) UpdateProject(_ context.Context, up driver.ProjectUpdate) (*drive
 		return nil, err
 	}
 
+	if len(up.Tags) > maxTagsPerResource {
+		return nil, errors.Newf(errors.InvalidArgument, "tags must have at most %d items", maxTagsPerResource)
+	}
+
 	updated := cloneProject(p)
 	applyProjectUpdate(updated, &up)
 	updated.Status = driver.ProjectUpdateCompleted
@@ -199,6 +207,7 @@ func (m *Mock) UpdateProject(_ context.Context, up driver.ProjectUpdate) (*drive
 	return m.observeProject(updated), nil
 }
 
+//nolint:gocyclo // validation branches mirror the service's rules
 func applyProjectUpdate(p *driver.Project, up *driver.ProjectUpdate) {
 	if up.Description != nil {
 		p.Description = *up.Description
@@ -219,9 +228,18 @@ func applyProjectUpdate(p *driver.Project, up *driver.ProjectUpdate) {
 	}
 
 	if len(up.TemplateProvidersToUpdate) == 1 && len(p.TemplateProviders) == 1 {
+		// The update shape has no RoleARN, and omitted members keep their value.
+		cur := p.TemplateProviders[0]
 		t := up.TemplateProvidersToUpdate[0]
-		t.Parameters = append([]driver.ProvisioningParameter(nil), t.Parameters...)
-		p.TemplateProviders = []driver.TemplateProvider{t}
+
+		cur.TemplateName = orDefault(t.TemplateName, cur.TemplateName)
+		cur.TemplateURL = orDefault(t.TemplateURL, cur.TemplateURL)
+
+		if t.Parameters != nil {
+			cur.Parameters = append([]driver.ProvisioningParameter(nil), t.Parameters...)
+		}
+
+		p.TemplateProviders = []driver.TemplateProvider{cur}
 	}
 }
 

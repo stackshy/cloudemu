@@ -114,7 +114,7 @@ func validImageDesc(v string) error {
 
 // CreateImage creates a custom image; versions are added with CreateImageVersion.
 //
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) CreateImage(_ context.Context, spec driver.ImageSpec) (*driver.Image, error) {
 	if !imageNamePattern.MatchString(spec.Name) {
 		return nil, errors.Newf(errors.InvalidArgument, "imageName %q must be 1-63 letters, digits, '-' and '.', with no consecutive separators", spec.Name) //nolint:lll // SDK-shaped literal
@@ -165,7 +165,7 @@ func (m *Mock) DescribeImage(_ context.Context, name string) (*driver.Image, err
 	return cloneImage(img), nil
 }
 
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) ListImages(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Image], error) {
 	return listFrom(m.images, listSpec[driver.Image]{
 		name:     func(t *driver.Image) string { return t.ImageName },
@@ -178,7 +178,7 @@ func (m *Mock) ListImages(_ context.Context, opts driver.ListOptions) (driver.Li
 // UpdateImage updates an image's display name, description or role. A property
 // can be cleared with DeleteProperties but not set and cleared in one call.
 //
-//nolint:gocyclo // validation mirrors the service rules
+//nolint:gocyclo // validation branches mirror the service's rules
 func (m *Mock) UpdateImage(_ context.Context, up driver.ImageUpdate) (*driver.Image, error) {
 	if len(up.DeleteProperties) > 2 { //nolint:mnd // DisplayName and Description are the only deletable properties
 		return nil, errors.New(errors.InvalidArgument, "deleteProperties must have at most 2 items")
@@ -352,7 +352,7 @@ func (m *Mock) aliasHolder(image, alias string) int {
 // grow (a deleted highest version's number is never reused) and a repeated
 // ClientToken returns the version it created the first time.
 //
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) CreateImageVersion(_ context.Context, spec driver.ImageVersionSpec) (*driver.ImageVersion, error) {
 	if err := validateVersionSpec(&spec); err != nil {
 		return nil, err
@@ -467,7 +467,7 @@ func (m *Mock) DescribeImageVersion(_ context.Context, ref driver.ImageVersionRe
 	return cloneImageVersion(v), nil
 }
 
-//nolint:gocritic,lll // driver-signature params and SDK-shaped helpers
+//nolint:gocritic,lll // large value params mirror the driver interface; SDK-shaped literal
 func (m *Mock) ListImageVersions(_ context.Context, imageName string, opts driver.ListOptions) (driver.ListPage[driver.ImageVersion], error) {
 	if !m.images.Has(imageName) {
 		return driver.ListPage[driver.ImageVersion]{}, errors.Newf(errors.NotFound, "Image %q does not exist", imageName)
@@ -484,7 +484,7 @@ func (m *Mock) ListImageVersions(_ context.Context, imageName string, opts drive
 
 // UpdateImageVersion changes a version's aliases and attributes.
 //
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) UpdateImageVersion(_ context.Context, up driver.ImageVersionUpdate) (*driver.ImageVersion, error) {
 	for _, a := range up.AliasesToAdd {
 		if err := validAlias(a); err != nil {
@@ -513,6 +513,11 @@ func (m *Mock) UpdateImageVersion(_ context.Context, up driver.ImageVersionUpdat
 
 	updated := cloneImageVersion(cur)
 	applyVersionUpdate(updated, &up)
+
+	if len(updated.Aliases) > driver.MaxImageVersionAliases {
+		return nil, errors.Newf(errors.InvalidArgument, "aliases must have at most %d items", driver.MaxImageVersionAliases)
+	}
+
 	updated.LastModifiedTime = m.now()
 	m.imageVersions.Set(imageVersionKey(cur.ImageName, cur.Version), updated)
 
@@ -579,7 +584,7 @@ func (m *Mock) DeleteImageVersion(_ context.Context, ref driver.ImageVersionRef)
 
 // ListAliases lists the aliases of one version, or of every version of the image.
 //
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) ListAliases(_ context.Context, ref driver.ImageVersionRef, opts driver.ListOptions) (driver.ListPage[string], error) {
 	if !m.images.Has(ref.ImageName) {
 		return driver.ListPage[string]{}, errors.Newf(errors.NotFound, "Image %q does not exist", ref.ImageName)
@@ -632,6 +637,8 @@ func cloneBody(in *driver.AppImageConfigBody) *driver.AppImageConfigBody {
 
 	if in.FileSystemConfig != nil {
 		f := *in.FileSystemConfig
+		f.DefaultUID = copyIntPtr(f.DefaultUID)
+		f.DefaultGID = copyIntPtr(f.DefaultGID)
 		out.FileSystemConfig = &f
 	}
 
@@ -648,7 +655,7 @@ func cloneAppImageConfig(in *driver.AppImageConfig) *driver.AppImageConfig {
 // normalizeBody validates an app image config block and applies the file system
 // defaults SageMaker documents for an unset mount path, uid and gid.
 //
-//nolint:gocyclo // validation mirrors the service rules
+//nolint:gocyclo // validation branches mirror the service's rules
 func normalizeBody(b *driver.AppImageConfigBody, kernelGateway bool) (*driver.AppImageConfigBody, error) {
 	if b == nil {
 		return nil, nil //nolint:nilnil // an absent block is valid
@@ -668,10 +675,21 @@ func normalizeBody(b *driver.AppImageConfigBody, kernelGateway bool) (*driver.Ap
 		}
 	}
 
-	if f := out.FileSystemConfig; f != nil {
-		if f.DefaultUID < 0 || f.DefaultUID > maxPosixID || f.DefaultGID < 0 || f.DefaultGID > maxPosixID {
+	if f := out.FileSystemConfig; f != nil { //nolint:nestif // validation mirrors the service's rules
+		uid, gid := defaultUID, defaultGID
+		if f.DefaultUID != nil {
+			uid = *f.DefaultUID
+		}
+
+		if f.DefaultGID != nil {
+			gid = *f.DefaultGID
+		}
+
+		if uid < 0 || uid > maxPosixID || gid < 0 || gid > maxPosixID {
 			return nil, errors.Newf(errors.InvalidArgument, "defaultUid and defaultGid must be between 0 and %d", maxPosixID)
 		}
+
+		f.DefaultUID, f.DefaultGID = &uid, &gid
 
 		if f.MountPath == "" {
 			f.MountPath = defaultMountPath
@@ -711,7 +729,7 @@ func (m *Mock) CreateAppImageConfig(_ context.Context, spec driver.AppImageConfi
 		return nil, err
 	}
 
-	if err = validateTags(spec.Tags); err != nil { //nolint:gocritic // driver-signature params and SDK-shaped helpers
+	if err = validateTags(spec.Tags); err != nil { //nolint:gocritic // large value params mirror the driver interface
 		return nil, err
 	}
 
@@ -739,7 +757,7 @@ func (m *Mock) DescribeAppImageConfig(_ context.Context, name string) (*driver.A
 	return cloneAppImageConfig(c), nil
 }
 
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) ListAppImageConfigs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.AppImageConfig], error) {
 	return listFrom(m.appImageConfigs, listSpec[driver.AppImageConfig]{
 		name:     func(t *driver.AppImageConfig) string { return t.Name },
@@ -795,4 +813,14 @@ func (m *Mock) DeleteAppImageConfig(_ context.Context, name string) error {
 	m.dropTags(c.ARN)
 
 	return nil
+}
+
+func copyIntPtr(in *int) *int {
+	if in == nil {
+		return nil
+	}
+
+	v := *in
+
+	return &v
 }

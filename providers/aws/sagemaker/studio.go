@@ -2,6 +2,7 @@ package sagemaker
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -22,6 +23,10 @@ func appKey(in *driver.AppSpec) string {
 
 //nolint:gocritic // cfg matches the driver signature; copied on entry.
 func (m *Mock) CreateDomain(_ context.Context, cfg driver.DomainSpec) (*driver.Domain, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if cfg.DomainName == "" {
 		return nil, errors.New(errors.InvalidArgument, "domainName is required")
 	}
@@ -60,7 +65,7 @@ func (m *Mock) DescribeDomain(_ context.Context, domainID string) (*driver.Domai
 	return &out, nil
 }
 
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) ListDomains(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Domain], error) {
 	return listFrom(m.domains, listSpec[driver.Domain]{
 		name:    func(t *driver.Domain) string { return t.DomainName },
@@ -74,6 +79,10 @@ func (m *Mock) DeleteDomain(_ context.Context, domainID string) error {
 		return errors.Newf(errors.NotFound, "domain %q not found", domainID)
 	}
 
+	if m.domainHasChildren(domainID) {
+		return driver.InUse("Domain %q still has user profiles, spaces or apps", domainID)
+	}
+
 	m.domains.Delete(domainID)
 	m.dropTags(m.arn("domain/" + domainID))
 
@@ -83,6 +92,10 @@ func (m *Mock) DeleteDomain(_ context.Context, domainID string) error {
 // --- User profile ---
 
 func (m *Mock) CreateUserProfile(_ context.Context, cfg driver.UserProfileSpec) (*driver.UserProfile, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if cfg.DomainID == "" || cfg.UserProfileName == "" {
 		return nil, errors.New(errors.InvalidArgument, "domainId and userProfileName are required")
 	}
@@ -124,13 +137,15 @@ func (m *Mock) DescribeUserProfile(_ context.Context, domainID, name string) (*d
 	return &out, nil
 }
 
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) ListUserProfiles(_ context.Context, domainID string, opts driver.ListOptions) (driver.ListPage[driver.UserProfile], error) {
 	return listFrom(m.userProfiles, listSpec[driver.UserProfile]{
 		name:    func(t *driver.UserProfile) string { return t.UserProfileName },
 		status:  func(t *driver.UserProfile) string { return t.Status },
 		created: func(t *driver.UserProfile) string { return t.CreationTime },
-		extra:   func(t *driver.UserProfile, _ map[string]string) bool { return domainID == "" || t.DomainID == domainID },
+		extra: func(t *driver.UserProfile, f map[string]string) bool {
+			return (domainID == "" || t.DomainID == domainID) && strings.Contains(t.UserProfileName, f["UserProfileNameContains"])
+		},
 	}, opts)
 }
 
@@ -149,6 +164,10 @@ func (m *Mock) DeleteUserProfile(_ context.Context, domainID, name string) error
 // --- Space ---
 
 func (m *Mock) CreateSpace(_ context.Context, cfg driver.SpaceSpec) (*driver.Space, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if cfg.DomainID == "" || cfg.SpaceName == "" {
 		return nil, errors.New(errors.InvalidArgument, "domainId and spaceName are required")
 	}
@@ -189,13 +208,15 @@ func (m *Mock) DescribeSpace(_ context.Context, domainID, name string) (*driver.
 	return &out, nil
 }
 
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) ListSpaces(_ context.Context, domainID string, opts driver.ListOptions) (driver.ListPage[driver.Space], error) {
 	return listFrom(m.spaces, listSpec[driver.Space]{
 		name:    func(t *driver.Space) string { return t.SpaceName },
 		status:  func(t *driver.Space) string { return t.Status },
 		created: func(t *driver.Space) string { return t.CreationTime },
-		extra:   func(t *driver.Space, _ map[string]string) bool { return domainID == "" || t.DomainID == domainID },
+		extra: func(t *driver.Space, f map[string]string) bool {
+			return (domainID == "" || t.DomainID == domainID) && strings.Contains(t.SpaceName, f["SpaceNameContains"])
+		},
 	}, opts)
 }
 
@@ -257,13 +278,16 @@ func (m *Mock) DescribeApp(_ context.Context, in driver.AppSpec) (*driver.App, e
 	return &out, nil
 }
 
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) ListApps(_ context.Context, domainID string, opts driver.ListOptions) (driver.ListPage[driver.App], error) {
 	return listFrom(m.apps, listSpec[driver.App]{
 		name:    func(t *driver.App) string { return t.AppName },
 		status:  func(t *driver.App) string { return t.Status },
 		created: func(t *driver.App) string { return t.CreationTime },
-		extra:   func(t *driver.App, _ map[string]string) bool { return domainID == "" || t.DomainID == domainID },
+		extra: func(t *driver.App, f map[string]string) bool {
+			return (domainID == "" || t.DomainID == domainID) && equalsOrUnset(f["UserProfileNameEquals"], t.UserProfileName) &&
+				equalsOrUnset(f["SpaceNameEquals"], t.SpaceName)
+		},
 	}, opts)
 }
 
@@ -280,4 +304,33 @@ func (m *Mock) DeleteApp(_ context.Context, in driver.AppSpec) error {
 	m.dropTags(app.AppARN)
 
 	return nil
+}
+
+// domainHasChildren reports whether a user profile, space or app still lives in
+// the domain (SageMaker refuses to delete such a domain).
+func (m *Mock) domainHasChildren(domainID string) bool {
+	for _, u := range m.userProfiles.All() {
+		if u.DomainID == domainID {
+			return true
+		}
+	}
+
+	for _, sp := range m.spaces.All() {
+		if sp.DomainID == domainID {
+			return true
+		}
+	}
+
+	for _, a := range m.apps.All() {
+		if a.DomainID == domainID {
+			return true
+		}
+	}
+
+	return false
+}
+
+// equalsOrUnset reports whether a filter is unset or equal to the value.
+func equalsOrUnset(filter, value string) bool {
+	return filter == "" || filter == value
 }

@@ -379,7 +379,7 @@ func workforceToWire(f *driver.Workforce) map[string]any {
 	}
 
 	if v := f.VPC; v != nil {
-		out["WorkforceVpcConfig"] = wireWorkforceVPC{VpcID: v.VPCID, SecurityGroupIDs: v.SecurityGroupIDs, Subnets: v.Subnets, VpcEndpointID: v.VPCEndpointID} //nolint:lll // SDK-shaped; see nongoals/standards
+		out["WorkforceVpcConfig"] = wireWorkforceVPC{VpcID: v.VPCID, SecurityGroupIDs: v.SecurityGroupIDs, Subnets: v.Subnets, VpcEndpointID: v.VPCEndpointID} //nolint:lll // SDK-shaped literal
 	}
 
 	return out

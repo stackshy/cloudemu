@@ -31,7 +31,18 @@ func validateJobName(field, name string) error {
 	return nil
 }
 
-// cloneEcho copies an echo map (the raw JSON values are immutable).
+// validateInstanceCount rejects a negative or oversized job instance count (0
+// means the default of one).
+func validateInstanceCount(field string, n int) error {
+	if n < 0 || n > driver.MaxJobInstances {
+		return errors.Newf(errors.InvalidArgument,
+			"Value '%d' at '%s' failed to satisfy constraint: Member must have value between 1 and %d", n, field, driver.MaxJobInstances)
+	}
+
+	return nil
+}
+
+// cloneEcho copies an echo map and each raw JSON value.
 func cloneEcho(in map[string]json.RawMessage) map[string]json.RawMessage {
 	if in == nil {
 		return nil
@@ -39,7 +50,7 @@ func cloneEcho(in map[string]json.RawMessage) map[string]json.RawMessage {
 
 	out := make(map[string]json.RawMessage, len(in))
 	for k, v := range in {
-		out[k] = v
+		out[k] = append(json.RawMessage(nil), v...)
 	}
 
 	return out
@@ -61,7 +72,15 @@ func copyChannels(in []driver.Channel) []driver.Channel {
 //
 //nolint:gocritic // cfg matches the driver signature; copied on entry.
 func (m *Mock) CreateTrainingJob(ctx context.Context, cfg driver.TrainingJobConfig) (*driver.TrainingJob, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if err := validateJobName("trainingJobName", cfg.JobName); err != nil {
+		return nil, err
+	}
+
+	if err := validateInstanceCount("resourceConfig.instanceCount", cfg.Resources.InstanceCount); err != nil {
 		return nil, err
 	}
 
@@ -145,7 +164,7 @@ func (m *Mock) DescribeTrainingJob(_ context.Context, name string) (*driver.Trai
 // ListTrainingJobs lists training jobs; filters and sort apply to each job's
 // observed state.
 //
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) ListTrainingJobs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.TrainingJob], error) {
 	return listObserved(m.trainingJobs, m.observeTrainingJob, listSpec[driver.TrainingJob]{
 		name:     func(t *driver.TrainingJob) string { return t.JobName },
@@ -177,7 +196,15 @@ func (m *Mock) StopTrainingJob(ctx context.Context, name string) error {
 
 //nolint:gocritic,dupl // cfg matches the driver signature; the create-job shape recurs across job kinds.
 func (m *Mock) CreateProcessingJob(ctx context.Context, cfg driver.ProcessingJobConfig) (*driver.ProcessingJob, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if err := validateJobName("processingJobName", cfg.JobName); err != nil {
+		return nil, err
+	}
+
+	if err := validateInstanceCount("processingResources.clusterConfig.instanceCount", cfg.Resources.InstanceCount); err != nil {
 		return nil, err
 	}
 
@@ -228,7 +255,7 @@ func (m *Mock) observeProcessingJob(j *driver.ProcessingJob) *driver.ProcessingJ
 
 // endTime is the end of a terminal projection, or "" while it is running.
 //
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func endTime(p projection) string {
 	if p.terminal() {
 		return fmtTime(p.ended)
@@ -246,7 +273,7 @@ func (m *Mock) DescribeProcessingJob(_ context.Context, name string) (*driver.Pr
 	return m.observeProcessingJob(job), nil
 }
 
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) ListProcessingJobs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.ProcessingJob], error) {
 	return listObserved(m.processingJobs, m.observeProcessingJob, listSpec[driver.ProcessingJob]{
 		name:     func(t *driver.ProcessingJob) string { return t.JobName },
@@ -277,7 +304,15 @@ func (m *Mock) StopProcessingJob(ctx context.Context, name string) error {
 
 //nolint:gocritic // cfg matches the driver signature; copied on entry.
 func (m *Mock) CreateTransformJob(ctx context.Context, cfg driver.TransformJobConfig) (*driver.TransformJob, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if err := validateJobName("transformJobName", cfg.JobName); err != nil {
+		return nil, err
+	}
+
+	if err := validateInstanceCount("transformResources.instanceCount", cfg.InstanceCount); err != nil {
 		return nil, err
 	}
 
@@ -339,7 +374,7 @@ func (m *Mock) DescribeTransformJob(_ context.Context, name string) (*driver.Tra
 	return m.observeTransformJob(job), nil
 }
 
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) ListTransformJobs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.TransformJob], error) {
 	return listObserved(m.transformJobs, m.observeTransformJob, listSpec[driver.TransformJob]{
 		name:     func(t *driver.TransformJob) string { return t.JobName },
@@ -372,6 +407,10 @@ func (m *Mock) StopTransformJob(ctx context.Context, name string) error {
 func (m *Mock) CreateHyperParameterTuningJob(
 	ctx context.Context, cfg driver.HyperParameterTuningJobConfig,
 ) (*driver.HyperParameterTuningJob, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if err := validateJobName("hyperParameterTuningJobName", cfg.JobName); err != nil {
 		return nil, err
 	}
@@ -442,7 +481,7 @@ func (m *Mock) DescribeHyperParameterTuningJob(_ context.Context, name string) (
 	return m.observeTuningJob(job), nil
 }
 
-//nolint:dupl,gocritic,lll // per-resource shim mirrors the SDK shape
+//nolint:dupl,gocritic,lll // per-resource shim mirrors the SDK shape; large value params mirror the driver interface; SDK-shaped literal
 func (m *Mock) ListHyperParameterTuningJobs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.HyperParameterTuningJob], error) {
 	return listObserved(m.tuningJobs, m.observeTuningJob, listSpec[driver.HyperParameterTuningJob]{
 		name:     func(t *driver.HyperParameterTuningJob) string { return t.JobName },
@@ -473,6 +512,10 @@ func (m *Mock) StopHyperParameterTuningJob(ctx context.Context, name string) err
 
 //nolint:gocritic // cfg matches the driver signature; copied on entry.
 func (m *Mock) CreateAutoMLJobV2(_ context.Context, cfg driver.AutoMLJobConfig) (*driver.AutoMLJob, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if err := validateJobName("autoMLJobName", cfg.JobName); err != nil {
 		return nil, err
 	}
@@ -533,7 +576,7 @@ func (m *Mock) DescribeAutoMLJobV2(_ context.Context, name string) (*driver.Auto
 	return m.observeAutoMLJob(job), nil
 }
 
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) ListAutoMLJobs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.AutoMLJob], error) {
 	return listObserved(m.autoMLJobs, m.observeAutoMLJob, listSpec[driver.AutoMLJob]{
 		name:     func(t *driver.AutoMLJob) string { return t.JobName },
@@ -555,6 +598,10 @@ func (m *Mock) StopAutoMLJob(_ context.Context, name string) error {
 
 //nolint:gocritic,dupl // cfg matches the driver signature; the create-job shape recurs across job kinds.
 func (m *Mock) CreateLabelingJob(_ context.Context, cfg driver.LabelingJobConfig) (*driver.LabelingJob, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if err := validateJobName("labelingJobName", cfg.JobName); err != nil {
 		return nil, err
 	}
@@ -608,7 +655,7 @@ func (m *Mock) DescribeLabelingJob(_ context.Context, name string) (*driver.Labe
 	return m.observeLabelingJob(job), nil
 }
 
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) ListLabelingJobs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.LabelingJob], error) {
 	return listObserved(m.labelingJobs, m.observeLabelingJob, listSpec[driver.LabelingJob]{
 		name:     func(t *driver.LabelingJob) string { return t.JobName },
@@ -630,6 +677,10 @@ func (m *Mock) StopLabelingJob(_ context.Context, name string) error {
 
 //nolint:gocritic,dupl // cfg matches the driver signature; the create-job shape recurs across job kinds.
 func (m *Mock) CreateCompilationJob(_ context.Context, cfg driver.CompilationJobConfig) (*driver.CompilationJob, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if err := validateJobName("compilationJobName", cfg.JobName); err != nil {
 		return nil, err
 	}
@@ -683,7 +734,7 @@ func (m *Mock) DescribeCompilationJob(_ context.Context, name string) (*driver.C
 	return m.observeCompilationJob(job), nil
 }
 
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) ListCompilationJobs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.CompilationJob], error) {
 	return listObserved(m.compilationJobs, m.observeCompilationJob, listSpec[driver.CompilationJob]{
 		name:     func(t *driver.CompilationJob) string { return t.JobName },

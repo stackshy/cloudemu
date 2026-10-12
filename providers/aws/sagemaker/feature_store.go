@@ -2,6 +2,7 @@ package sagemaker
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
@@ -14,6 +15,10 @@ func recordKey(group, recordID string) string {
 
 //nolint:gocritic // cfg matches the driver signature; copied on entry.
 func (m *Mock) CreateFeatureGroup(_ context.Context, cfg driver.FeatureGroupSpec) (*driver.FeatureGroup, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if cfg.GroupName == "" {
 		return nil, errors.New(errors.InvalidArgument, "featureGroupName is required")
 	}
@@ -58,12 +63,16 @@ func (m *Mock) DescribeFeatureGroup(_ context.Context, name string) (*driver.Fea
 	return &out, nil
 }
 
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) ListFeatureGroups(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.FeatureGroup], error) {
 	return listFrom(m.featureGroups, listSpec[driver.FeatureGroup]{
 		name:    func(t *driver.FeatureGroup) string { return t.GroupName },
 		status:  func(t *driver.FeatureGroup) string { return t.Status },
 		created: func(t *driver.FeatureGroup) string { return t.CreationTime },
+		keys: map[string]func(*driver.FeatureGroup) string{
+			"FeatureGroupStatus": func(t *driver.FeatureGroup) string { return t.Status },
+			"OfflineStoreStatus": func(t *driver.FeatureGroup) string { return t.Status },
+		},
 	}, opts)
 }
 
@@ -74,6 +83,13 @@ func (m *Mock) DeleteFeatureGroup(_ context.Context, name string) error {
 
 	m.featureGroups.Delete(name)
 	m.dropTags(m.arn("feature-group/" + name))
+
+	prefix := recordKey(name, "")
+	for _, k := range m.featureRecords.Keys() {
+		if strings.HasPrefix(k, prefix) {
+			m.featureRecords.Delete(k)
+		}
+	}
 
 	return nil
 }

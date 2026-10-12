@@ -265,7 +265,7 @@ func (h *Handler) listAliases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page, err := h.svc.ListAliases(r.Context(), driver.ImageVersionRef{ImageName: req.ImageName, Version: req.Version, Alias: req.Alias}, req.options()) //nolint:lll // SDK-shaped; see nongoals/standards
+	page, err := h.svc.ListAliases(r.Context(), driver.ImageVersionRef{ImageName: req.ImageName, Version: req.Version, Alias: req.Alias}, req.options()) //nolint:lll // SDK-shaped literal
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -283,8 +283,8 @@ func (h *Handler) listAliases(w http.ResponseWriter, r *http.Request) {
 // --- App image configs ---
 
 type wireFileSystem struct {
-	DefaultGID int    `json:"DefaultGid"`
-	DefaultUID int    `json:"DefaultUid"`
+	DefaultGID *int   `json:"DefaultGid,omitempty"`
+	DefaultUID *int   `json:"DefaultUid,omitempty"`
 	MountPath  string `json:"MountPath"`
 }
 
@@ -316,7 +316,7 @@ func toAppBody(b *wireAppBody) *driver.AppImageConfigBody {
 	}
 
 	if c := b.ContainerConfig; c != nil {
-		out.ContainerConfig = &driver.ContainerConfig{Arguments: c.ContainerArguments, Entrypoint: c.ContainerEntrypoint, Env: c.ContainerEnvironment} //nolint:lll // SDK-shaped; see nongoals/standards
+		out.ContainerConfig = &driver.ContainerConfig{Arguments: c.ContainerArguments, Entrypoint: c.ContainerEntrypoint, Env: c.ContainerEnvironment} //nolint:lll // SDK-shaped literal
 	}
 
 	if f := b.FileSystemConfig; f != nil {
@@ -337,7 +337,7 @@ func fromAppBody(b *driver.AppImageConfigBody) *wireAppBody {
 	}
 
 	if c := b.ContainerConfig; c != nil {
-		out.ContainerConfig = &wireContainerConfig{ContainerArguments: c.Arguments, ContainerEntrypoint: c.Entrypoint, ContainerEnvironment: c.Env} //nolint:lll // SDK-shaped; see nongoals/standards
+		out.ContainerConfig = &wireContainerConfig{ContainerArguments: c.Arguments, ContainerEntrypoint: c.Entrypoint, ContainerEnvironment: c.Env} //nolint:lll // SDK-shaped literal
 	}
 
 	if f := b.FileSystemConfig; f != nil {

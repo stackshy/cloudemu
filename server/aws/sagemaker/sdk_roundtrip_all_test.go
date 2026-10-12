@@ -1295,7 +1295,7 @@ func TestSDKWorkforceAndWorkteam(t *testing.T) { // T103, T106, T108
 
 	_, err = c.DeleteWorkforce(ctx, &awssm.DeleteWorkforceInput{WorkforceName: aws.String("default")})
 	require.ErrorAs(t, err, &ae)
-	assert.Equal(t, "ResourceInUse", ae.ErrorCode(), "a workforce with workteams is ResourceInUse")
+	assert.Equal(t, "ValidationException", ae.ErrorCode(), "DeleteWorkforce models no typed error")
 
 	uw, err := c.UpdateWorkteam(ctx, &awssm.UpdateWorkteamInput{WorkteamName: aws.String("team-1"), Description: aws.String("new")})
 	require.NoError(t, err)
@@ -2177,4 +2177,320 @@ func TestSDKNotebook_DescribeDefaultsAndNetworkFields(t *testing.T) {
 	assert.Equal(t, []string{"sg-1"}, d.SecurityGroups)
 	assert.Equal(t, smtypes.DirectInternetAccessDisabled, d.DirectInternetAccess)
 	assert.Equal(t, "key-1", aws.ToString(d.KmsKeyId))
+}
+
+func TestSDKNotebook_MetadataServiceAndAddressType(t *testing.T) {
+	c := smClient(t)
+	ctx := context.Background()
+
+	_, err := c.CreateNotebookInstance(ctx, &awssm.CreateNotebookInstanceInput{
+		NotebookInstanceName: aws.String("nb-imds"), InstanceType: smtypes.InstanceTypeMlT3Medium, RoleArn: aws.String("arn:aws:iam::123456789012:role/r"),
+		InstanceMetadataServiceConfiguration: &smtypes.InstanceMetadataServiceConfiguration{MinimumInstanceMetadataServiceVersion: aws.String("2")},
+		IpAddressType:                        smtypes.IPAddressTypeDualstack,
+	})
+	require.NoError(t, err)
+
+	d, err := c.DescribeNotebookInstance(ctx, &awssm.DescribeNotebookInstanceInput{NotebookInstanceName: aws.String("nb-imds")})
+	require.NoError(t, err)
+	assert.Equal(t, "2", aws.ToString(d.InstanceMetadataServiceConfiguration.MinimumInstanceMetadataServiceVersion))
+	assert.Equal(t, smtypes.IPAddressTypeDualstack, d.IpAddressType)
+
+	_, err = c.CreateNotebookInstance(ctx, &awssm.CreateNotebookInstanceInput{
+		NotebookInstanceName: aws.String("nb-default"), InstanceType: smtypes.InstanceTypeMlT3Medium, RoleArn: aws.String("arn:aws:iam::123456789012:role/r"),
+	})
+	require.NoError(t, err)
+
+	d, err = c.DescribeNotebookInstance(ctx, &awssm.DescribeNotebookInstanceInput{NotebookInstanceName: aws.String("nb-default")})
+	require.NoError(t, err)
+	assert.Equal(t, "1", aws.ToString(d.InstanceMetadataServiceConfiguration.MinimumInstanceMetadataServiceVersion))
+	assert.Equal(t, smtypes.IPAddressTypeIpv4, d.IpAddressType)
+}
+
+const sweepRole = "arn:aws:iam::123456789012:role/svc"
+
+// TestSDK_LifecycleSweep drives the describe / list / update / stop / delete
+// operations of the older families through the real SDK, one subtest each.
+func TestSDK_LifecycleSweep(t *testing.T) {
+	c := smClient(t)
+	ctx := context.Background()
+
+	t.Run("model and endpoint config", func(t *testing.T) {
+		_, err := c.CreateModel(ctx, &awssm.CreateModelInput{ModelName: aws.String("sw-m"), ExecutionRoleArn: aws.String(sweepRole)})
+		require.NoError(t, err)
+		_, err = c.CreateEndpointConfig(ctx, &awssm.CreateEndpointConfigInput{
+			EndpointConfigName: aws.String("sw-c"),
+			ProductionVariants: []smtypes.ProductionVariant{{
+				VariantName: aws.String("v"), ModelName: aws.String("sw-m"), InstanceType: smtypes.ProductionVariantInstanceTypeMlM5Large,
+				InitialInstanceCount: aws.Int32(1), InitialVariantWeight: aws.Float32(0),
+			}},
+		})
+		require.NoError(t, err)
+
+		d, err := c.DescribeEndpointConfig(ctx, &awssm.DescribeEndpointConfigInput{EndpointConfigName: aws.String("sw-c")})
+		require.NoError(t, err)
+		require.NotNil(t, d.ProductionVariants[0].InitialVariantWeight, "an explicit weight of 0 is returned")
+		assert.InDelta(t, 0, *d.ProductionVariants[0].InitialVariantWeight, 0)
+
+		ms, err := c.ListModels(ctx, &awssm.ListModelsInput{NameContains: aws.String("sw-")})
+		require.NoError(t, err)
+		assert.Len(t, ms.Models, 1)
+		cs, err := c.ListEndpointConfigs(ctx, &awssm.ListEndpointConfigsInput{})
+		require.NoError(t, err)
+		assert.Len(t, cs.EndpointConfigs, 1)
+
+		_, err = c.DeleteEndpointConfig(ctx, &awssm.DeleteEndpointConfigInput{EndpointConfigName: aws.String("sw-c")})
+		require.NoError(t, err)
+		_, err = c.DeleteModel(ctx, &awssm.DeleteModelInput{ModelName: aws.String("sw-m")})
+		require.NoError(t, err)
+
+		_, err = c.CreateEndpointConfig(ctx, &awssm.CreateEndpointConfigInput{
+			EndpointConfigName: aws.String("sw-bad"),
+			ProductionVariants: []smtypes.ProductionVariant{{VariantName: aws.String("v"), ModelName: aws.String("ghost"), InitialInstanceCount: aws.Int32(1)}},
+		})
+
+		var ae smithy.APIError
+
+		require.ErrorAs(t, err, &ae)
+		assert.Equal(t, "ValidationException", ae.ErrorCode(), "a variant naming a missing model is rejected")
+	})
+
+	t.Run("notebook and lifecycle config", func(t *testing.T) {
+		_, err := c.CreateNotebookInstanceLifecycleConfig(ctx, &awssm.CreateNotebookInstanceLifecycleConfigInput{
+			NotebookInstanceLifecycleConfigName: aws.String("sw-lc"),
+			OnStart:                             []smtypes.NotebookInstanceLifecycleHook{{Content: aws.String("ZWNobw==")}},
+		})
+		require.NoError(t, err)
+		_, err = c.CreateNotebookInstance(ctx, &awssm.CreateNotebookInstanceInput{
+			NotebookInstanceName: aws.String("sw-nb"), InstanceType: smtypes.InstanceTypeMlT3Medium, RoleArn: aws.String(sweepRole),
+		})
+		require.NoError(t, err)
+
+		nbs, err := c.ListNotebookInstances(ctx, &awssm.ListNotebookInstancesInput{})
+		require.NoError(t, err)
+		assert.Len(t, nbs.NotebookInstances, 1)
+		lcs, err := c.ListNotebookInstanceLifecycleConfigs(ctx, &awssm.ListNotebookInstanceLifecycleConfigsInput{})
+		require.NoError(t, err)
+		assert.Len(t, lcs.NotebookInstanceLifecycleConfigs, 1)
+
+		_, err = c.DeleteNotebookInstance(ctx, &awssm.DeleteNotebookInstanceInput{NotebookInstanceName: aws.String("sw-nb")})
+
+		var ae smithy.APIError
+
+		require.ErrorAs(t, err, &ae)
+		assert.Equal(t, "ValidationException", ae.ErrorCode(), "an InService notebook cannot be deleted")
+
+		_, err = c.StopNotebookInstance(ctx, &awssm.StopNotebookInstanceInput{NotebookInstanceName: aws.String("sw-nb")})
+		require.NoError(t, err)
+		_, err = c.DeleteNotebookInstance(ctx, &awssm.DeleteNotebookInstanceInput{NotebookInstanceName: aws.String("sw-nb")})
+		require.NoError(t, err)
+		_, err = c.DeleteNotebookInstanceLifecycleConfig(ctx, &awssm.DeleteNotebookInstanceLifecycleConfigInput{
+			NotebookInstanceLifecycleConfigName: aws.String("sw-lc"),
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("pipeline experiment trial", func(t *testing.T) {
+		_, err := c.CreatePipeline(ctx, &awssm.CreatePipelineInput{
+			PipelineName: aws.String("sw-pl"), RoleArn: aws.String(sweepRole), PipelineDefinition: aws.String(`{"Version":"2020-12-01","Steps":[]}`),
+		})
+		require.NoError(t, err)
+		ex, err := c.StartPipelineExecution(ctx, &awssm.StartPipelineExecutionInput{PipelineName: aws.String("sw-pl")})
+		require.NoError(t, err)
+
+		_, err = c.DescribePipeline(ctx, &awssm.DescribePipelineInput{PipelineName: aws.String("sw-pl")})
+		require.NoError(t, err)
+		_, err = c.UpdatePipeline(ctx, &awssm.UpdatePipelineInput{PipelineName: aws.String("sw-pl"), PipelineDefinition: aws.String(`{"Version":"2020-12-01","Steps":[]}`)})
+		require.NoError(t, err)
+		pls, err := c.ListPipelines(ctx, &awssm.ListPipelinesInput{})
+		require.NoError(t, err)
+		assert.Len(t, pls.PipelineSummaries, 1)
+		exs, err := c.ListPipelineExecutions(ctx, &awssm.ListPipelineExecutionsInput{PipelineName: aws.String("sw-pl")})
+		require.NoError(t, err)
+		assert.Len(t, exs.PipelineExecutionSummaries, 1)
+		_, err = c.StopPipelineExecution(ctx, &awssm.StopPipelineExecutionInput{PipelineExecutionArn: ex.PipelineExecutionArn, ClientRequestToken: aws.String("tok-1")})
+		require.NoError(t, err)
+
+		_, err = c.CreateExperiment(ctx, &awssm.CreateExperimentInput{ExperimentName: aws.String("sw-exp")})
+		require.NoError(t, err)
+		_, err = c.CreateTrial(ctx, &awssm.CreateTrialInput{TrialName: aws.String("sw-tr"), ExperimentName: aws.String("sw-exp")})
+		require.NoError(t, err)
+		_, err = c.DescribeExperiment(ctx, &awssm.DescribeExperimentInput{ExperimentName: aws.String("sw-exp")})
+		require.NoError(t, err)
+		_, err = c.DescribeTrial(ctx, &awssm.DescribeTrialInput{TrialName: aws.String("sw-tr")})
+		require.NoError(t, err)
+		es, err := c.ListExperiments(ctx, &awssm.ListExperimentsInput{})
+		require.NoError(t, err)
+		assert.Len(t, es.ExperimentSummaries, 1)
+
+		_, err = c.DeletePipeline(ctx, &awssm.DeletePipelineInput{PipelineName: aws.String("sw-pl"), ClientRequestToken: aws.String("tok-2")})
+		require.NoError(t, err)
+		_, err = c.DescribePipelineExecution(ctx, &awssm.DescribePipelineExecutionInput{PipelineExecutionArn: ex.PipelineExecutionArn})
+		require.Error(t, err, "deleting a pipeline deletes its executions")
+	})
+
+	t.Run("model package", func(t *testing.T) {
+		_, err := c.CreateModelPackageGroup(ctx, &awssm.CreateModelPackageGroupInput{ModelPackageGroupName: aws.String("sw-grp")})
+		require.NoError(t, err)
+		p, err := c.CreateModelPackage(ctx, &awssm.CreateModelPackageInput{
+			ModelPackageGroupName: aws.String("sw-grp"),
+			InferenceSpecification: &smtypes.InferenceSpecification{
+				Containers:                 []smtypes.ModelPackageContainerDefinition{{Image: aws.String("img:latest")}},
+				SupportedContentTypes:      []string{"application/json"},
+				SupportedResponseMIMETypes: []string{"application/json"},
+			},
+		})
+		require.NoError(t, err)
+
+		d, err := c.DescribeModelPackage(ctx, &awssm.DescribeModelPackageInput{ModelPackageName: p.ModelPackageArn})
+		require.NoError(t, err)
+		assert.Equal(t, "sw-grp/1", aws.ToString(d.ModelPackageName), "a versioned package is named <group>/<version>")
+
+		_, err = c.UpdateModelPackage(ctx, &awssm.UpdateModelPackageInput{ModelPackageArn: p.ModelPackageArn, ModelApprovalStatus: smtypes.ModelApprovalStatusApproved})
+		require.NoError(t, err)
+		g, err := c.DescribeModelPackageGroup(ctx, &awssm.DescribeModelPackageGroupInput{ModelPackageGroupName: aws.String("sw-grp")})
+		require.NoError(t, err)
+		assert.Equal(t, "sw-grp", aws.ToString(g.ModelPackageGroupName))
+		gs, err := c.ListModelPackageGroups(ctx, &awssm.ListModelPackageGroupsInput{})
+		require.NoError(t, err)
+		assert.Len(t, gs.ModelPackageGroupSummaryList, 1)
+
+		_, err = c.DeleteModelPackage(ctx, &awssm.DeleteModelPackageInput{ModelPackageName: p.ModelPackageArn})
+		require.NoError(t, err)
+		_, err = c.DeleteModelPackageGroup(ctx, &awssm.DeleteModelPackageGroupInput{ModelPackageGroupName: aws.String("sw-grp")})
+		require.NoError(t, err)
+	})
+
+	t.Run("feature group and cluster", func(t *testing.T) {
+		_, err := c.CreateFeatureGroup(ctx, &awssm.CreateFeatureGroupInput{
+			FeatureGroupName: aws.String("sw-fg"), RecordIdentifierFeatureName: aws.String("id"), EventTimeFeatureName: aws.String("ts"),
+			FeatureDefinitions: []smtypes.FeatureDefinition{
+				{FeatureName: aws.String("id"), FeatureType: smtypes.FeatureTypeString}, {FeatureName: aws.String("ts"), FeatureType: smtypes.FeatureTypeString},
+			},
+		})
+		require.NoError(t, err)
+		fgs, err := c.ListFeatureGroups(ctx, &awssm.ListFeatureGroupsInput{SortBy: smtypes.FeatureGroupSortByFeatureGroupStatus})
+		require.NoError(t, err)
+		assert.Len(t, fgs.FeatureGroupSummaries, 1)
+		_, err = c.DeleteFeatureGroup(ctx, &awssm.DeleteFeatureGroupInput{FeatureGroupName: aws.String("sw-fg")})
+		require.NoError(t, err)
+
+		_, err = c.CreateCluster(ctx, &awssm.CreateClusterInput{
+			ClusterName: aws.String("sw-cl"),
+			InstanceGroups: []smtypes.ClusterInstanceGroupSpecification{{
+				InstanceGroupName: aws.String("g"), InstanceType: smtypes.ClusterInstanceTypeMlP4d24xlarge, InstanceCount: aws.Int32(2),
+				LifeCycleConfig: &smtypes.ClusterLifeCycleConfig{SourceS3Uri: aws.String("s3://b/"), OnCreate: aws.String("on.sh")},
+				ExecutionRole:   aws.String(sweepRole),
+			}},
+		})
+		require.NoError(t, err)
+		cs, err := c.ListClusters(ctx, &awssm.ListClustersInput{})
+		require.NoError(t, err)
+		assert.Len(t, cs.ClusterSummaries, 1)
+		ns, err := c.ListClusterNodes(ctx, &awssm.ListClusterNodesInput{ClusterName: aws.String("sw-cl"), MaxResults: aws.Int32(1)})
+		require.NoError(t, err)
+		require.Len(t, ns.ClusterNodeSummaries, 1)
+		assert.NotNil(t, ns.NextToken, "ListClusterNodes pages")
+		node, err := c.DescribeClusterNode(ctx, &awssm.DescribeClusterNodeInput{ClusterName: aws.String("sw-cl"), NodeId: ns.ClusterNodeSummaries[0].InstanceId})
+		require.NoError(t, err)
+		assert.NotNil(t, node.NodeDetails)
+		_, err = c.DeleteCluster(ctx, &awssm.DeleteClusterInput{ClusterName: aws.String("sw-cl")})
+		require.NoError(t, err)
+	})
+
+	t.Run("studio", func(t *testing.T) {
+		dom, err := c.CreateDomain(ctx, &awssm.CreateDomainInput{
+			DomainName: aws.String("sw-dom"), AuthMode: smtypes.AuthModeIam, VpcId: aws.String("vpc-1"), SubnetIds: []string{"subnet-1"},
+			DefaultUserSettings: &smtypes.UserSettings{ExecutionRole: aws.String(sweepRole)},
+		})
+		require.NoError(t, err)
+		id := aws.ToString(dom.DomainId)
+
+		_, err = c.CreateUserProfile(ctx, &awssm.CreateUserProfileInput{DomainId: aws.String(id), UserProfileName: aws.String("u1")})
+		require.NoError(t, err)
+		_, err = c.CreateSpace(ctx, &awssm.CreateSpaceInput{DomainId: aws.String(id), SpaceName: aws.String("s1")})
+		require.NoError(t, err)
+		_, err = c.CreateApp(ctx, &awssm.CreateAppInput{DomainId: aws.String(id), UserProfileName: aws.String("u1"), AppName: aws.String("default"), AppType: smtypes.AppTypeJupyterServer})
+		require.NoError(t, err)
+
+		_, err = c.DescribeDomain(ctx, &awssm.DescribeDomainInput{DomainId: aws.String(id)})
+		require.NoError(t, err)
+		_, err = c.DescribeUserProfile(ctx, &awssm.DescribeUserProfileInput{DomainId: aws.String(id), UserProfileName: aws.String("u1")})
+		require.NoError(t, err)
+		_, err = c.DescribeSpace(ctx, &awssm.DescribeSpaceInput{DomainId: aws.String(id), SpaceName: aws.String("s1")})
+		require.NoError(t, err)
+
+		apps, err := c.ListApps(ctx, &awssm.ListAppsInput{DomainIdEquals: aws.String(id), UserProfileNameEquals: aws.String("other")})
+		require.NoError(t, err)
+		assert.Empty(t, apps.Apps, "UserProfileNameEquals filters the apps")
+		apps, err = c.ListApps(ctx, &awssm.ListAppsInput{DomainIdEquals: aws.String(id), UserProfileNameEquals: aws.String("u1")})
+		require.NoError(t, err)
+		assert.Len(t, apps.Apps, 1)
+		ups, err := c.ListUserProfiles(ctx, &awssm.ListUserProfilesInput{UserProfileNameContains: aws.String("zzz")})
+		require.NoError(t, err)
+		assert.Empty(t, ups.UserProfiles, "UserProfileNameContains filters the profiles")
+		sps, err := c.ListSpaces(ctx, &awssm.ListSpacesInput{SpaceNameContains: aws.String("s")})
+		require.NoError(t, err)
+		assert.Len(t, sps.Spaces, 1)
+		ds, err := c.ListDomains(ctx, &awssm.ListDomainsInput{})
+		require.NoError(t, err)
+		assert.Len(t, ds.Domains, 1)
+
+		_, err = c.DeleteDomain(ctx, &awssm.DeleteDomainInput{DomainId: aws.String(id)})
+		require.Error(t, err, "a domain with children is in use")
+
+		_, err = c.DeleteApp(ctx, &awssm.DeleteAppInput{DomainId: aws.String(id), UserProfileName: aws.String("u1"), AppName: aws.String("default"), AppType: smtypes.AppTypeJupyterServer})
+		require.NoError(t, err)
+		_, err = c.DeleteSpace(ctx, &awssm.DeleteSpaceInput{DomainId: aws.String(id), SpaceName: aws.String("s1")})
+		require.NoError(t, err)
+		_, err = c.DeleteUserProfile(ctx, &awssm.DeleteUserProfileInput{DomainId: aws.String(id), UserProfileName: aws.String("u1")})
+		require.NoError(t, err)
+		_, err = c.DeleteDomain(ctx, &awssm.DeleteDomainInput{DomainId: aws.String(id)})
+		require.NoError(t, err)
+	})
+
+	t.Run("code repository", func(t *testing.T) {
+		_, err := c.CreateCodeRepository(ctx, &awssm.CreateCodeRepositoryInput{
+			CodeRepositoryName: aws.String("sw-repo"), GitConfig: &smtypes.GitConfig{RepositoryUrl: aws.String("https://github.com/o/r.git")},
+		})
+		require.NoError(t, err)
+		_, err = c.DescribeCodeRepository(ctx, &awssm.DescribeCodeRepositoryInput{CodeRepositoryName: aws.String("sw-repo")})
+		require.NoError(t, err)
+		rs, err := c.ListCodeRepositories(ctx, &awssm.ListCodeRepositoriesInput{})
+		require.NoError(t, err)
+		assert.Len(t, rs.CodeRepositorySummaryList, 1)
+		_, err = c.DeleteCodeRepository(ctx, &awssm.DeleteCodeRepositoryInput{CodeRepositoryName: aws.String("sw-repo")})
+		require.NoError(t, err)
+	})
+
+	t.Run("jobs stop and list", func(t *testing.T) {
+		_, err := c.CreateProcessingJob(ctx, &awssm.CreateProcessingJobInput{
+			ProcessingJobName: aws.String("sw-pj"), RoleArn: aws.String(sweepRole), AppSpecification: &smtypes.AppSpecification{ImageUri: aws.String("p:1")},
+			ProcessingResources: &smtypes.ProcessingResources{ClusterConfig: &smtypes.ProcessingClusterConfig{
+				InstanceCount: aws.Int32(1), InstanceType: smtypes.ProcessingInstanceTypeMlM5Large, VolumeSizeInGB: aws.Int32(5),
+			}},
+		})
+		require.NoError(t, err)
+		_, err = c.StopProcessingJob(ctx, &awssm.StopProcessingJobInput{ProcessingJobName: aws.String("sw-pj")})
+		require.NoError(t, err)
+
+		_, err = c.CreateProcessingJob(ctx, &awssm.CreateProcessingJobInput{
+			ProcessingJobName: aws.String("sw-big"), RoleArn: aws.String(sweepRole), AppSpecification: &smtypes.AppSpecification{ImageUri: aws.String("p:1")},
+			ProcessingResources: &smtypes.ProcessingResources{ClusterConfig: &smtypes.ProcessingClusterConfig{
+				InstanceCount: aws.Int32(3_000_000), InstanceType: smtypes.ProcessingInstanceTypeMlM5Large, VolumeSizeInGB: aws.Int32(5),
+			}},
+		})
+
+		var ae smithy.APIError
+
+		require.ErrorAs(t, err, &ae)
+		assert.Equal(t, "ValidationException", ae.ErrorCode(), "an oversized instance count is rejected")
+
+		ts, err := c.ListTransformJobs(ctx, &awssm.ListTransformJobsInput{})
+		require.NoError(t, err)
+		assert.Empty(t, ts.TransformJobSummaries)
+		_, err = c.StopTransformJob(ctx, &awssm.StopTransformJobInput{TransformJobName: aws.String("ghost")})
+		require.Error(t, err)
+		_, err = c.StopHyperParameterTuningJob(ctx, &awssm.StopHyperParameterTuningJobInput{HyperParameterTuningJobName: aws.String("ghost")})
+		require.Error(t, err)
+	})
 }

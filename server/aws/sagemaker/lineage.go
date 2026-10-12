@@ -49,7 +49,7 @@ func fromLineageSource(in driver.LineageSource) map[string]any {
 // lineageKinds maps an entity kind to its wire member names.
 type lineageNames struct{ arn, name, typ, summaries string }
 
-var lineageWire = map[string]lineageNames{ //nolint:gochecknoglobals // static table
+var lineageWire = map[string]lineageNames{ //nolint:gochecknoglobals // SDK-shaped
 	driver.LineageArtifact: {"ArtifactArn", "ArtifactName", "ArtifactType", "ArtifactSummaries"},
 	driver.LineageAction:   {"ActionArn", "ActionName", "ActionType", "ActionSummaries"},
 	driver.LineageContext:  {"ContextArn", "ContextName", "ContextType", "ContextSummaries"},
@@ -104,7 +104,7 @@ type wireEntityRequest struct {
 	Tags               []wireTag         `json:"Tags"`
 }
 
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (q wireEntityRequest) spec(kind string) driver.LineageEntitySpec {
 	spec := driver.LineageEntitySpec{
 		Source: toLineageSource(q.Source), Description: strPtrIf(q.Description), Status: strPtrIf(q.Status),
@@ -123,7 +123,7 @@ func (q wireEntityRequest) spec(kind string) driver.LineageEntitySpec {
 	return spec
 }
 
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (q wireEntityRequest) update(kind string) driver.LineageEntityUpdate {
 	up := driver.LineageEntityUpdate{
 		Description: q.Description, Status: q.Status, Properties: q.Properties, PropertiesToRemove: q.PropertiesToRemove,
@@ -146,7 +146,7 @@ func (q wireEntityRequest) update(kind string) driver.LineageEntityUpdate {
 	return up
 }
 
-//nolint:dupl,lll,revive // per-resource shim mirrors the SDK shape
+//nolint:dupl,lll,revive // per-resource shim mirrors the SDK shape; SDK-shaped literal; SDK-shaped
 func (h *Handler) createEntityOp(kind string, create func(*http.Request, driver.LineageEntitySpec) (*driver.LineageEntity, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req wireEntityRequest
@@ -165,8 +165,8 @@ func (h *Handler) createEntityOp(kind string, create func(*http.Request, driver.
 	}
 }
 
-//nolint:lll,revive,unparam // SDK-shaped; see nongoals/standards
-func (h *Handler) describeEntityOp(kind, keyField string, describe func(*http.Request, string) (*driver.LineageEntity, error)) http.HandlerFunc {
+//nolint:lll // SDK-shaped literal
+func (h *Handler) describeEntityOp(_, keyField string, describe func(*http.Request, string) (*driver.LineageEntity, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key, ok := decodeName1(w, r, keyField)
 		if !ok {
@@ -194,8 +194,8 @@ func (h *Handler) lineageGroupARN(r *http.Request) string {
 	return g.ARN
 }
 
-//nolint:lll,revive // SDK-shaped; see nongoals/standards
-func (h *Handler) listEntityOp(kind string, list func(*http.Request, driver.ListOptions) (driver.ListPage[driver.LineageEntity], error)) http.HandlerFunc {
+//nolint:lll // SDK-shaped literal
+func (*Handler) listEntityOp(kind string, list func(*http.Request, driver.ListOptions) (driver.ListPage[driver.LineageEntity], error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		req, ok := decodeListReq(w, r)
 		if !ok {
@@ -213,7 +213,7 @@ func (h *Handler) listEntityOp(kind string, list func(*http.Request, driver.List
 	}
 }
 
-//nolint:dupl,lll,revive // per-resource shim mirrors the SDK shape
+//nolint:dupl,lll,revive // per-resource shim mirrors the SDK shape; SDK-shaped literal; SDK-shaped
 func (h *Handler) updateEntityOp(kind string, update func(*http.Request, driver.LineageEntityUpdate) (*driver.LineageEntity, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req wireEntityRequest
@@ -340,9 +340,7 @@ func (h *Handler) deleteContext(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteByName serves Delete operations that take a name and answer with the ARN.
-//
-//nolint:revive // SDK-shaped; see nongoals/standards
-func (h *Handler) deleteByName(w http.ResponseWriter, r *http.Request, field, arnField string,
+func (*Handler) deleteByName(w http.ResponseWriter, r *http.Request, field, arnField string,
 	del func(context.Context, string) (string, error),
 ) {
 	name, ok := decodeName1(w, r, field)

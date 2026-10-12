@@ -33,7 +33,7 @@ type listSpec[T any] struct {
 // uses: stable key order, filters, sort, then offset paging (bad token ->
 // InvalidArgument, never page 1). MaxResults 0 means "all items".
 //
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func listFrom[T any](store *memstore.Store[*T], spec listSpec[T], opts driver.ListOptions) (driver.ListPage[T], error) {
 	return listItems(store.SortedValues(), spec, opts)
 }
@@ -41,7 +41,7 @@ func listFrom[T any](store *memstore.Store[*T], spec listSpec[T], opts driver.Li
 // listItems is listFrom over an already-materialized slice, for resources whose
 // observed state (status overlays) differs from what the store holds.
 //
-//nolint:gocritic,gocyclo // validation mirrors the service rules
+//nolint:gocritic,gocyclo // large value params mirror the driver interface; validation branches mirror the service's rules
 func listItems[T any](all []*T, spec listSpec[T], opts driver.ListOptions) (driver.ListPage[T], error) {
 	if opts.MaxResults < 0 || opts.MaxResults > driver.MaxListResults {
 		return driver.ListPage[T]{}, errors.Newf(errors.InvalidArgument,
@@ -101,7 +101,7 @@ func copyListItem[T any](spec listSpec[T], item *T) T {
 
 // resolveSort validates SortBy/SortOrder against what the spec supports.
 //
-//nolint:gocritic,gocyclo // validation mirrors the service rules
+//nolint:gocritic,gocyclo // large value params mirror the driver interface; validation branches mirror the service's rules
 func resolveSort[T any](spec listSpec[T], opts driver.ListOptions) (string, bool, error) {
 	sortBy := opts.SortBy
 	if sortBy == "" {
@@ -218,7 +218,7 @@ type listFilter struct {
 	modifiedAfter, modifiedBefore time.Time
 }
 
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func newListFilter(opts driver.ListOptions) (listFilter, error) {
 	f := listFilter{opts: opts}
 
@@ -246,7 +246,7 @@ func newListFilter(opts driver.ListOptions) (listFilter, error) {
 	return f, nil
 }
 
-//nolint:gocritic,gocyclo // validation mirrors the service rules
+//nolint:gocritic,gocyclo // large value params mirror the driver interface; validation branches mirror the service's rules
 func matchItem[T any](f listFilter, spec listSpec[T], item *T) bool {
 	if f.opts.NameContains != "" && (spec.name == nil || !strings.Contains(spec.name(item), f.opts.NameContains)) {
 		return false

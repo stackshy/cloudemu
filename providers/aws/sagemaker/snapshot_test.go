@@ -134,9 +134,9 @@ func TestSnapshot_ClusterOldInstanceCountJSON(t *testing.T) { // T51
 	assert.Equal(t, 7, c.InstanceGroups[0].TargetCount, "the old InstanceCount becomes the target")
 	assert.Equal(t, 7, c.InstanceGroups[0].CurrentCount)
 
-	nodes, err := m.ListClusterNodes(context.Background(), "hp")
+	page, err := m.ListClusterNodes(context.Background(), "hp", driver.ListOptions{})
 	require.NoError(t, err)
-	assert.Len(t, nodes, 7)
+	assert.Len(t, page.Items, 7)
 }
 
 // TestSnapshot_RoundTripAllNewFamilies populates one resource of every family

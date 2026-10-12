@@ -97,9 +97,9 @@ func validateStatus(s *driver.TrialComponentStatus) error {
 	}
 }
 
-func validateParams(params map[string]driver.TrialComponentParameter) error {
+func validateParams(params map[string]driver.TrialComponentParameter, limit errors.Code) error {
 	if len(params) > driver.MaxTrialComponentParameters {
-		return errors.Newf(errors.ResourceExhausted, "a trial component has at most %d parameters", driver.MaxTrialComponentParameters)
+		return errors.Newf(limit, "a trial component has at most %d parameters", driver.MaxTrialComponentParameters)
 	}
 
 	for k, p := range params {
@@ -115,9 +115,9 @@ func validateParams(params map[string]driver.TrialComponentParameter) error {
 	return nil
 }
 
-func validateArtifacts(kind string, arts map[string]driver.TrialComponentArtifact) error {
+func validateArtifacts(kind string, arts map[string]driver.TrialComponentArtifact, limit errors.Code) error {
 	if len(arts) > driver.MaxTrialComponentArtifacts {
-		return errors.Newf(errors.ResourceExhausted, "a trial component has at most %d %s artifacts", driver.MaxTrialComponentArtifacts, kind)
+		return errors.Newf(limit, "a trial component has at most %d %s artifacts", driver.MaxTrialComponentArtifacts, kind)
 	}
 
 	for k, a := range arts {
@@ -130,7 +130,7 @@ func validateArtifacts(kind string, arts map[string]driver.TrialComponentArtifac
 }
 
 func validateTrialComponentFields(name, display string, status *driver.TrialComponentStatus,
-	params map[string]driver.TrialComponentParameter, in, out map[string]driver.TrialComponentArtifact,
+	params map[string]driver.TrialComponentParameter, in, out map[string]driver.TrialComponentArtifact, limit errors.Code,
 ) error {
 	if name != "" && (len(name) > maxTrialComponentNameLen || !trialComponentNamePattern.MatchString(name)) {
 		return errors.Newf(errors.InvalidArgument, "trialComponentName %q must be 1-%d letters, digits and hyphens", name, maxTrialComponentNameLen) //nolint:lll // SDK-shaped literal
@@ -144,27 +144,27 @@ func validateTrialComponentFields(name, display string, status *driver.TrialComp
 		return err
 	}
 
-	if err := validateParams(params); err != nil {
+	if err := validateParams(params, limit); err != nil {
 		return err
 	}
 
-	if err := validateArtifacts("input", in); err != nil {
+	if err := validateArtifacts("input", in, limit); err != nil {
 		return err
 	}
 
-	return validateArtifacts("output", out)
+	return validateArtifacts("output", out, limit)
 }
 
 // CreateTrialComponent creates a trial component. Names are unique per account
 // and not case-sensitive.
 //
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) CreateTrialComponent(_ context.Context, spec driver.TrialComponentSpec) (*driver.TrialComponent, error) {
 	if spec.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "trialComponentName is required")
 	}
 
-	if err := validateTrialComponentFields(spec.Name, spec.DisplayName, spec.Status, spec.Parameters, spec.InputArtifacts, spec.OutputArtifacts); err != nil { //nolint:lll // SDK-shaped literal
+	if err := validateTrialComponentFields(spec.Name, spec.DisplayName, spec.Status, spec.Parameters, spec.InputArtifacts, spec.OutputArtifacts, errors.ResourceExhausted); err != nil { //nolint:lll // SDK-shaped literal
 		return nil, err
 	}
 
@@ -206,7 +206,7 @@ func (m *Mock) DescribeTrialComponent(_ context.Context, name string) (*driver.T
 // one experiment (through its trials) or one source. The three filters are
 // mutually exclusive.
 //
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) ListTrialComponents(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.TrialComponent], error) {
 	exp, trial, source := opts.Filters["ExperimentName"], opts.Filters["TrialName"], opts.Filters["SourceArn"]
 
@@ -292,14 +292,14 @@ func keysOf(names []string) map[string]bool {
 // component by key, removes the keys listed for removal and bumps
 // LastModifiedTime.
 //
-//nolint:gocritic // driver-signature params and SDK-shaped helpers
+//nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) UpdateTrialComponent(_ context.Context, up driver.TrialComponentUpdate) (*driver.TrialComponent, error) {
 	display := ""
 	if up.DisplayName != nil {
 		display = *up.DisplayName
 	}
 
-	if err := validateTrialComponentFields("", display, up.Status, up.Parameters, up.InputArtifacts, up.OutputArtifacts); err != nil {
+	if err := validateTrialComponentFields("", display, up.Status, up.Parameters, up.InputArtifacts, up.OutputArtifacts, errors.InvalidArgument); err != nil { //nolint:lll // SDK-shaped literal
 		return nil, err
 	}
 
@@ -320,7 +320,7 @@ func (m *Mock) UpdateTrialComponent(_ context.Context, up driver.TrialComponentU
 	updated := cloneTrialComponent(cur)
 	mergeTrialComponent(updated, &up)
 
-	if err := validateTrialComponentFields("", "", nil, updated.Parameters, updated.InputArtifacts, updated.OutputArtifacts); err != nil {
+	if err := validateTrialComponentFields("", "", nil, updated.Parameters, updated.InputArtifacts, updated.OutputArtifacts, errors.InvalidArgument); err != nil { //nolint:lll // SDK-shaped literal
 		return nil, err
 	}
 
@@ -330,6 +330,7 @@ func (m *Mock) UpdateTrialComponent(_ context.Context, up driver.TrialComponentU
 	return cloneTrialComponent(updated), nil
 }
 
+//nolint:gocyclo // validation branches mirror the service's rules
 func mergeTrialComponent(tc *driver.TrialComponent, up *driver.TrialComponentUpdate) {
 	if up.DisplayName != nil {
 		tc.DisplayName = *up.DisplayName
@@ -344,8 +345,21 @@ func mergeTrialComponent(tc *driver.TrialComponent, up *driver.TrialComponentUpd
 	}
 
 	if up.Status != nil {
-		s := *up.Status
-		tc.Status = &s
+		// Each member is merged: sending only a Message keeps the PrimaryStatus.
+		merged := driver.TrialComponentStatus{}
+		if tc.Status != nil {
+			merged = *tc.Status
+		}
+
+		if up.Status.PrimaryStatus != "" {
+			merged.PrimaryStatus = up.Status.PrimaryStatus
+		}
+
+		if up.Status.Message != "" {
+			merged.Message = up.Status.Message
+		}
+
+		tc.Status = &merged
 	}
 
 	if len(up.Parameters) > 0 || len(up.ParametersToRemove) > 0 {
@@ -412,7 +426,7 @@ func (m *Mock) DeleteTrialComponent(_ context.Context, name string) (*driver.Tri
 // AssociateTrialComponent links a component to a trial (both ends are kept in
 // step). Associating an already-associated pair succeeds.
 //
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) AssociateTrialComponent(_ context.Context, componentName, trialName string) (string, string, error) {
 	m.entityMu.Lock()
 	defer m.entityMu.Unlock()
@@ -435,7 +449,7 @@ func (m *Mock) AssociateTrialComponent(_ context.Context, componentName, trialNa
 
 // DisassociateTrialComponent removes the link; a missing link is a no-op.
 //
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) DisassociateTrialComponent(_ context.Context, componentName, trialName string) (string, string, error) {
 	m.entityMu.Lock()
 	defer m.entityMu.Unlock()
@@ -475,7 +489,7 @@ func addSorted(in []string, name string) []string {
 	out := append([]string(nil), in...)
 
 	for _, n := range out {
-		if strings.EqualFold(n, name) {
+		if n == name {
 			return out
 		}
 	}
@@ -490,7 +504,7 @@ func removeName(in []string, name string) []string {
 	out := make([]string, 0, len(in))
 
 	for _, n := range in {
-		if !strings.EqualFold(n, name) {
+		if n != name {
 			out = append(out, n)
 		}
 	}

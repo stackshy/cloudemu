@@ -267,8 +267,7 @@ func (h *Handler) disassociateTrialComponent(w http.ResponseWriter, r *http.Requ
 	h.linkTrialComponent(w, r, h.svc.DisassociateTrialComponent)
 }
 
-//nolint:revive // SDK-shaped; see nongoals/standards
-func (h *Handler) linkTrialComponent(w http.ResponseWriter, r *http.Request,
+func (*Handler) linkTrialComponent(w http.ResponseWriter, r *http.Request,
 	call func(ctx context.Context, component, trial string) (string, string, error),
 ) {
 	var req struct {

@@ -15,7 +15,7 @@ func (s *SageMaker) DescribeModel(ctx context.Context, name string) (*driver.Mod
 	return cast[*driver.Model](s.do(ctx, "DescribeModel", name, func() (any, error) { return s.drv.DescribeModel(ctx, name) }))
 }
 
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (s *SageMaker) ListModels(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.Model], error) {
 	return cast[driver.ListPage[driver.Model]](s.do(ctx, "ListModels", opts, func() (any, error) {
 		return s.drv.ListModels(ctx, opts)
@@ -41,7 +41,7 @@ func (s *SageMaker) DescribeEndpointConfig(ctx context.Context, name string) (*d
 	}))
 }
 
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (s *SageMaker) ListEndpointConfigs(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.EndpointConfig], error) {
 	return cast[driver.ListPage[driver.EndpointConfig]](s.do(ctx, "ListEndpointConfigs", opts, func() (any, error) {
 		return s.drv.ListEndpointConfigs(ctx, opts)
@@ -62,14 +62,14 @@ func (s *SageMaker) DescribeEndpoint(ctx context.Context, name string) (*driver.
 	return cast[*driver.Endpoint](s.do(ctx, "DescribeEndpoint", name, func() (any, error) { return s.drv.DescribeEndpoint(ctx, name) }))
 }
 
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (s *SageMaker) ListEndpoints(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.Endpoint], error) {
 	return cast[driver.ListPage[driver.Endpoint]](s.do(ctx, "ListEndpoints", opts, func() (any, error) {
 		return s.drv.ListEndpoints(ctx, opts)
 	}))
 }
 
-//nolint:gocritic // SDK-shaped; see nongoals/standards
+//nolint:gocritic // large value params mirror the driver interface
 func (s *SageMaker) UpdateEndpoint(ctx context.Context, spec driver.UpdateEndpointSpec) (*driver.Endpoint, error) {
 	return cast[*driver.Endpoint](s.do(ctx, "UpdateEndpoint", spec, func() (any, error) {
 		return s.drv.UpdateEndpoint(ctx, spec)
@@ -103,7 +103,7 @@ func (s *SageMaker) DescribeInferenceComponent(ctx context.Context, name string)
 	}))
 }
 
-//nolint:gocritic,lll // SDK-shaped; see nongoals/standards
+//nolint:gocritic,lll // large value params mirror the driver interface; SDK-shaped literal
 func (s *SageMaker) ListInferenceComponents(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.InferenceComponent], error) {
 	return cast[driver.ListPage[driver.InferenceComponent]](s.do(ctx, "ListInferenceComponents", opts, func() (any, error) {
 		return s.drv.ListInferenceComponents(ctx, opts)
@@ -128,7 +128,7 @@ func (s *SageMaker) DescribeModelPackageGroup(ctx context.Context, name string) 
 	}))
 }
 
-//nolint:gocritic,lll // SDK-shaped; see nongoals/standards
+//nolint:gocritic,lll // large value params mirror the driver interface; SDK-shaped literal
 func (s *SageMaker) ListModelPackageGroups(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.ModelPackageGroup], error) {
 	return cast[driver.ListPage[driver.ModelPackageGroup]](s.do(ctx, "ListModelPackageGroups", opts, func() (any, error) {
 		return s.drv.ListModelPackageGroups(ctx, opts)
@@ -152,7 +152,7 @@ func (s *SageMaker) DescribeModelPackage(ctx context.Context, arn string) (*driv
 	}))
 }
 
-//nolint:gocritic,lll // SDK-shaped; see nongoals/standards
+//nolint:gocritic,lll // large value params mirror the driver interface; SDK-shaped literal
 func (s *SageMaker) ListModelPackages(ctx context.Context, groupName string, opts driver.ListOptions) (driver.ListPage[driver.ModelPackage], error) {
 	return cast[driver.ListPage[driver.ModelPackage]](s.do(ctx, "ListModelPackages", groupName, func() (any, error) {
 		return s.drv.ListModelPackages(ctx, groupName, opts)

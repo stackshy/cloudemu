@@ -31,6 +31,10 @@ const (
 	// MaxClusterInstances bounds the total instances of one cluster so a node
 	// listing never allocates without limit.
 	MaxClusterInstances = 10000
+
+	// MaxJobInstances bounds the instance count of one training, processing or
+	// transform job.
+	MaxJobInstances = 500
 	// DefaultThreadsPerCore is used when a group does not set ThreadsPerCore.
 	DefaultThreadsPerCore = 1
 )
@@ -130,6 +134,6 @@ type clusterAPI interface {
 	ListClusters(ctx context.Context, opts ListOptions) (ListPage[Cluster], error)
 	UpdateCluster(ctx context.Context, update ClusterUpdate) (*Cluster, error)
 	DeleteCluster(ctx context.Context, name string) error
-	ListClusterNodes(ctx context.Context, clusterName string) ([]ClusterNode, error)
+	ListClusterNodes(ctx context.Context, clusterName string, opts ListOptions) (ListPage[ClusterNode], error)
 	DescribeClusterNode(ctx context.Context, clusterName, nodeID string) (*ClusterNode, error)
 }

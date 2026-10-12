@@ -65,6 +65,8 @@ const (
 	DefaultJobStageSettle       = 1 * time.Second // SageMaker job: time spent in each stage (Starting, Training, ...)
 	DefaultJobStopSettle        = 1 * time.Second // SageMaker job Stopping->Stopped
 	DefaultProjectSettle        = 3 * time.Second // SageMaker project CreateInProgress->CreateCompleted
+	DefaultScheduleSettle       = 3 * time.Second // SageMaker monitoring schedule Pending->Scheduled
+	DefaultWorkforceSettle      = 3 * time.Second // SageMaker workforce Initializing/Updating->Active
 
 	// S3 RestoreObject ongoing-request="true"->"false", by retrieval tier.
 	DefaultRestoreExpeditedSettle = 1 * time.Second

@@ -154,7 +154,7 @@ type wireVariant struct {
 	ModelName            string          `json:"ModelName,omitempty"`
 	InstanceType         string          `json:"InstanceType,omitempty"`
 	InitialInstanceCount int             `json:"InitialInstanceCount,omitempty"`
-	InitialVariantWeight float64         `json:"InitialVariantWeight,omitempty"`
+	InitialVariantWeight *float64        `json:"InitialVariantWeight,omitempty"`
 	ServerlessConfig     *wireServerless `json:"ServerlessConfig,omitempty"`
 }
 
@@ -172,6 +172,11 @@ func (h *Handler) createEndpointConfig(w http.ResponseWriter, r *http.Request) {
 			// weight can default to 1 (an explicit 0 is a valid weight).
 			InitialVariantWeight *float64 `json:"InitialVariantWeight"`
 		} `json:"ProductionVariants"`
+		AsyncInferenceConfig *struct {
+			OutputConfig struct {
+				S3OutputPath string `json:"S3OutputPath"`
+			} `json:"OutputConfig"`
+		} `json:"AsyncInferenceConfig"`
 		Tags []wireTag `json:"Tags"`
 	}
 
@@ -180,6 +185,10 @@ func (h *Handler) createEndpointConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	spec := driver.EndpointConfigSpec{ConfigName: req.EndpointConfigName, Tags: toTags(req.Tags)}
+	if req.AsyncInferenceConfig != nil {
+		spec.AsyncOutputS3URI = req.AsyncInferenceConfig.OutputConfig.S3OutputPath
+	}
+
 	for _, v := range req.ProductionVariants {
 		spec.ProductionVariants = append(spec.ProductionVariants, driver.ProductionVariant{
 			VariantName:          v.VariantName,
@@ -222,12 +231,17 @@ func (h *Handler) describeEndpointConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{
+	resp := map[string]any{
 		"EndpointConfigName": ec.ConfigName,
 		"EndpointConfigArn":  ec.ConfigARN,
-		"ProductionVariants": variantsToWire(ec.ProductionVariants),
+		"ProductionVariants": variantsToWire(ec.ProductionVariants, ec.Serverless),
 		"CreationTime":       epoch(ec.CreationTime),
-	})
+	}
+	if ec.AsyncOutputS3URI != "" {
+		resp["AsyncInferenceConfig"] = map[string]any{"OutputConfig": map[string]any{"S3OutputPath": ec.AsyncOutputS3URI}}
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 //nolint:dupl // per-resource shim mirrors the SDK shape
@@ -281,16 +295,25 @@ func weightOrDefault(w *float64) float64 {
 	return *w
 }
 
-func variantsToWire(in []driver.ProductionVariant) []wireVariant {
+func variantsToWire(in []driver.ProductionVariant, serverless *driver.ServerlessConfig) []wireVariant {
 	out := make([]wireVariant, 0, len(in))
-	for _, v := range in {
-		out = append(out, wireVariant{
+
+	for i := range in {
+		v := &in[i]
+		weight := v.InitialVariantWeight // an explicit 0 is a valid weight, so it is always emitted
+		wv := wireVariant{
 			VariantName:          v.VariantName,
 			ModelName:            v.ModelName,
 			InstanceType:         v.InstanceType,
 			InitialInstanceCount: v.InitialInstanceCount,
-			InitialVariantWeight: v.InitialVariantWeight,
-		})
+			InitialVariantWeight: &weight,
+		}
+
+		if serverless != nil {
+			wv.ServerlessConfig = &wireServerless{MemorySizeInMB: serverless.MemorySizeInMB, MaxConcurrency: serverless.MaxConcurrency}
+		}
+
+		out = append(out, wv)
 	}
 
 	return out
