@@ -288,7 +288,10 @@ handler.
 ## 2. Compute
 
 **Driver interface:** `services/compute/driver/driver.go`
-**AWS:** EC2 | **Azure:** Virtual Machines | **GCP:** GCE
+**AWS:** EC2 | **Azure:** Virtual Machines | **GCP:** GCE | **OCI:** Compute + Block
+Volume (instance pools map to auto-scaling groups; instance configurations to
+launch templates; volume backups to snapshots; preemptible instances to spot —
+OCI has no key pair resource, so those calls report the gap)
 
 ### Instance Operations
 
@@ -401,6 +404,99 @@ client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{IncludeManagedResource
 | `DescribeKeyPairs` | `(ctx, names) ([]KeyPairInfo, error)` |
 
 **Total: 35 operations**
+
+### OCI Compute and Block Volume
+
+**Optional capability:** `server/oci/compute.Extras` — OCI scopes resources to a
+compartment, publishes a shape catalog, and models boot volumes, volume and VNIC
+attachments, volume groups and the OCID-addressed instance configurations and
+pools, none of which the portable interface carries. Its value types live in
+`providers/oci/compute`.
+**Provider:** `providers/oci/compute` | **Wire:** `server/oci/compute`
+
+Networking comes from VCN: launching an instance creates a VNIC in a subnet
+through `providers/oci/vcn`, and the instance is governed by both its VNIC's
+network security groups and its subnet's security lists. The lists are read as
+the subnet holds them when the instance is described, so a list added to the
+subnet after launch governs the instance too.
+
+A launch needs a shape from the catalog and an image (or a boot volume) that
+exists, on the wire and through the typed API alike; either one missing is a
+`404`. The wire launch also requires `availabilityDomain` and
+`createVnicDetails.subnetId`, and takes `shapeConfig` only on a flexible shape
+and within its OCPU and memory bounds (at most 64 GB per OCPU on E4.Flex and
+E5.Flex). An image launch sizes its boot volume from
+`sourceDetails.bootVolumeSizeInGBs` (default 50). A launch from a boot volume
+attaches that volume, reports the image it was built from as `imageId`, and is a
+`409` while the volume backs another instance. A volume clone or restore without
+`sizeInGBs` takes its source's size. A size below the source's, or outside
+OCI's 50–32768 GB, is refused, on create and on update; `vpusPerGB` must be 0,
+10, 20, or 30 to 120 in steps of 10. `UpdateInstance` leaves the fields a request
+omits untouched, may change the shape of a running instance (OCI reboots it into
+the new one), and checks `shapeConfig` against the shape the instance ends up
+with. Every update that carries `freeformTags` replaces the set. `ListInstances`
+filters on `displayName` and sorts by `sortBy` (`TIMECREATED`, the default,
+descending; or `DISPLAYNAME`, ascending) and `sortOrder`.
+
+A volume attaches only within its availability domain. It attaches to several
+instances only when every attachment is `isShareable`, and stays in use until the
+last one is detached. An `iscsi` attachment reports its target's `ipv4`, `iqn`
+and `port`. A boot volume is attached or detached only on a stopped instance,
+and backs one instance at a time. `LaunchInstanceConfiguration` launches into
+`launchDetails.compartmentId` from the request, else the one saved in the
+configuration, else the configuration's own compartment. Boot volume backups
+carry `bootvolumebackup` OCIDs.
+
+Each launch and lifecycle action publishes the instance's `oci_computeagent`
+metrics (`CpuUtilization`, `NetworksBytesIn`, `NetworksBytesOut`,
+`DiskBytesRead`, `DiskBytesWritten`, dimensioned by `resourceId`) into OCI
+Monitoring, in the instance's compartment.
+
+| Operation | Route |
+|-----------|-------|
+| `LaunchInstance` | `POST /20160918/instances` |
+| `ListInstances` | `GET /20160918/instances` |
+| `GetInstance` | `GET /20160918/instances/{instanceId}` |
+| `UpdateInstance` | `PUT /20160918/instances/{instanceId}` |
+| `InstanceAction` | `POST /20160918/instances/{instanceId}?action=START\|STOP\|SOFTSTOP\|RESET\|SOFTRESET` |
+| `TerminateInstance` | `DELETE /20160918/instances/{instanceId}` |
+| `ListShapes` | `GET /20160918/shapes` |
+| `CreateImage` / `ListImages` | `POST` / `GET /20160918/images` |
+| `GetImage` / `UpdateImage` / `DeleteImage` | `GET` / `PUT` / `DELETE /20160918/images/{imageId}` |
+| `CreateVolume` / `ListVolumes` | `POST` / `GET /20160918/volumes` |
+| `GetVolume` / `UpdateVolume` / `DeleteVolume` | `GET` / `PUT` / `DELETE /20160918/volumes/{volumeId}` |
+| `AttachVolume` / `ListVolumeAttachments` | `POST` / `GET /20160918/volumeAttachments` |
+| `GetVolumeAttachment` / `DetachVolume` | `GET` / `DELETE /20160918/volumeAttachments/{id}` |
+| `CreateBootVolume` / `ListBootVolumes` | `POST` / `GET /20160918/bootVolumes` |
+| `GetBootVolume` / `UpdateBootVolume` / `DeleteBootVolume` | `GET` / `PUT` / `DELETE /20160918/bootVolumes/{id}` |
+| `AttachBootVolume` / `ListBootVolumeAttachments` | `POST` / `GET /20160918/bootVolumeAttachments` |
+| `GetBootVolumeAttachment` / `DetachBootVolume` | `GET` / `DELETE /20160918/bootVolumeAttachments/{id}` |
+| `CreateVolumeBackup` / `ListVolumeBackups` | `POST` / `GET /20160918/volumeBackups` |
+| `CreateBootVolumeBackup` / `ListBootVolumeBackups` | `POST` / `GET /20160918/bootVolumeBackups` |
+| `CreateVolumeGroup` / `ListVolumeGroups` | `POST` / `GET /20160918/volumeGroups` |
+| `AttachVnic` / `ListVnicAttachments` | `POST` / `GET /20160918/vnicAttachments` |
+| `CreateInstanceConfiguration` / `ListInstanceConfigurations` | `POST` / `GET /20160918/instanceConfigurations` |
+| `LaunchInstanceConfiguration` | `POST /20160918/instanceConfigurations/{id}/actions/launch` |
+| `CreateInstancePool` / `ListInstancePools` | `POST` / `GET /20160918/instancePools` |
+| `InstancePoolAction` | `POST /20160918/instancePools/{id}/actions/{start,stop,softstop,reset,softreset}` |
+| `ListInstancePoolInstances` | `GET /20160918/instancePools/{id}/instances` |
+| `ChangeCompartment` | `POST /20160918/{collection}/{id}/actions/changeCompartment` |
+
+Every list route requires `compartmentId` and paginates with `limit` / `page`,
+returning the cursor as `opc-next-page`. With an identity service wired, a
+create or move into a compartment that does not exist is `404
+NotAuthorizedOrNotFound`, and `changeCompartment` moves only a resource of the
+collection named in its path. The mutations real OCI runs
+asynchronously — launch, update, the instance and pool actions, terminate, and
+every attach/detach — record a work request and stamp `opc-work-request-id`.
+
+Not emulated: `/volumeBackupPolicies`, `/computeCapacityReservations`,
+`/dedicatedVmHosts` and `/instanceConsoleConnections`, which the compute driver
+has no shape for; the handler claims them so a caller gets a `501` naming the
+gap. Autoscaling policies live in OCI's separate Autoscaling API (`/20181001`),
+which this handler does not claim — the driver stores them so the portable API
+round-trips them. There is no key pair collection: an SSH public key is the
+`ssh_authorized_keys` instance metadata entry.
 
 ---
 

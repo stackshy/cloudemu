@@ -11,6 +11,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/server"
+	"github.com/stackshy/cloudemu/v2/server/oci/compute"
 	"github.com/stackshy/cloudemu/v2/server/oci/identity"
 	ocilogging "github.com/stackshy/cloudemu/v2/server/oci/logging"
 	"github.com/stackshy/cloudemu/v2/server/oci/monitoring"
@@ -137,6 +138,22 @@ func New(d Drivers) *server.Server {
 		}
 
 		srv.Register(vcnHandler)
+	}
+
+	// Compute shares VCN's /20160918 prefix; the two claim disjoint
+	// collections, so registration order between them does not matter.
+	if d.Compute != nil {
+		computeHandler := compute.New(d.Compute, d.WorkRequests)
+
+		if comps, ok := d.Identity.(identity.Compartments); ok {
+			computeHandler.SetCompartmentChecker(func(id string) bool {
+				_, err := comps.GetCompartment(context.Background(), id)
+
+				return err == nil
+			})
+		}
+
+		srv.Register(computeHandler)
 	}
 
 	if d.Notifications != nil {
