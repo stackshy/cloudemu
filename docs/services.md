@@ -503,7 +503,7 @@ round-trips them. There is no key pair collection: an SSH public key is the
 ## 3. Database
 
 **Driver interface:** `services/database/driver/driver.go`
-**AWS:** DynamoDB | **Azure:** Cosmos DB | **GCP:** Firestore
+**AWS:** DynamoDB | **Azure:** Cosmos DB | **GCP:** Firestore | **OCI:** NoSQL Database
 
 ### Table Operations
 
@@ -562,6 +562,93 @@ round-trips them. There is no key pair collection: an SSH public key is the
 | `ListIndexes` | `(ctx, table) ([]IndexInfo, error)` |
 
 **Total: 21 operations**
+
+### OCI NoSQL Database
+
+**Optional capability:** `server/oci/nosql.Extras` — OCI creates a table from a
+DDL statement rather than a key list, gives it an OCID, a compartment and
+capacity limits, and addresses rows by typed primary key columns, none of which
+the portable model carries. Its value types live in `providers/oci/nosql`.
+**Provider:** `providers/oci/nosql` | **Wire:** `server/oci/nosql`
+
+| Operation | Route |
+|-----------|-------|
+| `CreateTable` | `POST /20190828/tables` |
+| `ListTables` | `GET /20190828/tables` |
+| `GetTable` | `GET /20190828/tables/{tableNameOrId}` |
+| `UpdateTable` | `PUT /20190828/tables/{tableNameOrId}` |
+| `DeleteTable` | `DELETE /20190828/tables/{tableNameOrId}` |
+| `ChangeTableCompartment` | `POST /20190828/tables/{tableNameOrId}/actions/changeCompartment` |
+| `CreateIndex` | `POST /20190828/tables/{tableNameOrId}/indexes` |
+| `ListIndexes` | `GET /20190828/tables/{tableNameOrId}/indexes` |
+| `GetIndex` | `GET /20190828/tables/{tableNameOrId}/indexes/{indexName}` |
+| `DeleteIndex` | `DELETE /20190828/tables/{tableNameOrId}/indexes/{indexName}` |
+| `GetRow` | `GET /20190828/tables/{tableNameOrId}/rows` |
+| `UpdateRow` | `PUT /20190828/tables/{tableNameOrId}/rows` |
+| `DeleteRow` | `DELETE /20190828/tables/{tableNameOrId}/rows` |
+| `Query` | `POST /20190828/query` |
+
+A table is addressed by name or OCID. Both list routes require `compartmentId`
+and paginate with `limit` / `page`, returning the cursor as `opc-next-page`;
+real OCI marks it optional on `ListIndexes`, and CloudEmu requires it so every
+list is compartment-scoped. `ListTables` orders by `timeCreated` descending
+unless `sortBy` (`timeCreated` | `name`) and `sortOrder` (`ASC` | `DESC`) say
+otherwise, and `lifecycleState` keeps only tables in that state (`ALL` keeps
+every one); a value outside those enums is `400`. `CreateTable` requires
+`name`, which must match the table the DDL names (case-insensitively), and is
+checked before any table, an existing one included, is touched. A
+`PROVISIONED` table sets `maxReadUnits` and `maxWriteUnits` above zero and
+`maxStorageInGBs` to at least 1. An index reports the `compartmentId`,
+`tableName` and `tableId` of its table. Table and index mutations are asynchronous in real
+OCI, so they answer `202` with an `opc-work-request-id`; index and
+compartment changes record `UPDATE_TABLE`, since NoSQL's operation-type enum
+has no entries for them. Row writes are synchronous and answer `200`, including
+an `IF_ABSENT` / `IF_PRESENT` write its option refuses: that one reports a null
+`version`, plus the row in the way when `isGetReturnRow` is set. `UpdateRow`'s
+`ttl` (days) replaces the table TTL for that row unless `isTtlUseTableDefault`
+is set; fields the table does not declare are dropped, and a missing column
+takes its `DEFAULT` or null; with `isExactMatch` set, either one is refused
+with `400`. A null primary key value is refused. Row numbers are decoded
+exactly, so a `LONG` above 2^53 is stored and addressed without rounding,
+including across a `--persist` restart; an `INTEGER` outside the 32-bit range
+or a `LONG` outside the 64-bit range is refused rather than clamped. Table, column and index
+names are case-insensitive and keep their declared spelling. With an identity
+service wired, a create or move into a compartment that does not exist is
+`404 NotAuthorizedOrNotFound`.
+
+The DDL is parsed, not stored and ignored. `CreateTable` reads `CREATE TABLE`
+and `UpdateTable` reads `ALTER TABLE` — scalar and `JSON` column types, `NOT
+NULL`, `DEFAULT`, `PRIMARY KEY` with an optional `SHARD` (without one the shard
+key is the whole primary key, as in Oracle NoSQL), `USING TTL <n> DAYS`, and
+`ADD` / `DROP` on a non-key column. `DEFAULT` takes one quoted or bare value
+and `NOT NULL` may come before or after it; a non-key `NOT NULL` column must
+declare a `DEFAULT` (`DEFAULT ''` counts), and primary key columns are
+reported as not nullable. An added column takes its `DEFAULT`, or null, on
+every existing row. `DROP` of a column an index uses is refused, and a dropped
+column is removed from stored rows. Everything else is refused with the construct named: primary
+keys of more than two columns, which the portable partition/sort key pair
+cannot project;
+`ARRAY`, `MAP`, `RECORD` and `ENUM` columns; generated, `MR_COUNTER` and
+`UUID` modifiers; `USING TTL` in `HOURS`, which OCI's own `Schema` model
+reports only in days; `MODIFY` and schema freezing; and JSON-path index keys.
+
+`Query` runs `SELECT *` and `DELETE FROM` over one table with AND-ed equality
+conditions — the REST API has no `MultiDelete`, so `DELETE FROM … WHERE` is how
+several rows go at once. Quoted literals keep their whitespace and any `AND`
+inside them, and a null column equals no literal. Column projections, aggregates, joins, `ORDER BY` and
+range conditions are rejected rather than silently reinterpreted.
+
+`/tables/{id}/usage` answers `501`: CloudEmu does not meter read, write and
+storage consumption, so a row of zeros would read as real telemetry. So do
+`/query/prepare` and `/query/summarize`, which hand back a prepared-statement
+handle there is nothing to bind, and a `Query` with `isPrepared: true`. **OCI NoSQL publishes no change stream** — it
+has no DynamoDB-Streams or Cosmos-change-feed equivalent — so
+`UpdateStreamConfig` and `GetStreamRecords` report `Unimplemented` rather than
+returning an empty iterator that would read as "no changes yet".
+
+Tables report `ACTIVE` from creation: every CloudEmu mutation is synchronous,
+so the `CREATING` and `DELETING` states an SDK waiter may poll for are never
+observable.
 
 ---
 

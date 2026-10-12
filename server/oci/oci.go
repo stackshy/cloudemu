@@ -15,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/oci/identity"
 	ocilogging "github.com/stackshy/cloudemu/v2/server/oci/logging"
 	"github.com/stackshy/cloudemu/v2/server/oci/monitoring"
+	"github.com/stackshy/cloudemu/v2/server/oci/nosql"
 	"github.com/stackshy/cloudemu/v2/server/oci/notifications"
 	"github.com/stackshy/cloudemu/v2/server/oci/objectstorage"
 	"github.com/stackshy/cloudemu/v2/server/oci/vcn"
@@ -168,6 +169,20 @@ func New(d Drivers) *server.Server {
 		}
 
 		srv.Register(notifHandler)
+	}
+
+	if d.NoSQL != nil {
+		nosqlHandler := nosql.New(d.NoSQL, d.WorkRequests)
+
+		if comps, ok := d.Identity.(identity.Compartments); ok {
+			nosqlHandler.SetCompartmentChecker(func(id string) bool {
+				_, err := comps.GetCompartment(context.Background(), id)
+
+				return err == nil
+			})
+		}
+
+		srv.Register(nosqlHandler)
 	}
 
 	return srv
