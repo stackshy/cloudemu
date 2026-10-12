@@ -2,6 +2,7 @@ package eventbridgescheduler
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/idempotency"
@@ -182,6 +183,66 @@ func validateScheduleInput(in *driver.ScheduleInput) error {
 
 	if len(in.Target) == 0 {
 		return validation("Target is required")
+	}
+
+	if err := validateEnums(in); err != nil {
+		return err
+	}
+
+	return validateFlexibleTimeWindow(in.FlexibleTimeWindow)
+}
+
+// Bounds AWS puts on FlexibleTimeWindow.MaximumWindowInMinutes.
+const (
+	minFlexibleWindowMinutes = 1
+	maxFlexibleWindowMinutes = 1440
+)
+
+// validateEnums checks the enum fields AWS validates on create and update. An
+// empty value is left to its default.
+func validateEnums(in *driver.ScheduleInput) error {
+	switch in.State {
+	case "", driver.ScheduleEnabled, driver.ScheduleDisabled:
+	default:
+		return validation("State %q is not one of ENABLED, DISABLED", in.State)
+	}
+
+	switch in.ActionAfterCompletion {
+	case "", "NONE", "DELETE":
+	default:
+		return validation("ActionAfterCompletion %q is not one of NONE, DELETE", in.ActionAfterCompletion)
+	}
+
+	return nil
+}
+
+// validateFlexibleTimeWindow checks Mode is OFF or FLEXIBLE, and that FLEXIBLE
+// names a MaximumWindowInMinutes within 1 to 1440.
+func validateFlexibleTimeWindow(raw json.RawMessage) error {
+	var w struct {
+		Mode                   string `json:"Mode"`
+		MaximumWindowInMinutes *int   `json:"MaximumWindowInMinutes"`
+	}
+
+	if err := json.Unmarshal(raw, &w); err != nil {
+		return validation("FlexibleTimeWindow is not a valid object")
+	}
+
+	switch w.Mode {
+	case "OFF":
+		return nil
+	case "FLEXIBLE":
+	default:
+		return validation("FlexibleTimeWindow.Mode %q is not one of OFF, FLEXIBLE", w.Mode)
+	}
+
+	if w.MaximumWindowInMinutes == nil {
+		return validation("FlexibleTimeWindow.MaximumWindowInMinutes is required when Mode is FLEXIBLE")
+	}
+
+	if m := *w.MaximumWindowInMinutes; m < minFlexibleWindowMinutes || m > maxFlexibleWindowMinutes {
+		return validation("FlexibleTimeWindow.MaximumWindowInMinutes %d is outside %d-%d",
+			m, minFlexibleWindowMinutes, maxFlexibleWindowMinutes)
 	}
 
 	return nil
