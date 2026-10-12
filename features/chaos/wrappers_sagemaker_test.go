@@ -71,3 +71,50 @@ func TestWrapSageMakerNonChaosOpsDelegate(t *testing.T) {
 		t.Fatalf("delegated CreateModel should not be affected: %v", err)
 	}
 }
+
+// TestWrapSageMakerNewMethodsChaosAndDelegation pins that the long-running
+// operations added for parity inject chaos, and that the remaining new methods
+// pass straight through the wrapper.
+func TestWrapSageMakerNewMethodsChaosAndDelegation(t *testing.T) { // T23
+	sm, e := newChaosSageMaker(t)
+	ctx := context.Background()
+
+	_, _ = sm.CreateModel(ctx, driver.ModelConfig{ModelName: "m"})
+	_, _ = sm.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{
+		ConfigName:         "cfg",
+		ProductionVariants: []driver.ProductionVariant{{VariantName: "v1", ModelName: "m"}},
+	})
+
+	if _, err := sm.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "ep", ConfigName: "cfg"}); err != nil {
+		t.Fatalf("create endpoint: %v", err)
+	}
+
+	if _, err := sm.CreatePipeline(ctx, driver.PipelineSpec{PipelineName: "pl"}); err != nil {
+		t.Fatalf("create pipeline: %v", err)
+	}
+
+	// A new method with no chaos hook delegates to the inner service.
+	if _, err := sm.CreateProject(ctx, driver.ProjectSpec{
+		Name: "proj", ServiceCatalog: &driver.ServiceCatalogProvisioning{ProductID: "p", ProvisioningArtifactID: "a"},
+	}); err != nil {
+		t.Fatalf("delegated CreateProject: %v", err)
+	}
+
+	if _, err := sm.DescribeProject(ctx, "proj"); err != nil {
+		t.Fatalf("delegated DescribeProject: %v", err)
+	}
+
+	e.Apply(chaos.ServiceOutage("sagemaker", time.Hour))
+
+	if _, err := sm.UpdateEndpoint(ctx, driver.UpdateEndpointSpec{EndpointName: "ep", ConfigName: "cfg"}); err == nil {
+		t.Error("expected chaos error on UpdateEndpoint")
+	}
+
+	if _, err := sm.StartPipelineExecution(ctx, "pl"); err == nil {
+		t.Error("expected chaos error on StartPipelineExecution")
+	}
+
+	if _, err := sm.CreateHyperParameterTuningJob(ctx, driver.HyperParameterTuningJobConfig{JobName: "hp"}); err == nil {
+		t.Error("expected chaos error on CreateHyperParameterTuningJob")
+	}
+}

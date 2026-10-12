@@ -22,10 +22,6 @@ func (m *Mock) CreateFeatureGroup(_ context.Context, cfg driver.FeatureGroupSpec
 		return nil, errors.New(errors.InvalidArgument, "recordIdentifierFeatureName is required")
 	}
 
-	if m.featureGroups.Has(cfg.GroupName) {
-		return nil, errors.Newf(errors.AlreadyExists, "feature group %q already exists", cfg.GroupName)
-	}
-
 	arn := m.arn("feature-group/" + cfg.GroupName)
 	fg := &driver.FeatureGroup{
 		GroupName:            cfg.GroupName,
@@ -40,9 +36,10 @@ func (m *Mock) CreateFeatureGroup(_ context.Context, cfg driver.FeatureGroupSpec
 		CreationTime:         m.now(),
 		Tags:                 copyTags(cfg.Tags),
 	}
-	m.featureGroups.Set(cfg.GroupName, fg)
+	if !m.featureGroups.SetIfAbsent(cfg.GroupName, fg) {
+		return nil, errors.Newf(errors.AlreadyExists, "feature group %q already exists", cfg.GroupName)
+	}
 	m.setTags(arn, cfg.Tags)
-	m.emitResourceCreated("FeatureGroup")
 
 	out := *fg
 
@@ -60,15 +57,12 @@ func (m *Mock) DescribeFeatureGroup(_ context.Context, name string) (*driver.Fea
 	return &out, nil
 }
 
-func (m *Mock) ListFeatureGroups(_ context.Context) ([]driver.FeatureGroup, error) {
-	all := m.featureGroups.All()
-	out := make([]driver.FeatureGroup, 0, len(all))
-
-	for _, v := range all {
-		out = append(out, *v)
-	}
-
-	return out, nil
+func (m *Mock) ListFeatureGroups(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.FeatureGroup], error) {
+	return listFrom(m.featureGroups, listSpec[driver.FeatureGroup]{
+		name:    func(t *driver.FeatureGroup) string { return t.GroupName },
+		status:  func(t *driver.FeatureGroup) string { return t.Status },
+		created: func(t *driver.FeatureGroup) string { return t.CreationTime },
+	}, opts)
 }
 
 func (m *Mock) DeleteFeatureGroup(_ context.Context, name string) error {
@@ -77,6 +71,7 @@ func (m *Mock) DeleteFeatureGroup(_ context.Context, name string) error {
 	}
 
 	m.featureGroups.Delete(name)
+	m.dropTags(m.arn("feature-group/" + name))
 
 	return nil
 }

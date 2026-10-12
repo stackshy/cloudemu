@@ -7,33 +7,6 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
-func (h *Handler) routeRegistry(w http.ResponseWriter, r *http.Request, op string) bool {
-	switch op {
-	case "CreateModelPackageGroup":
-		h.createModelPackageGroup(w, r)
-	case "DescribeModelPackageGroup":
-		h.describeModelPackageGroup(w, r)
-	case "ListModelPackageGroups":
-		h.listModelPackageGroups(w, r)
-	case "DeleteModelPackageGroup":
-		h.deleteModelPackageGroup(w, r)
-	case "CreateModelPackage":
-		h.createModelPackage(w, r)
-	case "DescribeModelPackage":
-		h.describeModelPackage(w, r)
-	case "ListModelPackages":
-		h.listModelPackages(w, r)
-	case "UpdateModelPackage":
-		h.updateModelPackage(w, r)
-	case "DeleteModelPackage":
-		h.deleteModelPackage(w, r)
-	default:
-		return false
-	}
-
-	return true
-}
-
 //nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createModelPackageGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -82,7 +55,12 @@ func (h *Handler) describeModelPackageGroup(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *Handler) listModelPackageGroups(w http.ResponseWriter, r *http.Request) {
-	groups, err := h.svc.ListModelPackageGroups(r.Context())
+	req, ok := decodeListReq(w, r)
+	if !ok {
+		return
+	}
+
+	groups, err := h.svc.ListModelPackageGroups(r.Context(), req.options())
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -153,23 +131,27 @@ func (h *Handler) describeModelPackage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{
-		"ModelPackageArn":       p.PackageARN,
-		"ModelPackageGroupName": p.GroupName,
-		"ModelPackageVersion":   p.Version,
-		"ModelPackageStatus":    p.Status,
-		"ModelApprovalStatus":   p.ApprovalStatus,
-		"CreationTime":          epoch(p.CreationTime),
-	})
+	resp := map[string]any{
+		"ModelPackageArn":        p.PackageARN,
+		"ModelPackageGroupName":  p.GroupName,
+		"ModelPackageVersion":    p.Version,
+		"ModelPackageStatus":     p.Status,
+		"ModelApprovalStatus":    p.ApprovalStatus,
+		"CreationTime":           epoch(p.CreationTime),
+		"InferenceSpecification": packageInferenceSpec(p),
+	}
+	setIf(resp, "ModelPackageDescription", p.Description)
+
+	wire.WriteJSON(w, resp)
 }
 
 func (h *Handler) listModelPackages(w http.ResponseWriter, r *http.Request) {
-	groupName, ok := decodeName1(w, r, "ModelPackageGroupName")
+	req, ok := decodeListReq(w, r)
 	if !ok {
 		return
 	}
 
-	pkgs, err := h.svc.ListModelPackages(r.Context(), groupName)
+	pkgs, err := h.svc.ListModelPackages(r.Context(), req.ModelPackageGroupName, req.options())
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -210,4 +192,93 @@ func (h *Handler) updateModelPackage(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deleteModelPackage(w http.ResponseWriter, r *http.Request) {
 	stopByName(w, r, "ModelPackageName", h.svc.DeleteModelPackage)
+}
+
+// packageInferenceSpec renders a model package's inference specification.
+func packageInferenceSpec(p *driver.ModelPackage) map[string]any {
+	c := map[string]any{"Image": p.InferenceImage}
+	setIf(c, "ModelDataUrl", p.ModelDataURL)
+
+	return map[string]any{"Containers": []map[string]any{c}}
+}
+
+func (h *Handler) batchDescribeModelPackage(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ModelPackageArnList []string `json:"ModelPackageArnList"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	res, err := h.svc.BatchDescribeModelPackage(r.Context(), req.ModelPackageArnList)
+	if err != nil {
+		writeDriverError(w, err)
+
+		return
+	}
+
+	summaries := make(map[string]any, len(res.Packages))
+
+	for arn := range res.Packages {
+		p := res.Packages[arn]
+		s := map[string]any{
+			"ModelPackageGroupName":  p.GroupName,
+			"ModelPackageArn":        p.PackageARN,
+			"ModelPackageVersion":    p.Version,
+			"ModelPackageStatus":     p.Status,
+			"ModelApprovalStatus":    p.ApprovalStatus,
+			"CreationTime":           epoch(p.CreationTime),
+			"InferenceSpecification": packageInferenceSpec(&p),
+		}
+		setIf(s, "ModelPackageDescription", p.Description)
+		summaries[arn] = s
+	}
+
+	errs := make(map[string]any, len(res.Errors))
+	for arn, e := range res.Errors {
+		errs[arn] = map[string]any{"ErrorCode": e.Code, "ErrorResponse": e.Message}
+	}
+
+	wire.WriteJSON(w, map[string]any{"ModelPackageSummaries": summaries, "BatchDescribeModelPackageErrorMap": errs})
+}
+
+func (h *Handler) putModelPackageGroupPolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ModelPackageGroupName string `json:"ModelPackageGroupName"`
+		ResourcePolicy        string `json:"ResourcePolicy"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	arn, err := h.svc.PutModelPackageGroupPolicy(r.Context(), req.ModelPackageGroupName, req.ResourcePolicy)
+	if err != nil {
+		writeDriverError(w, err)
+
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"ModelPackageGroupArn": arn})
+}
+
+func (h *Handler) getModelPackageGroupPolicy(w http.ResponseWriter, r *http.Request) {
+	name, ok := decodeName1(w, r, "ModelPackageGroupName")
+	if !ok {
+		return
+	}
+
+	policy, err := h.svc.GetModelPackageGroupPolicy(r.Context(), name)
+	if err != nil {
+		writeDriverError(w, err)
+
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{"ResourcePolicy": policy})
+}
+
+func (h *Handler) deleteModelPackageGroupPolicy(w http.ResponseWriter, r *http.Request) {
+	stopByName(w, r, "ModelPackageGroupName", h.svc.DeleteModelPackageGroupPolicy)
 }

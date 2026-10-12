@@ -15,8 +15,10 @@ func (s *SageMaker) DescribeDomain(ctx context.Context, domainID string) (*drive
 	return cast[*driver.Domain](s.do(ctx, "DescribeDomain", domainID, func() (any, error) { return s.drv.DescribeDomain(ctx, domainID) }))
 }
 
-func (s *SageMaker) ListDomains(ctx context.Context) ([]driver.Domain, error) {
-	return cast[[]driver.Domain](s.do(ctx, "ListDomains", nil, func() (any, error) { return s.drv.ListDomains(ctx) }))
+func (s *SageMaker) ListDomains(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.Domain], error) {
+	return cast[driver.ListPage[driver.Domain]](s.do(ctx, "ListDomains", opts, func() (any, error) {
+		return s.drv.ListDomains(ctx, opts)
+	}))
 }
 
 func (s *SageMaker) DeleteDomain(ctx context.Context, domainID string) error {
@@ -35,9 +37,9 @@ func (s *SageMaker) DescribeUserProfile(ctx context.Context, domainID, name stri
 	}))
 }
 
-func (s *SageMaker) ListUserProfiles(ctx context.Context, domainID string) ([]driver.UserProfile, error) {
-	return cast[[]driver.UserProfile](s.do(ctx, "ListUserProfiles", domainID, func() (any, error) {
-		return s.drv.ListUserProfiles(ctx, domainID)
+func (s *SageMaker) ListUserProfiles(ctx context.Context, domainID string, opts driver.ListOptions) (driver.ListPage[driver.UserProfile], error) {
+	return cast[driver.ListPage[driver.UserProfile]](s.do(ctx, "ListUserProfiles", domainID, func() (any, error) {
+		return s.drv.ListUserProfiles(ctx, domainID, opts)
 	}))
 }
 
@@ -55,8 +57,10 @@ func (s *SageMaker) DescribeSpace(ctx context.Context, domainID, name string) (*
 	return cast[*driver.Space](s.do(ctx, "DescribeSpace", name, func() (any, error) { return s.drv.DescribeSpace(ctx, domainID, name) }))
 }
 
-func (s *SageMaker) ListSpaces(ctx context.Context, domainID string) ([]driver.Space, error) {
-	return cast[[]driver.Space](s.do(ctx, "ListSpaces", domainID, func() (any, error) { return s.drv.ListSpaces(ctx, domainID) }))
+func (s *SageMaker) ListSpaces(ctx context.Context, domainID string, opts driver.ListOptions) (driver.ListPage[driver.Space], error) {
+	return cast[driver.ListPage[driver.Space]](s.do(ctx, "ListSpaces", domainID, func() (any, error) {
+		return s.drv.ListSpaces(ctx, domainID, opts)
+	}))
 }
 
 func (s *SageMaker) DeleteSpace(ctx context.Context, domainID, name string) error {
@@ -75,8 +79,10 @@ func (s *SageMaker) DescribeApp(ctx context.Context, in driver.AppSpec) (*driver
 	return cast[*driver.App](s.do(ctx, "DescribeApp", in, func() (any, error) { return s.drv.DescribeApp(ctx, in) }))
 }
 
-func (s *SageMaker) ListApps(ctx context.Context, domainID string) ([]driver.App, error) {
-	return cast[[]driver.App](s.do(ctx, "ListApps", domainID, func() (any, error) { return s.drv.ListApps(ctx, domainID) }))
+func (s *SageMaker) ListApps(ctx context.Context, domainID string, opts driver.ListOptions) (driver.ListPage[driver.App], error) {
+	return cast[driver.ListPage[driver.App]](s.do(ctx, "ListApps", domainID, func() (any, error) {
+		return s.drv.ListApps(ctx, domainID, opts)
+	}))
 }
 
 //nolint:gocritic // cfg/in matches the driver signature; forwarded unchanged.
@@ -99,9 +105,9 @@ func (s *SageMaker) DescribeNotebookInstance(ctx context.Context, name string) (
 	}))
 }
 
-func (s *SageMaker) ListNotebookInstances(ctx context.Context) ([]driver.NotebookInstance, error) {
-	return cast[[]driver.NotebookInstance](s.do(ctx, "ListNotebookInstances", nil, func() (any, error) {
-		return s.drv.ListNotebookInstances(ctx)
+func (s *SageMaker) ListNotebookInstances(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.NotebookInstance], error) {
+	return cast[driver.ListPage[driver.NotebookInstance]](s.do(ctx, "ListNotebookInstances", opts, func() (any, error) {
+		return s.drv.ListNotebookInstances(ctx, opts)
 	}))
 }
 
@@ -113,6 +119,22 @@ func (s *SageMaker) StartNotebookInstance(ctx context.Context, name string) erro
 
 func (s *SageMaker) StopNotebookInstance(ctx context.Context, name string) error {
 	_, err := s.do(ctx, "StopNotebookInstance", name, func() (any, error) { return nil, s.drv.StopNotebookInstance(ctx, name) })
+
+	return err
+}
+
+func (s *SageMaker) UpdateNotebookInstance(ctx context.Context, update driver.NotebookInstanceUpdate) error {
+	_, err := s.do(ctx, "UpdateNotebookInstance", update, func() (any, error) {
+		return nil, s.drv.UpdateNotebookInstance(ctx, update)
+	})
+
+	return err
+}
+
+func (s *SageMaker) UpdateNotebookInstanceLifecycleConfig(ctx context.Context, update driver.NotebookLifecycleConfigUpdate) error {
+	_, err := s.do(ctx, "UpdateNotebookInstanceLifecycleConfig", update, func() (any, error) {
+		return nil, s.drv.UpdateNotebookInstanceLifecycleConfig(ctx, update)
+	})
 
 	return err
 }
@@ -137,9 +159,9 @@ func (s *SageMaker) DescribeNotebookInstanceLifecycleConfig(ctx context.Context,
 	}))
 }
 
-func (s *SageMaker) ListNotebookInstanceLifecycleConfigs(ctx context.Context) ([]driver.NotebookLifecycleConfig, error) {
-	return cast[[]driver.NotebookLifecycleConfig](s.do(ctx, "ListNotebookInstanceLifecycleConfigs", nil, func() (any, error) {
-		return s.drv.ListNotebookInstanceLifecycleConfigs(ctx)
+func (s *SageMaker) ListNotebookInstanceLifecycleConfigs(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.NotebookLifecycleConfig], error) {
+	return cast[driver.ListPage[driver.NotebookLifecycleConfig]](s.do(ctx, "ListNotebookInstanceLifecycleConfigs", opts, func() (any, error) {
+		return s.drv.ListNotebookInstanceLifecycleConfigs(ctx, opts)
 	}))
 }
 
@@ -163,9 +185,9 @@ func (s *SageMaker) DescribeCodeRepository(ctx context.Context, name string) (*d
 	}))
 }
 
-func (s *SageMaker) ListCodeRepositories(ctx context.Context) ([]driver.CodeRepository, error) {
-	return cast[[]driver.CodeRepository](s.do(ctx, "ListCodeRepositories", nil, func() (any, error) {
-		return s.drv.ListCodeRepositories(ctx)
+func (s *SageMaker) ListCodeRepositories(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.CodeRepository], error) {
+	return cast[driver.ListPage[driver.CodeRepository]](s.do(ctx, "ListCodeRepositories", opts, func() (any, error) {
+		return s.drv.ListCodeRepositories(ctx, opts)
 	}))
 }
 

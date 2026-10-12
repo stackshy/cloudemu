@@ -17,8 +17,10 @@ func (s *SageMaker) DescribeTrainingJob(ctx context.Context, name string) (*driv
 	}))
 }
 
-func (s *SageMaker) ListTrainingJobs(ctx context.Context) ([]driver.TrainingJob, error) {
-	return cast[[]driver.TrainingJob](s.do(ctx, "ListTrainingJobs", nil, func() (any, error) { return s.drv.ListTrainingJobs(ctx) }))
+func (s *SageMaker) ListTrainingJobs(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.TrainingJob], error) {
+	return cast[driver.ListPage[driver.TrainingJob]](s.do(ctx, "ListTrainingJobs", opts, func() (any, error) {
+		return s.drv.ListTrainingJobs(ctx, opts)
+	}))
 }
 
 func (s *SageMaker) StopTrainingJob(ctx context.Context, name string) error {
@@ -40,8 +42,10 @@ func (s *SageMaker) DescribeProcessingJob(ctx context.Context, name string) (*dr
 	}))
 }
 
-func (s *SageMaker) ListProcessingJobs(ctx context.Context) ([]driver.ProcessingJob, error) {
-	return cast[[]driver.ProcessingJob](s.do(ctx, "ListProcessingJobs", nil, func() (any, error) { return s.drv.ListProcessingJobs(ctx) }))
+func (s *SageMaker) ListProcessingJobs(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.ProcessingJob], error) {
+	return cast[driver.ListPage[driver.ProcessingJob]](s.do(ctx, "ListProcessingJobs", opts, func() (any, error) {
+		return s.drv.ListProcessingJobs(ctx, opts)
+	}))
 }
 
 func (s *SageMaker) StopProcessingJob(ctx context.Context, name string) error {
@@ -61,8 +65,10 @@ func (s *SageMaker) DescribeTransformJob(ctx context.Context, name string) (*dri
 	}))
 }
 
-func (s *SageMaker) ListTransformJobs(ctx context.Context) ([]driver.TransformJob, error) {
-	return cast[[]driver.TransformJob](s.do(ctx, "ListTransformJobs", nil, func() (any, error) { return s.drv.ListTransformJobs(ctx) }))
+func (s *SageMaker) ListTransformJobs(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.TransformJob], error) {
+	return cast[driver.ListPage[driver.TransformJob]](s.do(ctx, "ListTransformJobs", opts, func() (any, error) {
+		return s.drv.ListTransformJobs(ctx, opts)
+	}))
 }
 
 func (s *SageMaker) StopTransformJob(ctx context.Context, name string) error {
@@ -86,9 +92,9 @@ func (s *SageMaker) DescribeHyperParameterTuningJob(ctx context.Context, name st
 	}))
 }
 
-func (s *SageMaker) ListHyperParameterTuningJobs(ctx context.Context) ([]driver.HyperParameterTuningJob, error) {
-	return cast[[]driver.HyperParameterTuningJob](s.do(ctx, "ListHyperParameterTuningJobs", nil, func() (any, error) {
-		return s.drv.ListHyperParameterTuningJobs(ctx)
+func (s *SageMaker) ListHyperParameterTuningJobs(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.HyperParameterTuningJob], error) {
+	return cast[driver.ListPage[driver.HyperParameterTuningJob]](s.do(ctx, "ListHyperParameterTuningJobs", opts, func() (any, error) {
+		return s.drv.ListHyperParameterTuningJobs(ctx, opts)
 	}))
 }
 
@@ -107,8 +113,10 @@ func (s *SageMaker) DescribeAutoMLJobV2(ctx context.Context, name string) (*driv
 	return cast[*driver.AutoMLJob](s.do(ctx, "DescribeAutoMLJobV2", name, func() (any, error) { return s.drv.DescribeAutoMLJobV2(ctx, name) }))
 }
 
-func (s *SageMaker) ListAutoMLJobs(ctx context.Context) ([]driver.AutoMLJob, error) {
-	return cast[[]driver.AutoMLJob](s.do(ctx, "ListAutoMLJobs", nil, func() (any, error) { return s.drv.ListAutoMLJobs(ctx) }))
+func (s *SageMaker) ListAutoMLJobs(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.AutoMLJob], error) {
+	return cast[driver.ListPage[driver.AutoMLJob]](s.do(ctx, "ListAutoMLJobs", opts, func() (any, error) {
+		return s.drv.ListAutoMLJobs(ctx, opts)
+	}))
 }
 
 func (s *SageMaker) StopAutoMLJob(ctx context.Context, name string) error {
@@ -128,8 +136,10 @@ func (s *SageMaker) DescribeLabelingJob(ctx context.Context, name string) (*driv
 	}))
 }
 
-func (s *SageMaker) ListLabelingJobs(ctx context.Context) ([]driver.LabelingJob, error) {
-	return cast[[]driver.LabelingJob](s.do(ctx, "ListLabelingJobs", nil, func() (any, error) { return s.drv.ListLabelingJobs(ctx) }))
+func (s *SageMaker) ListLabelingJobs(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.LabelingJob], error) {
+	return cast[driver.ListPage[driver.LabelingJob]](s.do(ctx, "ListLabelingJobs", opts, func() (any, error) {
+		return s.drv.ListLabelingJobs(ctx, opts)
+	}))
 }
 
 func (s *SageMaker) StopLabelingJob(ctx context.Context, name string) error {
@@ -151,8 +161,10 @@ func (s *SageMaker) DescribeCompilationJob(ctx context.Context, name string) (*d
 	}))
 }
 
-func (s *SageMaker) ListCompilationJobs(ctx context.Context) ([]driver.CompilationJob, error) {
-	return cast[[]driver.CompilationJob](s.do(ctx, "ListCompilationJobs", nil, func() (any, error) { return s.drv.ListCompilationJobs(ctx) }))
+func (s *SageMaker) ListCompilationJobs(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.CompilationJob], error) {
+	return cast[driver.ListPage[driver.CompilationJob]](s.do(ctx, "ListCompilationJobs", opts, func() (any, error) {
+		return s.drv.ListCompilationJobs(ctx, opts)
+	}))
 }
 
 func (s *SageMaker) StopCompilationJob(ctx context.Context, name string) error {

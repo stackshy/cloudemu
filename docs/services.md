@@ -2200,26 +2200,35 @@ static catalog of the RBAC operations the namespace exposes.
 **Driver interface:** `services/sagemaker/driver/driver.go` (control plane + `Runtime`)
 
 The control plane speaks awsJson1_1 (`X-Amz-Target: SageMaker.*`); the runtime speaks
-restJson1 (`POST /endpoints/{name}/invocations`). Asynchronous jobs complete synchronously
-to a terminal state so Describe/List are deterministic. Auto-metrics → CloudWatch via
-`SetMonitoring`.
+restJson1 (`POST /endpoints/{name}/invocations`). Jobs complete synchronously to a terminal
+state (with per-stage times in `SecondaryStatusTransitions`) so Describe/List are
+deterministic; with `--async-settle` jobs, endpoints, clusters and notebook updates pass
+through their real intermediate states as the clock advances. Real invocation, job-utilization
+and pipeline metrics → CloudWatch via `SetMonitoring`, and state-change events
+(`aws.sagemaker`) → the default EventBridge bus.
 
 | Family | Resources / Operations |
 |--------|------------------------|
-| Jobs | Training, Processing, Transform, HyperParameterTuning, AutoML (V2), Labeling, Compilation: each Create/Describe/List/Stop |
-| Inference | Model, EndpointConfig, Endpoint (+ UpdateEndpoint, UpdateEndpointWeightsAndCapacities), InferenceComponent |
-| Runtime | InvokeEndpoint, InvokeEndpointAsync (sagemaker-runtime) |
-| Model Registry | ModelPackageGroup, ModelPackage (versioned, approval status) |
-| Studio | Domain, UserProfile, Space, App |
-| Notebooks | NotebookInstance (+ Start/Stop), NotebookInstanceLifecycleConfig, CodeRepository |
-| Clusters | HyperPod Cluster (+ ListClusterNodes / DescribeClusterNode) |
+| Jobs | Training, Processing, Transform, HyperParameterTuning, AutoML (V2), Labeling, Compilation: each Create/Describe/List/Stop; Describe echoes the create request |
+| Inference | Model, EndpointConfig, Endpoint (real `ProductionVariants`, Creating/Updating states, UpdateEndpoint, UpdateEndpointWeightsAndCapacities), InferenceComponent |
+| Runtime | InvokeEndpoint (Content-Type/Accept/TargetVariant), InvokeEndpointAsync (sagemaker-runtime) |
+| Model Registry | ModelPackageGroup (+ resource policy), ModelPackage (versioned, approval status), BatchDescribeModelPackage |
+| Studio | Domain, UserProfile, Space, App, custom Images (+ versions), AppImageConfig |
+| Notebooks | NotebookInstance (+ Start/Stop/Update), NotebookInstanceLifecycleConfig (+ Update), CodeRepository |
+| Clusters | HyperPod Cluster (+ UpdateCluster, instance-group counts and status, ListClusterNodes / DescribeClusterNode) |
 | Feature Store | FeatureGroup + online-store runtime (PutRecord / GetRecord / DeleteRecord) |
-| Pipelines | Pipeline (+ executions), Experiment, Trial |
+| Pipelines | Pipeline (+ executions), Experiment, Trial, TrialComponent (+ trial associations) |
+| ML Lineage | Artifact, Action, Context, Associations, QueryLineage |
+| Model Monitor | Data/Model-quality, bias and explainability job definitions, MonitoringSchedule (+ lazily generated executions), monitoring alerts |
+| Projects | Project (Service Catalog provisioning) |
+| Workforce | Workforce, Workteam |
+| Search | Search, GetSearchSuggestions |
 | Tagging | AddTags / ListTags / DeleteTags |
 
-SDK-compat HTTP coverage spans every family above, round-tripped against the real
-`aws-sdk-go-v2/service/sagemaker`, `sagemakerruntime` and `sagemakerfeaturestoreruntime`
-clients. **Total: 121 operations.**
+List operations accept the real filter, sort and `MaxResults`/`NextToken` inputs (default
+page size 10, maximum 100). SDK-compat HTTP coverage spans every family above, round-tripped
+against the real `aws-sdk-go-v2/service/sagemaker`, `sagemakerruntime` and
+`sagemakerfeaturestoreruntime` clients. **Total: 207 operations.**
 
 ### GCP: Vertex AI
 
@@ -3246,7 +3255,7 @@ delete) is still enforced.
 | Generative AI: AWS Bedrock (control plane + runtime) | 65 |
 | Generative AI: AWS Bedrock Agent (control plane + runtime) | 32 |
 | Databricks: Azure (control + data plane) | 70 |
-| Machine Learning: AWS SageMaker (control plane + runtime) | 121 |
+| Machine Learning: AWS SageMaker (control plane + runtime) | 207 |
 | Machine Learning: Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
 | Machine Learning: GCP Vertex AI (Go API/driver) | 128 |
 | AI Search: Azure AI Search (control + data plane) | 53 |

@@ -15,10 +15,6 @@ func (m *Mock) CreatePipeline(_ context.Context, cfg driver.PipelineSpec) (*driv
 		return nil, errors.New(errors.InvalidArgument, "pipelineName is required")
 	}
 
-	if m.pipelines.Has(cfg.PipelineName) {
-		return nil, errors.Newf(errors.AlreadyExists, "pipeline %q already exists", cfg.PipelineName)
-	}
-
 	now := m.now()
 	arn := m.arn("pipeline/" + cfg.PipelineName)
 	p := &driver.Pipeline{
@@ -31,13 +27,12 @@ func (m *Mock) CreatePipeline(_ context.Context, cfg driver.PipelineSpec) (*driv
 		LastModifiedTime: now,
 		Tags:             copyTags(cfg.Tags),
 	}
-	m.pipelines.Set(cfg.PipelineName, p)
+	if !m.pipelines.SetIfAbsent(cfg.PipelineName, p) {
+		return nil, errors.Newf(errors.AlreadyExists, "pipeline %q already exists", cfg.PipelineName)
+	}
 	m.setTags(arn, cfg.Tags)
-	m.emitResourceCreated("Pipeline")
 
-	out := *p
-
-	return &out, nil
+	return clonePipeline(p), nil
 }
 
 func (m *Mock) DescribePipeline(_ context.Context, name string) (*driver.Pipeline, error) {
@@ -46,20 +41,17 @@ func (m *Mock) DescribePipeline(_ context.Context, name string) (*driver.Pipelin
 		return nil, errors.Newf(errors.NotFound, "pipeline %q not found", name)
 	}
 
-	out := *p
-
-	return &out, nil
+	return clonePipeline(p), nil
 }
 
-func (m *Mock) ListPipelines(_ context.Context) ([]driver.Pipeline, error) {
-	all := m.pipelines.All()
-	out := make([]driver.Pipeline, 0, len(all))
-
-	for _, v := range all {
-		out = append(out, *v)
-	}
-
-	return out, nil
+func (m *Mock) ListPipelines(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Pipeline], error) {
+	return listFrom(m.pipelines, listSpec[driver.Pipeline]{
+		clone:    func(t *driver.Pipeline) driver.Pipeline { return *clonePipeline(t) },
+		name:     func(t *driver.Pipeline) string { return t.PipelineName },
+		status:   func(t *driver.Pipeline) string { return t.Status },
+		created:  func(t *driver.Pipeline) string { return t.CreationTime },
+		modified: func(t *driver.Pipeline) string { return t.LastModifiedTime },
+	}, opts)
 }
 
 func (m *Mock) UpdatePipeline(_ context.Context, name, definition string) (*driver.Pipeline, error) {
@@ -76,9 +68,7 @@ func (m *Mock) UpdatePipeline(_ context.Context, name, definition string) (*driv
 	updated.LastModifiedTime = m.now()
 	m.pipelines.Set(name, &updated)
 
-	out := updated
-
-	return &out, nil
+	return clonePipeline(&updated), nil
 }
 
 func (m *Mock) DeletePipeline(_ context.Context, name string) error {
@@ -87,13 +77,14 @@ func (m *Mock) DeletePipeline(_ context.Context, name string) error {
 	}
 
 	m.pipelines.Delete(name)
+	m.dropTags(m.arn("pipeline/" + name))
 
 	return nil
 }
 
 // --- Pipeline execution ---
 
-func (m *Mock) StartPipelineExecution(_ context.Context, pipelineName string) (*driver.PipelineExecution, error) {
+func (m *Mock) StartPipelineExecution(ctx context.Context, pipelineName string) (*driver.PipelineExecution, error) {
 	if !m.pipelines.Has(pipelineName) {
 		return nil, errors.Newf(errors.NotFound, "pipeline %q not found", pipelineName)
 	}
@@ -108,6 +99,8 @@ func (m *Mock) StartPipelineExecution(_ context.Context, pipelineName string) (*
 		EndTime:      now,
 	}
 	m.executions.Set(arn, ex)
+	m.emitPipelineMetrics(ctx, pipelineName, true)
+	m.emitPipelineExecutionEvents(ctx, ex, driver.ExecutionExecuting, driver.ExecutionSucceeded)
 
 	out := *ex
 
@@ -115,6 +108,10 @@ func (m *Mock) StartPipelineExecution(_ context.Context, pipelineName string) (*
 }
 
 func (m *Mock) DescribePipelineExecution(_ context.Context, executionARN string) (*driver.PipelineExecution, error) {
+	if err := validateARN("pipelineExecutionArn", executionARN); err != nil {
+		return nil, err
+	}
+
 	ex, ok := m.executions.Get(executionARN)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "pipeline execution %q not found", executionARN)
@@ -125,19 +122,22 @@ func (m *Mock) DescribePipelineExecution(_ context.Context, executionARN string)
 	return &out, nil
 }
 
-func (m *Mock) ListPipelineExecutions(_ context.Context, pipelineName string) ([]driver.PipelineExecution, error) {
-	out := make([]driver.PipelineExecution, 0)
-
-	for _, ex := range m.executions.All() {
-		if pipelineName == "" || ex.PipelineName == pipelineName {
-			out = append(out, *ex)
-		}
-	}
-
-	return out, nil
+func (m *Mock) ListPipelineExecutions(_ context.Context, pipelineName string, opts driver.ListOptions) (driver.ListPage[driver.PipelineExecution], error) {
+	return listFrom(m.executions, listSpec[driver.PipelineExecution]{
+		name:    func(t *driver.PipelineExecution) string { return t.ExecutionARN },
+		status:  func(t *driver.PipelineExecution) string { return t.Status },
+		created: func(t *driver.PipelineExecution) string { return t.StartTime },
+		extra: func(t *driver.PipelineExecution, _ map[string]string) bool {
+			return pipelineName == "" || t.PipelineName == pipelineName
+		},
+	}, opts)
 }
 
-func (m *Mock) StopPipelineExecution(_ context.Context, executionARN string) error {
+func (m *Mock) StopPipelineExecution(ctx context.Context, executionARN string) error {
+	if err := validateARN("pipelineExecutionArn", executionARN); err != nil {
+		return err
+	}
+
 	ex, ok := m.executions.Get(executionARN)
 	if !ok {
 		return errors.Newf(errors.NotFound, "pipeline execution %q not found", executionARN)
@@ -147,6 +147,7 @@ func (m *Mock) StopPipelineExecution(_ context.Context, executionARN string) err
 	updated.Status = driver.ExecutionStopped
 	updated.EndTime = m.now()
 	m.executions.Set(executionARN, &updated)
+	m.emitPipelineExecutionEvents(ctx, &updated, driver.ExecutionStopping, driver.ExecutionStopped)
 
 	return nil
 }
@@ -158,10 +159,6 @@ func (m *Mock) CreateExperiment(_ context.Context, cfg driver.ExperimentSpec) (*
 		return nil, errors.New(errors.InvalidArgument, "experimentName is required")
 	}
 
-	if m.experiments.Has(cfg.ExperimentName) {
-		return nil, errors.Newf(errors.AlreadyExists, "experiment %q already exists", cfg.ExperimentName)
-	}
-
 	arn := m.arn("experiment/" + cfg.ExperimentName)
 	e := &driver.Experiment{
 		ExperimentName: cfg.ExperimentName,
@@ -170,12 +167,12 @@ func (m *Mock) CreateExperiment(_ context.Context, cfg driver.ExperimentSpec) (*
 		CreationTime:   m.now(),
 		Tags:           copyTags(cfg.Tags),
 	}
-	m.experiments.Set(cfg.ExperimentName, e)
+	if !m.experiments.SetIfAbsent(cfg.ExperimentName, e) {
+		return nil, errors.Newf(errors.AlreadyExists, "experiment %q already exists", cfg.ExperimentName)
+	}
 	m.setTags(arn, cfg.Tags)
 
-	out := *e
-
-	return &out, nil
+	return cloneExperiment(e), nil
 }
 
 func (m *Mock) DescribeExperiment(_ context.Context, name string) (*driver.Experiment, error) {
@@ -184,28 +181,37 @@ func (m *Mock) DescribeExperiment(_ context.Context, name string) (*driver.Exper
 		return nil, errors.Newf(errors.NotFound, "experiment %q not found", name)
 	}
 
-	out := *e
-
-	return &out, nil
+	return cloneExperiment(e), nil
 }
 
-func (m *Mock) ListExperiments(_ context.Context) ([]driver.Experiment, error) {
-	all := m.experiments.All()
-	out := make([]driver.Experiment, 0, len(all))
-
-	for _, v := range all {
-		out = append(out, *v)
-	}
-
-	return out, nil
+func (m *Mock) ListExperiments(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Experiment], error) {
+	return listFrom(m.experiments, listSpec[driver.Experiment]{
+		clone:   func(t *driver.Experiment) driver.Experiment { return *cloneExperiment(t) },
+		name:    func(t *driver.Experiment) string { return t.ExperimentName },
+		created: func(t *driver.Experiment) string { return t.CreationTime },
+	}, opts)
 }
 
+// DeleteExperiment deletes an experiment that has no trials left (trials must
+// be deleted first) and removes its lineage associations.
 func (m *Mock) DeleteExperiment(_ context.Context, name string) error {
-	if !m.experiments.Has(name) {
+	m.entityMu.Lock()
+	defer m.entityMu.Unlock()
+
+	e, ok := m.experiments.Get(name)
+	if !ok {
 		return errors.Newf(errors.NotFound, "experiment %q not found", name)
 	}
 
+	for _, t := range m.trials.All() {
+		if t.ExperimentName == name {
+			return errors.Newf(errors.FailedPrecondition, "experiment %q still has trials; delete them first", name)
+		}
+	}
+
 	m.experiments.Delete(name)
+	m.dropTags(m.arn("experiment/" + name))
+	m.removeAssociationsOf(e.ExperimentARN)
 
 	return nil
 }
@@ -217,12 +223,13 @@ func (m *Mock) CreateTrial(_ context.Context, cfg driver.TrialSpec) (*driver.Tri
 		return nil, errors.New(errors.InvalidArgument, "trialName is required")
 	}
 
-	if cfg.ExperimentName != "" && !m.experiments.Has(cfg.ExperimentName) {
-		return nil, errors.Newf(errors.InvalidArgument, "experiment %q not found", cfg.ExperimentName)
-	}
+	// entityMu orders the experiment check against DeleteExperiment, so a trial
+	// is never created under an experiment that is being deleted.
+	m.entityMu.Lock()
+	defer m.entityMu.Unlock()
 
-	if m.trials.Has(cfg.TrialName) {
-		return nil, errors.Newf(errors.AlreadyExists, "trial %q already exists", cfg.TrialName)
+	if cfg.ExperimentName != "" && !m.experiments.Has(cfg.ExperimentName) {
+		return nil, errors.Newf(errors.NotFound, "experiment %q not found", cfg.ExperimentName)
 	}
 
 	arn := m.arn("experiment-trial/" + cfg.TrialName)
@@ -233,12 +240,20 @@ func (m *Mock) CreateTrial(_ context.Context, cfg driver.TrialSpec) (*driver.Tri
 		CreationTime:   m.now(),
 		Tags:           copyTags(cfg.Tags),
 	}
-	m.trials.Set(cfg.TrialName, t)
+	if !m.trials.SetIfAbsent(cfg.TrialName, t) {
+		return nil, errors.Newf(errors.AlreadyExists, "trial %q already exists", cfg.TrialName)
+	}
 	m.setTags(arn, cfg.Tags)
 
-	out := *t
+	return cloneTrial(t), nil
+}
 
-	return &out, nil
+func cloneTrial(in *driver.Trial) *driver.Trial {
+	out := *in
+	out.Tags = copyTags(in.Tags)
+	out.TrialComponentNames = append([]string(nil), in.TrialComponentNames...)
+
+	return &out
 }
 
 func (m *Mock) DescribeTrial(_ context.Context, name string) (*driver.Trial, error) {
@@ -247,29 +262,51 @@ func (m *Mock) DescribeTrial(_ context.Context, name string) (*driver.Trial, err
 		return nil, errors.Newf(errors.NotFound, "trial %q not found", name)
 	}
 
-	out := *t
-
-	return &out, nil
+	return cloneTrial(t), nil
 }
 
-func (m *Mock) ListTrials(_ context.Context, experimentName string) ([]driver.Trial, error) {
-	out := make([]driver.Trial, 0)
-
-	for _, t := range m.trials.All() {
-		if experimentName == "" || t.ExperimentName == experimentName {
-			out = append(out, *t)
-		}
-	}
-
-	return out, nil
+func (m *Mock) ListTrials(_ context.Context, experimentName string, opts driver.ListOptions) (driver.ListPage[driver.Trial], error) {
+	return listFrom(m.trials, listSpec[driver.Trial]{
+		name:    func(t *driver.Trial) string { return t.TrialName },
+		created: func(t *driver.Trial) string { return t.CreationTime },
+		extra: func(t *driver.Trial, _ map[string]string) bool {
+			return experimentName == "" || t.ExperimentName == experimentName
+		},
+		clone: func(t *driver.Trial) driver.Trial { return *cloneTrial(t) },
+	}, opts)
 }
 
+// DeleteTrial deletes a trial that has no trial components left (they must be
+// disassociated and deleted first).
 func (m *Mock) DeleteTrial(_ context.Context, name string) error {
-	if !m.trials.Has(name) {
+	m.entityMu.Lock()
+	defer m.entityMu.Unlock()
+
+	t, ok := m.trials.Get(name)
+	if !ok {
 		return errors.Newf(errors.NotFound, "trial %q not found", name)
 	}
 
+	if len(t.TrialComponentNames) > 0 {
+		return errors.Newf(errors.FailedPrecondition, "trial %q still has trial components; disassociate them first", name)
+	}
+
 	m.trials.Delete(name)
+	m.dropTags(m.arn("experiment-trial/" + name))
 
 	return nil
+}
+
+func clonePipeline(in *driver.Pipeline) *driver.Pipeline {
+	out := *in
+	out.Tags = copyTags(in.Tags)
+
+	return &out
+}
+
+func cloneExperiment(in *driver.Experiment) *driver.Experiment {
+	out := *in
+	out.Tags = copyTags(in.Tags)
+
+	return &out
 }

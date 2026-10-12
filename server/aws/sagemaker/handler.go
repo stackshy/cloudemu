@@ -27,11 +27,15 @@ const targetPrefix = "SageMaker."
 // Handler serves SageMaker control-plane and runtime requests.
 type Handler struct {
 	svc driver.Service
+	ops map[string]http.HandlerFunc
 }
 
 // New returns a SageMaker handler backed by svc.
 func New(svc driver.Service) *Handler {
-	return &Handler{svc: svc}
+	h := &Handler{svc: svc}
+	h.ops = h.routes()
+
+	return h
 }
 
 // Matches claims awsJson1_1 control-plane requests (by X-Amz-Target), the
@@ -70,91 +74,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 
-	routers := []func(http.ResponseWriter, *http.Request, string) bool{
-		h.routeModels, h.routeEndpoints, h.routeInferenceComponents,
-		h.routeJobs, h.routeMoreJobs,
-		h.routeRegistry, h.routeStudio, h.routeNotebook,
-		h.routeCluster, h.routeFeatureStore, h.routePipelines, h.routeTags,
-	}
-	for _, route := range routers {
-		if route(w, r, op) {
-			return
+	if handle, ok := h.ops[op]; ok {
+		if validationNotFoundOps[op] {
+			w = notFoundAsValidation{w}
 		}
+
+		handle(w, r)
+
+		return
 	}
 
 	wire.WriteJSONError(w, http.StatusBadRequest, "UnknownOperationException", "unknown operation: "+op)
-}
-
-func (h *Handler) routeModels(w http.ResponseWriter, r *http.Request, op string) bool {
-	switch op {
-	case "CreateModel":
-		h.createModel(w, r)
-	case "DescribeModel":
-		h.describeModel(w, r)
-	case "ListModels":
-		h.listModels(w, r)
-	case "DeleteModel":
-		h.deleteModel(w, r)
-	default:
-		return false
-	}
-
-	return true
-}
-
-func (h *Handler) routeEndpoints(w http.ResponseWriter, r *http.Request, op string) bool {
-	switch op {
-	case "CreateEndpointConfig":
-		h.createEndpointConfig(w, r)
-	case "DescribeEndpointConfig":
-		h.describeEndpointConfig(w, r)
-	case "DeleteEndpointConfig":
-		h.deleteEndpointConfig(w, r)
-	case "CreateEndpoint":
-		h.createEndpoint(w, r)
-	case "DescribeEndpoint":
-		h.describeEndpoint(w, r)
-	case "ListEndpoints":
-		h.listEndpoints(w, r)
-	case "DeleteEndpoint":
-		h.deleteEndpoint(w, r)
-	default:
-		return false
-	}
-
-	return true
-}
-
-func (h *Handler) routeJobs(w http.ResponseWriter, r *http.Request, op string) bool {
-	switch op {
-	case "CreateTrainingJob":
-		h.createTrainingJob(w, r)
-	case "DescribeTrainingJob":
-		h.describeTrainingJob(w, r)
-	case "ListTrainingJobs":
-		h.listTrainingJobs(w, r)
-	case "StopTrainingJob":
-		h.stopTrainingJob(w, r)
-	default:
-		return false
-	}
-
-	return true
-}
-
-func (h *Handler) routeTags(w http.ResponseWriter, r *http.Request, op string) bool {
-	switch op {
-	case "AddTags":
-		h.addTags(w, r)
-	case "ListTags":
-		h.listTags(w, r)
-	case "DeleteTags":
-		h.deleteTags(w, r)
-	default:
-		return false
-	}
-
-	return true
 }
 
 // decodeName1 decodes a request body and returns the string value of the
@@ -191,25 +121,32 @@ func stopByName(w http.ResponseWriter, r *http.Request, field string, fn func(co
 // writeSummaries projects items into the awsJson1_1 list shape
 // {"<key>": [ {...}, ... ]} via per-item project. It collapses the otherwise
 // identical make/loop/WriteJSON boilerplate shared by every List* handler.
-func writeSummaries[T any](w http.ResponseWriter, key string, items []T, project func(*T) map[string]any) {
-	out := make([]map[string]any, 0, len(items))
-	for i := range items {
-		out = append(out, project(&items[i]))
+func writeSummaries[T any](w http.ResponseWriter, key string, page driver.ListPage[T], project func(*T) map[string]any) {
+	out := make([]map[string]any, 0, len(page.Items))
+	for i := range page.Items {
+		out = append(out, project(&page.Items[i]))
 	}
 
-	wire.WriteJSON(w, map[string]any{key: out})
+	resp := map[string]any{key: out}
+	if page.NextToken != "" {
+		resp["NextToken"] = page.NextToken
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 // epoch converts a stored RFC3339 timestamp to Unix seconds for awsJson1_1
 // timestamp serialization (the SDK's default format is unixTimestamp).
 func epoch(iso string) float64 {
-	t, err := time.Parse(time.RFC3339, iso)
+	t, err := time.Parse(time.RFC3339Nano, iso)
 	if err != nil {
 		return 0
 	}
 
-	return float64(t.Unix())
+	return float64(t.UnixMilli()) / millisPerSecond
 }
+
+const millisPerSecond = 1000
 
 func toTags(in []wireTag) []driver.Tag {
 	out := make([]driver.Tag, 0, len(in))

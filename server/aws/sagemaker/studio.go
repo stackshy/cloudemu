@@ -7,57 +7,6 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
-func (h *Handler) routeStudio(w http.ResponseWriter, r *http.Request, op string) bool {
-	switch op {
-	case "CreateDomain":
-		h.createDomain(w, r)
-	case "DescribeDomain":
-		h.describeDomain(w, r)
-	case "ListDomains":
-		h.listDomains(w, r)
-	case "DeleteDomain":
-		stopByName(w, r, "DomainId", h.svc.DeleteDomain)
-	case "CreateUserProfile":
-		h.createUserProfile(w, r)
-	case "DescribeUserProfile":
-		h.describeUserProfile(w, r)
-	case "ListUserProfiles":
-		h.listUserProfiles(w, r)
-	case "DeleteUserProfile":
-		h.deleteUserProfile(w, r)
-	default:
-		return h.routeStudioSpacesApps(w, r, op)
-	}
-
-	return true
-}
-
-//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
-func (h *Handler) routeStudioSpacesApps(w http.ResponseWriter, r *http.Request, op string) bool {
-	switch op {
-	case "CreateSpace":
-		h.createSpace(w, r)
-	case "DescribeSpace":
-		h.describeSpace(w, r)
-	case "ListSpaces":
-		h.listSpaces(w, r)
-	case "DeleteSpace":
-		h.deleteSpace(w, r)
-	case "CreateApp":
-		h.createApp(w, r)
-	case "DescribeApp":
-		h.describeApp(w, r)
-	case "ListApps":
-		h.listApps(w, r)
-	case "DeleteApp":
-		h.deleteApp(w, r)
-	default:
-		return false
-	}
-
-	return true
-}
-
 //nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createSpace(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -112,12 +61,12 @@ func (h *Handler) describeSpace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listSpaces(w http.ResponseWriter, r *http.Request) {
-	domainID, ok := decodeName1(w, r, "DomainIdEquals")
+	req, ok := decodeListReq(w, r)
 	if !ok {
 		return
 	}
 
-	spaces, err := h.svc.ListSpaces(r.Context(), domainID)
+	spaces, err := h.svc.ListSpaces(r.Context(), req.DomainIDEquals, req.options())
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -212,7 +161,12 @@ func (h *Handler) describeDomain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listDomains(w http.ResponseWriter, r *http.Request) {
-	domains, err := h.svc.ListDomains(r.Context())
+	req, ok := decodeListReq(w, r)
+	if !ok {
+		return
+	}
+
+	domains, err := h.svc.ListDomains(r.Context(), req.options())
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -288,12 +242,12 @@ func (h *Handler) describeUserProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listUserProfiles(w http.ResponseWriter, r *http.Request) {
-	domainID, ok := decodeName1(w, r, "DomainIdEquals")
+	req, ok := decodeListReq(w, r)
 	if !ok {
 		return
 	}
 
-	ups, err := h.svc.ListUserProfiles(r.Context(), domainID)
+	ups, err := h.svc.ListUserProfiles(r.Context(), req.DomainIDEquals, req.options())
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -395,12 +349,12 @@ func (h *Handler) describeApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listApps(w http.ResponseWriter, r *http.Request) {
-	domainID, ok := decodeName1(w, r, "DomainIdEquals")
+	req, ok := decodeListReq(w, r)
 	if !ok {
 		return
 	}
 
-	apps, err := h.svc.ListApps(r.Context(), domainID)
+	apps, err := h.svc.ListApps(r.Context(), req.DomainIDEquals, req.options())
 	if err != nil {
 		writeDriverError(w, err)
 

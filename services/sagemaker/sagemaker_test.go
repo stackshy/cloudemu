@@ -52,7 +52,7 @@ func TestPortableLatencyApplied(t *testing.T) {
 	s := newPortable(sagemaker.WithLatency(20 * time.Millisecond))
 
 	start := time.Now()
-	_, err := s.ListModels(context.Background())
+	_, err := s.ListModels(context.Background(), driver.ListOptions{})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, time.Since(start), 20*time.Millisecond)
 }

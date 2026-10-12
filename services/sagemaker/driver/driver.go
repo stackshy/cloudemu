@@ -28,6 +28,13 @@ type SageMaker interface {
 	clusterAPI
 	featureStoreAPI
 	pipelineAPI
+	projectAPI
+	workforceAPI
+	imageAPI
+	trialComponentAPI
+	lineageAPI
+	monitoringAPI
+	searchAPI
 	tagsAPI
 }
 

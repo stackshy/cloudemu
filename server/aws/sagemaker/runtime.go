@@ -1,6 +1,7 @@
 package sagemaker
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -43,8 +44,16 @@ func decodeName(raw string) string {
 }
 
 func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, endpointName string) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxInvokeBytes))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxInvokeBytes))
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "ValidationError",
+				"Payload exceeds the 6291456 byte limit for real-time inference")
+
+			return
+		}
+
 		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationError", "failed to read request body")
 
 		return
@@ -57,6 +66,7 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, endpointName st
 		Body:                   body,
 		InferenceComponentName: r.Header.Get("X-Amzn-Sagemaker-Inference-Component"),
 		TargetModel:            r.Header.Get("X-Amzn-Sagemaker-Target-Model"),
+		TargetVariant:          r.Header.Get("X-Amzn-Sagemaker-Target-Variant"),
 	})
 	if err != nil {
 		writeRuntimeError(w, err)
@@ -95,12 +105,19 @@ func (h *Handler) invokeAsync(w http.ResponseWriter, r *http.Request, endpointNa
 
 // writeRuntimeError maps driver errors for the restJson1 runtime surface.
 func writeRuntimeError(w http.ResponseWriter, err error) {
+	var modelErr *driver.ModelError
+	if errors.As(err, &modelErr) {
+		wire.WriteJSONError(w, http.StatusFailedDependency, driver.ExModelError, modelErr.Message)
+
+		return
+	}
+
 	switch {
-	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusNotFound, "ValidationError", err.Error())
+	case cerrors.IsNotFound(err), cerrors.IsInvalidArgument(err):
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationError", cerrors.Message(err))
 	case cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationError", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationError", cerrors.Message(err))
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalFailure", cerrors.Message(err))
 	}
 }

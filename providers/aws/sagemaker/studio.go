@@ -60,15 +60,12 @@ func (m *Mock) DescribeDomain(_ context.Context, domainID string) (*driver.Domai
 	return &out, nil
 }
 
-func (m *Mock) ListDomains(_ context.Context) ([]driver.Domain, error) {
-	all := m.domains.All()
-	out := make([]driver.Domain, 0, len(all))
-
-	for _, v := range all {
-		out = append(out, *v)
-	}
-
-	return out, nil
+func (m *Mock) ListDomains(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Domain], error) {
+	return listFrom(m.domains, listSpec[driver.Domain]{
+		name:    func(t *driver.Domain) string { return t.DomainName },
+		status:  func(t *driver.Domain) string { return t.Status },
+		created: func(t *driver.Domain) string { return t.CreationTime },
+	}, opts)
 }
 
 func (m *Mock) DeleteDomain(_ context.Context, domainID string) error {
@@ -77,6 +74,7 @@ func (m *Mock) DeleteDomain(_ context.Context, domainID string) error {
 	}
 
 	m.domains.Delete(domainID)
+	m.dropTags(m.arn("domain/" + domainID))
 
 	return nil
 }
@@ -93,10 +91,6 @@ func (m *Mock) CreateUserProfile(_ context.Context, cfg driver.UserProfileSpec) 
 	}
 
 	key := scopedKey(cfg.DomainID, cfg.UserProfileName)
-	if m.userProfiles.Has(key) {
-		return nil, errors.Newf(errors.AlreadyExists, "user profile %q already exists", cfg.UserProfileName)
-	}
-
 	arn := m.arn("user-profile/" + cfg.DomainID + "/" + cfg.UserProfileName)
 	up := &driver.UserProfile{
 		DomainID:         cfg.DomainID,
@@ -107,7 +101,9 @@ func (m *Mock) CreateUserProfile(_ context.Context, cfg driver.UserProfileSpec) 
 		CreationTime:     m.now(),
 		Tags:             copyTags(cfg.Tags),
 	}
-	m.userProfiles.Set(key, up)
+	if !m.userProfiles.SetIfAbsent(key, up) {
+		return nil, errors.Newf(errors.AlreadyExists, "user profile %q already exists", cfg.UserProfileName)
+	}
 	m.setTags(arn, cfg.Tags)
 
 	out := *up
@@ -126,16 +122,13 @@ func (m *Mock) DescribeUserProfile(_ context.Context, domainID, name string) (*d
 	return &out, nil
 }
 
-func (m *Mock) ListUserProfiles(_ context.Context, domainID string) ([]driver.UserProfile, error) {
-	out := make([]driver.UserProfile, 0)
-
-	for _, up := range m.userProfiles.All() {
-		if domainID == "" || up.DomainID == domainID {
-			out = append(out, *up)
-		}
-	}
-
-	return out, nil
+func (m *Mock) ListUserProfiles(_ context.Context, domainID string, opts driver.ListOptions) (driver.ListPage[driver.UserProfile], error) {
+	return listFrom(m.userProfiles, listSpec[driver.UserProfile]{
+		name:    func(t *driver.UserProfile) string { return t.UserProfileName },
+		status:  func(t *driver.UserProfile) string { return t.Status },
+		created: func(t *driver.UserProfile) string { return t.CreationTime },
+		extra:   func(t *driver.UserProfile, _ map[string]string) bool { return domainID == "" || t.DomainID == domainID },
+	}, opts)
 }
 
 func (m *Mock) DeleteUserProfile(_ context.Context, domainID, name string) error {
@@ -145,6 +138,7 @@ func (m *Mock) DeleteUserProfile(_ context.Context, domainID, name string) error
 	}
 
 	m.userProfiles.Delete(key)
+	m.dropTags(m.arn("user-profile/" + domainID + "/" + name))
 
 	return nil
 }
@@ -161,10 +155,6 @@ func (m *Mock) CreateSpace(_ context.Context, cfg driver.SpaceSpec) (*driver.Spa
 	}
 
 	key := scopedKey(cfg.DomainID, cfg.SpaceName)
-	if m.spaces.Has(key) {
-		return nil, errors.Newf(errors.AlreadyExists, "space %q already exists", cfg.SpaceName)
-	}
-
 	arn := m.arn("space/" + cfg.DomainID + "/" + cfg.SpaceName)
 	sp := &driver.Space{
 		DomainID:     cfg.DomainID,
@@ -174,7 +164,9 @@ func (m *Mock) CreateSpace(_ context.Context, cfg driver.SpaceSpec) (*driver.Spa
 		CreationTime: m.now(),
 		Tags:         copyTags(cfg.Tags),
 	}
-	m.spaces.Set(key, sp)
+	if !m.spaces.SetIfAbsent(key, sp) {
+		return nil, errors.Newf(errors.AlreadyExists, "space %q already exists", cfg.SpaceName)
+	}
 	m.setTags(arn, cfg.Tags)
 
 	out := *sp
@@ -193,16 +185,13 @@ func (m *Mock) DescribeSpace(_ context.Context, domainID, name string) (*driver.
 	return &out, nil
 }
 
-func (m *Mock) ListSpaces(_ context.Context, domainID string) ([]driver.Space, error) {
-	out := make([]driver.Space, 0)
-
-	for _, sp := range m.spaces.All() {
-		if domainID == "" || sp.DomainID == domainID {
-			out = append(out, *sp)
-		}
-	}
-
-	return out, nil
+func (m *Mock) ListSpaces(_ context.Context, domainID string, opts driver.ListOptions) (driver.ListPage[driver.Space], error) {
+	return listFrom(m.spaces, listSpec[driver.Space]{
+		name:    func(t *driver.Space) string { return t.SpaceName },
+		status:  func(t *driver.Space) string { return t.Status },
+		created: func(t *driver.Space) string { return t.CreationTime },
+		extra:   func(t *driver.Space, _ map[string]string) bool { return domainID == "" || t.DomainID == domainID },
+	}, opts)
 }
 
 func (m *Mock) DeleteSpace(_ context.Context, domainID, name string) error {
@@ -212,6 +201,7 @@ func (m *Mock) DeleteSpace(_ context.Context, domainID, name string) error {
 	}
 
 	m.spaces.Delete(key)
+	m.dropTags(m.arn("space/" + domainID + "/" + name))
 
 	return nil
 }
@@ -229,10 +219,6 @@ func (m *Mock) CreateApp(_ context.Context, in driver.AppSpec) (*driver.App, err
 	}
 
 	key := appKey(&in)
-	if m.apps.Has(key) {
-		return nil, errors.Newf(errors.AlreadyExists, "app %q already exists", in.AppName)
-	}
-
 	arn := m.arn("app/" + in.DomainID + "/" + in.AppType + "/" + in.AppName)
 	app := &driver.App{
 		DomainID:        in.DomainID,
@@ -244,7 +230,9 @@ func (m *Mock) CreateApp(_ context.Context, in driver.AppSpec) (*driver.App, err
 		Status:          driver.AppInService,
 		CreationTime:    m.now(),
 	}
-	m.apps.Set(key, app)
+	if !m.apps.SetIfAbsent(key, app) {
+		return nil, errors.Newf(errors.AlreadyExists, "app %q already exists", in.AppName)
+	}
 
 	out := *app
 
@@ -263,16 +251,13 @@ func (m *Mock) DescribeApp(_ context.Context, in driver.AppSpec) (*driver.App, e
 	return &out, nil
 }
 
-func (m *Mock) ListApps(_ context.Context, domainID string) ([]driver.App, error) {
-	out := make([]driver.App, 0)
-
-	for _, app := range m.apps.All() {
-		if domainID == "" || app.DomainID == domainID {
-			out = append(out, *app)
-		}
-	}
-
-	return out, nil
+func (m *Mock) ListApps(_ context.Context, domainID string, opts driver.ListOptions) (driver.ListPage[driver.App], error) {
+	return listFrom(m.apps, listSpec[driver.App]{
+		name:    func(t *driver.App) string { return t.AppName },
+		status:  func(t *driver.App) string { return t.Status },
+		created: func(t *driver.App) string { return t.CreationTime },
+		extra:   func(t *driver.App, _ map[string]string) bool { return domainID == "" || t.DomainID == domainID },
+	}, opts)
 }
 
 //nolint:gocritic // in matches the driver signature; copied on entry.
@@ -284,9 +269,8 @@ func (m *Mock) DeleteApp(_ context.Context, in driver.AppSpec) error {
 		return errors.Newf(errors.NotFound, "app %q not found", in.AppName)
 	}
 
-	app.Status = driver.AppDeleted
-
 	m.apps.Delete(key)
+	m.dropTags(app.AppARN)
 
 	return nil
 }

@@ -13,6 +13,7 @@ import (
 	awssm "github.com/aws/aws-sdk-go-v2/service/sagemaker"
 	smtypes "github.com/aws/aws-sdk-go-v2/service/sagemaker/types"
 	smrt "github.com/aws/aws-sdk-go-v2/service/sagemakerruntime"
+	smrttypes "github.com/aws/aws-sdk-go-v2/service/sagemakerruntime/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -203,4 +204,74 @@ func TestSDKValidationErrorIsGeneric(t *testing.T) {
 	)
 	assert.False(t, errors.As(err, &rnf), "ValidationException must not match a modeled typed error")
 	assert.False(t, errors.As(err, &inUse), "ValidationException must not match a modeled typed error")
+}
+
+func newRuntimeClients(t *testing.T) (*awssm.Client, *smrt.Client) {
+	t.Helper()
+
+	url := newServer(t)
+	cfg := newCfg(t)
+
+	return awssm.NewFromConfig(cfg, func(o *awssm.Options) { o.BaseEndpoint = aws.String(url) }),
+		smrt.NewFromConfig(cfg, func(o *smrt.Options) { o.BaseEndpoint = aws.String(url) })
+}
+
+func TestSDKInvoke_ContentTypeAndVariant(t *testing.T) { // T44, T46
+	c, rt := newRuntimeClients(t)
+	ctx := context.Background()
+	seedSDKEndpoint(t, c, "ep-1", "cfg-1", 1, 1)
+
+	out, err := rt.InvokeEndpoint(ctx, &smrt.InvokeEndpointInput{
+		EndpointName: aws.String("ep-1"), ContentType: aws.String("text/csv"), Accept: aws.String("*/*"), Body: []byte("1,2"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "text/csv", aws.ToString(out.ContentType), "a wildcard Accept is not echoed back")
+
+	out, err = rt.InvokeEndpoint(ctx, &smrt.InvokeEndpointInput{
+		EndpointName: aws.String("ep-1"), ContentType: aws.String("text/csv"), Accept: aws.String("application/json"), Body: []byte("1,2"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "application/json", aws.ToString(out.ContentType))
+
+	out, err = rt.InvokeEndpoint(ctx, &smrt.InvokeEndpointInput{
+		EndpointName: aws.String("ep-1"), Body: []byte("x"), TargetVariant: aws.String("v1"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "v1", aws.ToString(out.InvokedProductionVariant))
+
+	_, err = rt.InvokeEndpoint(ctx, &smrt.InvokeEndpointInput{
+		EndpointName: aws.String("ep-1"), Body: []byte("x"), TargetVariant: aws.String("nope"),
+	})
+
+	var ve *smrttypes.ValidationError
+
+	require.ErrorAs(t, err, &ve)
+}
+
+func TestSDKInvoke_Errors(t *testing.T) { // T45
+	c, rt := newRuntimeClients(t)
+	ctx := context.Background()
+
+	_, err := rt.InvokeEndpoint(ctx, &smrt.InvokeEndpointInput{EndpointName: aws.String("missing"), Body: []byte("x")})
+
+	var ve *smrttypes.ValidationError
+
+	require.ErrorAs(t, err, &ve)
+	assert.Contains(t, aws.ToString(ve.Message), "not found")
+
+	var re interface{ HTTPStatusCode() int }
+	if errors.As(err, &re) {
+		assert.Equal(t, 400, re.HTTPStatusCode(), "a missing endpoint is a 400 ValidationError")
+	}
+
+	seedSDKEndpoint(t, c, "ep-1", "cfg-1", 1, 1)
+
+	big := make([]byte, (6<<20)+1)
+	_, err = rt.InvokeEndpoint(ctx, &smrt.InvokeEndpointInput{EndpointName: aws.String("ep-1"), Body: big})
+	require.ErrorAs(t, err, &ve, "an oversized payload is rejected, never silently truncated")
+
+	exact := make([]byte, 6<<20)
+	out, err := rt.InvokeEndpoint(ctx, &smrt.InvokeEndpointInput{EndpointName: aws.String("ep-1"), Body: exact})
+	require.NoError(t, err)
+	assert.Len(t, out.Body, 6<<20, "a payload at the limit is echoed whole")
 }

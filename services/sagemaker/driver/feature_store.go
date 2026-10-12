@@ -57,7 +57,7 @@ type FeatureValue struct {
 type featureStoreAPI interface {
 	CreateFeatureGroup(ctx context.Context, cfg FeatureGroupSpec) (*FeatureGroup, error)
 	DescribeFeatureGroup(ctx context.Context, name string) (*FeatureGroup, error)
-	ListFeatureGroups(ctx context.Context) ([]FeatureGroup, error)
+	ListFeatureGroups(ctx context.Context, opts ListOptions) (ListPage[FeatureGroup], error)
 	DeleteFeatureGroup(ctx context.Context, name string) error
 
 	PutRecord(ctx context.Context, groupName string, record []FeatureValue) error

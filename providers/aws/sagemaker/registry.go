@@ -2,7 +2,10 @@ package sagemaker
 
 import (
 	"context"
+	"encoding/json"
+	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
@@ -15,10 +18,6 @@ func (m *Mock) CreateModelPackageGroup(_ context.Context, cfg driver.ModelPackag
 		return nil, errors.New(errors.InvalidArgument, "modelPackageGroupName is required")
 	}
 
-	if m.packageGroups.Has(cfg.GroupName) {
-		return nil, errors.Newf(errors.AlreadyExists, "model package group %q already exists", cfg.GroupName)
-	}
-
 	arn := m.arn("model-package-group/" + cfg.GroupName)
 	g := &driver.ModelPackageGroup{
 		GroupName:    cfg.GroupName,
@@ -28,42 +27,62 @@ func (m *Mock) CreateModelPackageGroup(_ context.Context, cfg driver.ModelPackag
 		CreationTime: m.now(),
 		Tags:         copyTags(cfg.Tags),
 	}
-	m.packageGroups.Set(cfg.GroupName, g)
+	if !m.packageGroups.SetIfAbsent(cfg.GroupName, g) {
+		return nil, errors.Newf(errors.AlreadyExists, "model package group %q already exists", cfg.GroupName)
+	}
 	m.setTags(arn, cfg.Tags)
 
-	out := *g
+	return cloneGroup(g), nil
+}
 
-	return &out, nil
+// groupNameOf accepts a model package group name or its ARN.
+func (m *Mock) groupNameOf(nameOrARN string) string {
+	return strings.TrimPrefix(nameOrARN, m.arn("model-package-group/"))
 }
 
 func (m *Mock) DescribeModelPackageGroup(_ context.Context, name string) (*driver.ModelPackageGroup, error) {
+	name = m.groupNameOf(name)
+
 	g, ok := m.packageGroups.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "model package group %q not found", name)
 	}
 
-	out := *g
-
-	return &out, nil
+	return cloneGroup(g), nil
 }
 
-func (m *Mock) ListModelPackageGroups(_ context.Context) ([]driver.ModelPackageGroup, error) {
-	all := m.packageGroups.All()
-	out := make([]driver.ModelPackageGroup, 0, len(all))
-
-	for _, v := range all {
-		out = append(out, *v)
-	}
-
-	return out, nil
+func (m *Mock) ListModelPackageGroups(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.ModelPackageGroup], error) {
+	return listFrom(m.packageGroups, listSpec[driver.ModelPackageGroup]{
+		clone:   func(t *driver.ModelPackageGroup) driver.ModelPackageGroup { return *cloneGroup(t) },
+		name:    func(t *driver.ModelPackageGroup) string { return t.GroupName },
+		status:  func(t *driver.ModelPackageGroup) string { return t.Status },
+		created: func(t *driver.ModelPackageGroup) string { return t.CreationTime },
+	}, opts)
 }
 
-func (m *Mock) DeleteModelPackageGroup(_ context.Context, name string) error {
+// DeleteModelPackageGroup deletes a group (by name or ARN) together with its
+// model package versions, its resource policy and their tags, so nothing is left
+// orphaned.
+func (m *Mock) DeleteModelPackageGroup(_ context.Context, nameOrARN string) error {
+	name := m.groupNameOf(nameOrARN)
+
+	m.pkgMu.Lock()
+	defer m.pkgMu.Unlock()
+
 	if !m.packageGroups.Has(name) {
 		return errors.Newf(errors.NotFound, "model package group %q not found", name)
 	}
 
+	for arn, p := range m.packages.All() {
+		if p.GroupName == name {
+			m.packages.Delete(arn)
+			m.dropTags(arn)
+		}
+	}
+
 	m.packageGroups.Delete(name)
+	m.packagePolicies.Delete(name)
+	m.dropTags(m.arn("model-package-group/" + name))
 
 	return nil
 }
@@ -71,20 +90,34 @@ func (m *Mock) DeleteModelPackageGroup(_ context.Context, name string) error {
 // --- Model package (versioned) ---
 
 //nolint:gocritic // cfg matches the driver signature; copied on entry.
-func (m *Mock) CreateModelPackage(_ context.Context, cfg driver.ModelPackageSpec) (*driver.ModelPackage, error) {
+func (m *Mock) CreateModelPackage(ctx context.Context, cfg driver.ModelPackageSpec) (*driver.ModelPackage, error) {
+	pkg, err := m.createModelPackage(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	m.emitModelPackageEvent(ctx, pkg)
+
+	return pkg, nil
+}
+
+// createModelPackage holds pkgMu for the whole create, so the event is
+// published by the caller after it is released.
+func (m *Mock) createModelPackage(cfg driver.ModelPackageSpec) (*driver.ModelPackage, error) {
 	if cfg.GroupName == "" {
 		return nil, errors.New(errors.InvalidArgument, "modelPackageGroupName is required")
 	}
 
+	// pkgMu serializes version assignment (two concurrent creates for the same
+	// group would otherwise compute the same N+1) and the group's existence check
+	// with DeleteModelPackageGroup, so a package is never created for a group
+	// that is being deleted.
+	m.pkgMu.Lock()
+	defer m.pkgMu.Unlock()
+
 	if !m.packageGroups.Has(cfg.GroupName) {
 		return nil, errors.Newf(errors.InvalidArgument, "model package group %q not found", cfg.GroupName)
 	}
-
-	// Serialize version assignment: without the lock two concurrent creates for
-	// the same group could compute the same N+1 and mint a colliding ARN, and
-	// the second Set would silently overwrite the first.
-	m.pkgMu.Lock()
-	defer m.pkgMu.Unlock()
 
 	version := m.nextPackageVersion(cfg.GroupName)
 	arn := m.arn("model-package/" + cfg.GroupName + "/" + strconv.Itoa(version))
@@ -103,9 +136,7 @@ func (m *Mock) CreateModelPackage(_ context.Context, cfg driver.ModelPackageSpec
 	m.packages.Set(arn, p)
 	m.setTags(arn, cfg.Tags)
 
-	out := *p
-
-	return &out, nil
+	return clonePackage(p), nil
 }
 
 func (m *Mock) nextPackageVersion(group string) int {
@@ -125,37 +156,46 @@ func (m *Mock) DescribeModelPackage(_ context.Context, arn string) (*driver.Mode
 		return nil, errors.Newf(errors.NotFound, "model package %q not found", arn)
 	}
 
-	out := *p
-
-	return &out, nil
+	return clonePackage(p), nil
 }
 
-func (m *Mock) ListModelPackages(_ context.Context, groupName string) ([]driver.ModelPackage, error) {
-	out := make([]driver.ModelPackage, 0)
+func (m *Mock) ListModelPackages(_ context.Context, groupName string, opts driver.ListOptions) (driver.ListPage[driver.ModelPackage], error) {
+	return listFrom(m.packages, listSpec[driver.ModelPackage]{
+		clone:   func(t *driver.ModelPackage) driver.ModelPackage { return *clonePackage(t) },
+		name:    func(t *driver.ModelPackage) string { return t.PackageARN },
+		status:  func(t *driver.ModelPackage) string { return t.Status },
+		created: func(t *driver.ModelPackage) string { return t.CreationTime },
+		extra: func(t *driver.ModelPackage, filters map[string]string) bool {
+			if status := filters["ModelApprovalStatus"]; status != "" && t.ApprovalStatus != status {
+				return false
+			}
 
-	for _, p := range m.packages.All() {
-		if groupName == "" || p.GroupName == groupName {
-			out = append(out, *p)
+			return groupName == "" || t.GroupName == m.groupNameOf(groupName)
+		},
+	}, opts)
+}
+
+func (m *Mock) UpdateModelPackage(ctx context.Context, arn, approvalStatus string) (*driver.ModelPackage, error) {
+	var out driver.ModelPackage
+
+	if !m.packages.Update(arn, func(p *driver.ModelPackage) *driver.ModelPackage {
+		updated := *p
+		updated.Tags = copyTags(p.Tags)
+
+		if approvalStatus != "" {
+			updated.ApprovalStatus = approvalStatus
 		}
-	}
 
-	return out, nil
-}
+		out = updated
 
-func (m *Mock) UpdateModelPackage(_ context.Context, arn, approvalStatus string) (*driver.ModelPackage, error) {
-	p, ok := m.packages.Get(arn)
-	if !ok {
+		return &updated
+	}) {
 		return nil, errors.Newf(errors.NotFound, "model package %q not found", arn)
 	}
 
-	updated := *p
 	if approvalStatus != "" {
-		updated.ApprovalStatus = approvalStatus
+		m.emitModelPackageEvent(ctx, &out, "ModelApprovalStatus")
 	}
-
-	m.packages.Set(arn, &updated)
-
-	out := updated
 
 	return &out, nil
 }
@@ -166,6 +206,122 @@ func (m *Mock) DeleteModelPackage(_ context.Context, arn string) error {
 	}
 
 	m.packages.Delete(arn)
+	m.dropTags(arn)
 
 	return nil
+}
+
+// maxPackageARNLen is the longest model package ARN SageMaker accepts.
+const maxPackageARNLen = 2048
+
+// packageARNPattern is the model package ARN shape BatchDescribeModelPackage
+// accepts.
+var packageARNPattern = regexp.MustCompile(`^arn:aws[a-z\-]*:sagemaker:[a-z0-9\-]{9,16}:[0-9]{12}:model-package/\S+$`) //nolint:gochecknoglobals // compiled once
+
+// BatchDescribeModelPackage describes up to 100 model packages. A package that
+// does not exist is reported in the per-ARN error map; it never fails the call.
+func (m *Mock) BatchDescribeModelPackage(_ context.Context, arns []string) (*driver.BatchDescribeResult, error) {
+	if len(arns) == 0 || len(arns) > driver.MaxBatchDescribePackages {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"modelPackageArnList must contain between 1 and %d ARNs", driver.MaxBatchDescribePackages)
+	}
+
+	for _, a := range arns {
+		if len(a) > maxPackageARNLen || !packageARNPattern.MatchString(a) {
+			return nil, errors.Newf(errors.InvalidArgument, "Value '%s' at 'modelPackageArnList' is not a valid model package ARN", a)
+		}
+	}
+
+	out := &driver.BatchDescribeResult{
+		Packages: make(map[string]driver.ModelPackage, len(arns)),
+		Errors:   map[string]driver.BatchPackageError{},
+	}
+
+	for _, a := range arns {
+		p, ok := m.packages.Get(a)
+		if !ok {
+			out.Errors[a] = driver.BatchPackageError{Code: "ResourceNotFound", Message: "Model package " + a + " does not exist"}
+
+			continue
+		}
+
+		out.Packages[a] = *clonePackage(p)
+	}
+
+	return out, nil
+}
+
+// PutModelPackageGroupPolicy sets (replacing any previous) the resource policy
+// of a model package group and returns the group ARN.
+func (m *Mock) PutModelPackageGroupPolicy(_ context.Context, nameOrARN, policy string) (string, error) {
+	if policy == "" || len(policy) > driver.MaxGroupPolicyLength {
+		return "", errors.Newf(errors.InvalidArgument, "resourcePolicy must be between 1 and %d characters", driver.MaxGroupPolicyLength)
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(policy), &doc); err != nil {
+		return "", errors.New(errors.InvalidArgument, "resourcePolicy must be a valid JSON policy document")
+	}
+
+	name := m.groupNameOf(nameOrARN)
+
+	m.pkgMu.Lock()
+	defer m.pkgMu.Unlock()
+
+	if !m.packageGroups.Has(name) {
+		return "", errors.Newf(errors.NotFound, "model package group %q not found", name)
+	}
+
+	m.packagePolicies.Set(name, policy)
+
+	return m.arn("model-package-group/" + name), nil
+}
+
+// GetModelPackageGroupPolicy returns the stored policy verbatim.
+func (m *Mock) GetModelPackageGroupPolicy(_ context.Context, nameOrARN string) (string, error) {
+	name := m.groupNameOf(nameOrARN)
+
+	m.pkgMu.Lock()
+	defer m.pkgMu.Unlock()
+
+	if !m.packageGroups.Has(name) {
+		return "", errors.Newf(errors.NotFound, "model package group %q not found", name)
+	}
+
+	policy, ok := m.packagePolicies.Get(name)
+	if !ok {
+		return "", errors.Newf(errors.NotFound, "model package group %q has no resource policy", name)
+	}
+
+	return policy, nil
+}
+
+// DeleteModelPackageGroupPolicy removes a group's resource policy.
+func (m *Mock) DeleteModelPackageGroupPolicy(_ context.Context, nameOrARN string) error {
+	name := m.groupNameOf(nameOrARN)
+
+	m.pkgMu.Lock()
+	defer m.pkgMu.Unlock()
+
+	if !m.packageGroups.Has(name) {
+		return errors.Newf(errors.NotFound, "model package group %q not found", name)
+	}
+
+	m.packagePolicies.Delete(name)
+
+	return nil
+}
+
+func cloneGroup(in *driver.ModelPackageGroup) *driver.ModelPackageGroup {
+	out := *in
+	out.Tags = copyTags(in.Tags)
+
+	return &out
+}
+
+func clonePackage(in *driver.ModelPackage) *driver.ModelPackage {
+	out := *in
+	out.Tags = copyTags(in.Tags)
+
+	return &out
 }
