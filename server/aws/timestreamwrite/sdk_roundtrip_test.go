@@ -228,3 +228,33 @@ func TestSDKCreateTableMissingDatabase(t *testing.T) {
 		t.Fatalf("expected ResourceNotFoundException for a missing database, got %T: %v", err, err)
 	}
 }
+
+// A table created without RetentionProperties reads back Timestream's defaults
+// of 6 hours in memory and 73000 days on magnetic storage.
+func TestSDKCreateTableDefaultsRetention(t *testing.T) {
+	ctx := context.Background()
+	c := newClient(t)
+
+	if _, err := c.CreateDatabase(ctx, &awsts.CreateDatabaseInput{DatabaseName: aws.String("defaults")}); err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	if _, err := c.CreateTable(ctx, &awsts.CreateTableInput{
+		DatabaseName: aws.String("defaults"), TableName: aws.String("plain"),
+	}); err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	got, err := c.DescribeTable(ctx, &awsts.DescribeTableInput{
+		DatabaseName: aws.String("defaults"), TableName: aws.String("plain"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeTable: %v", err)
+	}
+
+	r := got.Table.RetentionProperties
+	if r == nil || aws.ToInt64(r.MemoryStoreRetentionPeriodInHours) != 6 ||
+		aws.ToInt64(r.MagneticStoreRetentionPeriodInDays) != 73000 {
+		t.Fatalf("retention = %+v, want 6h / 73000d", r)
+	}
+}
