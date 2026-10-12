@@ -4,6 +4,7 @@
 package resourcegroupstaggingapi
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -178,9 +179,7 @@ func (h *Handler) tagResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.ResourceARNList) == 0 {
-		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
-			"1 validation error detected: ResourceARNList must have at least 1 element")
+	if !validARNList(w, req.ResourceARNList) {
 		return
 	}
 
@@ -207,9 +206,7 @@ func (h *Handler) untagResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.ResourceARNList) == 0 {
-		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
-			"1 validation error detected: ResourceARNList must have at least 1 element")
+	if !validARNList(w, req.ResourceARNList) {
 		return
 	}
 
@@ -224,6 +221,26 @@ func (h *Handler) untagResources(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{
 		"FailedResourcesMap": failed,
 	})
+}
+
+// maxTagARNs is the most ARNs TagResources and UntagResources take in one call.
+const maxTagARNs = 20
+
+// validARNList applies the 1 to 20 bound AWS puts on ResourceARNList.
+func validARNList(w http.ResponseWriter, arns []string) bool {
+	switch {
+	case len(arns) == 0:
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
+			"1 validation error detected: ResourceARNList must have at least 1 element")
+	case len(arns) > maxTagARNs:
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
+			fmt.Sprintf("1 validation error detected: Value at 'resourceARNList' failed to satisfy "+
+				"constraint: Member must have length less than or equal to %d", maxTagARNs))
+	default:
+		return true
+	}
+
+	return false
 }
 
 func matchesTypeFilter(r *resourcediscovery.Resource, filters []string) bool {
