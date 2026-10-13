@@ -64,6 +64,8 @@ type UserProfile struct {
 	ExecutionRoleARN string
 	Status           string
 	CreationTime     string
+	// LastModifiedTime equals CreationTime: there is no UpdateUserProfile yet.
+	LastModifiedTime string
 	Tags             []Tag
 }
 
@@ -81,7 +83,9 @@ type Space struct {
 	SpaceARN     string
 	Status       string
 	CreationTime string
-	Tags         []Tag
+	// LastModifiedTime equals CreationTime: there is no UpdateSpace yet.
+	LastModifiedTime string
+	Tags             []Tag
 }
 
 // AppSpec describes a Studio app to create.

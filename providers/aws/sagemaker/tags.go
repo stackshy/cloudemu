@@ -202,7 +202,7 @@ func (m *Mock) arnChecks() map[string]func(arn, rest string) bool {
 		"endpoint-config":            byName(m.endpointConfigs.Has),
 		// An endpoint whose Deleting window has elapsed is purged lazily; liveness
 		// goes through endpointStatus so a tag never lands on a deleted endpoint.
-		"endpoint":                           byName(func(name string) bool { return m.endpointStatus(name) != "" }),
+		"endpoint":                           byName(func(name string) bool { return m.endpointStatus(context.Background(), name) != "" }),
 		"inference-component":                byName(m.inferenceComponents.Has),
 		"model-package-group":                byName(m.packageGroups.Has),
 		"model-package":                      byARN(m.packages.Has),

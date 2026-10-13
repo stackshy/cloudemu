@@ -326,7 +326,7 @@ func (m *Mock) validateScheduleSpec(spec *driver.MonitoringScheduleSpec) error {
 		}
 	}
 
-	if spec.EndpointName != "" && m.endpointStatus(spec.EndpointName) == "" {
+	if spec.EndpointName != "" && m.endpointStatus(context.Background(), spec.EndpointName) == "" {
 		return errors.Newf(errors.InvalidArgument, "Could not find endpoint %q", spec.EndpointName)
 	}
 

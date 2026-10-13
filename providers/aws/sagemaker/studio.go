@@ -106,13 +106,15 @@ func (m *Mock) CreateUserProfile(_ context.Context, cfg driver.UserProfileSpec) 
 
 	key := scopedKey(cfg.DomainID, cfg.UserProfileName)
 	arn := m.arn("user-profile/" + cfg.DomainID + "/" + cfg.UserProfileName)
+	now := m.now()
 	up := &driver.UserProfile{
 		DomainID:         cfg.DomainID,
 		UserProfileName:  cfg.UserProfileName,
 		UserProfileARN:   arn,
 		ExecutionRoleARN: cfg.ExecutionRoleARN,
 		Status:           driver.StudioInService,
-		CreationTime:     m.now(),
+		CreationTime:     now,
+		LastModifiedTime: now,
 		Tags:             copyTags(cfg.Tags),
 	}
 
@@ -143,6 +145,9 @@ func (m *Mock) ListUserProfiles(_ context.Context, domainID string, opts driver.
 		name:    func(t *driver.UserProfile) string { return t.UserProfileName },
 		status:  func(t *driver.UserProfile) string { return t.Status },
 		created: func(t *driver.UserProfile) string { return t.CreationTime },
+		modified: func(t *driver.UserProfile) string {
+			return modifiedOrCreated(t.LastModifiedTime, t.CreationTime)
+		},
 		extra: func(t *driver.UserProfile, f map[string]string) bool {
 			return (domainID == "" || t.DomainID == domainID) && strings.Contains(t.UserProfileName, f["UserProfileNameContains"])
 		},
@@ -178,13 +183,15 @@ func (m *Mock) CreateSpace(_ context.Context, cfg driver.SpaceSpec) (*driver.Spa
 
 	key := scopedKey(cfg.DomainID, cfg.SpaceName)
 	arn := m.arn("space/" + cfg.DomainID + "/" + cfg.SpaceName)
+	now := m.now()
 	sp := &driver.Space{
-		DomainID:     cfg.DomainID,
-		SpaceName:    cfg.SpaceName,
-		SpaceARN:     arn,
-		Status:       driver.StudioInService,
-		CreationTime: m.now(),
-		Tags:         copyTags(cfg.Tags),
+		DomainID:         cfg.DomainID,
+		SpaceName:        cfg.SpaceName,
+		SpaceARN:         arn,
+		Status:           driver.StudioInService,
+		CreationTime:     now,
+		LastModifiedTime: now,
+		Tags:             copyTags(cfg.Tags),
 	}
 
 	if !m.spaces.SetIfAbsent(key, sp) {
@@ -214,6 +221,9 @@ func (m *Mock) ListSpaces(_ context.Context, domainID string, opts driver.ListOp
 		name:    func(t *driver.Space) string { return t.SpaceName },
 		status:  func(t *driver.Space) string { return t.Status },
 		created: func(t *driver.Space) string { return t.CreationTime },
+		modified: func(t *driver.Space) string {
+			return modifiedOrCreated(t.LastModifiedTime, t.CreationTime)
+		},
 		extra: func(t *driver.Space, f map[string]string) bool {
 			return (domainID == "" || t.DomainID == domainID) && strings.Contains(t.SpaceName, f["SpaceNameContains"])
 		},

@@ -1302,3 +1302,32 @@ func TestSageMakerEvents_AsyncSettleTerminalJob(t *testing.T) {
 
 // weightPtr returns a pointer to a variant weight (the driver field is a pointer: nil means "omitted").
 func weightPtr(v float64) *float64 { return &v }
+
+// A training job that has not started or finished carries no start or end time
+// in its event, rather than the string "0".
+func TestSageMakerEvents_UnsetTrainingTimesAreOmitted(t *testing.T) {
+	clock := config.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	p := aws.New(config.WithClock(clock), config.WithAsyncSettle())
+	ctx := context.Background()
+	drain := captureEvents(t, p, `{"source":["aws.sagemaker"],"detail-type":["SageMaker Training Job State Change"]}`)
+
+	if _, err := p.SageMaker.CreateTrainingJob(ctx, smdriver.TrainingJobConfig{JobName: "tj"}); err != nil {
+		t.Fatalf("CreateTrainingJob: %v", err)
+	}
+
+	evs := drain()
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want 1 (InProgress)", len(evs))
+	}
+
+	d := detailOf(t, &evs[0])
+	for _, key := range []string{"TrainingEndTime"} {
+		if v, present := d[key]; present {
+			t.Fatalf("an unfinished job's event carries %s = %v, want it omitted", key, v)
+		}
+	}
+
+	if d["CreationTime"] == nil || d["CreationTime"] == "0" {
+		t.Fatalf("CreationTime = %v, want the creation time in epoch milliseconds", d["CreationTime"])
+	}
+}

@@ -358,18 +358,18 @@ func (h *Handler) describeCodeRepository(w http.ResponseWriter, r *http.Request)
 			"SecretArn":     repo.SecretARN,
 		},
 		"CreationTime":     epoch(repo.CreationTime),
-		"LastModifiedTime": epoch(repoModified(repo)),
+		"LastModifiedTime": epoch(modifiedOrCreated(repo.LastModifiedTime, repo.CreationTime)),
 	})
 }
 
-// repoModified is the repository's LastModifiedTime, falling back to its creation
-// time for state restored from a snapshot that predates the field.
-func repoModified(repo *driver.CodeRepository) string {
-	if repo.LastModifiedTime != "" {
-		return repo.LastModifiedTime
+// modifiedOrCreated is a resource's LastModifiedTime, falling back to its
+// creation time for state restored from a snapshot that predates the field.
+func modifiedOrCreated(modified, created string) string {
+	if modified == "" {
+		return created
 	}
 
-	return repo.CreationTime
+	return modified
 }
 
 func (h *Handler) listCodeRepositories(w http.ResponseWriter, r *http.Request) {
@@ -390,7 +390,7 @@ func (h *Handler) listCodeRepositories(w http.ResponseWriter, r *http.Request) {
 			"CodeRepositoryName": repo.Name,
 			"CodeRepositoryArn":  repo.ARN,
 			"CreationTime":       epoch(repo.CreationTime),
-			"LastModifiedTime":   epoch(repoModified(repo)),
+			"LastModifiedTime":   epoch(modifiedOrCreated(repo.LastModifiedTime, repo.CreationTime)),
 		}
 	})
 }

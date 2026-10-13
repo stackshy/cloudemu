@@ -29,7 +29,7 @@ func (t *endpointTransition) active(now time.Time) bool { return now.Before(t.re
 // CreateEndpoint creates an endpoint. In synchronous mode it is InService
 // immediately; under --async-settle it is Creating for a short window.
 func (m *Mock) CreateEndpoint(ctx context.Context, cfg driver.EndpointSpec) (*driver.Endpoint, error) {
-	ep, err := m.createEndpoint(cfg)
+	ep, err := m.createEndpoint(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +41,7 @@ func (m *Mock) CreateEndpoint(ctx context.Context, cfg driver.EndpointSpec) (*dr
 
 // createEndpoint holds the endpoint lock for the whole create, so the event is
 // published by the caller after it is released.
-func (m *Mock) createEndpoint(cfg driver.EndpointSpec) (*driver.Endpoint, error) {
+func (m *Mock) createEndpoint(ctx context.Context, cfg driver.EndpointSpec) (*driver.Endpoint, error) {
 	if cfg.EndpointName == "" {
 		return nil, errors.New(errors.InvalidArgument, "endpointName is required")
 	}
@@ -56,7 +56,7 @@ func (m *Mock) createEndpoint(cfg driver.EndpointSpec) (*driver.Endpoint, error)
 	}
 
 	m.epMu.Lock()
-	defer m.epMu.Unlock()
+	defer m.unlockEndpoints(ctx)
 
 	now := m.opts.Clock.Now()
 	// An endpoint whose delete window has elapsed is gone: purge it so its name is free.
@@ -164,7 +164,7 @@ func (m *Mock) observeEndpoint(ep *driver.Endpoint, now time.Time) *driver.Endpo
 
 	tr, ok := m.epTrans[ep.EndpointName]
 	if ok && !tr.active(now) {
-		m.publishEndpointSettled(tr, out)
+		m.recordEndpointSettled(tr, out)
 
 		return out
 	}
@@ -195,18 +195,39 @@ func (m *Mock) observeEndpoint(ep *driver.Endpoint, now time.Time) *driver.Endpo
 	return out
 }
 
-// publishEndpointSettled publishes IN_SERVICE once, the first time an endpoint
-// is observed after its Creating or Updating transition elapsed (under
+// recordEndpointSettled notes that IN_SERVICE is due, once, the first time an
+// endpoint is observed after its Creating or Updating transition elapsed (under
 // --async-settle). Its Deleting transition has nothing further to publish. The
-// caller holds epMu.
-func (m *Mock) publishEndpointSettled(tr *endpointTransition, settled *driver.Endpoint) {
+// caller holds epMu, so the event is only queued here: it is published by
+// unlockEndpoints after epMu is released.
+func (m *Mock) recordEndpointSettled(tr *endpointTransition, settled *driver.Endpoint) {
 	if tr.kind == driver.EndpointDeleting || tr.settledPublished || !m.asyncEvents() {
 		return
 	}
 
 	tr.settledPublished = true
 
-	m.emitEndpointEvents(context.Background(), settled, driver.EndpointInService)
+	m.epDueMu.Lock()
+	m.epDue = append(m.epDue, cloneEndpoint(settled))
+	m.epDueMu.Unlock()
+}
+
+// unlockEndpoints releases epMu and then publishes the settled-endpoint events
+// the critical section noticed, with the caller's ctx. Publishing after the
+// release is what lets an event target (a Lambda handler, say) call back into
+// any endpoint operation: EventBridge delivers synchronously, and epMu is not
+// re-entrant.
+func (m *Mock) unlockEndpoints(ctx context.Context) {
+	m.epMu.Unlock()
+
+	m.epDueMu.Lock()
+	due := m.epDue
+	m.epDue = nil
+	m.epDueMu.Unlock()
+
+	for _, ep := range due {
+		m.emitEndpointEvents(ctx, ep, driver.EndpointInService)
+	}
 }
 
 // overlaySummaries merges what served before the transition (Current*) with
@@ -300,9 +321,9 @@ func (m *Mock) purgeEndpoint(name string) {
 
 // endpointStatus returns the observed status of name, or "" when it does not
 // exist.
-func (m *Mock) endpointStatus(name string) string {
+func (m *Mock) endpointStatus(ctx context.Context, name string) string {
 	m.epMu.Lock()
-	defer m.epMu.Unlock()
+	defer m.unlockEndpoints(ctx)
 
 	ep, ok := m.liveEndpoint(name, m.opts.Clock.Now())
 	if !ok {
@@ -313,9 +334,9 @@ func (m *Mock) endpointStatus(name string) string {
 }
 
 // DescribeEndpoint returns an endpoint with its observed lifecycle state.
-func (m *Mock) DescribeEndpoint(_ context.Context, name string) (*driver.Endpoint, error) {
+func (m *Mock) DescribeEndpoint(ctx context.Context, name string) (*driver.Endpoint, error) {
 	m.epMu.Lock()
-	defer m.epMu.Unlock()
+	defer m.unlockEndpoints(ctx)
 
 	ep, ok := m.liveEndpoint(name, m.opts.Clock.Now())
 	if !ok {
@@ -329,7 +350,7 @@ func (m *Mock) DescribeEndpoint(_ context.Context, name string) (*driver.Endpoin
 // apply to that observed state.
 //
 //nolint:gocritic // large value params mirror the driver interface
-func (m *Mock) ListEndpoints(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Endpoint], error) {
+func (m *Mock) ListEndpoints(ctx context.Context, opts driver.ListOptions) (driver.ListPage[driver.Endpoint], error) {
 	m.epMu.Lock()
 	now := m.opts.Clock.Now()
 	stored := m.endpoints.SortedValues()
@@ -340,7 +361,8 @@ func (m *Mock) ListEndpoints(_ context.Context, opts driver.ListOptions) (driver
 			observed = append(observed, live)
 		}
 	}
-	m.epMu.Unlock()
+
+	m.unlockEndpoints(ctx)
 
 	return listItems(observed, listSpec[driver.Endpoint]{
 		name:     func(t *driver.Endpoint) string { return t.EndpointName },
@@ -373,7 +395,7 @@ func (m *Mock) requireInService(name string, now time.Time) (*driver.Endpoint, e
 //
 //nolint:gocritic // large value params mirror the driver interface
 func (m *Mock) UpdateEndpoint(ctx context.Context, spec driver.UpdateEndpointSpec) (*driver.Endpoint, error) {
-	ep, err := m.updateEndpoint(spec)
+	ep, err := m.updateEndpoint(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -384,14 +406,14 @@ func (m *Mock) UpdateEndpoint(ctx context.Context, spec driver.UpdateEndpointSpe
 }
 
 //nolint:gocritic // large value params mirror the driver interface
-func (m *Mock) updateEndpoint(spec driver.UpdateEndpointSpec) (*driver.Endpoint, error) {
+func (m *Mock) updateEndpoint(ctx context.Context, spec driver.UpdateEndpointSpec) (*driver.Endpoint, error) {
 	ec, ok := m.endpointConfigs.Get(spec.ConfigName)
 	if !ok {
 		return nil, errors.Newf(errors.InvalidArgument, "endpoint config %q not found", spec.ConfigName)
 	}
 
 	m.epMu.Lock()
-	defer m.epMu.Unlock()
+	defer m.unlockEndpoints(ctx)
 
 	now := m.opts.Clock.Now()
 
@@ -466,7 +488,7 @@ func retainSummaries(next, current []driver.VariantSummary, spec driver.UpdateEn
 func (m *Mock) UpdateEndpointWeightsAndCapacities(
 	ctx context.Context, name string, weights []driver.VariantWeight,
 ) (*driver.Endpoint, error) {
-	ep, err := m.updateEndpointWeights(name, weights)
+	ep, err := m.updateEndpointWeights(ctx, name, weights)
 	if err != nil {
 		return nil, err
 	}
@@ -476,13 +498,13 @@ func (m *Mock) UpdateEndpointWeightsAndCapacities(
 	return ep, nil
 }
 
-func (m *Mock) updateEndpointWeights(name string, weights []driver.VariantWeight) (*driver.Endpoint, error) {
+func (m *Mock) updateEndpointWeights(ctx context.Context, name string, weights []driver.VariantWeight) (*driver.Endpoint, error) {
 	if len(weights) == 0 {
 		return nil, errors.New(errors.InvalidArgument, "desiredWeightsAndCapacities must contain at least 1 item")
 	}
 
 	m.epMu.Lock()
-	defer m.epMu.Unlock()
+	defer m.unlockEndpoints(ctx)
 
 	now := m.opts.Clock.Now()
 
@@ -547,7 +569,7 @@ func applyWeights(summaries []driver.VariantSummary, weights []driver.VariantWei
 // under --async-settle. Deleting an endpoint that is already Deleting is a
 // no-op.
 func (m *Mock) DeleteEndpoint(ctx context.Context, name string) error {
-	ep, err := m.deleteEndpoint(name)
+	ep, err := m.deleteEndpoint(ctx, name)
 	if err != nil || ep == nil {
 		return err
 	}
@@ -559,9 +581,9 @@ func (m *Mock) DeleteEndpoint(ctx context.Context, name string) error {
 
 // deleteEndpoint returns the endpoint as it was when deletion began, or nil
 // when the delete was a no-op (already Deleting).
-func (m *Mock) deleteEndpoint(name string) (*driver.Endpoint, error) {
+func (m *Mock) deleteEndpoint(ctx context.Context, name string) (*driver.Endpoint, error) {
 	m.epMu.Lock()
-	defer m.epMu.Unlock()
+	defer m.unlockEndpoints(ctx)
 
 	now := m.opts.Clock.Now()
 

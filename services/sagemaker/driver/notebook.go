@@ -133,7 +133,7 @@ type CodeRepository struct {
 	Branch       string
 	SecretARN    string
 	CreationTime string
-	// LastModifiedTime equals CreationTime: there is no UpdateCodeRepository.
+	// LastModifiedTime equals CreationTime: UpdateCodeRepository is not implemented yet.
 	LastModifiedTime string
 }
 

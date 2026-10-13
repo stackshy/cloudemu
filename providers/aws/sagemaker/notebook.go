@@ -474,11 +474,7 @@ func (m *Mock) ListCodeRepositories(_ context.Context, opts driver.ListOptions) 
 		name:    func(t *driver.CodeRepository) string { return t.Name },
 		created: func(t *driver.CodeRepository) string { return t.CreationTime },
 		modified: func(t *driver.CodeRepository) string {
-			if t.LastModifiedTime == "" { // restored from an older snapshot
-				return t.CreationTime
-			}
-
-			return t.LastModifiedTime
+			return modifiedOrCreated(t.LastModifiedTime, t.CreationTime)
 		},
 		// AWS defaults ListCodeRepositories SortBy to Name.
 		defaultSortBy: driver.SortByName,

@@ -257,6 +257,16 @@ func newListFilter(opts driver.ListOptions) (listFilter, error) {
 	return f, nil
 }
 
+// modifiedOrCreated is a resource's LastModifiedTime, falling back to its
+// creation time for state restored from a snapshot that predates the field.
+func modifiedOrCreated(modified, created string) string {
+	if modified == "" {
+		return created
+	}
+
+	return modified
+}
+
 // checkFilterSupport rejects a filter on a field the operation does not have.
 // An unsupported filter must never quietly turn into an empty result.
 //

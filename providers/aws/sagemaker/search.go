@@ -221,7 +221,9 @@ func (m *Mock) searchEndpoints() []*srec {
 			live = append(live, o)
 		}
 	}
-	m.epMu.Unlock()
+
+	// Search lists carry no ctx; the event queue is flushed with a background one.
+	m.unlockEndpoints(context.Background())
 
 	out := make([]*srec, 0, len(live))
 

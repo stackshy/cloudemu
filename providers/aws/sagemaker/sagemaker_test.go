@@ -5229,3 +5229,51 @@ func TestFamilies_ListSweepAndTagLiveness(t *testing.T) {
 	// The event publisher can be unwired (nil) without effect.
 	m.SetEventPublisher(nil)
 }
+
+// ListUserProfiles and ListSpaces document SortBy CreationTime | LastModifiedTime.
+func TestList_UserProfilesAndSpacesLastModified(t *testing.T) {
+	m, fc := newTestMockClock()
+	ctx := context.Background()
+
+	dom, err := m.CreateDomain(ctx, driver.DomainSpec{DomainName: "dom", AuthMode: "IAM"})
+	require.NoError(t, err)
+
+	for _, n := range []string{"alice", "bob"} {
+		_, err = m.CreateUserProfile(ctx, driver.UserProfileSpec{DomainID: dom.DomainID, UserProfileName: n})
+		require.NoError(t, err)
+		_, err = m.CreateSpace(ctx, driver.SpaceSpec{DomainID: dom.DomainID, SpaceName: n})
+		require.NoError(t, err)
+
+		fc.Advance(time.Hour)
+	}
+
+	ups, err := m.ListUserProfiles(ctx, dom.DomainID, driver.ListOptions{SortBy: driver.SortByLastModifiedTime, SortOrder: driver.SortDescending})
+	require.NoError(t, err)
+	require.Len(t, ups.Items, 2)
+	assert.Equal(t, "bob", ups.Items[0].UserProfileName, "newest first")
+	assert.NotEmpty(t, ups.Items[0].LastModifiedTime)
+
+	sps, err := m.ListSpaces(ctx, dom.DomainID, driver.ListOptions{SortBy: driver.SortByLastModifiedTime, SortOrder: driver.SortDescending})
+	require.NoError(t, err)
+	require.Len(t, sps.Items, 2)
+	assert.Equal(t, "bob", sps.Items[0].SpaceName)
+
+	for name, count := range map[string]func(after string) (int, error){
+		"user profiles": func(after string) (int, error) {
+			p, e := m.ListUserProfiles(ctx, dom.DomainID, driver.ListOptions{LastModifiedTimeAfter: after})
+			return len(p.Items), e
+		},
+		"spaces": func(after string) (int, error) {
+			p, e := m.ListSpaces(ctx, dom.DomainID, driver.ListOptions{LastModifiedTimeAfter: after})
+			return len(p.Items), e
+		},
+	} {
+		n, e := count("2000-01-01T00:00:00Z")
+		require.NoError(t, e, name)
+		assert.Equal(t, 2, n, name)
+
+		n, e = count("2999-01-01T00:00:00Z")
+		require.NoError(t, e, name)
+		assert.Equal(t, 0, n, name)
+	}
+}

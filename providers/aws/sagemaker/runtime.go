@@ -19,7 +19,7 @@ import (
 //
 //nolint:gocritic // in matches the driver signature; copied on entry.
 func (m *Mock) InvokeEndpoint(ctx context.Context, in driver.InvokeEndpointInput) (*driver.InvokeEndpointOutput, error) {
-	ep, err := m.servingEndpoint(in.EndpointName)
+	ep, err := m.servingEndpoint(ctx, in.EndpointName)
 	if err != nil {
 		return nil, err
 	}
@@ -59,10 +59,10 @@ func (m *Mock) InvokeEndpoint(ctx context.Context, in driver.InvokeEndpointInput
 }
 
 // servingEndpoint returns the observed endpoint when it can answer invocations.
-func (m *Mock) servingEndpoint(name string) (*driver.Endpoint, error) {
+func (m *Mock) servingEndpoint(ctx context.Context, name string) (*driver.Endpoint, error) {
 	m.epMu.Lock()
 	ep, ok := m.liveEndpoint(name, m.opts.Clock.Now())
-	m.epMu.Unlock()
+	m.unlockEndpoints(ctx)
 
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "Endpoint %s of account %s not found.", name, m.opts.AccountID)
@@ -137,7 +137,7 @@ const maxInferenceIDLen = 64
 // (echoed) result is considered to have been written. An endpoint whose
 // configuration has no async output path cannot be invoked asynchronously.
 func (m *Mock) InvokeEndpointAsync(ctx context.Context, in driver.InvokeEndpointAsyncInput) (*driver.InvokeEndpointAsyncOutput, error) {
-	ep, err := m.servingEndpoint(in.EndpointName)
+	ep, err := m.servingEndpoint(ctx, in.EndpointName)
 	if err != nil {
 		return nil, err
 	}

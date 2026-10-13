@@ -94,8 +94,16 @@ func epochMillis(iso string) int64 {
 
 // millisString is epochMillis rendered as a string: SageMaker's training-job
 // and tuning-job events carry their times as strings, processing and endpoint
-// events as numbers, the others as ISO-8601.
-func millisString(iso string) string { return strconv.FormatInt(epochMillis(iso), 10) }
+// events as numbers, the others as ISO-8601. An unset time is "", which the
+// event structs omit, instead of the string "0".
+func millisString(iso string) string {
+	ms := epochMillis(iso)
+	if ms == 0 {
+		return ""
+	}
+
+	return strconv.FormatInt(ms, 10)
+}
 
 // tagMap renders API tags the way events carry them: a key/value object.
 func tagMap(tags []driver.Tag) map[string]string {

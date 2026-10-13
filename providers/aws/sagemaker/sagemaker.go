@@ -117,6 +117,12 @@ type Mock struct {
 	// (--async-settle) transitions overlaid on stored endpoints at read time.
 	epMu sync.Mutex
 
+	// epDueMu guards epDue, the settled-endpoint events noticed while epMu was
+	// held. They are published only after epMu is released (unlockEndpoints), so
+	// an event handler that reads the endpoint back cannot deadlock on epMu.
+	epDueMu sync.Mutex
+	epDue   []*driver.Endpoint
+
 	// evMu guards settledEmitted, the settled states already published under
 	// --async-settle (key: resource ARN + state).
 	evMu           sync.Mutex

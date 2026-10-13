@@ -52,11 +52,12 @@ func (h *Handler) describeSpace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, map[string]any{
-		"DomainId":     sp.DomainID,
-		"SpaceName":    sp.SpaceName,
-		"SpaceArn":     sp.SpaceARN,
-		"Status":       sp.Status,
-		"CreationTime": epoch(sp.CreationTime),
+		"DomainId":         sp.DomainID,
+		"SpaceName":        sp.SpaceName,
+		"SpaceArn":         sp.SpaceARN,
+		"Status":           sp.Status,
+		"CreationTime":     epoch(sp.CreationTime),
+		"LastModifiedTime": epoch(modifiedOrCreated(sp.LastModifiedTime, sp.CreationTime)),
 	})
 }
 
@@ -75,10 +76,11 @@ func (h *Handler) listSpaces(w http.ResponseWriter, r *http.Request) {
 
 	writeSummaries(w, "Spaces", spaces, func(s *driver.Space) map[string]any {
 		return map[string]any{
-			"DomainId":     s.DomainID,
-			"SpaceName":    s.SpaceName,
-			"Status":       s.Status,
-			"CreationTime": epoch(s.CreationTime),
+			"DomainId":         s.DomainID,
+			"SpaceName":        s.SpaceName,
+			"Status":           s.Status,
+			"CreationTime":     epoch(s.CreationTime),
+			"LastModifiedTime": epoch(modifiedOrCreated(s.LastModifiedTime, s.CreationTime)),
 		}
 	})
 }
@@ -233,11 +235,12 @@ func (h *Handler) describeUserProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, map[string]any{
-		"DomainId":        up.DomainID,
-		"UserProfileName": up.UserProfileName,
-		"UserProfileArn":  up.UserProfileARN,
-		"Status":          up.Status,
-		"CreationTime":    epoch(up.CreationTime),
+		"DomainId":         up.DomainID,
+		"UserProfileName":  up.UserProfileName,
+		"UserProfileArn":   up.UserProfileARN,
+		"Status":           up.Status,
+		"CreationTime":     epoch(up.CreationTime),
+		"LastModifiedTime": epoch(modifiedOrCreated(up.LastModifiedTime, up.CreationTime)),
 	})
 }
 
@@ -256,10 +259,11 @@ func (h *Handler) listUserProfiles(w http.ResponseWriter, r *http.Request) {
 
 	writeSummaries(w, "UserProfiles", ups, func(u *driver.UserProfile) map[string]any {
 		return map[string]any{
-			"DomainId":        u.DomainID,
-			"UserProfileName": u.UserProfileName,
-			"Status":          u.Status,
-			"CreationTime":    epoch(u.CreationTime),
+			"DomainId":         u.DomainID,
+			"UserProfileName":  u.UserProfileName,
+			"Status":           u.Status,
+			"CreationTime":     epoch(u.CreationTime),
+			"LastModifiedTime": epoch(modifiedOrCreated(u.LastModifiedTime, u.CreationTime)),
 		}
 	})
 }
