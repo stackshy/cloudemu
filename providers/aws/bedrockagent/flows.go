@@ -49,6 +49,8 @@ func (m *Mock) CreateFlow(_ context.Context, cfg driver.FlowConfig) (*driver.Flo
 
 // GetFlow returns a flow by identifier.
 func (m *Mock) GetFlow(_ context.Context, id string) (*driver.Flow, error) {
+	id = resourceID(id, "flow/")
+
 	flow, ok := m.flows.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "flow %q not found", id)
@@ -75,9 +77,14 @@ func (m *Mock) ListFlows(_ context.Context, page driver.Page) ([]driver.Flow, st
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (m *Mock) UpdateFlow(_ context.Context, id string, cfg driver.FlowConfig) (*driver.Flow, error) {
+	id = resourceID(id, "flow/")
+
 	if err := validateFlow(cfg); err != nil {
 		return nil, err
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	flow, ok := m.flows.Get(id)
 	if !ok {
@@ -102,8 +109,14 @@ func (m *Mock) UpdateFlow(_ context.Context, id string, cfg driver.FlowConfig) (
 	return &result, nil
 }
 
-// DeleteFlow deletes a flow and its tags and returns its identifier.
+// DeleteFlow deletes a flow, its versions and aliases and their tags, and
+// returns its identifier.
 func (m *Mock) DeleteFlow(_ context.Context, id string) (string, error) {
+	id = resourceID(id, "flow/")
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	flow, ok := m.flows.Get(id)
 	if !ok {
 		return "", errors.Newf(errors.NotFound, "flow %q not found", id)
@@ -111,12 +124,18 @@ func (m *Mock) DeleteFlow(_ context.Context, id string) (string, error) {
 
 	m.flows.Delete(id)
 	m.dropTags(flow.ARN)
+	m.deleteFlowChildren(id)
 
 	return id, nil
 }
 
 // PrepareFlow prepares a flow, transitioning it to Prepared.
 func (m *Mock) PrepareFlow(_ context.Context, id string) (*driver.Flow, error) {
+	id = resourceID(id, "flow/")
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	flow, ok := m.flows.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "flow %q not found", id)

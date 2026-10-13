@@ -120,8 +120,8 @@ func TestTagErrors(t *testing.T) {
 	_, err = m.CreateAgent(ctx, driver.AgentConfig{Name: "a", Tags: map[string]string{"": "v"}})
 	assert.True(t, cerrors.IsInvalidArgument(err))
 
-	// Well-formed but naming nothing: not found. Includes a flow alias and a
-	// prompt version, which are not modeled yet.
+	// Well-formed but naming nothing: not found, including a flow alias and a
+	// prompt version that don't exist.
 	for _, arn := range []string{
 		"arn:aws:bedrock:us-east-1:123456789012:agent/ZZZZZZZZZZ",
 		"arn:aws:bedrock:us-east-1:123456789012:flow/ZZZZZZZZZZ/alias/YYYYYYYYYY",
@@ -141,6 +141,42 @@ func TestTagErrors(t *testing.T) {
 		_, err = m.ListTagsForResource(ctx, arn)
 		assert.True(t, cerrors.IsInvalidArgument(err), arn)
 	}
+}
+
+// TestTagsOnFlowAliasesAndPromptVersions covers the two ARN shapes #1452
+// found unsupported: flow/F/alias/A and prompt/P:N.
+func TestTagsOnFlowAliasesAndPromptVersions(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	flow := mustFlow(t, m)
+
+	alias, err := m.CreateFlowAlias(ctx, driver.FlowAliasConfig{
+		FlowID: flow.ID, Name: "a", RoutingConfiguration: []driver.FlowAliasRoute{{FlowVersion: driver.DraftVersion}},
+	})
+	require.NoError(t, err)
+
+	prompt, err := m.CreatePrompt(ctx, driver.PromptConfig{Name: "p"})
+	require.NoError(t, err)
+
+	version, err := m.CreatePromptVersion(ctx, prompt.ID, "", nil)
+	require.NoError(t, err)
+
+	for _, arn := range []string{alias.ARN, version.ARN} {
+		require.NoError(t, m.TagResource(ctx, arn, map[string]string{"k": "v"}), arn)
+
+		got, err := m.ListTagsForResource(ctx, arn)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]string{"k": "v"}, got, arn)
+	}
+
+	// A flow alias ARN under the wrong flow does not resolve.
+	other := mustFlow(t, m)
+	_, err = m.ListTagsForResource(ctx, other.ARN+"/alias/"+alias.ID)
+	assert.True(t, cerrors.IsNotFound(err))
+
+	got, err := m.ListTagsForResource(ctx, prompt.ARN)
+	require.NoError(t, err)
+	assert.Empty(t, got, "the version's tags are its own")
 }
 
 // TestDeleteDropsTags covers that deleting a resource (and cascading to its

@@ -46,8 +46,14 @@ func (m *Mock) CreatePrompt(_ context.Context, cfg driver.PromptConfig) (*driver
 	return &result, nil
 }
 
-// GetPrompt returns a prompt by identifier.
-func (m *Mock) GetPrompt(_ context.Context, id string) (*driver.Prompt, error) {
+// GetPrompt returns a prompt by id or ARN. An ARN ending in ":<version>"
+// returns that version.
+func (m *Mock) GetPrompt(ctx context.Context, id string) (*driver.Prompt, error) {
+	id, version := splitPromptIdentifier(id)
+	if version != "" {
+		return m.GetPromptVersion(ctx, id, version)
+	}
+
 	prompt, ok := m.prompts.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "prompt %q not found", id)
@@ -74,9 +80,14 @@ func (m *Mock) ListPrompts(_ context.Context, page driver.Page) ([]driver.Prompt
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (m *Mock) UpdatePrompt(_ context.Context, id string, cfg driver.PromptConfig) (*driver.Prompt, error) {
+	id, _ = splitPromptIdentifier(id)
+
 	if err := validatePrompt(cfg); err != nil {
 		return nil, err
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	prompt, ok := m.prompts.Get(id)
 	if !ok {
@@ -100,8 +111,14 @@ func (m *Mock) UpdatePrompt(_ context.Context, id string, cfg driver.PromptConfi
 	return &result, nil
 }
 
-// DeletePrompt deletes a prompt and its tags and returns its identifier.
+// DeletePrompt deletes a prompt, every version of it and their tags, and
+// returns its identifier.
 func (m *Mock) DeletePrompt(_ context.Context, id string) (string, error) {
+	id, _ = splitPromptIdentifier(id)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	prompt, ok := m.prompts.Get(id)
 	if !ok {
 		return "", errors.Newf(errors.NotFound, "prompt %q not found", id)
@@ -109,6 +126,7 @@ func (m *Mock) DeletePrompt(_ context.Context, id string) (string, error) {
 
 	m.prompts.Delete(id)
 	m.dropTags(prompt.ARN)
+	m.deletePromptChildren(id)
 
 	return id, nil
 }

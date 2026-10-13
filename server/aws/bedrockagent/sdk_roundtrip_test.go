@@ -12,6 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awsba "github.com/aws/aws-sdk-go-v2/service/bedrockagent"
 	batypes "github.com/aws/aws-sdk-go-v2/service/bedrockagent/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	providerba "github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
@@ -28,7 +30,15 @@ const (
 func newClient(t *testing.T) *awsba.Client {
 	t.Helper()
 
-	drv := providerba.New(config.NewOptions())
+	return newClientWith(t, config.NewOptions())
+}
+
+// newClientWith points a real SDK client at a server over a mock built with
+// opts.
+func newClientWith(t *testing.T, opts *config.Options) *awsba.Client {
+	t.Helper()
+
+	drv := providerba.New(opts)
 	ts := httptest.NewServer(serverba.New(drv))
 	t.Cleanup(ts.Close)
 
@@ -396,4 +406,74 @@ func assertNotFound(t *testing.T, err error) {
 	if !errors.As(err, &nfe) {
 		t.Fatalf("expected ResourceNotFoundException, got %T: %v", err, err)
 	}
+}
+
+// TestSDKAgentConfigurationRoundTrip covers the agent members #1452 found
+// dropped: promptOverrideConfiguration, plus agentCollaboration, guardrail and
+// memory configuration, which Terraform reads back after every apply.
+func TestSDKAgentConfigurationRoundTrip(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	override := &batypes.PromptOverrideConfiguration{PromptConfigurations: []batypes.PromptConfiguration{{
+		PromptType:         batypes.PromptTypeOrchestration,
+		PromptCreationMode: batypes.CreationModeOverridden,
+		PromptState:        batypes.PromptStateEnabled,
+		BasePromptTemplate: aws.String("You are $agent_instruction$"),
+		ParserMode:         batypes.CreationModeDefault,
+		InferenceConfiguration: &batypes.InferenceConfiguration{
+			Temperature: aws.Float32(0.2), MaximumLength: aws.Int32(512),
+		},
+	}}}
+
+	created, err := client.CreateAgent(ctx, &awsba.CreateAgentInput{
+		AgentName:                   aws.String("configured"),
+		FoundationModel:             aws.String(claudeModel),
+		AgentCollaboration:          batypes.AgentCollaborationSupervisorRouter,
+		PromptOverrideConfiguration: override,
+		GuardrailConfiguration: &batypes.GuardrailConfiguration{
+			GuardrailIdentifier: aws.String("gr-1"), GuardrailVersion: aws.String("1"),
+		},
+		MemoryConfiguration: &batypes.MemoryConfiguration{
+			EnabledMemoryTypes: []batypes.MemoryType{batypes.MemoryTypeSessionSummary}, StorageDays: aws.Int32(30),
+		},
+	})
+	require.NoError(t, err, "agentResourceRoleArn is optional in the service model")
+	requireStatus(t, created.ResultMetadata, http.StatusAccepted)
+
+	agentID := created.Agent.AgentId
+
+	got, err := client.GetAgent(ctx, &awsba.GetAgentInput{AgentId: agentID})
+	require.NoError(t, err)
+
+	agent := got.Agent
+	assert.Equal(t, batypes.AgentCollaborationSupervisorRouter, agent.AgentCollaboration)
+	require.Len(t, agent.PromptOverrideConfiguration.PromptConfigurations, 1)
+	assert.Equal(t, "You are $agent_instruction$",
+		aws.ToString(agent.PromptOverrideConfiguration.PromptConfigurations[0].BasePromptTemplate))
+	assert.Equal(t, "gr-1", aws.ToString(agent.GuardrailConfiguration.GuardrailIdentifier))
+	assert.Equal(t, int32(30), aws.ToInt32(agent.MemoryConfiguration.StorageDays))
+
+	// An update that omits the blocks keeps them.
+	_, err = client.UpdateAgent(ctx, &awsba.UpdateAgentInput{
+		AgentId: agentID, AgentName: aws.String("configured"), FoundationModel: aws.String(claudeModel),
+		AgentResourceRoleArn: aws.String(roleArn),
+	})
+	require.NoError(t, err)
+
+	got, err = client.GetAgent(ctx, &awsba.GetAgentInput{AgentId: agentID})
+	require.NoError(t, err)
+	require.Len(t, got.Agent.PromptOverrideConfiguration.PromptConfigurations, 1)
+	assert.Equal(t, batypes.AgentCollaborationSupervisorRouter, got.Agent.AgentCollaboration)
+
+	plain := createAgent(t, client, "plain", "")
+	defaults, err := client.GetAgent(ctx, &awsba.GetAgentInput{AgentId: aws.String(plain)})
+	require.NoError(t, err)
+	assert.Equal(t, batypes.AgentCollaborationDisabled, defaults.Agent.AgentCollaboration)
+	assert.Equal(t, batypes.OrchestrationTypeDefault, defaults.Agent.OrchestrationType)
+
+	_, err = client.CreateAgent(ctx, &awsba.CreateAgentInput{
+		AgentName: aws.String("bad"), AgentCollaboration: batypes.AgentCollaboration("BOSS"),
+	})
+	requireAPIError(t, err, "ValidationException", http.StatusBadRequest)
 }

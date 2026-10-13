@@ -78,6 +78,9 @@ func (m *Mock) UpdateKnowledgeBase(_ context.Context, id string, cfg driver.Know
 		return nil, err
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	kb, ok := m.knowledge.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "knowledge base %q not found", id)
@@ -101,9 +104,13 @@ func (m *Mock) UpdateKnowledgeBase(_ context.Context, id string, cfg driver.Know
 	return &result, nil
 }
 
-// DeleteKnowledgeBase deletes a knowledge base, its tags and, cascading like
-// real AWS, every data source and ingestion job that belongs to it.
+// DeleteKnowledgeBase deletes a knowledge base, its tags and resource policy
+// and, cascading like real AWS, every data source, ingestion job and document
+// that belongs to it.
 func (m *Mock) DeleteKnowledgeBase(_ context.Context, id string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	kb, ok := m.knowledge.Get(id)
 	if !ok {
 		return "", errors.Newf(errors.NotFound, "knowledge base %q not found", id)
@@ -111,8 +118,10 @@ func (m *Mock) DeleteKnowledgeBase(_ context.Context, id string) (string, error)
 
 	m.knowledge.Delete(id)
 	m.dropTags(kb.ARN)
+	m.policies.Delete(kb.ARN)
 	m.deleteDataSourcesForKnowledgeBase(id)
 	m.deleteJobsForKnowledgeBase(id)
+	deleteByPrefix(m.documents, id+"/")
 
 	return statusDeleting, nil
 }

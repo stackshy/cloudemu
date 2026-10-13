@@ -46,6 +46,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	badriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
@@ -60,14 +62,26 @@ const (
 	prefixFlows   = "/flows"
 	prefixPrompts = "/prompts"
 
-	segAgentAliases  = "agentaliases"
-	segDataSources   = "datasources"
-	segIngestionJobs = "ingestionjobs"
+	segAgentAliases       = "agentaliases"
+	segAgentVersions      = "agentversions"
+	segActionGroups       = "actiongroups"
+	segAgentKBs           = "knowledgebases"
+	segAgentCollaborators = "agentcollaborators"
+	segDataSources        = "datasources"
+	segIngestionJobs      = "ingestionjobs"
+	segDocuments          = "documents"
+	segStop               = "stop"
+	segVersions           = "versions"
+	segAliases            = "aliases"
 
 	// segment counts identifying the nested data-source path shapes.
 	dsCollectionSegments = 2 // {kb}/datasources
 	dsItemSegments       = 3 // {kb}/datasources/{ds}
 	ingestionSegments    = 4 // {kb}/datasources/{ds}/ingestionjobs
+	ingestionJobSegments = 5 // {kb}/datasources/{ds}/ingestionjobs/{job}
+	ingestionStopSegs    = 6 // {kb}/datasources/{ds}/ingestionjobs/{job}/stop
+	documentsSegments    = 4 // {kb}/datasources/{ds}/documents
+	documentsOpSegments  = 5 // {kb}/datasources/{ds}/documents/{getDocuments|deleteDocuments}
 )
 
 // Handler serves AWS Bedrock Agent restJson1 requests against a driver.
@@ -95,7 +109,7 @@ func New(drv badriver.BedrockAgent) *Handler {
 func (*Handler) Matches(r *http.Request) bool {
 	p := r.URL.Path
 
-	return ownsTagsPath(p) ||
+	return ownsTagsPath(p) || ownsPolicyPath(p) ||
 		underPrefix(p, prefixAgents) ||
 		underPrefix(p, prefixKB) ||
 		underPrefix(p, prefixFlows) ||
@@ -116,28 +130,39 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case ownsTagsPath(p):
 		h.serveTags(w, r)
+	case ownsPolicyPath(p):
+		h.serveResourcePolicy(w, r)
 	case underPrefix(p, prefixAgents):
-		h.serveAgents(w, r, segments(p, prefixAgents))
+		h.serveAgents(w, r, segments(r, prefixAgents))
 	case underPrefix(p, prefixKB):
-		h.serveKnowledgeBases(w, r, segments(p, prefixKB))
+		h.serveKnowledgeBases(w, r, segments(r, prefixKB))
 	case underPrefix(p, prefixFlows):
-		h.serveFlows(w, r, segments(p, prefixFlows))
+		h.serveFlows(w, r, segments(r, prefixFlows))
 	case underPrefix(p, prefixPrompts):
-		h.servePrompts(w, r, segments(p, prefixPrompts))
+		h.servePrompts(w, r, segments(r, prefixPrompts))
 	default:
 		notFound(w, p)
 	}
 }
 
-// segments trims prefix and surrounding slashes from path and splits the
-// remainder into path segments. An empty remainder yields a nil slice.
-func segments(path, prefix string) []string {
-	rest := strings.Trim(strings.TrimPrefix(path, prefix), "/")
+// segments trims prefix and surrounding slashes from the request path and
+// splits the remainder into unescaped path segments. It splits the escaped
+// path, so an identifier sent as an ARN (its "/" escaped as %2F by the SDK)
+// stays one segment. An empty remainder yields a nil slice.
+func segments(r *http.Request, prefix string) []string {
+	rest := strings.Trim(strings.TrimPrefix(r.URL.EscapedPath(), prefix), "/")
 	if rest == "" {
 		return nil
 	}
 
-	return strings.Split(rest, "/")
+	parts := strings.Split(rest, "/")
+	for i, part := range parts {
+		if u, err := url.PathUnescape(part); err == nil {
+			parts[i] = u
+		}
+	}
+
+	return parts
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -172,9 +197,40 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
+	writeJSONStatus(w, http.StatusOK, v)
+}
+
+// writeJSONStatus writes v with the success status the service model gives
+// the operation (200, 201 or 202).
+func writeJSONStatus(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", contentTypeJSON)
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeNoContent answers an operation whose model response is 204 with no
+// body.
+func writeNoContent(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// capabilityOf returns the optional capability T of the backing driver, or
+// answers the call with a ValidationException when it has none.
+func capabilityOf[T any](d badriver.BedrockAgent, w http.ResponseWriter, op string) (T, bool) {
+	c, ok := d.(T)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "ValidationException",
+			"The operation "+op+" is not supported by this Bedrock Agent backend.")
+	}
+
+	return c, ok
+}
+
+// queryBool reads a boolean query parameter such as skipResourceInUseCheck.
+func queryBool(r *http.Request, name string) bool {
+	v, err := strconv.ParseBool(r.URL.Query().Get(name))
+
+	return err == nil && v
 }
 
 // IAMService returns the IAM service prefix of the operations this handler

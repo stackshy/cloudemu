@@ -3071,6 +3071,206 @@
         "name": "UpdatePrompt"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "ActionGroups",
+        "doc": "ActionGroups manages the action groups (tools) of an agent version.",
+        "operations": [
+          {
+            "name": "CreateAgentActionGroup"
+          },
+          {
+            "name": "DeleteAgentActionGroup"
+          },
+          {
+            "name": "GetAgentActionGroup"
+          },
+          {
+            "name": "ListAgentActionGroups"
+          },
+          {
+            "name": "UpdateAgentActionGroup"
+          }
+        ]
+      },
+      {
+        "name": "AgentCollaborators",
+        "doc": "AgentCollaborators manages the collaborator agents of a supervisor agent.",
+        "operations": [
+          {
+            "name": "AssociateAgentCollaborator"
+          },
+          {
+            "name": "DisassociateAgentCollaborator"
+          },
+          {
+            "name": "GetAgentCollaborator"
+          },
+          {
+            "name": "ListAgentCollaborators"
+          },
+          {
+            "name": "UpdateAgentCollaborator"
+          }
+        ]
+      },
+      {
+        "name": "AgentKnowledgeBases",
+        "doc": "AgentKnowledgeBases associates knowledge bases with an agent version.",
+        "operations": [
+          {
+            "name": "AssociateAgentKnowledgeBase"
+          },
+          {
+            "name": "DisassociateAgentKnowledgeBase"
+          },
+          {
+            "name": "GetAgentKnowledgeBase"
+          },
+          {
+            "name": "ListAgentKnowledgeBases"
+          },
+          {
+            "name": "UpdateAgentKnowledgeBase"
+          }
+        ]
+      },
+      {
+        "name": "AgentVersions",
+        "doc": "AgentVersions manages agent versions and the rest of the alias lifecycle.",
+        "operations": [
+          {
+            "name": "DeleteAgentAlias"
+          },
+          {
+            "name": "DeleteAgentVersion"
+          },
+          {
+            "name": "GetAgentAlias"
+          },
+          {
+            "name": "GetAgentVersion"
+          },
+          {
+            "name": "ListAgentAliases"
+          },
+          {
+            "name": "ListAgentVersions"
+          },
+          {
+            "name": "UpdateAgentAlias"
+          }
+        ]
+      },
+      {
+        "name": "FlowValidator",
+        "doc": "FlowValidator checks a flow definition without storing it.",
+        "operations": [
+          {
+            "name": "ValidateFlowDefinition"
+          }
+        ]
+      },
+      {
+        "name": "FlowVersions",
+        "doc": "FlowVersions publishes flow versions and manages the aliases routing to them.",
+        "operations": [
+          {
+            "name": "CreateFlowAlias"
+          },
+          {
+            "name": "CreateFlowVersion"
+          },
+          {
+            "name": "DeleteFlowAlias"
+          },
+          {
+            "name": "DeleteFlowVersion"
+          },
+          {
+            "name": "GetFlowAlias"
+          },
+          {
+            "name": "GetFlowVersion"
+          },
+          {
+            "name": "ListFlowAliases"
+          },
+          {
+            "name": "ListFlowVersions"
+          },
+          {
+            "name": "UpdateFlowAlias"
+          }
+        ]
+      },
+      {
+        "name": "IngestionJobs",
+        "doc": "IngestionJobs reads, lists and stops data-source ingestion jobs.",
+        "operations": [
+          {
+            "name": "GetIngestionJob"
+          },
+          {
+            "name": "ListIngestionJobs"
+          },
+          {
+            "name": "StopIngestionJob"
+          }
+        ]
+      },
+      {
+        "name": "KnowledgeBaseDocuments",
+        "doc": "KnowledgeBaseDocuments manages the documents of a data source directly.",
+        "operations": [
+          {
+            "name": "DeleteKnowledgeBaseDocuments"
+          },
+          {
+            "name": "GetKnowledgeBaseDocuments"
+          },
+          {
+            "name": "IngestKnowledgeBaseDocuments"
+          },
+          {
+            "name": "ListKnowledgeBaseDocuments"
+          }
+        ]
+      },
+      {
+        "name": "PromptVersions",
+        "doc": "PromptVersions publishes immutable numbered versions of a prompt's DRAFT.",
+        "operations": [
+          {
+            "name": "CreatePromptVersion"
+          },
+          {
+            "name": "DeletePromptVersion"
+          },
+          {
+            "name": "GetPromptVersion"
+          },
+          {
+            "name": "ListPromptVersions"
+          }
+        ]
+      },
+      {
+        "name": "ResourcePolicies",
+        "doc": "ResourcePolicies attaches resource-based policies to knowledge bases.",
+        "operations": [
+          {
+            "name": "DeleteResourcePolicy"
+          },
+          {
+            "name": "GetResourcePolicy"
+          },
+          {
+            "name": "PutResourcePolicy"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "BedrockAgent"
     }

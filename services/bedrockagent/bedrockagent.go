@@ -160,6 +160,8 @@ func (b *BedrockAgent) PrepareAgent(ctx context.Context, agentID string) (*drive
 }
 
 // CreateAgentAlias creates an alias of an agent.
+//
+//nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (b *BedrockAgent) CreateAgentAlias(ctx context.Context, cfg driver.AgentAliasConfig) (*driver.AgentAlias, error) {
 	out, err := b.do(ctx, "CreateAgentAlias", cfg, func() (any, error) { return b.driver.CreateAgentAlias(ctx, cfg) })
 	if err != nil {

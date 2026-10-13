@@ -35,13 +35,15 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsInvalidArgument(err):
 		writeError(w, http.StatusBadRequest, "ValidationException", cerrors.Message(err))
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusBadRequest, "ValidationException", cerrors.Message(err))
+		// A state conflict: a version in use by an alias, a finished ingestion
+		// job, a stale policy revision.
+		writeError(w, http.StatusConflict, "ConflictException", cerrors.Message(err))
 	case cerrors.IsThrottled(err):
 		writeError(w, http.StatusTooManyRequests, "ThrottlingException", cerrors.Message(err))
 	case cerrors.IsPermissionDenied(err):
 		writeError(w, http.StatusForbidden, "AccessDeniedException", cerrors.Message(err))
 	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
-		writeError(w, http.StatusBadRequest, "ServiceQuotaExceededException", cerrors.Message(err))
+		writeError(w, http.StatusPaymentRequired, "ServiceQuotaExceededException", cerrors.Message(err))
 	default:
 		writeError(w, http.StatusInternalServerError, "InternalServerException", cerrors.Message(err))
 	}

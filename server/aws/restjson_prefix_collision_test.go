@@ -43,7 +43,7 @@ var restJSONTopLevelPrefixes = map[string][]string{
 
 	// Bare-root REST handlers.
 	"eks":                 {"clusters", "tags"},
-	"bedrockagent":        {"agents", "knowledgebases", "flows", "prompts", "tags"},
+	"bedrockagent":        {"agents", "knowledgebases", "flows", "prompts", "tags", "resourcepolicy"},
 	"bedrockagentruntime": {"agents", "knowledgebases"},
 	"sagemakerruntime":    {"endpoints"},
 	"k8s":                 {"k8s"},
@@ -83,6 +83,9 @@ var sharedTopLevelPrefixes = map[string]map[string]bool{
 	// registers first so its more-specific Matches wins.
 	"agents":         {"bedrockagent": true, "bedrockagentruntime": true},
 	"knowledgebases": {"bedrockagent": true, "bedrockagentruntime": true},
+	// /resourcepolicy/{arn} is shared: bedrock-agent claims it only for
+	// knowledge-base ARNs, VPC Lattice only for its own identifiers.
+	"resourcepolicy": {"bedrockagent": true, "vpclattice": true},
 }
 
 // TestRESTJSONPrefixesAreDisjoint asserts no top-level path segment is claimed

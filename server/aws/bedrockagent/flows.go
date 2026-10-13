@@ -11,8 +11,12 @@ func (h *Handler) serveFlows(w http.ResponseWriter, r *http.Request, segs []stri
 	switch {
 	case len(segs) == 0:
 		h.serveFlowCollection(w, r)
+	case len(segs) == 1 && segs[0] == segValidateDefinition:
+		withCapability(h, w, "ValidateFlowDefinition", func(c badriver.FlowValidator) { validateFlowDefinition(w, r, c) })
 	case len(segs) == 1:
 		h.serveFlowItem(w, r, segs[0])
+	case segs[1] == segVersions || segs[1] == segAliases:
+		withCapability(h, w, "FlowVersions", func(c badriver.FlowVersions) { serveFlowChildren(w, r, c, segs) })
 	default:
 		notFound(w, r.URL.Path)
 	}
@@ -46,6 +50,7 @@ func (h *Handler) serveFlowItem(w http.ResponseWriter, r *http.Request, id strin
 
 // --- operations ---
 
+//nolint:dupl // structurally similar to createPrompt but operates on a distinct resource type.
 func (h *Handler) createFlow(w http.ResponseWriter, r *http.Request) {
 	var in createFlowRequest
 	if !decodeJSON(w, r, &in) {
@@ -66,7 +71,7 @@ func (h *Handler) createFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, toFlowJSON(flow))
+	writeJSONStatus(w, http.StatusCreated, toFlowJSON(flow))
 }
 
 func (h *Handler) getFlow(w http.ResponseWriter, r *http.Request, id string) {
@@ -143,7 +148,7 @@ func (h *Handler) prepareFlow(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
-	writeJSON(w, prepareFlowResponse{ID: flow.ID, Status: flow.Status})
+	writeJSONStatus(w, http.StatusAccepted, prepareFlowResponse{ID: flow.ID, Status: flow.Status})
 }
 
 // --- converters ---

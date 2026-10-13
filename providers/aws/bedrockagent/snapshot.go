@@ -24,6 +24,17 @@ type bedrockAgentSnapshot struct {
 	Flows       json.RawMessage `json:"flows,omitempty"`
 	Prompts     json.RawMessage `json:"prompts,omitempty"`
 	Tags        json.RawMessage `json:"tags,omitempty"`
+
+	AgentVersions  json.RawMessage `json:"agentVersions,omitempty"`
+	ActionGroups   json.RawMessage `json:"actionGroups,omitempty"`
+	AgentKBs       json.RawMessage `json:"agentKnowledgeBases,omitempty"`
+	Collaborators  json.RawMessage `json:"collaborators,omitempty"`
+	FlowVersions   json.RawMessage `json:"flowVersions,omitempty"`
+	FlowAliases    json.RawMessage `json:"flowAliases,omitempty"`
+	PromptVersions json.RawMessage `json:"promptVersions,omitempty"`
+	Documents      json.RawMessage `json:"documents,omitempty"`
+	Policies       json.RawMessage `json:"resourcePolicies,omitempty"`
+	VersionSeq     json.RawMessage `json:"versionSeq,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused. Bedrock Agent holds
@@ -43,6 +54,16 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 		{&snap.Flows, m.flows.Snapshot},
 		{&snap.Prompts, m.prompts.Snapshot},
 		{&snap.Tags, m.tags.Snapshot},
+		{&snap.AgentVersions, m.agentVersions.Snapshot},
+		{&snap.ActionGroups, m.actionGroups.Snapshot},
+		{&snap.AgentKBs, m.agentKBs.Snapshot},
+		{&snap.Collaborators, m.collaborators.Snapshot},
+		{&snap.FlowVersions, m.flowVersions.Snapshot},
+		{&snap.FlowAliases, m.flowAliases.Snapshot},
+		{&snap.PromptVersions, m.promptVersions.Snapshot},
+		{&snap.Documents, m.documents.Snapshot},
+		{&snap.Policies, m.policies.Snapshot},
+		{&snap.VersionSeq, m.versionSeq.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -58,8 +79,9 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 }
 
 // Restore rebuilds the mock's state under the original identities: every agent,
-// alias, knowledge base, data source, ingestion job, flow, and prompt id is
-// preserved so cross-references (e.g. a data source's knowledge-base id, or a
+// alias, version, action group, knowledge base (and association), collaborator,
+// data source, document, ingestion job, flow (and alias), prompt and policy is
+// preserved, as is each resource's last version number, so cross-references (e.g. a data source's knowledge-base id, or a
 // tag entry's ARN) resolve.
 func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	var snap bedrockAgentSnapshot
@@ -79,6 +101,16 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		{snap.Flows, m.flows.LoadSnapshot},
 		{snap.Prompts, m.prompts.LoadSnapshot},
 		{snap.Tags, m.tags.LoadSnapshot},
+		{snap.AgentVersions, m.agentVersions.LoadSnapshot},
+		{snap.ActionGroups, m.actionGroups.LoadSnapshot},
+		{snap.AgentKBs, m.agentKBs.LoadSnapshot},
+		{snap.Collaborators, m.collaborators.LoadSnapshot},
+		{snap.FlowVersions, m.flowVersions.LoadSnapshot},
+		{snap.FlowAliases, m.flowAliases.LoadSnapshot},
+		{snap.PromptVersions, m.promptVersions.LoadSnapshot},
+		{snap.Documents, m.documents.LoadSnapshot},
+		{snap.Policies, m.policies.LoadSnapshot},
+		{snap.VersionSeq, m.versionSeq.LoadSnapshot},
 	}
 
 	for _, l := range loads {

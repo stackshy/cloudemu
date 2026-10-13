@@ -1,6 +1,7 @@
 package bedrockagent
 
 import (
+	"context"
 	"net/http"
 
 	badriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
@@ -13,6 +14,8 @@ func (h *Handler) servePrompts(w http.ResponseWriter, r *http.Request, segs []st
 		h.servePromptCollection(w, r)
 	case len(segs) == 1:
 		h.servePromptItem(w, r, segs[0])
+	case len(segs) == promptVersionsSegments && segs[1] == segVersions && r.Method == http.MethodPost:
+		withCapability(h, w, "CreatePromptVersion", func(c badriver.PromptVersions) { createPromptVersion(w, r, c, segs[0]) })
 	default:
 		notFound(w, r.URL.Path)
 	}
@@ -30,6 +33,13 @@ func (h *Handler) servePromptCollection(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) servePromptItem(w http.ResponseWriter, r *http.Request, id string) {
+	if version := r.URL.Query().Get("promptVersion"); version != "" &&
+		(r.Method == http.MethodGet || r.Method == http.MethodDelete) {
+		withCapability(h, w, "PromptVersions", func(c badriver.PromptVersions) { servePromptVersion(w, r, c, id, version) })
+
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.getPrompt(w, r, id)
@@ -44,6 +54,7 @@ func (h *Handler) servePromptItem(w http.ResponseWriter, r *http.Request, id str
 
 // --- operations ---
 
+//nolint:dupl // structurally similar to createFlow but operates on a distinct resource type.
 func (h *Handler) createPrompt(w http.ResponseWriter, r *http.Request) {
 	var in createPromptRequest
 	if !decodeJSON(w, r, &in) {
@@ -64,7 +75,7 @@ func (h *Handler) createPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, toPromptJSON(prompt))
+	writeJSONStatus(w, http.StatusCreated, toPromptJSON(prompt))
 }
 
 func (h *Handler) getPrompt(w http.ResponseWriter, r *http.Request, id string) {
@@ -84,7 +95,20 @@ func (h *Handler) listPrompts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prompts, next, err := h.agent.ListPrompts(r.Context(), page)
+	list := h.agent.ListPrompts
+
+	if id := r.URL.Query().Get("promptIdentifier"); id != "" {
+		c, ok := capabilityOf[badriver.PromptVersions](h.agent, w, "ListPrompts")
+		if !ok {
+			return
+		}
+
+		list = func(ctx context.Context, page badriver.Page) ([]badriver.Prompt, string, error) {
+			return c.ListPromptVersions(ctx, id, page)
+		}
+	}
+
+	prompts, next, err := list(r.Context(), page)
 	if err != nil {
 		writeErr(w, err)
 

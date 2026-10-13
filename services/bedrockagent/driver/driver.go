@@ -19,6 +19,13 @@ const (
 	AgentAliasPrepared = "PREPARED"
 )
 
+// AgentCollaborationDisabled is the agentCollaboration value of an agent that
+// is not a supervisor; it is the default.
+const AgentCollaborationDisabled = "DISABLED"
+
+// OrchestrationTypeDefault is the default orchestrationType of an agent.
+const OrchestrationTypeDefault = "DEFAULT"
+
 // KnowledgeBase status values.
 const (
 	KnowledgeBaseActive = "ACTIVE"
@@ -31,7 +38,9 @@ const (
 
 // IngestionJob status values.
 const (
-	IngestionJobComplete = "COMPLETE"
+	IngestionJobComplete   = "COMPLETE"
+	IngestionJobInProgress = "IN_PROGRESS"
+	IngestionJobStopped    = "STOPPED"
 )
 
 // Flow status values (PascalCase, per FlowStatus).
@@ -43,53 +52,92 @@ const (
 // DraftVersion is the working version assigned to freshly created resources.
 const DraftVersion = "DRAFT"
 
-// AgentConfig describes an agent to create.
+// AgentConfig describes an agent to create. The RawMessage members are kept
+// verbatim; an Update that omits one keeps the stored value.
 type AgentConfig struct {
-	Name                    string
-	ResourceRoleArn         string
-	FoundationModel         string
-	Instruction             string
-	Description             string
-	IdleSessionTTLInSeconds int32
-	ClientToken             string
-	Tags                    map[string]string
+	Name                        string
+	ResourceRoleArn             string
+	FoundationModel             string
+	Instruction                 string
+	Description                 string
+	IdleSessionTTLInSeconds     int32
+	ClientToken                 string
+	Tags                        map[string]string
+	AgentCollaboration          string
+	OrchestrationType           string
+	CustomerEncryptionKeyArn    string
+	PromptOverrideConfiguration json.RawMessage
+	GuardrailConfiguration      json.RawMessage
+	MemoryConfiguration         json.RawMessage
+	CustomOrchestration         json.RawMessage
 }
 
-// Agent describes a Bedrock agent.
+// Agent describes a Bedrock agent. Version is DRAFT for the working draft and
+// a number for a version cut from it (see AgentVersions).
 type Agent struct {
-	ID                      string
-	ARN                     string
-	Name                    string
-	ResourceRoleArn         string
-	FoundationModel         string
-	Instruction             string
-	Description             string
-	Status                  string
-	Version                 string
-	IdleSessionTTLInSeconds int32
-	CreatedAt               string
-	UpdatedAt               string
-	PreparedAt              string
+	ID                          string
+	ARN                         string
+	Name                        string
+	ResourceRoleArn             string
+	FoundationModel             string
+	Instruction                 string
+	Description                 string
+	Status                      string
+	Version                     string
+	IdleSessionTTLInSeconds     int32
+	CreatedAt                   string
+	UpdatedAt                   string
+	PreparedAt                  string
+	AgentCollaboration          string
+	OrchestrationType           string
+	CustomerEncryptionKeyArn    string
+	PromptOverrideConfiguration json.RawMessage
+	GuardrailConfiguration      json.RawMessage
+	MemoryConfiguration         json.RawMessage
+	CustomOrchestration         json.RawMessage
 }
 
-// AgentAliasConfig describes an agent alias to create.
+// AgentAliasRoute is one routingConfiguration entry of an agent alias.
+type AgentAliasRoute struct {
+	AgentVersion          string
+	ProvisionedThroughput string
+}
+
+// AgentAliasHistoryEvent records a routing an alias used between two instants.
+// EndDate is empty for the routing in effect.
+type AgentAliasHistoryEvent struct {
+	RoutingConfiguration []AgentAliasRoute
+	StartDate            string
+	EndDate              string
+}
+
+// AgentAliasConfig describes an agent alias to create or update. An empty
+// RoutingConfiguration cuts a new numbered version from the agent's DRAFT and
+// points the alias at it, as real Bedrock does.
 type AgentAliasConfig struct {
-	AgentID     string
-	Name        string
-	Description string
-	Tags        map[string]string
+	AgentID              string
+	Name                 string
+	Description          string
+	ClientToken          string
+	RoutingConfiguration []AgentAliasRoute
+	InvocationState      string
+	Tags                 map[string]string
 }
 
 // AgentAlias describes an alias of an agent.
 type AgentAlias struct {
-	ID          string
-	ARN         string
-	AgentID     string
-	Name        string
-	Description string
-	Status      string
-	CreatedAt   string
-	UpdatedAt   string
+	ID                   string
+	ARN                  string
+	AgentID              string
+	Name                 string
+	Description          string
+	Status               string
+	ClientToken          string
+	RoutingConfiguration []AgentAliasRoute
+	HistoryEvents        []AgentAliasHistoryEvent
+	InvocationState      string
+	CreatedAt            string
+	UpdatedAt            string
 }
 
 // KnowledgeBaseConfig describes a knowledge base to create.
@@ -146,6 +194,7 @@ type IngestionJob struct {
 	DataSourceID    string
 	Description     string
 	Status          string
+	Statistics      IngestionJobStatistics
 	StartedAt       string
 	UpdatedAt       string
 }

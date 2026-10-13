@@ -19,7 +19,8 @@ func TestSharedTagsPathRoutedByARN(t *testing.T) {
 
 	status, resp := doRequest(t, ts, http.MethodPut, "/agents/",
 		`{"agentName":"tagged","tags":{"owner":"bedrock"}}`, jsonCT)
-	require.Equalf(t, http.StatusOK, status, "CreateAgent body=%s", resp)
+	// CreateAgent answers 202 Accepted, as in the service model.
+	require.Equalf(t, http.StatusAccepted, status, "CreateAgent body=%s", resp)
 
 	agentARN := jsonField(t, resp, "agent", "agentArn")
 
