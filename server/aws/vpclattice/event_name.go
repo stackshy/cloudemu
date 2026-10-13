@@ -10,12 +10,21 @@ const SigningName = "vpc-lattice"
 
 // Top-level path roots and sub-paths of the REST-JSON routes.
 const (
-	rootServices            = "services"
-	rootTargetGroups        = "targetgroups"
-	rootDomainVerifications = "domainverifications"
-	rootAuthPolicy          = "authpolicy"
-	rootResourcePolicy      = "resourcepolicy"
-	rootTags                = "tags"
+	rootServiceNetworks              = "servicenetworks"
+	rootSNVpcAssociations            = "servicenetworkvpcassociations"
+	rootSNVpcEndpointAssociations    = "servicenetworkvpcendpointassociations"
+	rootSNServiceAssociations        = "servicenetworkserviceassociations"
+	rootSNResourceAssociations       = "servicenetworkresourceassociations"
+	rootResourceConfigurations       = "resourceconfigurations"
+	rootResourceGateways             = "resourcegateways"
+	rootResourceEndpointAssociations = "resourceendpointassociations"
+	rootAccessLogSubscriptions       = "accesslogsubscriptions"
+	rootServices                     = "services"
+	rootTargetGroups                 = "targetgroups"
+	rootDomainVerifications          = "domainverifications"
+	rootAuthPolicy                   = "authpolicy"
+	rootResourcePolicy               = "resourcepolicy"
+	rootTags                         = "tags"
 
 	pathListeners         = "listeners"
 	pathRules             = "rules"
@@ -27,18 +36,18 @@ const (
 // collectionNouns maps a top-level collection root to its singular and plural
 // operation nouns ("servicenetworks" -> ServiceNetwork/ServiceNetworks).
 var collectionNouns = map[string][2]string{ //nolint:gochecknoglobals // static route-name lookup table
-	"servicenetworks":                       {"ServiceNetwork", "ServiceNetworks"},
-	rootServices:                            {"Service", "Services"},
-	rootTargetGroups:                        {"TargetGroup", "TargetGroups"},
-	"servicenetworkvpcassociations":         {"ServiceNetworkVpcAssociation", "ServiceNetworkVpcAssociations"},
-	"servicenetworkvpcendpointassociations": {"ServiceNetworkVpcEndpointAssociation", "ServiceNetworkVpcEndpointAssociations"},
-	"servicenetworkserviceassociations":     {"ServiceNetworkServiceAssociation", "ServiceNetworkServiceAssociations"},
-	"servicenetworkresourceassociations":    {"ServiceNetworkResourceAssociation", "ServiceNetworkResourceAssociations"},
-	"resourceconfigurations":                {"ResourceConfiguration", "ResourceConfigurations"},
-	"resourcegateways":                      {"ResourceGateway", "ResourceGateways"},
-	"resourceendpointassociations":          {"ResourceEndpointAssociation", "ResourceEndpointAssociations"},
-	"accesslogsubscriptions":                {"AccessLogSubscription", "AccessLogSubscriptions"},
-	rootDomainVerifications:                 {"DomainVerification", "DomainVerifications"},
+	rootServiceNetworks:              {"ServiceNetwork", "ServiceNetworks"},
+	rootServices:                     {"Service", "Services"},
+	rootTargetGroups:                 {"TargetGroup", "TargetGroups"},
+	rootSNVpcAssociations:            {"ServiceNetworkVpcAssociation", "ServiceNetworkVpcAssociations"},
+	rootSNVpcEndpointAssociations:    {"ServiceNetworkVpcEndpointAssociation", "ServiceNetworkVpcEndpointAssociations"},
+	rootSNServiceAssociations:        {"ServiceNetworkServiceAssociation", "ServiceNetworkServiceAssociations"},
+	rootSNResourceAssociations:       {"ServiceNetworkResourceAssociation", "ServiceNetworkResourceAssociations"},
+	rootResourceConfigurations:       {"ResourceConfiguration", "ResourceConfigurations"},
+	rootResourceGateways:             {"ResourceGateway", "ResourceGateways"},
+	rootResourceEndpointAssociations: {"ResourceEndpointAssociation", "ResourceEndpointAssociations"},
+	rootAccessLogSubscriptions:       {"AccessLogSubscription", "AccessLogSubscriptions"},
+	rootDomainVerifications:          {"DomainVerification", "DomainVerifications"},
 }
 
 // OperationName returns the VPC Lattice API operation name (the CloudTrail

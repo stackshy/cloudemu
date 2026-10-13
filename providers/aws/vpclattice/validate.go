@@ -25,7 +25,7 @@ const (
 	maxPort          = 65535
 
 	minRulePriority = 1
-	maxRulePriority = 100
+	maxRulePriority = 2000
 )
 
 func invalidf(format string, args ...any) error {
@@ -66,18 +66,20 @@ func validateListener(protocol string, port int32) (int32, error) {
 		return 0, invalidf("listener port %d is out of range 1-%d", port, maxPort)
 	}
 
-	// The SDK documents defaults for HTTP and HTTPS only; other protocols keep
-	// the port as given.
-	if port == 0 {
-		switch protocol {
-		case listenerProtocolHTTP:
-			return defaultHTTPPort, nil
-		case listenerProtocolHTTPS:
-			return defaultHTTPSPort, nil
-		}
+	if port != 0 {
+		return port, nil
 	}
 
-	return port, nil
+	// The API documents defaults for HTTP and HTTPS only, and a listener's port
+	// is always 1-65535, so TLS_PASSTHROUGH needs an explicit port.
+	switch protocol {
+	case listenerProtocolHTTP:
+		return defaultHTTPPort, nil
+	case listenerProtocolHTTPS:
+		return defaultHTTPSPort, nil
+	default:
+		return 0, invalidf("listener port is required for protocol %s", protocol)
+	}
 }
 
 func validateRulePriority(priority int32) error {

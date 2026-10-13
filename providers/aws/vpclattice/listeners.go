@@ -147,6 +147,10 @@ func (m *Mock) ListListeners(_ context.Context, serviceID string) ([]driver.List
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if _, err := m.serviceARNFor(serviceID); err != nil {
+		return nil, err
+	}
+
 	sid := idFromIdentifier(serviceID)
 
 	all := sortedValues(m.listeners.All(), cloneListener)

@@ -570,6 +570,10 @@ func TestCreateListener_Validation(t *testing.T) {
 	_, err = m.CreateListener(ctx, &driver.CreateListenerInput{ServiceID: svc.ID, Protocol: "TLS_PASSTHROUGH", Port: 8443})
 	require.NoError(t, err)
 
+	// TLS_PASSTHROUGH has no documented default port, and a listener's port is 1-65535.
+	_, err = m.CreateListener(ctx, &driver.CreateListenerInput{ServiceID: svc.ID, Protocol: "TLS_PASSTHROUGH"})
+	assert.True(t, cerrors.IsInvalidArgument(err))
+
 	// Failed creates stored nothing (B5).
 	ls, _ := m.ListListeners(ctx, svc.ID)
 	assert.Len(t, ls, 3)
@@ -651,10 +655,19 @@ func TestRulePriority_Conflict(t *testing.T) {
 	_, err = m.UpdateRule(ctx, svc.ID, l.ID, r2.ID, 10, nil, nil)
 	assert.True(t, cerrors.IsAlreadyExists(err))
 
-	for _, p := range []int32{0, -1, 101} {
+	for _, p := range []int32{0, -1, 2001} {
 		_, err = m.CreateRule(ctx, &driver.CreateRuleInput{ServiceID: svc.ID, ListenerID: l.ID, Name: "x", Priority: p})
 		assert.True(t, cerrors.IsInvalidArgument(err), "%d", p)
 	}
+
+	// The documented range is 1-2000 (CreateRule / UpdateRule API reference).
+	for _, p := range []int32{500, 1000, 2000} {
+		_, err = m.CreateRule(ctx, &driver.CreateRuleInput{ServiceID: svc.ID, ListenerID: l.ID, Name: "hi", Priority: p})
+		require.NoError(t, err, "%d", p)
+	}
+
+	_, err = m.UpdateRule(ctx, svc.ID, l.ID, r2.ID, 2001, nil, nil)
+	assert.True(t, cerrors.IsInvalidArgument(err))
 
 	// Freed priority is reusable.
 	require.NoError(t, m.DeleteRule(ctx, svc.ID, l.ID, r1.ID))
@@ -696,7 +709,7 @@ func TestBatchUpdateRules_FailureShape(t *testing.T) {
 	a, _ := m.CreateRule(ctx, &driver.CreateRuleInput{ServiceID: svc.ID, ListenerID: l.ID, Name: "a", Priority: 1})
 
 	_, fail, err := m.BatchUpdateRules(ctx, svc.ID, l.ID, []driver.RuleUpdate{
-		{RuleID: "rule-missing", Priority: 5}, {RuleID: a.ID, Priority: 500},
+		{RuleID: "rule-missing", Priority: 5}, {RuleID: a.ID, Priority: 2001},
 	})
 	require.NoError(t, err)
 	require.Len(t, fail, 2)
@@ -858,15 +871,31 @@ func TestListRules_DefaultRule(t *testing.T) {
 
 	assert.True(t, cerrors.IsInvalidArgument(m.DeleteRule(ctx, svc.ID, l.ID, rs[0].ID)))
 
-	upd, err := m.UpdateRule(ctx, svc.ID, l.ID, rs[0].ID, 0, nil, []byte(`{"fixedResponse":{"statusCode":503}}`))
-	require.NoError(t, err)
-	assert.Contains(t, string(upd.Action), "503")
-	lg, _ := m.GetListener(ctx, svc.ID, l.ID)
-	assert.Contains(t, string(lg.DefaultAction), "503")
-
-	// Default rule does not take part in priority uniqueness or cascade.
+	// AWS: "You can't modify a default listener rule. To modify a default
+	// listener rule, use UpdateListener."
+	_, err = m.UpdateRule(ctx, svc.ID, l.ID, rs[0].ID, 0, nil, []byte(`{"fixedResponse":{"statusCode":503}}`))
+	assert.True(t, cerrors.IsInvalidArgument(err))
 	_, err = m.UpdateRule(ctx, svc.ID, l.ID, rs[0].ID, 7, nil, nil)
 	assert.True(t, cerrors.IsInvalidArgument(err))
+
+	_, fail, err := m.BatchUpdateRules(ctx, svc.ID, l.ID, []driver.RuleUpdate{
+		{RuleID: rs[0].ID, Action: []byte(`{"fixedResponse":{"statusCode":503}}`)},
+	})
+	require.NoError(t, err)
+	require.Len(t, fail, 1)
+	assert.Equal(t, rs[0].ID, fail[0].RuleID)
+	assert.Equal(t, "ValidationException", fail[0].FailureCode)
+
+	// The listener's default action is untouched; UpdateListener is the way to change it.
+	lg, _ := m.GetListener(ctx, svc.ID, l.ID)
+	assert.JSONEq(t, string(l.DefaultAction), string(lg.DefaultAction))
+
+	_, err = m.UpdateListener(ctx, svc.ID, l.ID, []byte(`{"fixedResponse":{"statusCode":503}}`))
+	require.NoError(t, err)
+	got, err = m.GetRule(ctx, svc.ID, l.ID, rs[0].ID)
+	require.NoError(t, err)
+	assert.Contains(t, string(got.Action), "503")
+
 	require.NoError(t, m.DeleteListener(ctx, svc.ID, l.ID))
 }
 
@@ -1088,4 +1117,11 @@ func TestFailedCreatesMutateNothing(t *testing.T) {
 	assert.Empty(t, sns)
 	assert.Empty(t, subs)
 	assert.Empty(t, m.tags.All())
+}
+
+func TestListListeners_UnknownService(t *testing.T) {
+	m := newTestMock()
+
+	_, err := m.ListListeners(context.Background(), "svc-missing")
+	assert.True(t, cerrors.IsNotFound(err))
 }

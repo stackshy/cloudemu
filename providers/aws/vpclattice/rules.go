@@ -50,21 +50,10 @@ func (m *Mock) defaultRuleListener(serviceID, listenerID, ruleID string) (*drive
 	return l, true
 }
 
-// updateDefaultRule applies a rule update to the listener's default action; the
-// default rule has no priority or match to change.
-func (m *Mock) updateDefaultRule(l *driver.Listener, priority int32, match, action []byte) (*driver.Rule, error) {
-	if priority != 0 || len(match) > 0 {
-		return nil, invalidf("the default rule's priority and match cannot be changed")
-	}
-
-	if len(action) > 0 {
-		l.DefaultAction = append([]byte(nil), action...)
-		l.LastUpdatedAt = m.now()
-	}
-
-	out := m.defaultRule(l)
-
-	return &out, nil
+// errDefaultRuleImmutable is returned for UpdateRule / BatchUpdateRule on a
+// listener's default rule, which only UpdateListener may change.
+func errDefaultRuleImmutable() error {
+	return invalidf("a default listener rule cannot be modified; use UpdateListener")
 }
 
 // failureCodeFor maps an error to the per-item failure code BatchUpdateRule reports.
@@ -200,8 +189,8 @@ func (m *Mock) UpdateRule(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if l, ok := m.defaultRuleListener(serviceID, listenerID, ruleID); ok {
-		return m.updateDefaultRule(l, priority, match, action)
+	if _, ok := m.defaultRuleListener(serviceID, listenerID, ruleID); ok {
+		return nil, errDefaultRuleImmutable()
 	}
 
 	rule, err := m.getRuleLocked(serviceID, listenerID, ruleID)
@@ -292,8 +281,8 @@ func (m *Mock) BatchUpdateRules(
 
 // batchUpdateOne applies one BatchUpdateRule entry. Caller holds m.mu.
 func (m *Mock) batchUpdateOne(serviceID, listenerID string, u driver.RuleUpdate) (*driver.Rule, error) {
-	if l, isDefault := m.defaultRuleListener(serviceID, listenerID, u.RuleID); isDefault {
-		return m.updateDefaultRule(l, u.Priority, u.Match, u.Action)
+	if _, isDefault := m.defaultRuleListener(serviceID, listenerID, u.RuleID); isDefault {
+		return nil, errDefaultRuleImmutable()
 	}
 
 	rule, err := m.getRuleLocked(serviceID, listenerID, u.RuleID)

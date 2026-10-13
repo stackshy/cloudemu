@@ -1246,3 +1246,212 @@ func TestOperationName(t *testing.T) {
 		}
 	}
 }
+
+// --- review round 1 ---
+
+func TestSDK_RulePriority_Range(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+	svc, _ := client.CreateService(ctx, &awsvpcl.CreateServiceInput{Name: aws.String("svc")})
+	l, _ := client.CreateListener(ctx, &awsvpcl.CreateListenerInput{
+		ServiceIdentifier: svc.Id, Name: aws.String("lst"), Protocol: vpcltypes.ListenerProtocolHttp, DefaultAction: fixed404(),
+	})
+
+	mk := func(name string, priority int32) error {
+		_, err := client.CreateRule(ctx, &awsvpcl.CreateRuleInput{
+			ServiceIdentifier: svc.Id, ListenerIdentifier: l.Id, Name: aws.String(name), Priority: aws.Int32(priority),
+			Match:  &vpcltypes.RuleMatchMemberHttpMatch{Value: vpcltypes.HttpMatch{Method: aws.String("GET")}},
+			Action: fixed404(),
+		})
+
+		return err
+	}
+
+	for _, p := range []int32{500, 2000} {
+		if err := mk("rul-ok", p); err != nil {
+			t.Fatalf("priority %d: %v", p, err)
+		}
+	}
+
+	requireAPIError[*vpcltypes.ValidationException](t, mk("rul-high", 2001), "priority 2001")
+	requireAPIError[*vpcltypes.ValidationException](t, mk("rul-zero", 0), "priority 0")
+}
+
+func TestSDK_DefaultRule_NotModifiable(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+	svc, _ := client.CreateService(ctx, &awsvpcl.CreateServiceInput{Name: aws.String("svc")})
+	l, _ := client.CreateListener(ctx, &awsvpcl.CreateListenerInput{
+		ServiceIdentifier: svc.Id, Name: aws.String("lst"), Protocol: vpcltypes.ListenerProtocolHttp, DefaultAction: fixed404(),
+	})
+
+	rs, err := client.ListRules(ctx, &awsvpcl.ListRulesInput{ServiceIdentifier: svc.Id, ListenerIdentifier: l.Id})
+	if err != nil || len(rs.Items) != 1 {
+		t.Fatalf("ListRules: %v %+v", err, rs)
+	}
+
+	def := rs.Items[0].Id
+
+	_, err = client.UpdateRule(ctx, &awsvpcl.UpdateRuleInput{
+		ServiceIdentifier: svc.Id, ListenerIdentifier: l.Id, RuleIdentifier: def, Action: fixed404(),
+	})
+	requireAPIError[*vpcltypes.ValidationException](t, err, "UpdateRule on the default rule")
+
+	out, err := client.BatchUpdateRule(ctx, &awsvpcl.BatchUpdateRuleInput{
+		ServiceIdentifier: svc.Id, ListenerIdentifier: l.Id,
+		Rules: []vpcltypes.RuleUpdate{{RuleIdentifier: def, Action: fixed404()}},
+	})
+	if err != nil || len(out.Unsuccessful) != 1 || aws.ToString(out.Unsuccessful[0].FailureCode) != "ValidationException" {
+		t.Fatalf("BatchUpdateRule on the default rule: %v %+v", err, out)
+	}
+
+	// UpdateListener is the supported way to change the default action.
+	if _, err = client.UpdateListener(ctx, &awsvpcl.UpdateListenerInput{
+		ServiceIdentifier: svc.Id, ListenerIdentifier: l.Id,
+		DefaultAction: &vpcltypes.RuleActionMemberFixedResponse{Value: vpcltypes.FixedResponseAction{StatusCode: aws.Int32(503)}},
+	}); err != nil {
+		t.Fatalf("UpdateListener: %v", err)
+	}
+}
+
+func TestSDK_CreateListener_TLSPassthroughPort(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+	svc, _ := client.CreateService(ctx, &awsvpcl.CreateServiceInput{Name: aws.String("svc")})
+
+	_, err := client.CreateListener(ctx, &awsvpcl.CreateListenerInput{
+		ServiceIdentifier: svc.Id, Name: aws.String("lst"), Protocol: vpcltypes.ListenerProtocolTlsPassthrough,
+		DefaultAction: fixed404(),
+	})
+	requireAPIError[*vpcltypes.ValidationException](t, err, "TLS_PASSTHROUGH without a port")
+
+	l, err := client.CreateListener(ctx, &awsvpcl.CreateListenerInput{
+		ServiceIdentifier: svc.Id, Name: aws.String("lst"), Protocol: vpcltypes.ListenerProtocolTlsPassthrough,
+		Port: aws.Int32(8443), DefaultAction: fixed404(),
+	})
+	if err != nil || aws.ToInt32(l.Port) != 8443 {
+		t.Fatalf("TLS_PASSTHROUGH with a port: %v %+v", err, l)
+	}
+}
+
+// TestSDK_NotFound_AllResources drives a get, update or delete of an id that
+// does not exist for every resource kind and requires ResourceNotFoundException.
+func TestSDK_NotFound_AllResources(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	calls := map[string]func() error{
+		"GetServiceNetwork": func() error {
+			_, err := client.GetServiceNetwork(ctx, &awsvpcl.GetServiceNetworkInput{ServiceNetworkIdentifier: aws.String("sn-missing")})
+			return err
+		},
+		"DeleteServiceNetwork": func() error {
+			_, err := client.DeleteServiceNetwork(ctx, &awsvpcl.DeleteServiceNetworkInput{ServiceNetworkIdentifier: aws.String("sn-missing")})
+			return err
+		},
+		"UpdateService": func() error {
+			_, err := client.UpdateService(ctx, &awsvpcl.UpdateServiceInput{ServiceIdentifier: aws.String("svc-missing")})
+			return err
+		},
+		"DeleteService": func() error {
+			_, err := client.DeleteService(ctx, &awsvpcl.DeleteServiceInput{ServiceIdentifier: aws.String("svc-missing")})
+			return err
+		},
+		"GetListener": func() error {
+			_, err := client.GetListener(ctx, &awsvpcl.GetListenerInput{ServiceIdentifier: aws.String("svc-missing"), ListenerIdentifier: aws.String("listener-missing")})
+			return err
+		},
+		"DeleteListener": func() error {
+			_, err := client.DeleteListener(ctx, &awsvpcl.DeleteListenerInput{ServiceIdentifier: aws.String("svc-missing"), ListenerIdentifier: aws.String("listener-missing")})
+			return err
+		},
+		"ListListeners": func() error {
+			_, err := client.ListListeners(ctx, &awsvpcl.ListListenersInput{ServiceIdentifier: aws.String("svc-missing")})
+			return err
+		},
+		"ListRules": func() error {
+			_, err := client.ListRules(ctx, &awsvpcl.ListRulesInput{ServiceIdentifier: aws.String("svc-missing"), ListenerIdentifier: aws.String("listener-missing")})
+			return err
+		},
+		"UpdateTargetGroup": func() error {
+			_, err := client.UpdateTargetGroup(ctx, &awsvpcl.UpdateTargetGroupInput{
+				TargetGroupIdentifier: aws.String("tg-missing"), HealthCheck: &vpcltypes.HealthCheckConfig{Enabled: aws.Bool(true)},
+			})
+			return err
+		},
+		"ListTargets": func() error {
+			_, err := client.ListTargets(ctx, &awsvpcl.ListTargetsInput{TargetGroupIdentifier: aws.String("tg-missing")})
+			return err
+		},
+		"DeregisterTargets": func() error {
+			_, err := client.DeregisterTargets(ctx, &awsvpcl.DeregisterTargetsInput{
+				TargetGroupIdentifier: aws.String("tg-missing"), Targets: []vpcltypes.Target{{Id: aws.String("10.0.0.1")}},
+			})
+			return err
+		},
+		"GetServiceNetworkVpcAssociation": func() error {
+			_, err := client.GetServiceNetworkVpcAssociation(ctx, &awsvpcl.GetServiceNetworkVpcAssociationInput{ServiceNetworkVpcAssociationIdentifier: aws.String("snva-missing")})
+			return err
+		},
+		"DeleteServiceNetworkVpcAssociation": func() error {
+			_, err := client.DeleteServiceNetworkVpcAssociation(ctx, &awsvpcl.DeleteServiceNetworkVpcAssociationInput{ServiceNetworkVpcAssociationIdentifier: aws.String("snva-missing")})
+			return err
+		},
+		"GetServiceNetworkServiceAssociation": func() error {
+			_, err := client.GetServiceNetworkServiceAssociation(ctx, &awsvpcl.GetServiceNetworkServiceAssociationInput{ServiceNetworkServiceAssociationIdentifier: aws.String("snsa-missing")})
+			return err
+		},
+		"DeleteServiceNetworkServiceAssociation": func() error {
+			_, err := client.DeleteServiceNetworkServiceAssociation(ctx, &awsvpcl.DeleteServiceNetworkServiceAssociationInput{ServiceNetworkServiceAssociationIdentifier: aws.String("snsa-missing")})
+			return err
+		},
+		"GetServiceNetworkResourceAssociation": func() error {
+			_, err := client.GetServiceNetworkResourceAssociation(ctx, &awsvpcl.GetServiceNetworkResourceAssociationInput{ServiceNetworkResourceAssociationIdentifier: aws.String("snra-missing")})
+			return err
+		},
+		"DeleteServiceNetworkResourceAssociation": func() error {
+			_, err := client.DeleteServiceNetworkResourceAssociation(ctx, &awsvpcl.DeleteServiceNetworkResourceAssociationInput{ServiceNetworkResourceAssociationIdentifier: aws.String("snra-missing")})
+			return err
+		},
+		"GetResourceConfiguration": func() error {
+			_, err := client.GetResourceConfiguration(ctx, &awsvpcl.GetResourceConfigurationInput{ResourceConfigurationIdentifier: aws.String("rc-missing")})
+			return err
+		},
+		"DeleteResourceConfiguration": func() error {
+			_, err := client.DeleteResourceConfiguration(ctx, &awsvpcl.DeleteResourceConfigurationInput{ResourceConfigurationIdentifier: aws.String("rc-missing")})
+			return err
+		},
+		"GetResourceGateway": func() error {
+			_, err := client.GetResourceGateway(ctx, &awsvpcl.GetResourceGatewayInput{ResourceGatewayIdentifier: aws.String("rg-missing")})
+			return err
+		},
+		"GetAccessLogSubscription": func() error {
+			_, err := client.GetAccessLogSubscription(ctx, &awsvpcl.GetAccessLogSubscriptionInput{AccessLogSubscriptionIdentifier: aws.String("als-missing")})
+			return err
+		},
+		"DeleteAccessLogSubscription": func() error {
+			_, err := client.DeleteAccessLogSubscription(ctx, &awsvpcl.DeleteAccessLogSubscriptionInput{AccessLogSubscriptionIdentifier: aws.String("als-missing")})
+			return err
+		},
+		"GetDomainVerification": func() error {
+			_, err := client.GetDomainVerification(ctx, &awsvpcl.GetDomainVerificationInput{DomainVerificationIdentifier: aws.String("dv-missing")})
+			return err
+		},
+		"DeleteDomainVerification": func() error {
+			_, err := client.DeleteDomainVerification(ctx, &awsvpcl.DeleteDomainVerificationInput{DomainVerificationIdentifier: aws.String("dv-missing")})
+			return err
+		},
+		"GetAuthPolicy": func() error {
+			_, err := client.GetAuthPolicy(ctx, &awsvpcl.GetAuthPolicyInput{ResourceIdentifier: aws.String("sn-missing")})
+			return err
+		},
+		"GetResourcePolicy": func() error {
+			_, err := client.GetResourcePolicy(ctx, &awsvpcl.GetResourcePolicyInput{ResourceArn: aws.String("arn:aws:vpc-lattice:us-east-1:000000000000:servicenetwork/sn-missing")})
+			return err
+		},
+	}
+
+	for name, call := range calls {
+		requireAPIError[*vpcltypes.ResourceNotFoundException](t, call(), name)
+	}
+}
