@@ -421,6 +421,8 @@ func (h *Handler) getTopicAttributes(w http.ResponseWriter, r *http.Request) {
 		{Key: "Owner", Value: owner},
 		{Key: "Policy", Value: policy},
 		{Key: "EffectiveDeliveryPolicy", Value: defaultEffectiveDeliveryPolicy},
+		// SNS reports DisplayName even when unset, as an empty string.
+		{Key: "DisplayName", Value: info.DisplayName},
 	}
 	entries = append(entries, optionalTopicAttributes(info)...)
 
@@ -432,13 +434,12 @@ func (h *Handler) getTopicAttributes(w http.ResponseWriter, r *http.Request) {
 }
 
 // optionalTopicAttributes returns the GetTopicAttributes entries SNS emits only
-// when set: DisplayName, DeliveryPolicy, KmsMasterKeyId, SignatureVersion,
+// when set: DeliveryPolicy, KmsMasterKeyId, SignatureVersion,
 // TracingConfig, ArchivePolicy, the delivery-status feedback family, and (for
 // a FIFO topic) the FifoTopic / ContentBasedDeduplication flags.
 func optionalTopicAttributes(info *notifdriver.TopicInfo) []attributeEntry {
 	var entries []attributeEntry
 
-	entries = appendNonEmptyAttr(entries, "DisplayName", info.DisplayName)
 	entries = appendNonEmptyAttr(entries, "DeliveryPolicy", info.DeliveryPolicy)
 	entries = appendNonEmptyAttr(entries, "KmsMasterKeyId", info.KmsMasterKeyID)
 	entries = appendNonEmptyAttr(entries, "SignatureVersion", info.SignatureVersion)

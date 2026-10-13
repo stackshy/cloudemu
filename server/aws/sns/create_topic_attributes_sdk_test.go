@@ -41,6 +41,22 @@ func TestSDKSNSCreateTopicDisplayName(t *testing.T) {
 	}
 }
 
+// TestSDKSNSDisplayNameIsAlwaysReported asserts a topic created without a
+// DisplayName still reports the key, as an empty string, as SNS does.
+func TestSDKSNSDisplayNameIsAlwaysReported(t *testing.T) {
+	sns := newSDKClient(t)
+
+	topic, err := sns.CreateTopic(context.Background(), &awssns.CreateTopicInput{Name: aws.String("unnamed")})
+	if err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+
+	got, ok := topicAttributes(t, sns, aws.ToString(topic.TopicArn))["DisplayName"]
+	if !ok || got != "" {
+		t.Fatalf("DisplayName = %q (present %v), want present and empty", got, ok)
+	}
+}
+
 // TestSDKSNSCreateTopicFifoFlags asserts a .fifo topic created with FifoTopic and
 // ContentBasedDeduplication persists both flags for GetTopicAttributes to reflect.
 func TestSDKSNSCreateTopicFifoFlags(t *testing.T) {

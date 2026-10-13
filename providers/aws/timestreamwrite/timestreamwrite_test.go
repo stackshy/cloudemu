@@ -289,3 +289,27 @@ func TestSnapshotRestorePreservesIdentity(t *testing.T) {
 	requireNoError(t, err)
 	assertEqual(t, gotTable.TableName, "t")
 }
+
+// A table created without RetentionProperties reports Timestream's defaults:
+// 6 hours in the memory store and 73000 days in the magnetic store.
+func TestCreateTableDefaultsRetention(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	createDatabase(t, m, "db")
+
+	table, err := m.CreateTable(ctx, &driver.CreateTableInput{DatabaseName: "db", TableName: "plain"})
+	requireNoError(t, err)
+
+	if table.RetentionProperties == nil {
+		t.Fatal("expected default RetentionProperties")
+	}
+
+	assertEqual(t, table.RetentionProperties.MemoryStoreRetentionPeriodInHours, int64(6))
+	assertEqual(t, table.RetentionProperties.MagneticStoreRetentionPeriodInDays, int64(73000))
+
+	got, err := m.DescribeTable(ctx, "db", "plain")
+	requireNoError(t, err)
+	assertEqual(t, got.RetentionProperties.MemoryStoreRetentionPeriodInHours, int64(6))
+	assertEqual(t, got.RetentionProperties.MagneticStoreRetentionPeriodInDays, int64(73000))
+}

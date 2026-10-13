@@ -58,7 +58,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cognito` | [Cognito](./aws/cognito.md) | - | - | - | 50 |
 | `communication` | - | [Communication](./azure/communication.md) | - | - | 10 |
 | `composer` | - | - | [Composer](./gcp/composer.md) | - | 6 |
-| `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | - | 37 |
+| `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | [Compute](./oci/compute.md) | 37 |
 | `configservice` | [Config](./aws/config.md) | - | - | - | 102 |
 | `containerapps` | - | [ContainerApps](./azure/containerapps.md) | - | - | 28 |
 | `containerinstances` | - | [ContainerInstances](./azure/containerinstances.md) | - | - | 10 |
@@ -115,7 +115,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `loadtesting` | - | [LoadTesting](./azure/loadtesting.md) | - | - | 8 |
 | `location` | [Location](./aws/location.md) | - | - | - | 28 |
 | `locks` | - | [Locks](./azure/locks.md) | - | - | 4 |
-| `logging` | [CloudWatchLogs](./aws/cloudwatchlogs.md) | [LogAnalytics](./azure/loganalytics.md) | [CloudLogging](./gcp/cloudlogging.md) | - | 17 |
+| `logging` | [CloudWatchLogs](./aws/cloudwatchlogs.md) | [LogAnalytics](./azure/loganalytics.md) | [CloudLogging](./gcp/cloudlogging.md) | [Logging](./oci/logging.md) | 17 |
 | `logic` | - | [Logic](./azure/logic.md) | - | - | 14 |
 | `lro` | - | - | [LRO](./gcp/lro.md) | - | 1 |
 | `managedcassandra` | - | [ManagedCassandra](./azure/managedcassandra.md) | - | - | 15 |
@@ -133,7 +133,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `networkconnectivity` | - | - | [NetworkConnectivity](./gcp/networkconnectivity.md) | - | 11 |
 | `networkfirewall` | [NetworkFirewall](./aws/networkfirewall.md) | - | - | - | 23 |
 | `networking` | [VPC](./aws/vpc.md) | [VNet](./azure/vnet.md) | [VPC](./gcp/vpc.md) | [VCN](./oci/vcn.md) | 57 |
-| `notification` | [SNS](./aws/sns.md) | [NotificationHubs](./azure/notificationhubs.md) | [FCM](./gcp/fcm.md) | - | 9 |
+| `notification` | [SNS](./aws/sns.md) | [NotificationHubs](./azure/notificationhubs.md) | [FCM](./gcp/fcm.md) | [Notifications](./oci/notifications.md) | 9 |
 | `opensearch` | [OpenSearch](./aws/opensearch.md) | - | - | - | 96 |
 | `parameterstore` | [SSM](./aws/ssm.md) | - | - | - | 9 |
 | `postgresflex` | - | [PostgresFlex](./azure/postgresflex.md) | - | - | 21 |
@@ -169,7 +169,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `sql` | - | [SQL](./azure/sql.md) | - | - | 21 |
 | `sqlvirtualmachine` | - | [SQLVirtualMachine](./azure/sqlvirtualmachine.md) | - | - | 9 |
 | `sshpublickeys` | - | [Sshpublickeys](./azure/sshpublickeys.md) | - | - | 7 |
-| `storage` | [S3](./aws/s3.md) | [BlobStorage](./azure/blobstorage.md) | [GCS](./gcp/gcs.md) | - | 35 |
+| `storage` | [S3](./aws/s3.md) | [BlobStorage](./azure/blobstorage.md) | [GCS](./gcp/gcs.md) | [ObjectStorage](./oci/objectstorage.md) | 35 |
 | `storageaccount` | - | [Storageaccount](./azure/storageaccount.md) | - | - | 10 |
 | `streamanalytics` | - | [StreamAnalytics](./azure/streamanalytics.md) | - | - | 19 |
 | `sts` | [STS](./aws/sts.md) | - | - | - | 8 |

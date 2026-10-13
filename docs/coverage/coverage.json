@@ -5055,7 +5055,8 @@
     "providers": {
       "aws": "EC2",
       "azure": "VirtualMachines",
-      "gcp": "GCE"
+      "gcp": "GCE",
+      "oci": "Compute"
     }
   },
   {
@@ -11238,7 +11239,8 @@
     "providers": {
       "aws": "CloudWatchLogs",
       "azure": "LogAnalytics",
-      "gcp": "CloudLogging"
+      "gcp": "CloudLogging",
+      "oci": "Logging"
     }
   },
   {
@@ -13442,7 +13444,8 @@
     "providers": {
       "aws": "SNS",
       "azure": "NotificationHubs",
-      "gcp": "FCM"
+      "gcp": "FCM",
+      "oci": "Notifications"
     }
   },
   {
@@ -19200,7 +19203,8 @@
     "providers": {
       "aws": "S3",
       "azure": "BlobStorage",
-      "gcp": "GCS"
+      "gcp": "GCS",
+      "oci": "ObjectStorage"
     }
   },
   {

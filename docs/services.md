@@ -66,7 +66,7 @@ This is a hand-maintained reference for the core service categories on all three
 ## 1. Storage
 
 **Driver interface:** `services/storage/driver/driver.go`
-**AWS:** S3 | **Azure:** Blob Storage | **GCP:** GCS
+**AWS:** S3 | **Azure:** Blob Storage | **GCP:** GCS | **OCI:** Object Storage (buckets live in a compartment under the tenancy namespace; pre-authenticated requests map to presigned URLs; retention rules and storage tiers have no portable equivalent — bucket policies, CORS and object tags are not OCI concepts and answer `Unimplemented`)
 
 ### Bucket Operations
 
@@ -159,12 +159,139 @@ This is a hand-maintained reference for the core service categories on all three
 
 **Total: 33 operations**
 
+### OCI Object Storage
+
+**Optional capability:** `server/oci/objectstorage.Extras` — OCI roots every
+path at the tenancy namespace, scopes buckets to a compartment, and carries
+bucket settings, object rename, storage tiers, retention rules and
+pre-authenticated requests that the portable interface does not express. Its
+value types live in `providers/oci/objectstorage`.
+**Provider:** `providers/oci/objectstorage` | **Wire:** `server/oci/objectstorage`
+
+Object Storage carries no API-version prefix; `{ns}` is the tenancy namespace,
+which `GET /n` returns.
+
+| Operation | Route |
+|-----------|-------|
+| `GetNamespace` | `GET /n` |
+| `GetNamespaceMetadata` | `GET /n/{ns}` |
+| `CreateBucket` | `POST /n/{ns}/b` |
+| `ListBuckets` | `GET /n/{ns}/b` |
+| `GetBucket` | `GET /n/{ns}/b/{bucket}` |
+| `HeadBucket` | `HEAD /n/{ns}/b/{bucket}` |
+| `UpdateBucket` | `POST /n/{ns}/b/{bucket}` |
+| `DeleteBucket` | `DELETE /n/{ns}/b/{bucket}` |
+| `ListObjects` | `GET /n/{ns}/b/{bucket}/o` |
+| `PutObject` | `PUT /n/{ns}/b/{bucket}/o/{object}` |
+| `GetObject` | `GET /n/{ns}/b/{bucket}/o/{object}` |
+| `HeadObject` | `HEAD /n/{ns}/b/{bucket}/o/{object}` |
+| `DeleteObject` | `DELETE /n/{ns}/b/{bucket}/o/{object}` |
+| `ListObjectVersions` | `GET /n/{ns}/b/{bucket}/objectversions` |
+| `RenameObject` | `POST /n/{ns}/b/{bucket}/actions/renameObject` |
+| `CopyObject` | `POST /n/{ns}/b/{bucket}/actions/copyObject` |
+| `UpdateObjectStorageTier` | `POST /n/{ns}/b/{bucket}/actions/updateObjectStorageTier` |
+| `CreateMultipartUpload` | `POST /n/{ns}/b/{bucket}/u` |
+| `ListMultipartUploads` | `GET /n/{ns}/b/{bucket}/u` |
+| `UploadPart` | `PUT /n/{ns}/b/{bucket}/u/{object}` |
+| `CommitMultipartUpload` | `POST /n/{ns}/b/{bucket}/u/{object}` |
+| `ListMultipartUploadParts` | `GET /n/{ns}/b/{bucket}/u/{object}` |
+| `AbortMultipartUpload` | `DELETE /n/{ns}/b/{bucket}/u/{object}` |
+| `CreatePreauthenticatedRequest` | `POST /n/{ns}/b/{bucket}/p` |
+| `ListPreauthenticatedRequests` | `GET /n/{ns}/b/{bucket}/p` |
+| `GetPreauthenticatedRequest` | `GET /n/{ns}/b/{bucket}/p/{parId}` |
+| `DeletePreauthenticatedRequest` | `DELETE /n/{ns}/b/{bucket}/p/{parId}` |
+| PAR redemption | `GET`/`PUT /p/{par}/n/{ns}/b/{bucket}/o/{object}` |
+| PAR bucket listing | `GET /p/{par}/n/{ns}/b/{bucket}/o/` |
+| `CreateRetentionRule` | `POST /n/{ns}/b/{bucket}/retentionRules` |
+| `ListRetentionRules` | `GET /n/{ns}/b/{bucket}/retentionRules` |
+| `GetRetentionRule` | `GET /n/{ns}/b/{bucket}/retentionRules/{ruleId}` |
+| `UpdateRetentionRule` | `PUT /n/{ns}/b/{bucket}/retentionRules/{ruleId}` |
+| `DeleteRetentionRule` | `DELETE /n/{ns}/b/{bucket}/retentionRules/{ruleId}` |
+| `PutObjectLifecyclePolicy` | `PUT /n/{ns}/b/{bucket}/l` |
+| `GetObjectLifecyclePolicy` | `GET /n/{ns}/b/{bucket}/l` |
+| `DeleteObjectLifecyclePolicy` | `DELETE /n/{ns}/b/{bucket}/l` |
+
+`ListBuckets` is the one collection OCI scopes by compartment, so it is the
+only route here that requires `compartmentId`; every other list is scoped by
+its bucket. Every list pages by `limit` and `page` (`start` for `ListObjects`)
+and returns the cursor as `opc-next-page`; an unspecified `limit` yields OCI's
+Object Storage page size of 1000, not the 100 the other OCI services default
+to. `copyObject` is asynchronous in real OCI, so it returns `202` with an
+`opc-work-request-id` the shared work-request poller answers at
+`/workRequests/{id}`; every other mutation here is synchronous. A create into,
+or a move to, a compartment Identity does not know is `404
+NotAuthorizedOrNotFound`, as for VCN.
+
+ETags are opaque and minted per write, so re-uploading identical bytes changes
+them. `if-match` and `if-none-match` are honored on Put, Get, Head and Delete
+object, on UpdateBucket and DeleteBucket, and on both sides of `copyObject`: a
+failed write precondition is `412 IfMatchFailed` / `IfNoneMatchFailed`, a
+matching `if-none-match` on a read is `304`. GetObject serves a single byte
+`Range` with `206` and `Content-Range`; an unsatisfiable range is `416`, a
+multi-range request is refused. GetObject and HeadObject report the digest as
+`Content-MD5`, or as `opc-multipart-md5` (`<base64 MD5 of the part MD5s>-<part
+count>`) for an object a multipart commit assembled, which the commit response
+also carries; PutObject and UploadPart answer `opc-content-md5`, and a
+`Content-MD5` request header that does not match the body is `400
+InvalidParameter`. `Last-Modified` is an HTTP-date. `copyObject` requires `destinationRegion` and
+refuses another region or namespace; a source version, replacement metadata
+and a destination storage tier all apply. A multipart commit checks each
+part's `etag` and refuses a repeated `partNum`. UpdateBucket's `name` renames the bucket, its objects and PARs
+moving with it. Errors carry Object Storage's own codes where it has one:
+`BucketAlreadyExists`, `BucketNotEmpty`.
+
+Buckets refuse deletion while they hold objects or uncommitted multipart
+uploads. Versioning is the OCI tri-state — `Disabled`, `Enabled`, `Suspended` —
+and never returns to `Disabled` once enabled; enabling it seeds the objects
+already present as versions, and a `Suspended` bucket reuses the `null` version
+rather than appending. Retention rules with an elapsed lock block overwrites
+and deletes, and a locked rule cannot be weakened. Lifecycle rules are stored
+exactly as sent — unit, `target` and all three `objectNameFilter` lists — and
+the policy reports its `timeCreated`; `ABORT` requires the `multipart-uploads`
+target, and only rules aimed at `objects` age out live objects.
+
+A pre-authenticated request requires `timeExpires`, with no S3-style cap, and
+on the `AnyObject` types `objectName` is a prefix. Its redemption token is drawn
+from `crypto/rand`, so tokens issued after a persist restore never collide with
+restored ones. `accessUri` path-escapes the object name and `fullPath` is the
+absolute URL on the host the create was sent to. Redemption checks the
+namespace in the path like every other route. `bucketListingAction` is `Deny`
+(the default) or `ListObjects`; an `AnyObjectRead` or `AnyObjectReadWrite`
+request with `ListObjects` answers `GET` on its `/o/` URI with
+`{"objects":[...]}`, scoped to its bucket and `objectName` prefix and paged by
+`prefix`, `start` and `limit` as ListObjects is.
+
+Object bytes flow through `config.WithStorageEngine` when one is wired, the
+same seam AWS S3, Azure Blob and GCP GCS use, keyed by object version so each
+version's bytes are addressed separately.
+
+Not emulated, each claimed by the handler and answered `501 NotImplemented`
+with the reason rather than a bare `404`:
+
+- `/actions/reencrypt` and `/actions/reencrypt/{object}`, which need
+  per-object key material the storage driver has no shape for.
+- `/actions/restoreObjects`, which needs an archive-retrieval lifecycle;
+  archived objects are readable directly.
+- `/replicationPolicies` and `/replicationSources`, since CloudEmu runs a
+  single region.
+- `/actions/batchDeleteObjects` and `/actions/makeBucketWritable`.
+- `PUT /n/{ns}` (`UpdateNamespaceMetadata`); the default S3 and Swift
+  compartments are fixed.
+- `/n/{ns}/pe` (private endpoints).
+
+The S3 Compatibility API is not emulated either. Real OCI serves it on a
+separate `*.compat.objectstorage` host, and nothing here shares the AWS S3
+handler.
+
 ---
 
 ## 2. Compute
 
 **Driver interface:** `services/compute/driver/driver.go`
-**AWS:** EC2 | **Azure:** Virtual Machines | **GCP:** GCE
+**AWS:** EC2 | **Azure:** Virtual Machines | **GCP:** GCE | **OCI:** Compute + Block
+Volume (instance pools map to auto-scaling groups; instance configurations to
+launch templates; volume backups to snapshots; preemptible instances to spot —
+OCI has no key pair resource, so those calls report the gap)
 
 ### Instance Operations
 
@@ -277,6 +404,99 @@ client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{IncludeManagedResource
 | `DescribeKeyPairs` | `(ctx, names) ([]KeyPairInfo, error)` |
 
 **Total: 35 operations**
+
+### OCI Compute and Block Volume
+
+**Optional capability:** `server/oci/compute.Extras` — OCI scopes resources to a
+compartment, publishes a shape catalog, and models boot volumes, volume and VNIC
+attachments, volume groups and the OCID-addressed instance configurations and
+pools, none of which the portable interface carries. Its value types live in
+`providers/oci/compute`.
+**Provider:** `providers/oci/compute` | **Wire:** `server/oci/compute`
+
+Networking comes from VCN: launching an instance creates a VNIC in a subnet
+through `providers/oci/vcn`, and the instance is governed by both its VNIC's
+network security groups and its subnet's security lists. The lists are read as
+the subnet holds them when the instance is described, so a list added to the
+subnet after launch governs the instance too.
+
+A launch needs a shape from the catalog and an image (or a boot volume) that
+exists, on the wire and through the typed API alike; either one missing is a
+`404`. The wire launch also requires `availabilityDomain` and
+`createVnicDetails.subnetId`, and takes `shapeConfig` only on a flexible shape
+and within its OCPU and memory bounds (at most 64 GB per OCPU on E4.Flex and
+E5.Flex). An image launch sizes its boot volume from
+`sourceDetails.bootVolumeSizeInGBs` (default 50). A launch from a boot volume
+attaches that volume, reports the image it was built from as `imageId`, and is a
+`409` while the volume backs another instance. A volume clone or restore without
+`sizeInGBs` takes its source's size. A size below the source's, or outside
+OCI's 50–32768 GB, is refused, on create and on update; `vpusPerGB` must be 0,
+10, 20, or 30 to 120 in steps of 10. `UpdateInstance` leaves the fields a request
+omits untouched, may change the shape of a running instance (OCI reboots it into
+the new one), and checks `shapeConfig` against the shape the instance ends up
+with. Every update that carries `freeformTags` replaces the set. `ListInstances`
+filters on `displayName` and sorts by `sortBy` (`TIMECREATED`, the default,
+descending; or `DISPLAYNAME`, ascending) and `sortOrder`.
+
+A volume attaches only within its availability domain. It attaches to several
+instances only when every attachment is `isShareable`, and stays in use until the
+last one is detached. An `iscsi` attachment reports its target's `ipv4`, `iqn`
+and `port`. A boot volume is attached or detached only on a stopped instance,
+and backs one instance at a time. `LaunchInstanceConfiguration` launches into
+`launchDetails.compartmentId` from the request, else the one saved in the
+configuration, else the configuration's own compartment. Boot volume backups
+carry `bootvolumebackup` OCIDs.
+
+Each launch and lifecycle action publishes the instance's `oci_computeagent`
+metrics (`CpuUtilization`, `NetworksBytesIn`, `NetworksBytesOut`,
+`DiskBytesRead`, `DiskBytesWritten`, dimensioned by `resourceId`) into OCI
+Monitoring, in the instance's compartment.
+
+| Operation | Route |
+|-----------|-------|
+| `LaunchInstance` | `POST /20160918/instances` |
+| `ListInstances` | `GET /20160918/instances` |
+| `GetInstance` | `GET /20160918/instances/{instanceId}` |
+| `UpdateInstance` | `PUT /20160918/instances/{instanceId}` |
+| `InstanceAction` | `POST /20160918/instances/{instanceId}?action=START\|STOP\|SOFTSTOP\|RESET\|SOFTRESET` |
+| `TerminateInstance` | `DELETE /20160918/instances/{instanceId}` |
+| `ListShapes` | `GET /20160918/shapes` |
+| `CreateImage` / `ListImages` | `POST` / `GET /20160918/images` |
+| `GetImage` / `UpdateImage` / `DeleteImage` | `GET` / `PUT` / `DELETE /20160918/images/{imageId}` |
+| `CreateVolume` / `ListVolumes` | `POST` / `GET /20160918/volumes` |
+| `GetVolume` / `UpdateVolume` / `DeleteVolume` | `GET` / `PUT` / `DELETE /20160918/volumes/{volumeId}` |
+| `AttachVolume` / `ListVolumeAttachments` | `POST` / `GET /20160918/volumeAttachments` |
+| `GetVolumeAttachment` / `DetachVolume` | `GET` / `DELETE /20160918/volumeAttachments/{id}` |
+| `CreateBootVolume` / `ListBootVolumes` | `POST` / `GET /20160918/bootVolumes` |
+| `GetBootVolume` / `UpdateBootVolume` / `DeleteBootVolume` | `GET` / `PUT` / `DELETE /20160918/bootVolumes/{id}` |
+| `AttachBootVolume` / `ListBootVolumeAttachments` | `POST` / `GET /20160918/bootVolumeAttachments` |
+| `GetBootVolumeAttachment` / `DetachBootVolume` | `GET` / `DELETE /20160918/bootVolumeAttachments/{id}` |
+| `CreateVolumeBackup` / `ListVolumeBackups` | `POST` / `GET /20160918/volumeBackups` |
+| `CreateBootVolumeBackup` / `ListBootVolumeBackups` | `POST` / `GET /20160918/bootVolumeBackups` |
+| `CreateVolumeGroup` / `ListVolumeGroups` | `POST` / `GET /20160918/volumeGroups` |
+| `AttachVnic` / `ListVnicAttachments` | `POST` / `GET /20160918/vnicAttachments` |
+| `CreateInstanceConfiguration` / `ListInstanceConfigurations` | `POST` / `GET /20160918/instanceConfigurations` |
+| `LaunchInstanceConfiguration` | `POST /20160918/instanceConfigurations/{id}/actions/launch` |
+| `CreateInstancePool` / `ListInstancePools` | `POST` / `GET /20160918/instancePools` |
+| `InstancePoolAction` | `POST /20160918/instancePools/{id}/actions/{start,stop,softstop,reset,softreset}` |
+| `ListInstancePoolInstances` | `GET /20160918/instancePools/{id}/instances` |
+| `ChangeCompartment` | `POST /20160918/{collection}/{id}/actions/changeCompartment` |
+
+Every list route requires `compartmentId` and paginates with `limit` / `page`,
+returning the cursor as `opc-next-page`. With an identity service wired, a
+create or move into a compartment that does not exist is `404
+NotAuthorizedOrNotFound`, and `changeCompartment` moves only a resource of the
+collection named in its path. The mutations real OCI runs
+asynchronously — launch, update, the instance and pool actions, terminate, and
+every attach/detach — record a work request and stamp `opc-work-request-id`.
+
+Not emulated: `/volumeBackupPolicies`, `/computeCapacityReservations`,
+`/dedicatedVmHosts` and `/instanceConsoleConnections`, which the compute driver
+has no shape for; the handler claims them so a caller gets a `501` naming the
+gap. Autoscaling policies live in OCI's separate Autoscaling API (`/20181001`),
+which this handler does not claim — the driver stores them so the portable API
+round-trips them. There is no key pair collection: an SSH public key is the
+`ssh_authorized_keys` instance metadata entry.
 
 ---
 
@@ -1422,7 +1642,7 @@ a source cluster and detach on promote; clone-on-read on every path.
 ## 13. Logging
 
 **Driver interface:** `services/logging/driver/driver.go`
-**AWS:** CloudWatch Logs | **Azure:** Log Analytics | **GCP:** Cloud Logging
+**AWS:** CloudWatch Logs | **Azure:** Log Analytics | **GCP:** Cloud Logging | **OCI:** Logging (a log group is the log group; a CUSTOM log is the log stream; an ingested log entry is the log event — metric and subscription filters have no OCI equivalent and report `Unimplemented`)
 
 ### Log Group Operations
 
@@ -1448,7 +1668,7 @@ a source cluster and detach on promote; clone-on-read on every path.
 | `PutLogEvents` | `(ctx, logGroup, streamName, events) error` |
 | `GetLogEvents` | `(ctx, input) ([]LogEvent, error)` |
 
-### Filtering and Metric Filters
+### Filtering, Metric Filters and Subscription Filters
 
 | Operation | Signature |
 |-----------|-----------|
@@ -1456,15 +1676,109 @@ a source cluster and detach on promote; clone-on-read on every path.
 | `PutMetricFilter` | `(ctx, config) error` |
 | `DeleteMetricFilter` | `(ctx, logGroup, filterName) error` |
 | `DescribeMetricFilters` | `(ctx, logGroup) ([]MetricFilterInfo, error)` |
+| `PutSubscriptionFilter` | `(ctx, config) error` |
+| `DeleteSubscriptionFilter` | `(ctx, logGroup, filterName) error` |
+| `DescribeSubscriptionFilters` | `(ctx, logGroup) ([]SubscriptionFilterInfo, error)` |
 
-**Total: 13 operations**
+**Total: 17 operations**
+
+### OCI Logging
+
+**Optional capability:** `server/oci/logging.Extras` — OCI addresses log groups
+and logs by OCID inside a compartment, gives a log a type and a service source,
+batches ingestion, and searches with its own query language, none of which the
+portable model carries. Its value types live in `providers/oci/logging`.
+**Provider:** `providers/oci/logging` | **Wire:** `server/oci/logging`
+
+OCI publishes the service on three API surfaces, each at its own version
+prefix. They collapse onto one CloudEmu server, so `Matches` claims each
+prefix's collections exactly. A top-level `/logs` collection belongs to the
+ingestion plane alone; the control plane nests logs under their log group.
+
+| Operation | Route |
+|-----------|-------|
+| `CreateLogGroup` | `POST /20200531/logGroups` |
+| `ListLogGroups` | `GET /20200531/logGroups` |
+| `GetLogGroup` | `GET /20200531/logGroups/{logGroupId}` |
+| `UpdateLogGroup` | `PUT /20200531/logGroups/{logGroupId}` |
+| `DeleteLogGroup` | `DELETE /20200531/logGroups/{logGroupId}` |
+| `ChangeLogGroupCompartment` | `POST /20200531/logGroups/{logGroupId}/actions/changeCompartment` |
+| `CreateLog` | `POST /20200531/logGroups/{logGroupId}/logs` |
+| `ListLogs` | `GET /20200531/logGroups/{logGroupId}/logs` |
+| `GetLog` | `GET /20200531/logGroups/{logGroupId}/logs/{logId}` |
+| `UpdateLog` | `PUT /20200531/logGroups/{logGroupId}/logs/{logId}` |
+| `DeleteLog` | `DELETE /20200531/logGroups/{logGroupId}/logs/{logId}` |
+| `ChangeLogLogGroup` | `POST /20200531/logGroups/{logGroupId}/logs/{logId}/actions/changeLogGroup` |
+| `PutLogs` | `POST /20200831/logs/{logId}/actions/push` |
+| `SearchLogs` | `POST /20190909/search` |
+
+The version prefixes are the oci-go-sdk clients' `BasePath`s — `20200531` for
+`logging`, `20200831` for `loggingingestion`, `20190909` for `loggingsearch` —
+and the handler tests pin them as SDK literals rather than handler constants.
+
+`ListLogGroups` requires `compartmentId`; it, `ListLogs` and `SearchLogs`
+paginate with `limit` / `page`, returning the cursor as `opc-next-page`. A
+`page` this API never returned is rejected with `400` rather than silently
+restarting at the first page. `ListLogs` takes no `compartmentId` —
+the log group in the path fixes the compartment, as it does in real OCI — and
+narrows on `displayName`, `logType`, `sourceService`, `sourceResource` and
+`lifecycleState`. Every log group and log mutation is asynchronous in real OCI,
+so each answers `202` with an `opc-work-request-id`; the created resource's
+OCID comes back on the work request, whose `operationType` is one of the SDK's
+`OperationTypesEnum` values (`CREATE_LOG_GROUP`, `MOVE_LOG_GROUP`, `MOVE_LOG`,
+…). Ingestion and search are synchronous.
+
+When the server wires Identity, creating a log group in, or moving one into, a
+compartment that does not exist is `404 NotAuthorizedOrNotFound`, as in VCN.
+`ChangeLogGroupCompartment` reads the target from `compartmentId`, the
+`ChangeLogGroupCompartmentDetails` field. Deleting a log group that still holds
+logs is `409 IncorrectState`, as real OCI requires the group empty; the
+portable `DeleteLogGroup` is the path that cascades. A log's
+`retentionDuration` must be 30 to 180 days in 30-day steps; any other value is
+`400`. A log response carries the configured `tenancyId`.
+
+A CUSTOM log takes entries from `PutLogs` and has no service source: it carries
+a `configuration` only when the caller supplied one, never a synthesized
+`sourceType`. A SERVICE log is fed by the service its `configuration.source`
+names, so ingesting into one is refused rather than accepted and dropped, as is
+ingesting into a disabled log. Every `LogEntryBatch` must carry `source`, `type`
+and `defaultlogentrytime`, which the SDK marks mandatory; a call with a batch
+missing one is `400` naming the batch and field, and ingests nothing.
+
+Search queries are read in the form
+`search "compartmentId[/logGroupId[/logId]]" | where <field> = '<value>' [and …]
+| sort by datetime [asc|desc]`, with `*` as the wildcard and comma-separated
+search targets. The tenancy OCID addresses the root compartment, where log
+groups created without one land. Everything else is rejected naming what it tripped on rather
+than answered with an empty result set: the `summarize`, `stats`, `topN` and
+`extract` operators; `or`, `not` and parenthesised where clauses; the `>`, `<`,
+`>=`, `<=`, `=~` and `!~` operators; a field the record shape has no place for,
+including a nested payload path; a sort on anything but datetime; and a search
+target segment written as a name where OCI takes an OCID.
+
+Not emulated: `/20200531/unifiedAgentConfigurations` and
+`/20200531/logSavedSearches`, which the logging driver has no shape for. Both
+are claimed so a caller gets a `501` naming the gap rather than a bare `404`.
+A log group's retention is CloudEmu's: real OCI carries retention on the log,
+and the group holds the default its logs inherit so the portable
+`RetentionDays` has somewhere to live. Log group display names are unique per
+compartment, as in real OCI, so the same name may be used in two compartments.
+The portable driver has only a name to address a group by, so a name held in
+more than one compartment is rejected as ambiguous rather than resolved
+arbitrarily; such a group is reachable through the OCI API by OCID.
+
+A read limit is bounded before it sizes an allocation: `GetLogEvents`,
+`FilterLogEvents` and `SearchLogs` reject a negative limit and one above
+10000 with `InvalidArgument`. Subscription filters, like metric filters, are
+not an OCI Logging operation and report `Unimplemented` — OCI delivers log
+entries to another service through a Service Connector.
 
 ---
 
 ## 14. Notification
 
 **Driver interface:** `services/notification/driver/driver.go`
-**AWS:** SNS | **Azure:** Notification Hubs | **GCP:** FCM
+**AWS:** SNS | **Azure:** Notification Hubs | **GCP:** FCM | **OCI:** Notifications (ONS)
 
 ### Topic Operations
 
@@ -1490,6 +1804,106 @@ a source cluster and detach on promote; clone-on-read on every path.
 | `Publish` | `(ctx, input) (*PublishOutput, error)` |
 
 **Total: 8 operations**
+
+### OCI Notifications (ONS)
+
+**Optional capability:** `server/oci/notifications.Extras`. ONS scopes topics
+and subscriptions to a compartment, addresses both by OCID, and gates delivery
+behind a confirmation handshake, none of which the portable model carries. Its
+value types live in `providers/oci/notifications`; a driver that does not
+implement `Extras` is served `501` for every path the handler claims.
+**Provider:** `providers/oci/notifications` | **Wire:** `server/oci/notifications`
+
+| Operation | Route |
+|-----------|-------|
+| `CreateTopic` | `POST /20181201/topics` |
+| `ListTopics` | `GET /20181201/topics` |
+| `GetTopic` | `GET /20181201/topics/{topicId}` |
+| `UpdateTopic` | `PUT /20181201/topics/{topicId}` |
+| `DeleteTopic` | `DELETE /20181201/topics/{topicId}` |
+| `ChangeTopicCompartment` | `POST /20181201/topics/{topicId}/actions/changeCompartment` |
+| `PublishMessage` | `POST /20181201/topics/{topicId}/messages` |
+| `CreateSubscription` | `POST /20181201/subscriptions` |
+| `ListSubscriptions` | `GET /20181201/subscriptions` |
+| `GetSubscription` | `GET /20181201/subscriptions/{id}` |
+| `UpdateSubscription` | `PUT /20181201/subscriptions/{id}` |
+| `DeleteSubscription` | `DELETE /20181201/subscriptions/{id}` |
+| `GetConfirmSubscription` | `GET /20181201/subscriptions/{id}/confirmation` |
+| `GetUnsubscription` | `GET /20181201/subscriptions/{id}/unsubscription` |
+| `ChangeSubscriptionCompartment` | `POST /20181201/subscriptions/{id}/actions/changeCompartment` |
+| `ResendSubscriptionConfirmation` | `POST /20181201/subscriptions/{id}/resendConfirmation` |
+
+Both list routes require `compartmentId` and paginate with `limit` / `page`,
+returning the cursor as `opc-next-page`. `ListTopics` also honours `sortBy`
+(`TIMECREATED`, `LIFECYCLESTATE`) with `sortOrder` `ASC` / `DESC`, plus `id`,
+`name` and `lifecycleState` filters; an unknown sort key is rejected rather
+than answered in an arbitrary order. A page token the listing never issued is
+a `400 InvalidParameter`, not a silent restart from page one.
+`definedTags` are rejected rather than echoed back empty;
+`freeformTags` round-trip.
+
+Topic names are unique **across the tenancy**, not per compartment, so the same
+name in a second compartment is a `409`. When Identity is wired (as `serve`
+does), creating a topic or subscription, or moving either, into a compartment
+that does not exist is a `404 NotAuthorizedOrNotFound`, as for VCN.
+
+Both creates answer `201 Created`. Create, get and update of a topic or a
+subscription return the etag in the `etag` response header as well as the body,
+since that header is where the SDK reads `Etag` from. Update, delete and
+`ChangeTopicCompartment` honour an `if-match` precondition against the stored
+etag, which rotates on every mutation: a stale etag is a `412` with code
+`NoEtagMatch` and the resource is left alone. The comparison happens under the
+same lock as the write, so of several writers holding one etag exactly one
+wins. An absent `if-match` is unconditional.
+
+A single subscription (create, get, update) is ONS's `Subscription`, which
+carries the delivery policy as a JSON-encoded **string** in `deliverPolicy`. A
+list item is `SubscriptionSummary`, which carries it as an **object** in
+`deliveryPolicy`. Terraform's `oci_ons_subscription.delivery_policy` reads the
+former.
+
+Real ONS splits the control plane from the data plane **by host, not by API
+prefix**: `PublishMessage` goes to the topic's own `apiEndpoint` rather than to
+a differently-prefixed path. CloudEmu serves both on one listener, so every
+topic reports the origin the caller reached as its `apiEndpoint` and a publish
+posted there lands back on the same handler. A client that follows
+`apiEndpoint`, as the real SDKs do, needs no special casing.
+
+A subscription is created `PENDING` and receives nothing until it is confirmed.
+Real ONS mails the confirmation token to the endpoint; the emulator has no
+channel to mail it on, so a `PENDING` subscription carries its token in the
+create response, and `GET .../confirmation?token=…&protocol=…` flips it to
+`ACTIVE`. Publishing to a topic whose subscriptions are all `PENDING`
+succeeds and delivers to nobody. `.../unsubscription` takes the same token pair
+and removes the subscription. Both `token` and `protocol` are mandatory on
+these two endpoints; either missing is a `400`. The exception is
+`ORACLE_FUNCTIONS`: ONS does not ask a function to confirm, so that
+subscription is created `ACTIVE` with no token. Protocols are `EMAIL`, `SMS`, `CUSTOM_HTTPS`,
+the deprecated `HTTPS`, `SLACK`, `PAGERDUTY` and `ORACLE_FUNCTIONS`, taken
+verbatim and read back as sent; anything else, a lowercase name included, is
+rejected rather than stored unused. Only the portable `Subscribe` maps
+lowercase names and `http` / `https` onto them. The endpoint is checked against
+the protocol at create rather than at first delivery: an `EMAIL` endpoint must
+hold an `@`, and a webhook endpoint must be an `https` URL of at most 512
+characters, with no query string for `CUSTOM_HTTPS` / `HTTPS`. A delivery
+policy's `backoffRetryPolicy` must be `EXPONENTIAL` with a positive
+`maxRetryDuration`. On `UpdateTopic` a sent `description`, even an empty one,
+replaces the stored text. Message bodies are `RAW_TEXT`
+or `JSON`, declared in the `messageType` **header** as the SDK sends it (a
+`messageType` query parameter is accepted as a fallback), and are capped at
+ONS's 64 KB.
+
+`DeleteTopic` answers `204` and `ChangeTopicCompartment` answers `202`. Real
+ONS returns only an `opc-request-id` for both; CloudEmu additionally records a
+work request for each, resolvable through `server/oci/workrequest`, and returns
+its `opc-work-request-id`, which SDK clients ignore. Every subscription
+mutation is synchronous.
+
+Delivery is recorded in-memory and readable through `Deliveries`, keeping the
+most recent 100 messages per subscription; nothing is sent over a real
+transport, so delivery policies (`backoffRetryPolicy`) round-trip but never
+retry. Each publish emits `PublishedMessages` and `DeliveredMessages` under
+`oci_notification` into the topic's own compartment, keyed by `resourceId`.
 
 ---
 

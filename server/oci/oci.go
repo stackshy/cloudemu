@@ -11,8 +11,12 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/server"
+	"github.com/stackshy/cloudemu/v2/server/oci/compute"
 	"github.com/stackshy/cloudemu/v2/server/oci/identity"
+	ocilogging "github.com/stackshy/cloudemu/v2/server/oci/logging"
 	"github.com/stackshy/cloudemu/v2/server/oci/monitoring"
+	"github.com/stackshy/cloudemu/v2/server/oci/notifications"
+	"github.com/stackshy/cloudemu/v2/server/oci/objectstorage"
 	"github.com/stackshy/cloudemu/v2/server/oci/vcn"
 	"github.com/stackshy/cloudemu/v2/server/oci/workrequest"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
@@ -94,6 +98,34 @@ func New(d Drivers) *server.Server {
 		srv.Register(monitoring.New(d.Monitoring))
 	}
 
+	if d.Logging != nil {
+		logHandler := ocilogging.New(d.Logging, d.WorkRequests)
+
+		if comps, ok := d.Identity.(identity.Compartments); ok {
+			logHandler.SetCompartmentChecker(func(id string) bool {
+				_, err := comps.GetCompartment(context.Background(), id)
+
+				return err == nil
+			})
+		}
+
+		srv.Register(logHandler)
+	}
+
+	if d.ObjectStorage != nil {
+		osHandler := objectstorage.New(d.ObjectStorage, d.WorkRequests)
+
+		if comps, ok := d.Identity.(identity.Compartments); ok {
+			osHandler.SetCompartmentChecker(func(id string) bool {
+				_, err := comps.GetCompartment(context.Background(), id)
+
+				return err == nil
+			})
+		}
+
+		srv.Register(osHandler)
+	}
+
 	if d.VCN != nil {
 		vcnHandler := vcn.New(d.VCN, d.WorkRequests)
 
@@ -106,6 +138,36 @@ func New(d Drivers) *server.Server {
 		}
 
 		srv.Register(vcnHandler)
+	}
+
+	// Compute shares VCN's /20160918 prefix; the two claim disjoint
+	// collections, so registration order between them does not matter.
+	if d.Compute != nil {
+		computeHandler := compute.New(d.Compute, d.WorkRequests)
+
+		if comps, ok := d.Identity.(identity.Compartments); ok {
+			computeHandler.SetCompartmentChecker(func(id string) bool {
+				_, err := comps.GetCompartment(context.Background(), id)
+
+				return err == nil
+			})
+		}
+
+		srv.Register(computeHandler)
+	}
+
+	if d.Notifications != nil {
+		notifHandler := notifications.New(d.Notifications, d.WorkRequests)
+
+		if comps, ok := d.Identity.(identity.Compartments); ok {
+			notifHandler.SetCompartmentChecker(func(id string) bool {
+				_, err := comps.GetCompartment(context.Background(), id)
+
+				return err == nil
+			})
+		}
+
+		srv.Register(notifHandler)
 	}
 
 	return srv

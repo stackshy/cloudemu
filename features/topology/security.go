@@ -198,7 +198,7 @@ func evaluateACLRules(
 			continue
 		}
 
-		allowed := rule.Action == "allow"
+		allowed := rule.Action == actionAllow
 
 		return &ACLVerdict{
 			Allowed:    allowed,

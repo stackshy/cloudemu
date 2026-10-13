@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -349,6 +350,33 @@ func TestSDKResourceGroupsTaggingTypeFilterAndPaging(t *testing.T) {
 			Tags:            map[string]string{"k": "v"},
 		})
 		require.Error(t, err)
+	})
+
+	t.Run("more than 20 ARNs is rejected", func(t *testing.T) {
+		arns := make([]string, 21)
+		for i := range arns {
+			arns[i] = "arn:aws:s3:::cap-bucket-" + strconv.Itoa(i)
+		}
+
+		_, err := client.TagResources(ctx, &rgta.TagResourcesInput{
+			ResourceARNList: arns,
+			Tags:            map[string]string{"k": "v"},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ValidationException")
+
+		_, err = client.UntagResources(ctx, &rgta.UntagResourcesInput{
+			ResourceARNList: arns,
+			TagKeys:         []string{"k"},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ValidationException")
+
+		_, err = client.TagResources(ctx, &rgta.TagResourcesInput{
+			ResourceARNList: arns[:20],
+			Tags:            map[string]string{"k": "v"},
+		})
+		require.NoError(t, err, "20 is the cap, not past it")
 	})
 
 	t.Run("ResourcesPerPage + PaginationToken (F4)", func(t *testing.T) {

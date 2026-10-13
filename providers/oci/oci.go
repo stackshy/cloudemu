@@ -4,8 +4,12 @@ package oci
 import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
+	computeprovider "github.com/stackshy/cloudemu/v2/providers/oci/compute"
 	"github.com/stackshy/cloudemu/v2/providers/oci/identity"
+	logprovider "github.com/stackshy/cloudemu/v2/providers/oci/logging"
 	"github.com/stackshy/cloudemu/v2/providers/oci/monitoring"
+	notifprovider "github.com/stackshy/cloudemu/v2/providers/oci/notifications"
+	"github.com/stackshy/cloudemu/v2/providers/oci/objectstorage"
 	vcnprovider "github.com/stackshy/cloudemu/v2/providers/oci/vcn"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
@@ -75,14 +79,32 @@ func New(opts ...config.Option) *Provider {
 		Region:        o.OCIRegion(),
 	}
 	p.Identity = identity.New(o)
+	p.ObjectStorage = objectstorage.New(o)
 	p.VCN = vcnprovider.New(o)
+	p.Compute = computeprovider.New(o)
+	p.Notifications = notifprovider.New(o)
 
 	p.Monitoring = monitoring.New(o)
+	p.Logging = logprovider.New(o)
 
+	p.wireNetworking()
 	p.wireMonitoring()
 	p.wireDiscovery()
 
 	return p
+}
+
+// wireNetworking points Compute at VCN: launching an instance creates a VNIC
+// in a subnet rather than modeling an interface of its own.
+func (p *Provider) wireNetworking() {
+	c, ok := p.Compute.(*computeprovider.Mock)
+	if !ok {
+		return
+	}
+
+	if n, ok := p.VCN.(*vcnprovider.Mock); ok {
+		c.SetNetworking(n)
+	}
 }
 
 // wireMonitoring points every metric-producing mock at the monitoring service.

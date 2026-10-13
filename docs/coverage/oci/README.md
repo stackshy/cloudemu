@@ -5,7 +5,11 @@ Services cloudemu emulates for OCI, by native name. Back to the [cross-provider 
 
 | OCI service | Portable service | Operations |
 | --- | --- | --- |
+| [Compute](./compute.md) | `compute` | 37 |
 | [Identity](./identity.md) | `iam` | 40 |
+| [Logging](./logging.md) | `logging` | 17 |
 | [Monitoring](./monitoring.md) | `monitoring` | 12 |
+| [Notifications](./notifications.md) | `notification` | 9 |
+| [ObjectStorage](./objectstorage.md) | `storage` | 35 |
 | [VCN](./vcn.md) | `networking` | 57 |
 | [Workrequest](./workrequest.md) | (provider-native) | 4 |
