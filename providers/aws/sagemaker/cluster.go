@@ -48,7 +48,7 @@ func (m *Mock) CreateCluster(_ context.Context, cfg driver.ClusterSpec) (*driver
 	}
 
 	if !m.clusters.SetIfAbsent(cfg.ClusterName, c) {
-		return nil, errors.Newf(errors.AlreadyExists, "cluster %q already exists", cfg.ClusterName)
+		return nil, driver.InUse("cluster %q already exists", cfg.ClusterName)
 	}
 
 	m.setTags(arn, cfg.Tags)

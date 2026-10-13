@@ -117,6 +117,11 @@ type Mock struct {
 	// (--async-settle) transitions overlaid on stored endpoints at read time.
 	epMu sync.Mutex
 
+	// evMu guards settledEmitted, the settled states already published under
+	// --async-settle (key: resource ARN + state).
+	evMu           sync.Mutex
+	settledEmitted map[string]struct{}
+
 	// invMu guards invFailures, the seeded per-endpoint model failures.
 	invMu       sync.Mutex
 	pipeMu      sync.Mutex // serializes pipeline update/delete against execution start/stop
@@ -185,6 +190,7 @@ func New(opts *config.Options) *Mock {
 		monAlerts:           memstore.New[*driver.MonitoringAlert](),
 		monSettle:           settle.NewSet(),
 		invFailures:         map[string]int{},
+		settledEmitted:      map[string]struct{}{},
 		trialComponents:     memstore.New[*driver.TrialComponent](),
 		lineageEntities:     memstore.New[*driver.LineageEntity](),
 		associations:        memstore.New[*driver.Association](),
@@ -252,6 +258,13 @@ func copyVariants(in []driver.ProductionVariant) []driver.ProductionVariant {
 
 	out := make([]driver.ProductionVariant, len(in))
 	copy(out, in)
+
+	for i := range out {
+		if in[i].InitialVariantWeight != nil {
+			w := *in[i].InitialVariantWeight
+			out[i].InitialVariantWeight = &w
+		}
+	}
 
 	return out
 }

@@ -74,7 +74,9 @@ type ProductionVariant struct {
 	ModelName            string
 	InstanceType         string
 	InitialInstanceCount int
-	InitialVariantWeight float64
+	// InitialVariantWeight is nil when the caller omits it; the provider applies
+	// SageMaker's default of 1.0, so the Go library and the server agree.
+	InitialVariantWeight *float64
 }
 
 // ServerlessConfig configures serverless inference for a variant.
@@ -261,6 +263,9 @@ type InvokeEndpointAsyncInput struct {
 	EndpointName string
 	InputS3URI   string
 	ContentType  string
+	// InferenceID is the caller's correlation id (1-64 characters). Empty means
+	// the service generates one.
+	InferenceID string
 }
 
 // InvokeEndpointAsyncOutput carries the S3 location of the async result.

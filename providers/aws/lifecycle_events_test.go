@@ -1002,7 +1002,7 @@ func sageMakerEndpoint(t *testing.T, p *aws.Provider) {
 	if _, err := p.SageMaker.CreateEndpointConfig(ctx, smdriver.EndpointConfigSpec{
 		ConfigName: "cfg",
 		ProductionVariants: []smdriver.ProductionVariant{
-			{VariantName: "AllTraffic", ModelName: "mdl", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: 1},
+			{VariantName: "AllTraffic", ModelName: "mdl", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: weightPtr(1.0)},
 		},
 	}); err != nil {
 		t.Fatalf("CreateEndpointConfig: %v", err)
@@ -1209,8 +1209,10 @@ func TestSageMakerEvents_UnwiredAndPublishError(t *testing.T) { // T138
 }
 
 // TestSageMakerEvents_AsyncSettleTransitions pins the --async-settle contract:
-// only the first state is published when the call returns, and repeated reads
-// never publish duplicates.
+// the first state is published when the call returns, the terminal state is
+// published once when the resource settles (the first read after it), and
+// repeated reads never publish duplicates. A rule on EndpointStatus IN_SERVICE
+// therefore fires under async settle, which is what people wire these events for.
 func TestSageMakerEvents_AsyncSettleTransitions(t *testing.T) { // T139
 	clock := config.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	p := aws.New(config.WithClock(clock), config.WithAsyncSettle())
@@ -1220,6 +1222,15 @@ func TestSageMakerEvents_AsyncSettleTransitions(t *testing.T) { // T139
 	sageMakerEndpoint(t, p)
 	requireSequence(t, statusSequence(t, drain(), "EndpointStatus"), []string{"SageMaker Endpoint State Change|CREATING"})
 
+	// Still settling: a read publishes nothing.
+	if _, err := p.SageMaker.DescribeEndpoint(ctx, "ep"); err != nil {
+		t.Fatalf("DescribeEndpoint: %v", err)
+	}
+
+	if got := drain(); len(got) != 0 {
+		t.Fatalf("a read while Creating published %d events, want none", len(got))
+	}
+
 	clock.Advance(time.Hour)
 
 	for range 3 {
@@ -1228,7 +1239,66 @@ func TestSageMakerEvents_AsyncSettleTransitions(t *testing.T) { // T139
 		}
 	}
 
+	requireSequence(t, statusSequence(t, drain(), "EndpointStatus"), []string{"SageMaker Endpoint State Change|IN_SERVICE"})
+
+	// An update settles the same way: UPDATING at the call, IN_SERVICE once settled.
+	if _, err := p.SageMaker.CreateEndpointConfig(ctx, smdriver.EndpointConfigSpec{
+		ConfigName:         "cfg2",
+		ProductionVariants: []smdriver.ProductionVariant{{VariantName: "AllTraffic", ModelName: "mdl", InstanceType: "ml.m5.large", InitialInstanceCount: 2, InitialVariantWeight: weightPtr(1.0)}},
+	}); err != nil {
+		t.Fatalf("CreateEndpointConfig: %v", err)
+	}
+
+	if _, err := p.SageMaker.UpdateEndpoint(ctx, smdriver.UpdateEndpointSpec{EndpointName: "ep", ConfigName: "cfg2"}); err != nil {
+		t.Fatalf("UpdateEndpoint: %v", err)
+	}
+
+	requireSequence(t, statusSequence(t, drain(), "EndpointStatus"), []string{"SageMaker Endpoint State Change|UPDATING"})
+
+	clock.Advance(time.Hour)
+
+	for range 2 {
+		if _, err := p.SageMaker.DescribeEndpoint(ctx, "ep"); err != nil {
+			t.Fatalf("DescribeEndpoint: %v", err)
+		}
+	}
+
+	requireSequence(t, statusSequence(t, drain(), "EndpointStatus"), []string{"SageMaker Endpoint State Change|IN_SERVICE"})
+}
+
+// TestSageMakerEvents_AsyncSettleTerminalJob: a training job publishes InProgress
+// at the call and Completed once, when it settles (any read after that).
+func TestSageMakerEvents_AsyncSettleTerminalJob(t *testing.T) {
+	clock := config.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	p := aws.New(config.WithClock(clock), config.WithAsyncSettle())
+	ctx := context.Background()
+	drain := captureEvents(t, p, `{"source":["aws.sagemaker"],"detail-type":["SageMaker Training Job State Change"]}`)
+
+	if _, err := p.SageMaker.CreateTrainingJob(ctx, smdriver.TrainingJobConfig{JobName: "tj"}); err != nil {
+		t.Fatalf("CreateTrainingJob: %v", err)
+	}
+
+	requireSequence(t, statusSequence(t, drain(), "TrainingJobStatus"), []string{"SageMaker Training Job State Change|InProgress"})
+
+	clock.Advance(time.Hour)
+
+	for range 3 {
+		if _, err := p.SageMaker.DescribeTrainingJob(ctx, "tj"); err != nil {
+			t.Fatalf("DescribeTrainingJob: %v", err)
+		}
+	}
+
+	requireSequence(t, statusSequence(t, drain(), "TrainingJobStatus"), []string{"SageMaker Training Job State Change|Completed"})
+
+	// Listing settled jobs again publishes nothing more.
+	if _, err := p.SageMaker.ListTrainingJobs(ctx, smdriver.ListOptions{}); err != nil {
+		t.Fatalf("ListTrainingJobs: %v", err)
+	}
+
 	if got := drain(); len(got) != 0 {
-		t.Fatalf("reads published %d events, want none", len(got))
+		t.Fatalf("a repeat list published %d events, want none", len(got))
 	}
 }
+
+// weightPtr returns a pointer to a variant weight (the driver field is a pointer: nil means "omitted").
+func weightPtr(v float64) *float64 { return &v }

@@ -9468,7 +9468,7 @@ func TestSageMakerEndpointLifecycle(t *testing.T) {
 
 	_, err := sm.CreateEndpointConfig(ctx, sagemakerdriver.EndpointConfigSpec{
 		ConfigName:         "bad",
-		ProductionVariants: []sagemakerdriver.ProductionVariant{{VariantName: "v", ModelName: "ghost", InitialVariantWeight: 1}},
+		ProductionVariants: []sagemakerdriver.ProductionVariant{{VariantName: "v", ModelName: "ghost", InitialVariantWeight: weightPtr(1.0)}},
 	})
 	if !cerrors.IsInvalidArgument(err) {
 		t.Fatalf("a variant naming a missing model must be InvalidArgument, got %v", err)
@@ -9476,7 +9476,7 @@ func TestSageMakerEndpointLifecycle(t *testing.T) {
 
 	if _, err = sm.CreateEndpointConfig(ctx, sagemakerdriver.EndpointConfigSpec{
 		ConfigName:         "c",
-		ProductionVariants: []sagemakerdriver.ProductionVariant{{VariantName: "v", ModelName: "m", InitialInstanceCount: 1, InitialVariantWeight: 1}},
+		ProductionVariants: []sagemakerdriver.ProductionVariant{{VariantName: "v", ModelName: "m", InitialInstanceCount: 1, InitialVariantWeight: weightPtr(1.0)}},
 	}); err != nil {
 		t.Fatalf("CreateEndpointConfig: %v", err)
 	}
@@ -9503,3 +9503,6 @@ func TestSageMakerEndpointLifecycle(t *testing.T) {
 		t.Fatalf("a deleted endpoint must be NotFound, got %v", err)
 	}
 }
+
+// weightPtr returns a pointer to a variant weight (the driver field is a pointer: nil means "omitted").
+func weightPtr(v float64) *float64 { return &v }

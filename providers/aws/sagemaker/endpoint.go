@@ -20,6 +20,8 @@ type endpointTransition struct {
 	readyAt    time.Time
 	prev       []driver.VariantSummary // what was serving before the transition
 	prevConfig string
+	// settledPublished is set once IN_SERVICE has been published for this transition.
+	settledPublished bool
 }
 
 func (t *endpointTransition) active(now time.Time) bool { return now.Before(t.readyAt) }
@@ -84,6 +86,15 @@ func (m *Mock) createEndpoint(cfg driver.EndpointSpec) (*driver.Endpoint, error)
 	return m.observeEndpoint(ep, now), nil
 }
 
+// variantWeight is the variant's initial weight, SageMaker's default when omitted.
+func variantWeight(v *driver.ProductionVariant) float64 {
+	if v.InitialVariantWeight == nil {
+		return defaultVariantWeight
+	}
+
+	return *v.InitialVariantWeight
+}
+
 // variantSummaries builds the runtime view of config variants: serving counts
 // equal the configured values, and each variant lists the container images of
 // its model.
@@ -92,7 +103,7 @@ func (m *Mock) variantSummaries(variants []driver.ProductionVariant, stamp strin
 
 	for i := range variants {
 		v := &variants[i]
-		weight := v.InitialVariantWeight
+		weight := variantWeight(v)
 
 		out = append(out, driver.VariantSummary{
 			VariantName:          v.VariantName,
@@ -152,7 +163,13 @@ func (m *Mock) observeEndpoint(ep *driver.Endpoint, now time.Time) *driver.Endpo
 	out := cloneEndpoint(ep)
 
 	tr, ok := m.epTrans[ep.EndpointName]
-	if !ok || !tr.active(now) {
+	if ok && !tr.active(now) {
+		m.publishEndpointSettled(tr, out)
+
+		return out
+	}
+
+	if !ok {
 		return out
 	}
 
@@ -176,6 +193,20 @@ func (m *Mock) observeEndpoint(ep *driver.Endpoint, now time.Time) *driver.Endpo
 	}
 
 	return out
+}
+
+// publishEndpointSettled publishes IN_SERVICE once, the first time an endpoint
+// is observed after its Creating or Updating transition elapsed (under
+// --async-settle). Its Deleting transition has nothing further to publish. The
+// caller holds epMu.
+func (m *Mock) publishEndpointSettled(tr *endpointTransition, settled *driver.Endpoint) {
+	if tr.kind == driver.EndpointDeleting || tr.settledPublished || !m.asyncEvents() {
+		return
+	}
+
+	tr.settledPublished = true
+
+	m.emitEndpointEvents(context.Background(), settled, driver.EndpointInService)
 }
 
 // overlaySummaries merges what served before the transition (Current*) with
@@ -264,6 +295,7 @@ func (m *Mock) purgeEndpoint(name string) {
 	m.endpoints.Delete(name)
 	delete(m.epTrans, name)
 	m.dropTags(m.arn("endpoint/" + name))
+	m.clearInvocationFailure(name)
 }
 
 // endpointStatus returns the observed status of name, or "" when it does not
@@ -315,6 +347,8 @@ func (m *Mock) ListEndpoints(_ context.Context, opts driver.ListOptions) (driver
 		status:   func(t *driver.Endpoint) string { return t.Status },
 		created:  func(t *driver.Endpoint) string { return t.CreationTime },
 		modified: func(t *driver.Endpoint) string { return t.LastModifiedTime },
+		// AWS documents SortOrder default Descending for ListEndpoints.
+		defaultOrder: driver.SortDescending,
 	}, opts)
 }
 
@@ -497,8 +531,9 @@ func applyWeights(summaries []driver.VariantSummary, weights []driver.VariantWei
 		}
 
 		if w.DesiredInstanceCount != nil {
-			if *w.DesiredInstanceCount < 1 {
-				return errors.Newf(errors.InvalidArgument, "desiredInstanceCount for variant %q must be at least 1", w.VariantName)
+			// DesiredWeightAndCapacity allows a minimum of 0 (scale to zero).
+			if *w.DesiredInstanceCount < 0 {
+				return errors.Newf(errors.InvalidArgument, "desiredInstanceCount for variant %q must not be negative", w.VariantName)
 			}
 
 			summaries[i].DesiredInstanceCount, summaries[i].CurrentInstanceCount = *w.DesiredInstanceCount, *w.DesiredInstanceCount

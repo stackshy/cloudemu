@@ -63,7 +63,7 @@ func TestDiscovery_NewTypes(t *testing.T) { // T21
 	mustNoErr(err)
 	_, err = p.SageMaker.CreateEndpointConfig(ctx, sagemakerdriver.EndpointConfigSpec{
 		ConfigName: "cfg", Tags: tags,
-		ProductionVariants: []sagemakerdriver.ProductionVariant{{VariantName: "v", ModelName: "mdl", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: 1}},
+		ProductionVariants: []sagemakerdriver.ProductionVariant{{VariantName: "v", ModelName: "mdl", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: weightPtr(1.0)}},
 	})
 	mustNoErr(err)
 	_, err = p.SageMaker.CreatePipeline(ctx, sagemakerdriver.PipelineSpec{PipelineName: "pl", Tags: tags})
@@ -103,3 +103,6 @@ func TestDiscovery_NewTypes(t *testing.T) { // T21
 		}
 	}
 }
+
+// weightPtr returns a pointer to a variant weight (the driver field is a pointer: nil means "omitted").
+func weightPtr(v float64) *float64 { return &v }

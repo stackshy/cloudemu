@@ -72,7 +72,9 @@ func TestErrorMapping(t *testing.T) { // T10
 		typ  string
 	}{
 		{"not found", cerrors.New(cerrors.NotFound, "x"), 400, "ResourceNotFound"},
-		{"already exists is validation", cerrors.New(cerrors.AlreadyExists, "x"), 400, "ValidationException"},
+		// A plain already-exists is the validation-style duplicate (CreateModel, CreateEndpoint, ...); operations whose SDK
+		// error list has ResourceInUse return driver.InUse from the provider, covered per op in the provider and SDK tests.
+		{"plain already exists (no ResourceInUse on the op)", cerrors.New(cerrors.AlreadyExists, "x"), 400, "ValidationException"},
 		{"invalid argument", cerrors.New(cerrors.InvalidArgument, "x"), 400, "ValidationException"},
 		{"failed precondition", cerrors.New(cerrors.FailedPrecondition, "x"), 400, "ValidationException"},
 		{"exhausted is limit exceeded", cerrors.New(cerrors.ResourceExhausted, "x"), 400, "ResourceLimitExceeded"},

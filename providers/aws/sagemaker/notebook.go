@@ -144,6 +144,8 @@ func (m *Mock) ListNotebookInstances(_ context.Context, opts driver.ListOptions)
 		status:   func(t *driver.NotebookInstance) string { return t.Status },
 		created:  func(t *driver.NotebookInstance) string { return t.CreationTime },
 		modified: func(t *driver.NotebookInstance) string { return t.LastModifiedTime },
+		// AWS defaults ListNotebookInstances SortBy to Name.
+		defaultSortBy: driver.SortByName,
 		extra: func(t *driver.NotebookInstance, f map[string]string) bool {
 			if r := f["AdditionalCodeRepositoryEquals"]; r != "" && !slices.Contains(t.AdditionalCodeRepos, r) {
 				return false
@@ -384,11 +386,12 @@ func (m *Mock) DescribeNotebookInstanceLifecycleConfig(_ context.Context, name s
 	return &out, nil
 }
 
-//nolint:gocritic,lll // large value params mirror the driver interface; SDK-shaped literal
+//nolint:dupl,gocritic,lll // per-resource shim mirrors the SDK shape; large value params mirror the driver interface; SDK-shaped literal
 func (m *Mock) ListNotebookInstanceLifecycleConfigs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.NotebookLifecycleConfig], error) {
 	return listFrom(m.notebookLCs, listSpec[driver.NotebookLifecycleConfig]{
-		name:    func(t *driver.NotebookLifecycleConfig) string { return t.Name },
-		created: func(t *driver.NotebookLifecycleConfig) string { return t.CreationTime },
+		name:     func(t *driver.NotebookLifecycleConfig) string { return t.Name },
+		created:  func(t *driver.NotebookLifecycleConfig) string { return t.CreationTime },
+		modified: func(t *driver.NotebookLifecycleConfig) string { return t.LastModifiedTime },
 	}, opts)
 }
 
@@ -434,13 +437,16 @@ func (m *Mock) CreateCodeRepository(_ context.Context, cfg driver.CodeRepository
 		return nil, errors.New(errors.InvalidArgument, "codeRepositoryName is required")
 	}
 
+	now := m.now()
+
 	repo := &driver.CodeRepository{
-		Name:         cfg.Name,
-		ARN:          m.arn("code-repository/" + cfg.Name),
-		GitURL:       cfg.GitURL,
-		Branch:       cfg.Branch,
-		SecretARN:    cfg.SecretARN,
-		CreationTime: m.now(),
+		Name:             cfg.Name,
+		ARN:              m.arn("code-repository/" + cfg.Name),
+		GitURL:           cfg.GitURL,
+		Branch:           cfg.Branch,
+		SecretARN:        cfg.SecretARN,
+		CreationTime:     now,
+		LastModifiedTime: now,
 	}
 	if !m.codeRepos.SetIfAbsent(cfg.Name, repo) {
 		return nil, errors.Newf(errors.AlreadyExists, "code repository %q already exists", cfg.Name)
@@ -467,6 +473,15 @@ func (m *Mock) ListCodeRepositories(_ context.Context, opts driver.ListOptions) 
 	return listFrom(m.codeRepos, listSpec[driver.CodeRepository]{
 		name:    func(t *driver.CodeRepository) string { return t.Name },
 		created: func(t *driver.CodeRepository) string { return t.CreationTime },
+		modified: func(t *driver.CodeRepository) string {
+			if t.LastModifiedTime == "" { // restored from an older snapshot
+				return t.CreationTime
+			}
+
+			return t.LastModifiedTime
+		},
+		// AWS defaults ListCodeRepositories SortBy to Name.
+		defaultSortBy: driver.SortByName,
 	}, opts)
 }
 

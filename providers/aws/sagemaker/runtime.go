@@ -44,7 +44,7 @@ func (m *Mock) InvokeEndpoint(ctx context.Context, in driver.InvokeEndpointInput
 		}
 	}
 
-	m.emitInvocation(ctx, in.EndpointName, variant)
+	m.emitInvocation(ctx, in.EndpointName, variant, variantInstanceCount(ep, variant))
 
 	body := in.Body
 	if body == nil {
@@ -129,6 +129,9 @@ func firstConcreteMediaType(accept string) string {
 	return ""
 }
 
+// maxInferenceIDLen is the documented maximum length of InferenceId.
+const maxInferenceIDLen = 64
+
 // InvokeEndpointAsync records an asynchronous invocation and returns the S3
 // location under the endpoint configuration's async output path where the
 // (echoed) result is considered to have been written. An endpoint whose
@@ -148,10 +151,16 @@ func (m *Mock) InvokeEndpointAsync(ctx context.Context, in driver.InvokeEndpoint
 		return nil, errors.Newf(errors.InvalidArgument, "endpoint %q has no asynchronous inference configuration", in.EndpointName)
 	}
 
-	variant, _ := pickVariant(ep, "")
-	m.emitInvocation(ctx, in.EndpointName, variant)
+	id := in.InferenceID
+	if id == "" {
+		id = idgen.GenerateID("")
+	} else if len(id) > maxInferenceIDLen {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"Value at 'inferenceId' failed to satisfy constraint: Member must have length less than or equal to %d", maxInferenceIDLen)
+	}
 
-	id := idgen.GenerateID("")
+	variant, _ := pickVariant(ep, "")
+	m.emitInvocation(ctx, in.EndpointName, variant, variantInstanceCount(ep, variant))
 
 	return &driver.InvokeEndpointAsyncOutput{
 		OutputS3URI: strings.TrimSuffix(ec.AsyncOutputS3URI, "/") + "/" + id + ".out",
@@ -159,20 +168,13 @@ func (m *Mock) InvokeEndpointAsync(ctx context.Context, in driver.InvokeEndpoint
 	}, nil
 }
 
-// SetInvocationFailure makes every InvokeEndpoint call to the named endpoint
-// fail as a model-container error with the given HTTP status (0 clears it).
-// It is a test seam: real model failures come from the user's container.
-func (m *Mock) SetInvocationFailure(endpoint string, status int) {
+// clearInvocationFailure forgets a failure seeded on a deleted endpoint, so a
+// re-created endpoint with the same name starts clean.
+func (m *Mock) clearInvocationFailure(endpoint string) {
 	m.invMu.Lock()
 	defer m.invMu.Unlock()
 
-	if status == 0 {
-		delete(m.invFailures, endpoint)
-
-		return
-	}
-
-	m.invFailures[endpoint] = status
+	delete(m.invFailures, endpoint)
 }
 
 func (m *Mock) invocationFailure(endpoint string) (int, bool) {

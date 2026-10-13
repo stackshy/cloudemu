@@ -121,7 +121,7 @@ func TestInferenceFlowAndInvoke(t *testing.T) {
 	_, err = m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{
 		ConfigName: "cfg-a",
 		ProductionVariants: []driver.ProductionVariant{
-			{VariantName: "v1", ModelName: "model-a", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: 1},
+			{VariantName: "v1", ModelName: "model-a", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: ptr(1.0)},
 		},
 	})
 	require.NoError(t, err)
@@ -146,7 +146,8 @@ func TestInferenceFlowAndInvoke(t *testing.T) {
 	require.Len(t, got.VariantSummaries, 1)
 	assert.InDelta(t, 0.5, got.VariantSummaries[0].DesiredWeight, 0.001)
 	assert.Equal(t, 3, got.VariantSummaries[0].DesiredInstanceCount)
-	assert.InDelta(t, 1.0, got.Variants[0].InitialVariantWeight, 0.001, "the endpoint config's initial values are not overwritten")
+	require.NotNil(t, got.Variants[0].InitialVariantWeight)
+	assert.InDelta(t, 1.0, *got.Variants[0].InitialVariantWeight, 0.001, "the endpoint config's initial values are not overwritten")
 	assert.Equal(t, 1, got.Variants[0].InitialInstanceCount)
 }
 
@@ -374,7 +375,7 @@ func (r *metricsRig) endpoint(t *testing.T, name string) {
 	_, err = r.m.CreateEndpointConfig(r.ctx, driver.EndpointConfigSpec{
 		ConfigName: "cfg",
 		ProductionVariants: []driver.ProductionVariant{
-			{VariantName: "AllTraffic", ModelName: "mdl", InstanceType: "ml.m5.large", InitialInstanceCount: 2, InitialVariantWeight: 1},
+			{VariantName: "AllTraffic", ModelName: "mdl", InstanceType: "ml.m5.large", InitialInstanceCount: 2, InitialVariantWeight: ptr(1.0)},
 		},
 	})
 	require.NoError(t, err)
@@ -410,7 +411,8 @@ func TestInvokeMetrics_DimsAndUnits(t *testing.T) { // T131
 
 	dims := map[string]string{"EndpointName": "ep", "VariantName": "AllTraffic"}
 	assert.InDelta(t, 1, r.sum(t, "AWS/SageMaker", "Invocations", dims), 0)
-	assert.InDelta(t, 1, r.sum(t, "AWS/SageMaker", "InvocationsPerInstance", dims), 0)
+	// AWS emits 1/numberOfInstances per request: this variant runs 2 instances.
+	assert.InDelta(t, 0.5, r.sum(t, "AWS/SageMaker", "InvocationsPerInstance", dims), 0.0001)
 	assert.Positive(t, r.sum(t, "AWS/SageMaker", "ModelLatency", dims))
 	assert.Positive(t, r.sum(t, "AWS/SageMaker", "OverheadLatency", dims))
 	// The fabricated EndpointName-only series no longer exists.
@@ -522,7 +524,7 @@ func TestMetrics_NilMonitoringIsSafe(t *testing.T) { // T135
 	require.NoError(t, err)
 	_, err = m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{
 		ConfigName:         "cfg",
-		ProductionVariants: []driver.ProductionVariant{{VariantName: "v", ModelName: "mdl", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: 1}},
+		ProductionVariants: []driver.ProductionVariant{{VariantName: "v", ModelName: "mdl", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: ptr(1.0)}},
 	})
 	require.NoError(t, err)
 	_, err = m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "ep", ConfigName: "cfg"})
@@ -900,7 +902,7 @@ func seedConfig(t *testing.T, m *Mock, suffix string, count int, weight float64)
 	_, err := m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{
 		ConfigName: name,
 		ProductionVariants: []driver.ProductionVariant{
-			{VariantName: "v1", ModelName: "model-a", InstanceType: "ml.m5.large", InitialInstanceCount: count, InitialVariantWeight: weight},
+			{VariantName: "v1", ModelName: "model-a", InstanceType: "ml.m5.large", InitialInstanceCount: count, InitialVariantWeight: ptr(weight)},
 		},
 	})
 	require.NoError(t, err)
@@ -1054,7 +1056,7 @@ func TestUpdateEndpoint_Errors(t *testing.T) { // T34
 		{"no items", nil},
 		{"unknown variant", []driver.VariantWeight{{VariantName: "ghost", DesiredWeight: ptr(1.0)}}},
 		{"negative weight", []driver.VariantWeight{{VariantName: "v1", DesiredWeight: ptr(-0.1)}}},
-		{"zero instances", []driver.VariantWeight{{VariantName: "v1", DesiredInstanceCount: ptr(0)}}},
+		{"negative instances", []driver.VariantWeight{{VariantName: "v1", DesiredInstanceCount: ptr(-1)}}},
 	}
 
 	for _, tc := range cases {
@@ -1202,8 +1204,8 @@ func TestInvoke_TargetVariantAndContentType(t *testing.T) { // T44, T46
 	_, err := m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{
 		ConfigName: "two",
 		ProductionVariants: []driver.ProductionVariant{
-			{VariantName: "blue", ModelName: "model-a", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: 0},
-			{VariantName: "green", ModelName: "model-a", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: 1},
+			{VariantName: "blue", ModelName: "model-a", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: ptr(0.0)},
+			{VariantName: "green", ModelName: "model-a", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: ptr(1.0)},
 		},
 	})
 	require.NoError(t, err)
@@ -4134,7 +4136,7 @@ func TestDeepCopy_AllDescribes(t *testing.T) { // T17
 	require.NoError(t, err)
 	_, err = m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{
 		ConfigName: "cfg", Tags: tags,
-		ProductionVariants: []driver.ProductionVariant{{VariantName: "v", ModelName: "mdl", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: 1}},
+		ProductionVariants: []driver.ProductionVariant{{VariantName: "v", ModelName: "mdl", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: ptr(1.0)}},
 	})
 	require.NoError(t, err)
 	_, err = m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "ep", ConfigName: "cfg", Tags: tags})
@@ -4330,7 +4332,7 @@ func TestCreateEndpointConfig_Validation(t *testing.T) {
 	require.NoError(t, err)
 
 	v := func(name, model string) driver.ProductionVariant {
-		return driver.ProductionVariant{VariantName: name, ModelName: model, InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: 1}
+		return driver.ProductionVariant{VariantName: name, ModelName: model, InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: ptr(1.0)}
 	}
 
 	for name, variants := range map[string][]driver.ProductionVariant{
@@ -4338,7 +4340,7 @@ func TestCreateEndpointConfig_Validation(t *testing.T) {
 		"missing model":    {v("a", "ghost")},
 		"duplicate name":   {v("a", "m"), v("a", "m")},
 		"negative count":   {{VariantName: "a", ModelName: "m", InitialInstanceCount: -1}},
-		"negative weight":  {{VariantName: "a", ModelName: "m", InitialVariantWeight: -1}},
+		"negative weight":  {{VariantName: "a", ModelName: "m", InitialVariantWeight: ptr(-1.0)}},
 		"too many":         {v("1", "m"), v("2", "m"), v("3", "m"), v("4", "m"), v("5", "m"), v("6", "m"), v("7", "m"), v("8", "m"), v("9", "m"), v("10", "m"), v("11", "m")},
 		"unnamed":          {{ModelName: "m"}},
 		"huge count":       {{VariantName: "a", ModelName: "m", InitialInstanceCount: 100000}},
@@ -4365,7 +4367,7 @@ func TestCreateInferenceComponent_References(t *testing.T) {
 	_, err := m.CreateModel(ctx, driver.ModelConfig{ModelName: "m"})
 	require.NoError(t, err)
 	_, err = m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{
-		ConfigName: "c", ProductionVariants: []driver.ProductionVariant{{VariantName: "v", ModelName: "m", InitialVariantWeight: 1}},
+		ConfigName: "c", ProductionVariants: []driver.ProductionVariant{{VariantName: "v", ModelName: "m", InitialVariantWeight: ptr(1.0)}},
 	})
 	require.NoError(t, err)
 	_, err = m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "e", ConfigName: "c"})
@@ -4390,7 +4392,7 @@ func TestInvokeEndpointAsync_UsesConfiguredOutputPath(t *testing.T) {
 	_, err := m.CreateModel(ctx, driver.ModelConfig{ModelName: "m"})
 	require.NoError(t, err)
 
-	variants := []driver.ProductionVariant{{VariantName: "v", ModelName: "m", InitialVariantWeight: 1}}
+	variants := []driver.ProductionVariant{{VariantName: "v", ModelName: "m", InitialVariantWeight: ptr(1.0)}}
 	_, err = m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{ConfigName: "sync", ProductionVariants: variants})
 	require.NoError(t, err)
 	_, err = m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{ConfigName: "async", ProductionVariants: variants, AsyncOutputS3URI: "s3://out/results/"})
@@ -4410,6 +4412,16 @@ func TestInvokeEndpointAsync_UsesConfiguredOutputPath(t *testing.T) {
 	out, err := m.InvokeEndpointAsync(ctx, driver.InvokeEndpointAsyncInput{EndpointName: "async-ep", InputS3URI: "s3://in/x"})
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(out.OutputS3URI, "s3://out/results/"+out.InferenceID), out.OutputS3URI)
+
+	// A caller-supplied InferenceId is kept (AWS only generates one when none is given).
+	out, err = m.InvokeEndpointAsync(ctx, driver.InvokeEndpointAsyncInput{EndpointName: "async-ep", InputS3URI: "s3://in/x", InferenceID: "myid-1"})
+	require.NoError(t, err)
+	assert.Equal(t, "myid-1", out.InferenceID)
+	assert.Equal(t, "s3://out/results/myid-1.out", out.OutputS3URI)
+
+	_, err = m.InvokeEndpointAsync(ctx, driver.InvokeEndpointAsyncInput{EndpointName: "async-ep", InputS3URI: "s3://in/x", InferenceID: strings.Repeat("a", 65)})
+	require.Error(t, err, "InferenceId is 1-64 characters")
+	assert.True(t, errors.IsInvalidArgument(err))
 }
 
 func TestJobInstanceCount_Bounded(t *testing.T) {
@@ -4516,7 +4528,7 @@ func TestEndpointNameReusableAfterDelete_AsyncSettle(t *testing.T) {
 	_, err := m.CreateModel(ctx, driver.ModelConfig{ModelName: "m"})
 	require.NoError(t, err)
 	_, err = m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{
-		ConfigName: "c", ProductionVariants: []driver.ProductionVariant{{VariantName: "v", ModelName: "m", InitialVariantWeight: 1}},
+		ConfigName: "c", ProductionVariants: []driver.ProductionVariant{{VariantName: "v", ModelName: "m", InitialVariantWeight: ptr(1.0)}},
 	})
 	require.NoError(t, err)
 	_, err = m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "e", ConfigName: "c"})
@@ -4552,4 +4564,668 @@ func execTimes2(t *testing.T, m *Mock, schedule string) []driver.MonitoringExecu
 	require.NoError(t, err)
 
 	return page.Items
+}
+
+// TestDuplicateCreates_ExceptionPerOp pins which duplicate creates are
+// ResourceInUse (the SDK models it on those operations) and which stay a plain
+// already-exists ValidationException (no ResourceInUse in the operation's error list).
+func TestDuplicateCreates_ExceptionPerOp(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	dom, err := m.CreateDomain(ctx, driver.DomainSpec{DomainName: "dupdom", AuthMode: "IAM"})
+	require.NoError(t, err)
+
+	_, err = m.CreateUserProfile(ctx, driver.UserProfileSpec{DomainID: dom.DomainID, UserProfileName: "bob"})
+	require.NoError(t, err)
+
+	inUse := map[string]func() error{
+		"training job":   func() error { _, e := m.CreateTrainingJob(ctx, driver.TrainingJobConfig{JobName: "dup"}); return e },
+		"processing job": func() error { _, e := m.CreateProcessingJob(ctx, driver.ProcessingJobConfig{JobName: "dup"}); return e },
+		"transform job": func() error {
+			_, e := m.CreateTransformJob(ctx, driver.TransformJobConfig{JobName: "dup", ModelName: "m1"})
+			return e
+		},
+		"tuning job": func() error {
+			_, e := m.CreateHyperParameterTuningJob(ctx, driver.HyperParameterTuningJobConfig{JobName: "dup", MaxJobs: 4})
+			return e
+		},
+		"AutoML job":   func() error { _, e := m.CreateAutoMLJobV2(ctx, driver.AutoMLJobConfig{JobName: "dup"}); return e },
+		"labeling job": func() error { _, e := m.CreateLabelingJob(ctx, driver.LabelingJobConfig{JobName: "dup"}); return e },
+		"compilation job": func() error {
+			_, e := m.CreateCompilationJob(ctx, driver.CompilationJobConfig{JobName: "dup"})
+			return e
+		},
+		"feature group": func() error {
+			_, e := m.CreateFeatureGroup(ctx, driver.FeatureGroupSpec{
+				GroupName: "dup", RecordIdentifierName: "id", EventTimeFeatureName: "ts",
+				Features: []driver.FeatureDefinition{{Name: "id", Type: "String"}, {Name: "ts", Type: "String"}},
+			})
+			return e
+		},
+		"cluster": func() error {
+			_, e := m.CreateCluster(ctx, driver.ClusterSpec{ClusterName: "dup", InstanceGroups: []driver.ClusterInstanceGroupSpec{groupSpec("w", 1)}})
+			return e
+		},
+		"user profile": func() error {
+			_, e := m.CreateUserProfile(ctx, driver.UserProfileSpec{DomainID: dom.DomainID, UserProfileName: "alice"})
+			return e
+		},
+		"space": func() error {
+			_, e := m.CreateSpace(ctx, driver.SpaceSpec{DomainID: dom.DomainID, SpaceName: "dup"})
+			return e
+		},
+		"app": func() error {
+			_, e := m.CreateApp(ctx, driver.AppSpec{DomainID: dom.DomainID, UserProfileName: "bob", AppType: "JupyterServer", AppName: "dup"})
+			return e
+		},
+	}
+
+	for name, create := range inUse {
+		require.NoError(t, createOnce(name, create), name+": first create")
+		assert.Equal(t, driver.ExResourceInUse, exceptionOf(create()), name+": duplicate is ResourceInUse")
+	}
+
+	// No ResourceInUse in the SDK error list: stays a validation-style duplicate.
+	_, err = m.CreateModel(ctx, driver.ModelConfig{ModelName: "dupm", RoleARN: "role"})
+	require.NoError(t, err)
+
+	_, err = m.CreateModel(ctx, driver.ModelConfig{ModelName: "dupm", RoleARN: "role"})
+	assert.True(t, errors.IsAlreadyExists(err))
+	assert.Empty(t, exceptionOf(err))
+}
+
+// createOnce runs a create function the first time (the duplicate follows).
+func createOnce(_ string, create func() error) error { return create() }
+
+// A deleted endpoint is purged lazily under async settle. It must not come back
+// InService after a persist restart, and a tag on it must not succeed once its
+// Deleting window has elapsed.
+func TestEndpoint_DeletingNotPersisted(t *testing.T) {
+	m, fc := newAsyncMock()
+	ctx := context.Background()
+	cfg := seedConfig(t, m, "a", 1, 1)
+
+	_, err := m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "pe", ConfigName: cfg, Tags: []driver.Tag{{Key: "k", Value: "v"}}})
+	require.NoError(t, err)
+	fc.Advance(3 * time.Second)
+
+	err = m.DeleteEndpoint(ctx, "pe")
+	require.NoError(t, err)
+
+	raw, err := m.Snapshot(ctx, true)
+	require.NoError(t, err)
+
+	restored, _ := newAsyncMock()
+	require.NoError(t, restored.Restore(ctx, raw))
+
+	_, err = restored.DescribeEndpoint(ctx, "pe")
+	assert.True(t, errors.IsNotFound(err), "a deleted endpoint is gone after restore")
+
+	list, err := restored.ListEndpoints(ctx, driver.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, list.Items)
+
+	_, err = restored.ListTags(ctx, restored.arn("endpoint/pe"))
+	assert.True(t, errors.IsNotFound(err), "its tags are not restored either")
+
+	for _, tags := range restored.tags.All() {
+		assert.Empty(t, tags, "no orphan tag entry for the deleted endpoint")
+	}
+
+	// The live mock is untouched by the snapshot: still Deleting, then gone.
+	got, err := m.DescribeEndpoint(ctx, "pe")
+	require.NoError(t, err)
+	assert.Equal(t, driver.EndpointDeleting, got.Status)
+}
+
+func TestEndpoint_TagLivenessAfterDelete(t *testing.T) {
+	m, fc := newAsyncMock()
+	ctx := context.Background()
+	cfg := seedConfig(t, m, "a", 1, 1)
+
+	_, err := m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "pe", ConfigName: cfg})
+	require.NoError(t, err)
+	fc.Advance(3 * time.Second)
+
+	err = m.DeleteEndpoint(ctx, "pe")
+	require.NoError(t, err)
+
+	arn := m.arn("endpoint/pe")
+
+	// Still Deleting: the resource exists, so tagging works.
+	_, err = m.AddTags(ctx, arn, []driver.Tag{{Key: "a", Value: "1"}})
+	require.NoError(t, err)
+
+	// Its Deleting window has elapsed but nobody read it yet: it is gone.
+	fc.Advance(5 * time.Second)
+
+	_, err = m.AddTags(ctx, arn, []driver.Tag{{Key: "b", Value: "2"}})
+	assert.True(t, errors.IsNotFound(err), "tagging an elapsed-Deleting endpoint is not found")
+}
+
+// AWS documents SortOrder default Descending for ListEndpoints, ListModels,
+// ListEndpointConfigs and ListTransformJobs.
+func TestList_DefaultSortOrderDescending(t *testing.T) {
+	m, fc := newTestMockClock()
+	ctx := context.Background()
+
+	for _, n := range []string{"ord-a", "ord-b", "ord-c"} {
+		_, err := m.CreateModel(ctx, driver.ModelConfig{ModelName: n, RoleARN: "role", Containers: []driver.ContainerDefinition{{Image: "i"}}})
+		require.NoError(t, err)
+		cfg := seedConfig(t, m, n, 1, 1)
+		_, err = m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: n, ConfigName: cfg})
+		require.NoError(t, err)
+		_, err = m.CreateTransformJob(ctx, driver.TransformJobConfig{JobName: n, ModelName: n})
+		require.NoError(t, err)
+
+		fc.Advance(time.Second)
+	}
+
+	names := func(items any) []string {
+		var out []string
+
+		switch v := items.(type) {
+		case []driver.Model:
+			for i := range v {
+				out = append(out, v[i].ModelName)
+			}
+		case []driver.EndpointConfig:
+			for i := range v {
+				out = append(out, v[i].ConfigName)
+			}
+		case []driver.Endpoint:
+			for i := range v {
+				out = append(out, v[i].EndpointName)
+			}
+		case []driver.TransformJob:
+			for i := range v {
+				out = append(out, v[i].JobName)
+			}
+		}
+
+		return out
+	}
+
+	newestFirst := []string{"ord-c", "ord-b", "ord-a"}
+	oldestFirst := []string{"ord-a", "ord-b", "ord-c"}
+
+	mp, _ := m.ListModels(ctx, driver.ListOptions{NamePrefix: "ord-"}) // seedConfig also creates model-a
+	cp, _ := m.ListEndpointConfigs(ctx, driver.ListOptions{})
+	ep, _ := m.ListEndpoints(ctx, driver.ListOptions{})
+	tp, _ := m.ListTransformJobs(ctx, driver.ListOptions{})
+
+	assert.Equal(t, newestFirst, names(mp.Items), "ListModels")
+	assert.Equal(t, []string{"cfg-ord-c", "cfg-ord-b", "cfg-ord-a"}, names(cp.Items), "ListEndpointConfigs")
+	assert.Equal(t, newestFirst, names(ep.Items), "ListEndpoints")
+	assert.Equal(t, newestFirst, names(tp.Items), "ListTransformJobs")
+
+	// An explicit order still wins, and a page of one is the newest item.
+	ap, _ := m.ListEndpoints(ctx, driver.ListOptions{SortOrder: driver.SortAscending})
+	assert.Equal(t, oldestFirst, names(ap.Items))
+
+	one, _ := m.ListEndpoints(ctx, driver.ListOptions{MaxResults: 1})
+	assert.Equal(t, []string{"ord-c"}, names(one.Items), "--max-results 1 returns the latest endpoint")
+
+	// Training and processing jobs keep their documented ascending default.
+	for _, n := range []string{"t-a", "t-b"} {
+		_, err := m.CreateTrainingJob(ctx, driver.TrainingJobConfig{JobName: n})
+		require.NoError(t, err)
+
+		fc.Advance(time.Second)
+	}
+
+	tj, _ := m.ListTrainingJobs(ctx, driver.ListOptions{})
+	require.Len(t, tj.Items, 2)
+	assert.Equal(t, "t-a", tj.Items[0].JobName)
+}
+
+func TestList_NotebookFamilySortAndFilters(t *testing.T) {
+	m, fc := newTestMockClock()
+	ctx := context.Background()
+
+	for _, n := range []string{"zeta", "alpha"} { // created zeta first, so alpha is newer
+		_, err := m.CreateNotebookInstanceLifecycleConfig(ctx, driver.NotebookLifecycleConfigSpec{Name: n, OnStart: "echo"})
+		require.NoError(t, err)
+		_, err = m.CreateCodeRepository(ctx, driver.CodeRepositorySpec{Name: n, GitURL: "https://git/" + n})
+		require.NoError(t, err)
+		_, err = m.CreateNotebookInstance(ctx, driver.NotebookInstanceSpec{Name: n, InstanceType: "ml.t3.medium"})
+		require.NoError(t, err)
+
+		fc.Advance(time.Hour)
+	}
+
+	// ListCodeRepositories and ListNotebookInstances default SortBy to Name.
+	repos, err := m.ListCodeRepositories(ctx, driver.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, repos.Items, 2)
+	assert.Equal(t, "alpha", repos.Items[0].Name, "code repositories default to Name order")
+
+	nbs, err := m.ListNotebookInstances(ctx, driver.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, nbs.Items, 2)
+	assert.Equal(t, "alpha", nbs.Items[0].Name, "notebook instances default to Name order")
+
+	// LastModifiedTime is a documented SortBy value and filter on both.
+	lcs, err := m.ListNotebookInstanceLifecycleConfigs(ctx, driver.ListOptions{SortBy: driver.SortByLastModifiedTime, SortOrder: driver.SortDescending})
+	require.NoError(t, err)
+	require.Len(t, lcs.Items, 2)
+	assert.Equal(t, "alpha", lcs.Items[0].Name)
+
+	repos, err = m.ListCodeRepositories(ctx, driver.ListOptions{SortBy: driver.SortByLastModifiedTime, SortOrder: driver.SortDescending})
+	require.NoError(t, err)
+	assert.Equal(t, "alpha", repos.Items[0].Name)
+	assert.NotEmpty(t, repos.Items[0].LastModifiedTime)
+
+	for name, list := range map[string]func(string) (int, error){
+		"lifecycle configs": func(after string) (int, error) {
+			p, e := m.ListNotebookInstanceLifecycleConfigs(ctx, driver.ListOptions{LastModifiedTimeAfter: after})
+			return len(p.Items), e
+		},
+		"code repositories": func(after string) (int, error) {
+			p, e := m.ListCodeRepositories(ctx, driver.ListOptions{LastModifiedTimeAfter: after})
+			return len(p.Items), e
+		},
+	} {
+		n, e := list("2000-01-01T00:00:00Z")
+		require.NoError(t, e, name)
+		assert.Equal(t, 2, n, name+": a past LastModifiedTimeAfter matches everything")
+
+		n, e = list("2999-01-01T00:00:00Z")
+		require.NoError(t, e, name)
+		assert.Equal(t, 0, n, name+": a future bound matches nothing")
+	}
+}
+
+// A filter on a field the operation does not have must be an error, never a
+// silently empty result.
+func TestList_UnsupportedFilterIsAnError(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateModel(ctx, driver.ModelConfig{ModelName: "m", RoleARN: "role", Containers: []driver.ContainerDefinition{{Image: "i"}}})
+	require.NoError(t, err)
+
+	_, err = m.ListModels(ctx, driver.ListOptions{LastModifiedTimeAfter: "2000-01-01T00:00:00Z"})
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalidArgument(err))
+
+	_, err = m.ListModels(ctx, driver.ListOptions{StatusEquals: "InService"})
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalidArgument(err))
+}
+
+// ModelPackageGroupName takes a name or an ARN (CreateModelPackage).
+func TestCreateModelPackage_AcceptsGroupARN(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	g, err := m.CreateModelPackageGroup(ctx, driver.ModelPackageGroupSpec{GroupName: "grp1"})
+	require.NoError(t, err)
+
+	byARN, err := m.CreateModelPackage(ctx, driver.ModelPackageSpec{GroupName: g.GroupARN})
+	require.NoError(t, err)
+	assert.Equal(t, "grp1", byARN.GroupName, "the group is stored by name")
+	assert.Equal(t, 1, byARN.Version)
+
+	byName, err := m.CreateModelPackage(ctx, driver.ModelPackageSpec{GroupName: "grp1"})
+	require.NoError(t, err)
+	assert.Equal(t, 2, byName.Version, "name and ARN refer to the same group")
+
+	_, err = m.CreateModelPackage(ctx, driver.ModelPackageSpec{GroupName: m.arn("model-package-group/ghost")})
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalidArgument(err) || errors.IsNotFound(err))
+}
+
+// A library caller who omits InitialVariantWeight gets SageMaker's default of
+// 1.0 in the provider, the same as `serve`. An explicit 0 is kept.
+func TestEndpointConfig_VariantWeightDefaultsInProvider(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateModel(ctx, driver.ModelConfig{ModelName: "m", RoleARN: "role", Containers: []driver.ContainerDefinition{{Image: "i"}}})
+	require.NoError(t, err)
+
+	zero := 0.0
+	_, err = m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{ConfigName: "c", ProductionVariants: []driver.ProductionVariant{
+		{VariantName: "omitted", ModelName: "m", InstanceType: "ml.m5.large", InitialInstanceCount: 1},
+		{VariantName: "zero", ModelName: "m", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: &zero},
+	}})
+	require.NoError(t, err)
+
+	got, err := m.DescribeEndpointConfig(ctx, "c")
+	require.NoError(t, err)
+	require.NotNil(t, got.ProductionVariants[0].InitialVariantWeight)
+	assert.InDelta(t, 1.0, *got.ProductionVariants[0].InitialVariantWeight, 0.001, "an omitted weight is stored as 1.0")
+	require.NotNil(t, got.ProductionVariants[1].InitialVariantWeight)
+	assert.InDelta(t, 0.0, *got.ProductionVariants[1].InitialVariantWeight, 0.001, "an explicit 0 is kept")
+
+	_, err = m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "e", ConfigName: "c"})
+	require.NoError(t, err)
+
+	ep, err := m.DescribeEndpoint(ctx, "e")
+	require.NoError(t, err)
+	assert.InDelta(t, 1.0, ep.VariantSummaries[0].CurrentWeight, 0.001, "DescribeEndpoint shows CurrentWeight 1, not 0")
+	assert.InDelta(t, 0.0, ep.VariantSummaries[1].CurrentWeight, 0.001)
+
+	// Reads are deep copies: mutating the returned weight does not change the stored one.
+	*got.ProductionVariants[0].InitialVariantWeight = 9
+
+	again, _ := m.DescribeEndpointConfig(ctx, "c")
+	assert.InDelta(t, 1.0, *again.ProductionVariants[0].InitialVariantWeight, 0.001)
+
+	neg := -1.0
+	_, err = m.CreateEndpointConfig(ctx, driver.EndpointConfigSpec{ConfigName: "bad", ProductionVariants: []driver.ProductionVariant{
+		{VariantName: "v", ModelName: "m", InitialVariantWeight: &neg},
+	}})
+	assert.True(t, errors.IsInvalidArgument(err))
+}
+
+// A model failure seeded on one endpoint must not apply to a re-created
+// endpoint that happens to reuse the name.
+func TestInvocationFailure_ClearedOnEndpointDelete(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	cfg := seedConfig(t, m, "a", 1, 1)
+
+	_, err := m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "ep", ConfigName: cfg})
+	require.NoError(t, err)
+
+	m.SetInvocationFailure("ep", 500)
+
+	_, err = m.InvokeEndpoint(ctx, driver.InvokeEndpointInput{EndpointName: "ep"})
+	require.Error(t, err, "the seeded failure applies while the endpoint exists")
+
+	require.NoError(t, m.DeleteEndpoint(ctx, "ep"))
+
+	_, err = m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "ep", ConfigName: cfg})
+	require.NoError(t, err)
+
+	_, err = m.InvokeEndpoint(ctx, driver.InvokeEndpointInput{EndpointName: "ep"})
+	assert.NoError(t, err, "a re-created endpoint starts clean")
+}
+
+// DesiredWeightAndCapacity allows DesiredInstanceCount down to 0 (scale to zero).
+func TestUpdateEndpointWeightsAndCapacities_ScaleToZero(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	cfg := seedConfig(t, m, "a", 2, 1)
+
+	_, err := m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "ep", ConfigName: cfg})
+	require.NoError(t, err)
+
+	_, err = m.UpdateEndpointWeightsAndCapacities(ctx, "ep", []driver.VariantWeight{{VariantName: "v1", DesiredInstanceCount: ptr(0)}})
+	require.NoError(t, err)
+
+	got, err := m.DescribeEndpoint(ctx, "ep")
+	require.NoError(t, err)
+	assert.Equal(t, 0, got.VariantSummaries[0].DesiredInstanceCount)
+	assert.Equal(t, 0, got.VariantSummaries[0].CurrentInstanceCount)
+}
+
+// A schedule keeps producing executions: once more than the cap have fired, the
+// newest ones are kept, not the oldest.
+func TestScheduleFires_KeepsNewest(t *testing.T) {
+	from := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(3000 * time.Hour)
+
+	fires := scheduleSpec{hourly: true}.fires(from, to, driver.MaxMonitoringExecutionsPerSchedule)
+
+	require.Len(t, fires, driver.MaxMonitoringExecutionsPerSchedule)
+	assert.Equal(t, to, fires[len(fires)-1], "the most recent fire is kept")
+	assert.Equal(t, to.Add(-999*time.Hour), fires[0], "the oldest kept fire is 999 hours before it")
+
+	for i := 1; i < len(fires); i++ {
+		require.True(t, fires[i].After(fires[i-1]), "oldest first, strictly increasing")
+	}
+
+	// Below the cap nothing changes: every fire in (from, to], oldest first.
+	few := scheduleSpec{hourly: true}.fires(from, from.Add(3*time.Hour), driver.MaxMonitoringExecutionsPerSchedule)
+	assert.Equal(t, []time.Time{from.Add(time.Hour), from.Add(2 * time.Hour), from.Add(3 * time.Hour)}, few)
+
+	// A daily schedule far in the future still reports its latest fire.
+	daily := scheduleSpec{hour: 3}.fires(from, to, 5)
+	require.Len(t, daily, 5)
+	assert.Equal(t, 3, daily[4].Hour())
+	assert.True(t, daily[4].After(to.Add(-24*time.Hour)), "within the last day of the window")
+}
+
+func TestInvocationsPerInstance_ScalesWithInstanceCount(t *testing.T) {
+	r := newMetricsRig()
+	r.endpoint(t, "ep") // 2 instances
+
+	_, err := r.m.UpdateEndpointWeightsAndCapacities(r.ctx, "ep", []driver.VariantWeight{{VariantName: "AllTraffic", DesiredInstanceCount: ptr(4)}})
+	require.NoError(t, err)
+
+	for i := 0; i < 4; i++ {
+		_, err = r.m.InvokeEndpoint(r.ctx, driver.InvokeEndpointInput{EndpointName: "ep", Body: []byte("x")})
+		require.NoError(t, err)
+	}
+
+	dims := map[string]string{"EndpointName": "ep", "VariantName": "AllTraffic"}
+	assert.InDelta(t, 4, r.sum(t, "AWS/SageMaker", "Invocations", dims), 0)
+	assert.InDelta(t, 1.0, r.sum(t, "AWS/SageMaker", "InvocationsPerInstance", dims), 0.0001, "4 invocations over 4 instances")
+
+	// A scaled-to-zero variant reports no per-instance value rather than dividing by zero.
+	_, err = r.m.UpdateEndpointWeightsAndCapacities(r.ctx, "ep", []driver.VariantWeight{{VariantName: "AllTraffic", DesiredInstanceCount: ptr(0)}})
+	require.NoError(t, err)
+
+	_, err = r.m.InvokeEndpoint(r.ctx, driver.InvokeEndpointInput{EndpointName: "ep", Body: []byte("x")})
+	require.NoError(t, err)
+	assert.InDelta(t, 1.0, r.sum(t, "AWS/SageMaker", "InvocationsPerInstance", dims), 0.0001, "no datapoint at zero instances")
+}
+
+// A describe / list / delete sweep over the resource families, so every thin
+// shim is exercised in this package and each family's list reports what the
+// create stored.
+func TestFamilies_DescribeListDeleteSweep(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	count := func(name string, n int, err error, want int) {
+		t.Helper()
+		require.NoError(t, err, name)
+		assert.Equal(t, want, n, name)
+	}
+
+	// Jobs: every kind lists what was created.
+	_, err := m.CreateProcessingJob(ctx, driver.ProcessingJobConfig{JobName: "p1"})
+	require.NoError(t, err)
+	pj, err := m.ListProcessingJobs(ctx, driver.ListOptions{})
+	count("processing jobs", len(pj.Items), err, 1)
+
+	_, err = m.CreateHyperParameterTuningJob(ctx, driver.HyperParameterTuningJobConfig{JobName: "h1", MaxJobs: 2})
+	require.NoError(t, err)
+	hj, err := m.ListHyperParameterTuningJobs(ctx, driver.ListOptions{})
+	count("tuning jobs", len(hj.Items), err, 1)
+
+	_, err = m.CreateAutoMLJobV2(ctx, driver.AutoMLJobConfig{JobName: "a1"})
+	require.NoError(t, err)
+	aj, err := m.ListAutoMLJobs(ctx, driver.ListOptions{})
+	count("automl jobs", len(aj.Items), err, 1)
+
+	_, err = m.CreateLabelingJob(ctx, driver.LabelingJobConfig{JobName: "l1"})
+	require.NoError(t, err)
+	lj, err := m.ListLabelingJobs(ctx, driver.ListOptions{})
+	count("labeling jobs", len(lj.Items), err, 1)
+
+	_, err = m.CreateCompilationJob(ctx, driver.CompilationJobConfig{JobName: "c1"})
+	require.NoError(t, err)
+	cj, err := m.ListCompilationJobs(ctx, driver.ListOptions{})
+	count("compilation jobs", len(cj.Items), err, 1)
+
+	// Pipelines and experiments.
+	_, err = m.CreatePipeline(ctx, driver.PipelineSpec{PipelineName: "pl", Definition: "{}"})
+	require.NoError(t, err)
+	_, err = m.DescribePipeline(ctx, "pl")
+	require.NoError(t, err)
+	up, err := m.UpdatePipeline(ctx, "pl", `{"Version":"2020-12-01"}`)
+	require.NoError(t, err)
+	assert.Contains(t, up.Definition, "2020-12-01")
+	pl, err := m.ListPipelines(ctx, driver.ListOptions{})
+	count("pipelines", len(pl.Items), err, 1)
+
+	ex, err := m.StartPipelineExecution(ctx, "pl")
+	require.NoError(t, err)
+	exs, err := m.ListPipelineExecutions(ctx, "pl", driver.ListOptions{})
+	count("pipeline executions", len(exs.Items), err, 1)
+	assert.Equal(t, ex.ExecutionARN, exs.Items[0].ExecutionARN)
+
+	_, err = m.CreateExperiment(ctx, driver.ExperimentSpec{ExperimentName: "exp"})
+	require.NoError(t, err)
+	es, err := m.ListExperiments(ctx, driver.ListOptions{})
+	count("experiments", len(es.Items), err, 1)
+
+	// Feature groups and clusters.
+	_, err = m.CreateFeatureGroup(ctx, driver.FeatureGroupSpec{
+		GroupName: "fg", RecordIdentifierName: "id", EventTimeFeatureName: "ts",
+		Features: []driver.FeatureDefinition{{Name: "id", Type: "String"}, {Name: "ts", Type: "String"}},
+	})
+	require.NoError(t, err)
+	_, err = m.DescribeFeatureGroup(ctx, "fg")
+	require.NoError(t, err)
+	fgs, err := m.ListFeatureGroups(ctx, driver.ListOptions{})
+	count("feature groups", len(fgs.Items), err, 1)
+
+	_, err = m.CreateCluster(ctx, driver.ClusterSpec{ClusterName: "cl", InstanceGroups: []driver.ClusterInstanceGroupSpec{groupSpec("w", 1)}})
+	require.NoError(t, err)
+	cls, err := m.ListClusters(ctx, driver.ListOptions{})
+	count("clusters", len(cls.Items), err, 1)
+	require.NoError(t, m.DeleteCluster(ctx, "cl"))
+	cls, err = m.ListClusters(ctx, driver.ListOptions{})
+	count("clusters after delete", len(cls.Items), err, 0)
+
+	// Notebook support resources and the registry.
+	_, err = m.CreateNotebookInstanceLifecycleConfig(ctx, driver.NotebookLifecycleConfigSpec{Name: "lc", OnStart: "echo"})
+	require.NoError(t, err)
+	require.NoError(t, m.DeleteNotebookInstanceLifecycleConfig(ctx, "lc"))
+
+	_, err = m.CreateCodeRepository(ctx, driver.CodeRepositorySpec{Name: "repo", GitURL: "https://git/r"})
+	require.NoError(t, err)
+	repo, err := m.DescribeCodeRepository(ctx, "repo")
+	require.NoError(t, err)
+	assert.NotEmpty(t, repo.LastModifiedTime)
+	require.NoError(t, m.DeleteCodeRepository(ctx, "repo"))
+
+	g, err := m.CreateModelPackageGroup(ctx, driver.ModelPackageGroupSpec{GroupName: "grp"})
+	require.NoError(t, err)
+	gs, err := m.ListModelPackageGroups(ctx, driver.ListOptions{})
+	count("package groups", len(gs.Items), err, 1)
+
+	pkg, err := m.CreateModelPackage(ctx, driver.ModelPackageSpec{GroupName: g.GroupARN})
+	require.NoError(t, err)
+	require.NoError(t, m.DeleteModelPackage(ctx, pkg.PackageARN))
+
+	// Studio: domain, user profile, space, app.
+	dom, err := m.CreateDomain(ctx, driver.DomainSpec{DomainName: "dom", AuthMode: "IAM"})
+	require.NoError(t, err)
+	_, err = m.DescribeDomain(ctx, dom.DomainID)
+	require.NoError(t, err)
+
+	_, err = m.CreateUserProfile(ctx, driver.UserProfileSpec{DomainID: dom.DomainID, UserProfileName: "alice"})
+	require.NoError(t, err)
+	_, err = m.DescribeUserProfile(ctx, dom.DomainID, "alice")
+	require.NoError(t, err)
+	ups, err := m.ListUserProfiles(ctx, dom.DomainID, driver.ListOptions{})
+	count("user profiles", len(ups.Items), err, 1)
+
+	_, err = m.CreateSpace(ctx, driver.SpaceSpec{DomainID: dom.DomainID, SpaceName: "sp"})
+	require.NoError(t, err)
+	_, err = m.DescribeSpace(ctx, dom.DomainID, "sp")
+	require.NoError(t, err)
+	sps, err := m.ListSpaces(ctx, dom.DomainID, driver.ListOptions{})
+	count("spaces", len(sps.Items), err, 1)
+
+	app := driver.AppSpec{DomainID: dom.DomainID, UserProfileName: "alice", AppType: "JupyterServer", AppName: "default"}
+	_, err = m.CreateApp(ctx, app)
+	require.NoError(t, err)
+	_, err = m.DescribeApp(ctx, app)
+	require.NoError(t, err)
+	require.NoError(t, m.DeleteApp(ctx, app))
+	require.NoError(t, m.DeleteSpace(ctx, dom.DomainID, "sp"))
+
+	// An endpoint config deletes once nothing uses it.
+	cfg := seedConfig(t, m, "sweep", 1, 1)
+	require.NoError(t, m.DeleteEndpointConfig(ctx, cfg))
+}
+
+// The remaining families' list and delete shims, plus tag liveness for the
+// resource types whose ARNs are not keyed by a plain name.
+func TestFamilies_ListSweepAndTagLiveness(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	img, err := m.CreateImage(ctx, driver.ImageSpec{Name: "img-1", RoleARN: testRole})
+	require.NoError(t, err)
+	imgs, err := m.ListImages(ctx, driver.ListOptions{})
+	require.NoError(t, err)
+	assert.Len(t, imgs.Items, 1)
+
+	_, err = m.CreateAppImageConfig(ctx, driver.AppImageConfigSpec{
+		Name: "cfg-1", KernelGateway: &driver.AppImageConfigBody{KernelSpecs: []driver.KernelSpec{{Name: "python3"}}, FileSystemConfig: &driver.FileSystemConfig{}},
+	})
+	require.NoError(t, err)
+	acs, err := m.ListAppImageConfigs(ctx, driver.ListOptions{})
+	require.NoError(t, err)
+	assert.Len(t, acs.Items, 1)
+
+	// Lineage contexts.
+	c, err := m.CreateContext(ctx, driver.LineageEntitySpec{Name: "ctx-1", Type: "Experiment", Source: driver.LineageSource{SourceURI: "s3://b/c"}})
+	require.NoError(t, err)
+	cs, err := m.ListContexts(ctx, driver.ListOptions{})
+	require.NoError(t, err)
+	assert.Len(t, cs.Items, 1)
+
+	desc := "updated"
+	up, err := m.UpdateContext(ctx, driver.LineageEntityUpdate{Key: "ctx-1", Description: &desc})
+	require.NoError(t, err)
+	assert.Equal(t, "updated", up.Description)
+
+	arn, err := m.DeleteContext(ctx, "ctx-1")
+	require.NoError(t, err)
+	assert.Equal(t, c.ARN, arn)
+
+	// Workforce and workteam lists.
+	_, err = m.CreateWorkforce(ctx, cognitoWorkforce("default"))
+	require.NoError(t, err)
+	_, err = m.CreateWorkteam(ctx, driver.WorkteamSpec{Name: "t1", Description: "d", Members: []driver.MemberDefinition{cognitoMember("g")}})
+	require.NoError(t, err)
+
+	wfs, err := m.ListWorkforces(ctx, driver.ListOptions{})
+	require.NoError(t, err)
+	assert.Len(t, wfs.Items, 1)
+
+	wts, err := m.ListWorkteams(ctx, driver.ListOptions{})
+	require.NoError(t, err)
+	assert.Len(t, wts.Items, 1)
+
+	// Inference components.
+	cfg := seedConfig(t, m, "ic", 1, 1)
+	_, err = m.CreateEndpoint(ctx, driver.EndpointSpec{EndpointName: "ep", ConfigName: cfg})
+	require.NoError(t, err)
+
+	_, err = m.CreateInferenceComponent(ctx, driver.InferenceComponentSpec{Name: "ic-1", EndpointName: "ep", VariantName: "v1"})
+	require.NoError(t, err)
+	_, err = m.DescribeInferenceComponent(ctx, "ic-1")
+	require.NoError(t, err)
+	ics, err := m.ListInferenceComponents(ctx, driver.ListOptions{})
+	require.NoError(t, err)
+	assert.Len(t, ics.Items, 1)
+	require.NoError(t, m.DeleteInferenceComponent(ctx, "ic-1"))
+
+	// Tag liveness for pipeline and app ARNs: a live resource is taggable, a missing one is not found.
+	_, err = m.CreatePipeline(ctx, driver.PipelineSpec{PipelineName: "pl", Definition: "{}"})
+	require.NoError(t, err)
+
+	_, err = m.AddTags(ctx, m.arn("pipeline/pl"), []driver.Tag{{Key: "k", Value: "v"}})
+	require.NoError(t, err)
+
+	_, err = m.AddTags(ctx, m.arn("pipeline/ghost"), []driver.Tag{{Key: "k", Value: "v"}})
+	assert.True(t, errors.IsNotFound(err))
+
+	_, err = m.AddTags(ctx, img.ImageARN, []driver.Tag{{Key: "k", Value: "v"}})
+	require.NoError(t, err)
+
+	// The event publisher can be unwired (nil) without effect.
+	m.SetEventPublisher(nil)
 }

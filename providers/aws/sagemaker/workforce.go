@@ -469,7 +469,7 @@ func (m *Mock) DescribeWorkteam(_ context.Context, name string) (*driver.Worktea
 	return cloneWorkteam(t), nil
 }
 
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
+//nolint:gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) ListWorkteams(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Workteam], error) {
 	return listFrom(m.workteams, listSpec[driver.Workteam]{
 		name:    func(t *driver.Workteam) string { return t.Name },

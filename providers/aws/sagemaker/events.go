@@ -32,13 +32,47 @@ func (m *Mock) SetEventPublisher(p awsevents.Publisher) {
 	m.events.SetPublisher(p)
 }
 
+// asyncEvents reports whether state changes are published one at a time: under
+// --async-settle a resource's later states are published when it settles.
+func (m *Mock) asyncEvents() bool {
+	return m.opts.SettleDuration(settle.DefaultJobStageSettle) > 0 || m.opts.SettleDuration(settle.DefaultEndpointSettle) > 0
+}
+
+// firstSettle reports true exactly once per key, so a settled state is
+// published once however often the resource is read afterwards.
+func (m *Mock) firstSettle(key string) bool {
+	m.evMu.Lock()
+	defer m.evMu.Unlock()
+
+	if _, done := m.settledEmitted[key]; done {
+		return false
+	}
+
+	m.settledEmitted[key] = struct{}{}
+
+	return true
+}
+
+// publishSettled publishes a job's terminal state once, the first time it is
+// observed settled under --async-settle. There is no scheduler in the mock, so a
+// settled state is noticed by the read that finds it; without async settle every
+// state was already published at the call.
+func (m *Mock) publishSettled(arn, status string, terminal bool, emit func(state string)) {
+	if !terminal || !m.asyncEvents() || !m.firstSettle(arn+"|"+status) {
+		return
+	}
+
+	emit(status)
+}
+
 // emitStates publishes one event per state, in order. Without --async-settle a
 // resource passes through its states instantly, so every state is published
 // back to back (real SageMaker may send several events per change). Under
-// --async-settle only the first state is published at call time; the later
-// states are not emitted, because the mock has no scheduler to fire them.
+// --async-settle only the first state is published at call time; the terminal
+// state is published once when the resource is first read settled
+// (publishSettled, and the endpoint observer).
 func (m *Mock) emitStates(ctx context.Context, detailType string, resources, states []string, detail func(state string) any) {
-	if m.opts.SettleDuration(settle.DefaultJobStageSettle) > 0 || m.opts.SettleDuration(settle.DefaultEndpointSettle) > 0 {
+	if m.asyncEvents() {
 		states = states[:1]
 	}
 

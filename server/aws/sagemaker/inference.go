@@ -195,7 +195,7 @@ func (h *Handler) createEndpointConfig(w http.ResponseWriter, r *http.Request) {
 			ModelName:            v.ModelName,
 			InstanceType:         v.InstanceType,
 			InitialInstanceCount: v.InitialInstanceCount,
-			InitialVariantWeight: weightOrDefault(v.InitialVariantWeight),
+			InitialVariantWeight: v.InitialVariantWeight, // nil when omitted: the provider applies the default
 		})
 		if v.ServerlessConfig != nil {
 			spec.Serverless = &driver.ServerlessConfig{
@@ -285,28 +285,17 @@ func (h *Handler) deleteEndpointConfig(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{})
 }
 
-// weightOrDefault returns an omitted InitialVariantWeight as SageMaker's
-// default of 1.
-func weightOrDefault(w *float64) float64 {
-	if w == nil {
-		return 1
-	}
-
-	return *w
-}
-
 func variantsToWire(in []driver.ProductionVariant, serverless *driver.ServerlessConfig) []wireVariant {
 	out := make([]wireVariant, 0, len(in))
 
 	for i := range in {
 		v := &in[i]
-		weight := v.InitialVariantWeight // an explicit 0 is a valid weight, so it is always emitted
 		wv := wireVariant{
 			VariantName:          v.VariantName,
 			ModelName:            v.ModelName,
 			InstanceType:         v.InstanceType,
 			InitialInstanceCount: v.InitialInstanceCount,
-			InitialVariantWeight: &weight,
+			InitialVariantWeight: v.InitialVariantWeight, // stored resolved; an explicit 0 is a valid weight
 		}
 
 		if serverless != nil {

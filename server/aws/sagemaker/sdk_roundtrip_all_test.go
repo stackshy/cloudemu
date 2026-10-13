@@ -20,8 +20,10 @@ import (
 
 	"github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
+	smdriver "github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
 func smClient(t *testing.T) *awssm.Client {
@@ -1869,7 +1871,7 @@ func TestSDKMonitoringJobDefinitions_AllKinds(t *testing.T) { // T80
 
 func TestSDKMonitoringSchedule_ExecutionsAndAlerts(t *testing.T) { // T82, T83, T86, T88
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
-	c, cloud := newCloudClient(t, config.WithClock(fc))
+	c, _ := newCloudClient(t, config.WithClock(fc))
 	ctx := context.Background()
 	role := aws.String("arn:aws:iam::123456789012:role/svc")
 
@@ -1980,8 +1982,59 @@ func TestSDKMonitoringSchedule_ExecutionsAndAlerts(t *testing.T) { // T82, T83, 
 	require.Len(t, ls.MonitoringScheduleSummaries, 1)
 	assert.Equal(t, "dq-1", aws.ToString(ls.MonitoringScheduleSummaries[0].MonitoringJobDefinitionName))
 
-	// alerts: seeded (real SageMaker has no create API), then read and updated through the SDK
-	require.NoError(t, cloud.SageMaker.PutMonitoringAlert("s-1", "alert-1", 1, 2))
+	_, err = c.DeleteMonitoringSchedule(ctx, &awssm.DeleteMonitoringScheduleInput{MonitoringScheduleName: aws.String("s-1")})
+	require.NoError(t, err)
+
+	var nf *smtypes.ResourceNotFound
+
+	_, err = c.DescribeMonitoringSchedule(ctx, &awssm.DescribeMonitoringScheduleInput{MonitoringScheduleName: aws.String("s-1")})
+	require.ErrorAs(t, err, &nf)
+
+	history, err := c.ListMonitoringExecutions(ctx, &awssm.ListMonitoringExecutionsInput{MonitoringScheduleName: aws.String("s-1")})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(history.MonitoringExecutionSummaries), 3, "the execution history outlives the schedule")
+}
+
+// alertDriver serves monitoring alerts from a fixed record. Real SageMaker has no
+// create API for alerts (they come from Model Dashboard violations), so the emulator
+// cannot produce one over the wire; the wire shape is pinned through the driver
+// seam, and the alert timeline logic is covered by the provider tests.
+type alertDriver struct {
+	smdriver.Service
+	alert smdriver.MonitoringAlert
+}
+
+func (a *alertDriver) ListMonitoringAlerts(context.Context, string, smdriver.ListOptions) (smdriver.ListPage[smdriver.MonitoringAlert], error) {
+	return smdriver.ListPage[smdriver.MonitoringAlert]{Items: []smdriver.MonitoringAlert{a.alert}}, nil
+}
+
+func (a *alertDriver) UpdateMonitoringAlert(_ context.Context, schedule, _ string, datapoints, period int) (*smdriver.MonitoringSchedule, error) {
+	if datapoints < 1 || period < 1 {
+		return nil, cerrors.New(cerrors.InvalidArgument, "datapointsToAlert and evaluationPeriod must be between 1 and 100")
+	}
+
+	a.alert.DatapointsToAlert, a.alert.EvaluationPeriod = datapoints, period
+
+	return &smdriver.MonitoringSchedule{Name: schedule}, nil
+}
+
+func (a *alertDriver) ListMonitoringAlertHistory(context.Context, smdriver.ListOptions) (smdriver.ListPage[smdriver.MonitoringAlertEvent], error) {
+	return smdriver.ListPage[smdriver.MonitoringAlertEvent]{Items: []smdriver.MonitoringAlertEvent{
+		{ScheduleName: a.alert.ScheduleName, AlertName: a.alert.Name, Status: smdriver.AlertOK, CreationTime: a.alert.CreationTime},
+	}}, nil
+}
+
+func TestSDKMonitoringAlerts_Wire(t *testing.T) {
+	drv := &alertDriver{Service: cloudemu.NewAWS().SageMaker, alert: smdriver.MonitoringAlert{
+		ScheduleName: "s-1", Name: "alert-1", Status: smdriver.AlertOK, DatapointsToAlert: 1, EvaluationPeriod: 2,
+		CreationTime: "2025-01-01T00:00:00Z", LastModifiedTime: "2025-01-01T00:00:00Z",
+	}}
+
+	ts := httptest.NewServer(awsserver.New(awsserver.Drivers{SageMaker: drv}))
+	t.Cleanup(ts.Close)
+
+	c := awssm.NewFromConfig(newCfg(t), func(o *awssm.Options) { o.BaseEndpoint = aws.String(ts.URL) })
+	ctx := context.Background()
 
 	la, err := c.ListMonitoringAlerts(ctx, &awssm.ListMonitoringAlertsInput{MonitoringScheduleName: aws.String("s-1")})
 	require.NoError(t, err)
@@ -1995,25 +2048,17 @@ func TestSDKMonitoringSchedule_ExecutionsAndAlerts(t *testing.T) { // T82, T83, 
 	require.NoError(t, err)
 	assert.Equal(t, "alert-1", aws.ToString(ua.MonitoringAlertName))
 
+	var ae smithy.APIError
+
 	_, err = c.UpdateMonitoringAlert(ctx, &awssm.UpdateMonitoringAlertInput{
 		MonitoringScheduleName: aws.String("s-1"), MonitoringAlertName: aws.String("alert-1"), DatapointsToAlert: aws.Int32(0), EvaluationPeriod: aws.Int32(3),
 	})
 	require.ErrorAs(t, err, &ae)
 
-	_, err = c.ListMonitoringAlertHistory(ctx, &awssm.ListMonitoringAlertHistoryInput{MonitoringScheduleName: aws.String("s-1")})
+	hist, err := c.ListMonitoringAlertHistory(ctx, &awssm.ListMonitoringAlertHistoryInput{MonitoringScheduleName: aws.String("s-1")})
 	require.NoError(t, err)
-
-	_, err = c.DeleteMonitoringSchedule(ctx, &awssm.DeleteMonitoringScheduleInput{MonitoringScheduleName: aws.String("s-1")})
-	require.NoError(t, err)
-
-	var nf *smtypes.ResourceNotFound
-
-	_, err = c.DescribeMonitoringSchedule(ctx, &awssm.DescribeMonitoringScheduleInput{MonitoringScheduleName: aws.String("s-1")})
-	require.ErrorAs(t, err, &nf)
-
-	history, err := c.ListMonitoringExecutions(ctx, &awssm.ListMonitoringExecutionsInput{MonitoringScheduleName: aws.String("s-1")})
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(history.MonitoringExecutionSummaries), 3, "the execution history outlives the schedule")
+	require.Len(t, hist.MonitoringAlertHistory, 1)
+	assert.Equal(t, "alert-1", aws.ToString(hist.MonitoringAlertHistory[0].MonitoringAlertName))
 }
 
 func TestSDKSearch_AndSuggestions(t *testing.T) { // T114, T116, T117, T118
@@ -2493,4 +2538,38 @@ func TestSDK_LifecycleSweep(t *testing.T) {
 		_, err = c.StopHyperParameterTuningJob(ctx, &awssm.StopHyperParameterTuningJobInput{HyperParameterTuningJobName: aws.String("ghost")})
 		require.Error(t, err)
 	})
+}
+
+// TestSDK_DuplicateCreate_ResourceInUse pins the typed exception of a duplicate
+// create: ResourceInUse where the SDK models it for the operation, and a
+// ValidationException where it does not (CreateModel).
+func TestSDK_DuplicateCreate_ResourceInUse(t *testing.T) {
+	c, _ := newCloudClient(t)
+	ctx := context.Background()
+
+	create := func() error {
+		_, err := c.CreateTrainingJob(ctx, &awssm.CreateTrainingJobInput{
+			TrainingJobName: aws.String("dupjob"),
+			RoleArn:         aws.String("arn:aws:iam::123456789012:role/svc"),
+			AlgorithmSpecification: &smtypes.AlgorithmSpecification{
+				TrainingImage: aws.String("img:latest"), TrainingInputMode: smtypes.TrainingInputModeFile,
+			},
+			OutputDataConfig: &smtypes.OutputDataConfig{S3OutputPath: aws.String("s3://b/out")},
+			ResourceConfig: &smtypes.ResourceConfig{
+				InstanceType: smtypes.TrainingInstanceTypeMlM5Large, InstanceCount: aws.Int32(1), VolumeSizeInGB: aws.Int32(5),
+			},
+			StoppingCondition: &smtypes.StoppingCondition{MaxRuntimeInSeconds: aws.Int32(3600)},
+		})
+
+		return err
+	}
+
+	require.NoError(t, create())
+
+	err := create()
+
+	var inUse *smtypes.ResourceInUse
+
+	require.ErrorAs(t, err, &inUse, "a duplicate CreateTrainingJob is ResourceInUse, as before this PR")
+	assert.Contains(t, aws.ToString(inUse.Message), "dupjob")
 }

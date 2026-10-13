@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
+	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
 var _ snapshot.Snapshottable = (*Mock)(nil)
@@ -84,7 +86,7 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := make(map[string]json.RawMessage)
 
 	for _, s := range m.stores() {
-		b, err := s.store.Snapshot()
+		b, err := m.persistedStore(s).Snapshot()
 		if err != nil {
 			return nil, fmt.Errorf("sagemaker: snapshot store %s: %w", s.key, err)
 		}
@@ -93,6 +95,87 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	}
 
 	return json.Marshal(snap)
+}
+
+const (
+	storeKeyEndpoints = "endpoints"
+	storeKeyTags      = "tags"
+)
+
+// persistedStore returns the store to serialize for s. An endpoint with a
+// Deleting transition is already going away, but its transition is in-memory
+// only and the store entry is purged lazily on the next read, so persisting it
+// would bring a deleted endpoint (and its tags) back InService after a restart.
+// The endpoints and tags stores are therefore filtered; every other store is
+// serialized as is.
+func (m *Mock) persistedStore(s namedStore) snapshotStore {
+	if s.key != storeKeyEndpoints && s.key != storeKeyTags {
+		return s.store
+	}
+
+	deleting := m.deletingEndpoints()
+	if len(deleting) == 0 {
+		return s.store
+	}
+
+	if s.key == storeKeyEndpoints {
+		return m.endpointsWithout(deleting)
+	}
+
+	return m.tagsWithout(deleting)
+}
+
+// deletingEndpoints returns the names of endpoints with a Deleting transition.
+func (m *Mock) deletingEndpoints() map[string]struct{} {
+	m.epMu.Lock()
+	defer m.epMu.Unlock()
+
+	out := map[string]struct{}{}
+
+	for name, tr := range m.epTrans {
+		if tr.kind == driver.EndpointDeleting {
+			out[name] = struct{}{}
+		}
+	}
+
+	return out
+}
+
+// endpointsWithout copies the endpoints store minus the named endpoints.
+func (m *Mock) endpointsWithout(skip map[string]struct{}) *memstore.Store[*driver.Endpoint] {
+	m.epMu.Lock()
+	defer m.epMu.Unlock()
+
+	kept := memstore.New[*driver.Endpoint]()
+
+	for name, ep := range m.endpoints.All() {
+		if _, gone := skip[name]; !gone {
+			kept.Set(name, ep)
+		}
+	}
+
+	return kept
+}
+
+// tagsWithout copies the tag store minus the tags of the named endpoints.
+func (m *Mock) tagsWithout(endpoints map[string]struct{}) *memstore.Store[[]driver.Tag] {
+	m.tagMu.Lock()
+	defer m.tagMu.Unlock()
+
+	skip := make(map[string]struct{}, len(endpoints))
+	for name := range endpoints {
+		skip[m.arn("endpoint/"+name)] = struct{}{}
+	}
+
+	kept := memstore.New[[]driver.Tag]()
+
+	for arn, tags := range m.tags.All() {
+		if _, gone := skip[arn]; !gone {
+			kept.Set(arn, tags)
+		}
+	}
+
+	return kept
 }
 
 // Restore rebuilds the mock's state under the original identities: every job,

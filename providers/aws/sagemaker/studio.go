@@ -65,7 +65,7 @@ func (m *Mock) DescribeDomain(_ context.Context, domainID string) (*driver.Domai
 	return &out, nil
 }
 
-//nolint:gocritic // large value params mirror the driver interface
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) ListDomains(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Domain], error) {
 	return listFrom(m.domains, listSpec[driver.Domain]{
 		name:    func(t *driver.Domain) string { return t.DomainName },
@@ -117,7 +117,7 @@ func (m *Mock) CreateUserProfile(_ context.Context, cfg driver.UserProfileSpec) 
 	}
 
 	if !m.userProfiles.SetIfAbsent(key, up) {
-		return nil, errors.Newf(errors.AlreadyExists, "user profile %q already exists", cfg.UserProfileName)
+		return nil, driver.InUse("user profile %q already exists", cfg.UserProfileName)
 	}
 	m.setTags(arn, cfg.Tags)
 
@@ -188,7 +188,7 @@ func (m *Mock) CreateSpace(_ context.Context, cfg driver.SpaceSpec) (*driver.Spa
 	}
 
 	if !m.spaces.SetIfAbsent(key, sp) {
-		return nil, errors.Newf(errors.AlreadyExists, "space %q already exists", cfg.SpaceName)
+		return nil, driver.InUse("space %q already exists", cfg.SpaceName)
 	}
 	m.setTags(arn, cfg.Tags)
 
@@ -258,7 +258,7 @@ func (m *Mock) CreateApp(_ context.Context, in driver.AppSpec) (*driver.App, err
 	}
 
 	if !m.apps.SetIfAbsent(key, app) {
-		return nil, errors.Newf(errors.AlreadyExists, "app %q already exists", in.AppName)
+		return nil, driver.InUse("app %q already exists", in.AppName)
 	}
 
 	out := *app

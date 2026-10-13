@@ -105,7 +105,7 @@ func (m *Mock) CreateTrainingJob(ctx context.Context, cfg driver.TrainingJobConf
 	}
 
 	if !m.trainingJobs.SetIfAbsent(cfg.JobName, job) {
-		return nil, errors.Newf(errors.AlreadyExists, "training job %q already exists", cfg.JobName)
+		return nil, driver.InUse("training job %q already exists", cfg.JobName)
 	}
 
 	m.setTags(arn, cfg.Tags)
@@ -149,6 +149,8 @@ func (m *Mock) observeTrainingJob(j *driver.TrainingJob) *driver.TrainingJob {
 		out.TrainingTimeSeconds, out.BillableTimeSeconds = secs, secs
 	}
 
+	m.publishSettled(j.JobARN, out.Status, p.terminal(), func(state string) { m.emitTrainingEvents(context.Background(), &out, state) })
+
 	return &out
 }
 
@@ -175,6 +177,8 @@ func (m *Mock) ListTrainingJobs(_ context.Context, opts driver.ListOptions) (dri
 }
 
 // StopTrainingJob requests a stop. See stopJob for the semantics.
+//
+//nolint:dupl // per-job-kind stop shim mirrors the SDK shape
 func (m *Mock) StopTrainingJob(ctx context.Context, name string) error {
 	accepted, err := stopJobAccepted(m, m.trainingJobs, name, "training job", stopAccess[driver.TrainingJob]{
 		created:       func(j *driver.TrainingJob) string { return j.CreationTime },
@@ -226,7 +230,7 @@ func (m *Mock) CreateProcessingJob(ctx context.Context, cfg driver.ProcessingJob
 	}
 
 	if !m.processingJobs.SetIfAbsent(cfg.JobName, job) {
-		return nil, errors.Newf(errors.AlreadyExists, "processing job %q already exists", cfg.JobName)
+		return nil, driver.InUse("processing job %q already exists", cfg.JobName)
 	}
 
 	m.setTags(arn, cfg.Tags)
@@ -249,6 +253,8 @@ func (m *Mock) observeProcessingJob(j *driver.ProcessingJob) *driver.ProcessingJ
 	out.Status = p.primary(stages, mixedCaseStop)
 	out.LastModifiedTime = fmtTime(p.modified)
 	out.ProcessingEndTime = endTime(p)
+
+	m.publishSettled(j.JobARN, out.Status, p.terminal(), func(state string) { m.emitProcessingEvents(context.Background(), &out, state) })
 
 	return &out
 }
@@ -283,6 +289,7 @@ func (m *Mock) ListProcessingJobs(_ context.Context, opts driver.ListOptions) (d
 	}, opts)
 }
 
+//nolint:dupl // per-job-kind stop shim mirrors the SDK shape
 func (m *Mock) StopProcessingJob(ctx context.Context, name string) error {
 	accepted, err := stopJobAccepted(m, m.processingJobs, name, "processing job", stopAccess[driver.ProcessingJob]{
 		created:       func(j *driver.ProcessingJob) string { return j.CreationTime },
@@ -338,7 +345,7 @@ func (m *Mock) CreateTransformJob(ctx context.Context, cfg driver.TransformJobCo
 	}
 
 	if !m.transformJobs.SetIfAbsent(cfg.JobName, job) {
-		return nil, errors.Newf(errors.AlreadyExists, "transform job %q already exists", cfg.JobName)
+		return nil, driver.InUse("transform job %q already exists", cfg.JobName)
 	}
 
 	m.setTags(arn, cfg.Tags)
@@ -362,6 +369,8 @@ func (m *Mock) observeTransformJob(j *driver.TransformJob) *driver.TransformJob 
 	out.LastModifiedTime = fmtTime(p.modified)
 	out.TransformEndTime = endTime(p)
 
+	m.publishSettled(j.JobARN, out.Status, p.terminal(), func(state string) { m.emitTransformEvents(context.Background(), &out, state) })
+
 	return &out
 }
 
@@ -374,16 +383,19 @@ func (m *Mock) DescribeTransformJob(_ context.Context, name string) (*driver.Tra
 	return m.observeTransformJob(job), nil
 }
 
-//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
+//nolint:gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
 func (m *Mock) ListTransformJobs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.TransformJob], error) {
 	return listObserved(m.transformJobs, m.observeTransformJob, listSpec[driver.TransformJob]{
 		name:     func(t *driver.TransformJob) string { return t.JobName },
 		status:   func(t *driver.TransformJob) string { return t.Status },
 		created:  func(t *driver.TransformJob) string { return t.CreationTime },
 		modified: func(t *driver.TransformJob) string { return t.LastModifiedTime },
+		// AWS documents SortOrder default Descending for ListTransformJobs.
+		defaultOrder: driver.SortDescending,
 	}, opts)
 }
 
+//nolint:dupl // per-job-kind stop shim mirrors the SDK shape
 func (m *Mock) StopTransformJob(ctx context.Context, name string) error {
 	accepted, err := stopJobAccepted(m, m.transformJobs, name, "transform job", stopAccess[driver.TransformJob]{
 		created:       func(j *driver.TransformJob) string { return j.CreationTime },
@@ -433,7 +445,7 @@ func (m *Mock) CreateHyperParameterTuningJob(
 	}
 
 	if !m.tuningJobs.SetIfAbsent(cfg.JobName, job) {
-		return nil, errors.Newf(errors.AlreadyExists, "tuning job %q already exists", cfg.JobName)
+		return nil, driver.InUse("tuning job %q already exists", cfg.JobName)
 	}
 
 	m.setTags(arn, cfg.Tags)
@@ -469,6 +481,8 @@ func (m *Mock) observeTuningJob(j *driver.HyperParameterTuningJob) *driver.Hyper
 		out.TrainingJobCounts["InProgress"] = minInt(maxInt(j.MaxParallelJobs, 1), total)
 	}
 
+	m.publishSettled(j.JobARN, out.Status, p.terminal(), func(state string) { m.emitTuningEvents(context.Background(), &out, state) })
+
 	return &out
 }
 
@@ -491,6 +505,7 @@ func (m *Mock) ListHyperParameterTuningJobs(_ context.Context, opts driver.ListO
 	}, opts)
 }
 
+//nolint:dupl // per-job-kind stop shim mirrors the SDK shape
 func (m *Mock) StopHyperParameterTuningJob(ctx context.Context, name string) error {
 	accepted, err := stopJobAccepted(m, m.tuningJobs, name, "tuning job", stopAccess[driver.HyperParameterTuningJob]{
 		created:       func(j *driver.HyperParameterTuningJob) string { return j.CreationTime },
@@ -539,7 +554,7 @@ func (m *Mock) CreateAutoMLJobV2(_ context.Context, cfg driver.AutoMLJobConfig) 
 	}
 
 	if !m.autoMLJobs.SetIfAbsent(cfg.JobName, job) {
-		return nil, errors.Newf(errors.AlreadyExists, "AutoML job %q already exists", cfg.JobName)
+		return nil, driver.InUse("AutoML job %q already exists", cfg.JobName)
 	}
 
 	m.setTags(arn, cfg.Tags)
@@ -624,7 +639,7 @@ func (m *Mock) CreateLabelingJob(_ context.Context, cfg driver.LabelingJobConfig
 	}
 
 	if !m.labelingJobs.SetIfAbsent(cfg.JobName, job) {
-		return nil, errors.Newf(errors.AlreadyExists, "labeling job %q already exists", cfg.JobName)
+		return nil, driver.InUse("labeling job %q already exists", cfg.JobName)
 	}
 
 	m.setTags(arn, cfg.Tags)
@@ -703,7 +718,7 @@ func (m *Mock) CreateCompilationJob(_ context.Context, cfg driver.CompilationJob
 	}
 
 	if !m.compilationJobs.SetIfAbsent(cfg.JobName, job) {
-		return nil, errors.Newf(errors.AlreadyExists, "compilation job %q already exists", cfg.JobName)
+		return nil, driver.InUse("compilation job %q already exists", cfg.JobName)
 	}
 
 	m.setTags(arn, cfg.Tags)

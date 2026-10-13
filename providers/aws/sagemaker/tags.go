@@ -191,16 +191,18 @@ func (m *Mock) arnChecks() map[string]func(arn, rest string) bool {
 	}
 
 	checks := map[string]func(string, string) bool{
-		"training-job":                       byName(m.trainingJobs.Has),
-		"processing-job":                     byName(m.processingJobs.Has),
-		"transform-job":                      byName(m.transformJobs.Has),
-		"hyper-parameter-tuning-job":         byName(m.tuningJobs.Has),
-		"automl-job":                         byName(m.autoMLJobs.Has),
-		"labeling-job":                       byName(m.labelingJobs.Has),
-		"compilation-job":                    byName(m.compilationJobs.Has),
-		"model":                              byName(m.models.Has),
-		"endpoint-config":                    byName(m.endpointConfigs.Has),
-		"endpoint":                           byName(m.endpoints.Has),
+		"training-job":               byName(m.trainingJobs.Has),
+		"processing-job":             byName(m.processingJobs.Has),
+		"transform-job":              byName(m.transformJobs.Has),
+		"hyper-parameter-tuning-job": byName(m.tuningJobs.Has),
+		"automl-job":                 byName(m.autoMLJobs.Has),
+		"labeling-job":               byName(m.labelingJobs.Has),
+		"compilation-job":            byName(m.compilationJobs.Has),
+		"model":                      byName(m.models.Has),
+		"endpoint-config":            byName(m.endpointConfigs.Has),
+		// An endpoint whose Deleting window has elapsed is purged lazily; liveness
+		// goes through endpointStatus so a tag never lands on a deleted endpoint.
+		"endpoint":                           byName(func(name string) bool { return m.endpointStatus(name) != "" }),
 		"inference-component":                byName(m.inferenceComponents.Has),
 		"model-package-group":                byName(m.packageGroups.Has),
 		"model-package":                      byARN(m.packages.Has),

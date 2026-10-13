@@ -43,7 +43,7 @@ func (m *Mock) CreateFeatureGroup(_ context.Context, cfg driver.FeatureGroupSpec
 	}
 
 	if !m.featureGroups.SetIfAbsent(cfg.GroupName, fg) {
-		return nil, errors.Newf(errors.AlreadyExists, "feature group %q already exists", cfg.GroupName)
+		return nil, driver.InUse("feature group %q already exists", cfg.GroupName)
 	}
 	m.setTags(arn, cfg.Tags)
 

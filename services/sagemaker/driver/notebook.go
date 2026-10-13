@@ -133,6 +133,8 @@ type CodeRepository struct {
 	Branch       string
 	SecretARN    string
 	CreationTime string
+	// LastModifiedTime equals CreationTime: there is no UpdateCodeRepository.
+	LastModifiedTime string
 }
 
 // notebookAPI covers notebook instances and supporting resources.

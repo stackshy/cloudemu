@@ -116,6 +116,10 @@ func (m *Mock) createModelPackage(cfg driver.ModelPackageSpec) (*driver.ModelPac
 		return nil, errors.New(errors.InvalidArgument, "modelPackageGroupName is required")
 	}
 
+	// The group is given by name or by ARN; the other registry operations
+	// normalize through groupNameOf, and so does create.
+	cfg.GroupName = m.groupNameOf(cfg.GroupName)
+
 	// pkgMu serializes version assignment (two concurrent creates for the same
 	// group would otherwise compute the same N+1) and the group's existence check
 	// with DeleteModelPackageGroup, so a package is never created for a group

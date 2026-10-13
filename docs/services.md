@@ -2617,8 +2617,8 @@ The control plane speaks awsJson1_1 (`X-Amz-Target: SageMaker.*`); the runtime s
 restJson1 (`POST /endpoints/{name}/invocations`). Jobs complete synchronously to a terminal
 state (with per-stage times in `SecondaryStatusTransitions`) so Describe/List are
 deterministic; with `--async-settle` jobs, endpoints, clusters and notebook updates pass
-through their real intermediate states as the clock advances. Real invocation, job-utilization
-and pipeline metrics → CloudWatch via `SetMonitoring`, and state-change events
+through their real intermediate states as the clock advances. Invocation, job-utilization
+and pipeline metrics (nominal values) → CloudWatch via `SetMonitoring`, and state-change events
 (`aws.sagemaker`) → the default EventBridge bus.
 
 | Family | Resources / Operations |

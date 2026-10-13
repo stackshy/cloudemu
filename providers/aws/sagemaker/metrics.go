@@ -56,7 +56,11 @@ func variantDims(endpoint, variant string) map[string]string {
 
 // emitInvocation records a successful invocation: Invocations,
 // InvocationsPerInstance, ModelLatency and OverheadLatency, in one batch.
-func (m *Mock) emitInvocation(ctx context.Context, endpoint, variant string) {
+//
+// instances is the variant's serving instance count: AWS reports
+// InvocationsPerInstance as 1/numberOfInstances per request, so a variant that
+// serves nothing (scaled to zero) has no per-instance value.
+func (m *Mock) emitInvocation(ctx context.Context, endpoint, variant string, instances int) {
 	if m.monitoring == nil {
 		return
 	}
@@ -64,12 +68,28 @@ func (m *Mock) emitInvocation(ctx context.Context, endpoint, variant string) {
 	now := m.opts.Clock.Now()
 	dims := variantDims(endpoint, variant)
 
-	m.putMetrics(ctx, []mondriver.MetricDatum{
+	data := []mondriver.MetricDatum{
 		m.datum(nsEndpoint, "Invocations", 1, unitNone, dims, now),
-		m.datum(nsEndpoint, "InvocationsPerInstance", 1, unitNone, dims, now),
 		m.datum(nsEndpoint, "ModelLatency", nominalModelLatencyUs, unitMicroseconds, dims, now),
 		m.datum(nsEndpoint, "OverheadLatency", nominalOverheadLatencyUs, unitMicroseconds, dims, now),
-	})
+	}
+
+	if instances > 0 {
+		data = append(data, m.datum(nsEndpoint, "InvocationsPerInstance", 1/float64(instances), unitNone, dims, now))
+	}
+
+	m.putMetrics(ctx, data)
+}
+
+// variantInstanceCount returns the serving instance count of a variant of ep.
+func variantInstanceCount(ep *driver.Endpoint, variant string) int {
+	for i := range ep.VariantSummaries {
+		if ep.VariantSummaries[i].VariantName == variant {
+			return ep.VariantSummaries[i].CurrentInstanceCount
+		}
+	}
+
+	return 0
 }
 
 // emitInvocationFailure records a failed invocation of an existing endpoint:

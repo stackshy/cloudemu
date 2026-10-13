@@ -27,6 +27,9 @@ type listSpec[T any] struct {
 	// defaultOrder is the SortOrder used when the request names none; empty
 	// means ascending.
 	defaultOrder string
+	// defaultSortBy is the SortBy used when the request names none; empty means
+	// CreationTime (Name when the resource has no creation time).
+	defaultSortBy string
 }
 
 // listFrom is the single List implementation every SageMaker List operation
@@ -56,6 +59,10 @@ func listItems[T any](all []*T, spec listSpec[T], opts driver.ListOptions) (driv
 
 	f, err := newListFilter(opts)
 	if err != nil {
+		return driver.ListPage[T]{}, err
+	}
+
+	if err = checkFilterSupport(&f, spec); err != nil {
 		return driver.ListPage[T]{}, err
 	}
 
@@ -104,6 +111,10 @@ func copyListItem[T any](spec listSpec[T], item *T) T {
 //nolint:gocritic,gocyclo // large value params mirror the driver interface; validation branches mirror the service's rules
 func resolveSort[T any](spec listSpec[T], opts driver.ListOptions) (string, bool, error) {
 	sortBy := opts.SortBy
+	if sortBy == "" {
+		sortBy = spec.defaultSortBy
+	}
+
 	if sortBy == "" {
 		sortBy = driver.SortByCreationTime
 		if spec.created == nil {
@@ -244,6 +255,29 @@ func newListFilter(opts driver.ListOptions) (listFilter, error) {
 	}
 
 	return f, nil
+}
+
+// checkFilterSupport rejects a filter on a field the operation does not have.
+// An unsupported filter must never quietly turn into an empty result.
+//
+//nolint:gocyclo // one check per filter field
+func checkFilterSupport[T any](f *listFilter, spec listSpec[T]) error {
+	unsupported := func(field string) error {
+		return errors.Newf(errors.InvalidArgument, "filter %s is not supported by this operation", field)
+	}
+
+	switch {
+	case (!f.createdAfter.IsZero() || !f.createdBefore.IsZero()) && spec.created == nil:
+		return unsupported("CreationTime")
+	case (!f.modifiedAfter.IsZero() || !f.modifiedBefore.IsZero()) && spec.modified == nil:
+		return unsupported("LastModifiedTime")
+	case f.opts.StatusEquals != "" && spec.status == nil:
+		return unsupported("StatusEquals")
+	case (f.opts.NameContains != "" || f.opts.NamePrefix != "") && spec.name == nil:
+		return unsupported("NameContains")
+	}
+
+	return nil
 }
 
 //nolint:gocritic,gocyclo // large value params mirror the driver interface; validation branches mirror the service's rules

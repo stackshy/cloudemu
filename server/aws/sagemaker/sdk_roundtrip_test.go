@@ -22,7 +22,18 @@ import (
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
+	smdriver "github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
+
+// modelFailingDriver wraps the real driver and fails every invocation as a
+// model-container error, which is what a failing user container produces. The
+// emulator has no production way to make a container fail, so the wire shape is
+// pinned through the driver seam instead.
+type modelFailingDriver struct{ smdriver.Service }
+
+func (modelFailingDriver) InvokeEndpoint(context.Context, smdriver.InvokeEndpointInput) (*smdriver.InvokeEndpointOutput, error) {
+	return nil, &smdriver.ModelError{OriginalStatusCode: 500, Message: "model container failure"}
+}
 
 func newServer(t *testing.T) string {
 	t.Helper()
@@ -283,7 +294,7 @@ func TestSDKInvoke_Errors(t *testing.T) { // T45
 // HTTP 424 with the modeled ModelError exception.
 func TestSDKInvoke_ModelError(t *testing.T) { // T132, B6
 	cloud := cloudemu.NewAWS()
-	ts := httptest.NewServer(awsserver.New(awsserver.Drivers{SageMaker: cloud.SageMaker}))
+	ts := httptest.NewServer(awsserver.New(awsserver.Drivers{SageMaker: modelFailingDriver{cloud.SageMaker}}))
 	t.Cleanup(ts.Close)
 
 	cfg := newCfg(t)
@@ -300,8 +311,6 @@ func TestSDKInvoke_ModelError(t *testing.T) { // T132, B6
 	require.NoError(t, err)
 	_, err = c.CreateEndpoint(ctx, &awssm.CreateEndpointInput{EndpointName: aws.String("e"), EndpointConfigName: aws.String("c")})
 	require.NoError(t, err)
-
-	cloud.SageMaker.SetInvocationFailure("e", 500)
 
 	_, err = rt.InvokeEndpoint(ctx, &smrt.InvokeEndpointInput{EndpointName: aws.String("e"), Body: []byte("x")})
 
@@ -357,7 +366,14 @@ func TestInvoke_MarkupResponseIsNotServedAsMarkup(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "application/octet-stream", resp.Header.Get("Content-Type"))
 	assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+	assert.Equal(t, "sandbox", resp.Header.Get("Content-Security-Policy"), "a response that slips past the type check still cannot run script")
 	assert.Equal(t, "<script>alert(1)</script>", string(body))
+
+	// Any +xml suffix and the XSL types are active content too, not only the common few.
+	for _, ct := range []string{"application/rss+xml", "application/atom+xml", "application/mathml+xml", "text/xsl", "application/xslt+xml", "APPLICATION/RSS+XML; charset=utf-8"} {
+		resp, _ = rawPost(t, url+"/endpoints/e/invocations", "", ct, []byte("<a/>"), map[string]string{"Accept": ct})
+		assert.Equal(t, "application/octet-stream", resp.Header.Get("Content-Type"), ct)
+	}
 
 	resp, _ = rawPost(t, url+"/endpoints/e/invocations", "", "application/json", []byte("{}"), map[string]string{"Accept": "application/json"})
 	assert.Equal(t, "application/json", resp.Header.Get("Content-Type"), "a data type is echoed unchanged")
@@ -441,4 +457,14 @@ func TestSDKInvokeAsync_UsesConfiguredOutput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, aws.ToString(out.OutputLocation), "s3://results/out/")
 	assert.NotEmpty(t, aws.ToString(out.InferenceId))
+
+	// The caller's InferenceId (the X-Amzn-SageMaker-Inference-Id header) and
+	// content type (X-Amzn-SageMaker-Content-Type) are honored.
+	out, err = rt.InvokeEndpointAsync(ctx, &smrt.InvokeEndpointAsyncInput{
+		EndpointName: aws.String("e"), InputLocation: aws.String("s3://in/x"),
+		InferenceId: aws.String("myid-1"), ContentType: aws.String("text/csv"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "myid-1", aws.ToString(out.InferenceId))
+	assert.Equal(t, "s3://results/out/myid-1.out", aws.ToString(out.OutputLocation))
 }

@@ -62,6 +62,8 @@ func (m *Mock) ListModels(_ context.Context, opts driver.ListOptions) (driver.Li
 		name:    func(t *driver.Model) string { return t.ModelName },
 		created: func(t *driver.Model) string { return t.CreationTime },
 		clone:   func(t *driver.Model) driver.Model { return *cloneModel(t) },
+		// AWS documents SortOrder default Descending for ListModels.
+		defaultOrder: driver.SortDescending,
 	}, opts)
 }
 
@@ -96,7 +98,7 @@ func (m *Mock) CreateEndpointConfig(_ context.Context, cfg driver.EndpointConfig
 	ec := &driver.EndpointConfig{
 		ConfigName:         cfg.ConfigName,
 		ConfigARN:          arn,
-		ProductionVariants: copyVariants(cfg.ProductionVariants),
+		ProductionVariants: withDefaultWeights(cfg.ProductionVariants),
 		Serverless:         cfg.Serverless,
 		AsyncOutputS3URI:   cfg.AsyncOutputS3URI,
 		CreationTime:       m.now(),
@@ -109,6 +111,24 @@ func (m *Mock) CreateEndpointConfig(_ context.Context, cfg driver.EndpointConfig
 	m.setTags(arn, cfg.Tags)
 
 	return cloneEndpointConfig(ec), nil
+}
+
+// defaultVariantWeight is SageMaker's InitialVariantWeight default.
+const defaultVariantWeight = 1.0
+
+// withDefaultWeights copies the variants and stores SageMaker's default weight
+// of 1.0 on every variant whose weight was omitted.
+func withDefaultWeights(in []driver.ProductionVariant) []driver.ProductionVariant {
+	out := copyVariants(in)
+
+	for i := range out {
+		if out[i].InitialVariantWeight == nil {
+			w := defaultVariantWeight
+			out[i].InitialVariantWeight = &w
+		}
+	}
+
+	return out
 }
 
 // cloneEndpointConfig deep-copies the variant slice so callers never alias the
@@ -136,6 +156,8 @@ func (m *Mock) ListEndpointConfigs(_ context.Context, opts driver.ListOptions) (
 		name:    func(t *driver.EndpointConfig) string { return t.ConfigName },
 		created: func(t *driver.EndpointConfig) string { return t.CreationTime },
 		clone:   func(t *driver.EndpointConfig) driver.EndpointConfig { return *cloneEndpointConfig(t) },
+		// AWS documents SortOrder default Descending for ListEndpointConfigs.
+		defaultOrder: driver.SortDescending,
 	}, opts)
 }
 
@@ -262,7 +284,7 @@ func (m *Mock) validateVariants(variants []driver.ProductionVariant) error {
 			return errors.Newf(errors.InvalidArgument, "Could not find model %q.", v.ModelName)
 		case v.InitialInstanceCount < 0 || v.InitialInstanceCount > maxVariantInstances:
 			return errors.Newf(errors.InvalidArgument, "initialInstanceCount must be between 0 and %d", maxVariantInstances)
-		case v.InitialVariantWeight < 0:
+		case v.InitialVariantWeight != nil && *v.InitialVariantWeight < 0:
 			return errors.New(errors.InvalidArgument, "initialVariantWeight must not be negative")
 		}
 

@@ -78,6 +78,8 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, endpointName st
 	// The echoed body is caller-controlled, so a markup type is never served as
 	// markup and the type is not sniffed.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Even if a type slips past safeContentType, a sandboxed response cannot run script.
+	w.Header().Set("Content-Security-Policy", "sandbox")
 
 	if out.ContentType != "" {
 		w.Header().Set("Content-Type", safeContentType(out.ContentType))
@@ -93,12 +95,19 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, endpointName st
 
 // safeContentType maps a content type a browser would render as active
 // content to application/octet-stream.
+const contentTypeOctetStream = "application/octet-stream"
+
 func safeContentType(ct string) string {
 	media := strings.ToLower(strings.TrimSpace(strings.SplitN(ct, ";", 2)[0])) //nolint:mnd // protocol constant
 
-	switch media {
-	case "text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/xml":
-		return "application/octet-stream"
+	switch {
+	case media == "text/html", media == "text/xml", media == "application/xml",
+		media == "text/xsl", media == "application/xslt+xml":
+		return contentTypeOctetStream
+	case strings.HasSuffix(media, "+xml"):
+		// application/xhtml+xml, image/svg+xml, application/rss+xml, ...: every
+		// +xml structured-syntax type is XML a browser may render as active content.
+		return contentTypeOctetStream
 	default:
 		return ct
 	}
@@ -108,7 +117,8 @@ func (h *Handler) invokeAsync(w http.ResponseWriter, r *http.Request, endpointNa
 	out, err := h.svc.InvokeEndpointAsync(r.Context(), driver.InvokeEndpointAsyncInput{
 		EndpointName: endpointName,
 		InputS3URI:   r.Header.Get("X-Amzn-Sagemaker-Inputlocation"),
-		ContentType:  r.Header.Get("Content-Type"),
+		ContentType:  r.Header.Get("X-Amzn-Sagemaker-Content-Type"),
+		InferenceID:  r.Header.Get("X-Amzn-Sagemaker-Inference-Id"),
 	})
 	if err != nil {
 		writeRuntimeError(w, err)
