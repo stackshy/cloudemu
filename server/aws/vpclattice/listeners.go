@@ -131,10 +131,5 @@ func (h *Handler) listListeners(w http.ResponseWriter, r *http.Request, serviceI
 		return
 	}
 
-	items := make([]wireListener, 0, len(ls))
-	for i := range ls {
-		items = append(items, listenerToWire(&ls[i]))
-	}
-
-	writeJSON(w, map[string]any{"items": items})
+	writeItems(w, r, ls, listenerToWire)
 }

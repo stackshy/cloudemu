@@ -106,10 +106,5 @@ func (h *Handler) listAccessLogSubs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]wireAccessLogSub, 0, len(as))
-	for i := range as {
-		items = append(items, accessLogSubToWire(&as[i]))
-	}
-
-	writeJSON(w, map[string]any{"items": items})
+	writeItems(w, r, as, accessLogSubToWire)
 }

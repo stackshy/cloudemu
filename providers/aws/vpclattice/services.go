@@ -18,11 +18,24 @@ func serviceNotFound(id string) error {
 	return errors.Newf(errors.NotFound, "service %q not found", id)
 }
 
-func cloneService(s *driver.Service) driver.Service { return *s }
+func (m *Mock) cloneService(s *driver.Service) driver.Service {
+	out := *s
+	out.Status = m.observe(s.ID, s.Status)
+
+	return out
+}
 
 func (m *Mock) CreateService(_ context.Context, in *driver.CreateServiceInput) (*driver.Service, error) {
+	if err := validateAuthType(in.AuthType); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.serviceNameTaken(in.Name) {
+		return nil, conflictf("service %q already exists", in.Name)
+	}
 
 	authType := in.AuthType
 	if authType == "" {
@@ -55,8 +68,9 @@ func (m *Mock) CreateService(_ context.Context, in *driver.CreateServiceInput) (
 	}
 	m.services.Set(id, svc)
 	m.writeTags(svc.ARN, in.Tags)
+	m.beginSettle(id)
 
-	out := cloneService(svc)
+	out := m.cloneService(svc)
 
 	return &out, nil
 }
@@ -72,12 +86,16 @@ func (m *Mock) GetService(_ context.Context, identifier string) (*driver.Service
 		return nil, serviceNotFound(id)
 	}
 
-	out := cloneService(svc)
+	out := m.cloneService(svc)
 
 	return &out, nil
 }
 
 func (m *Mock) UpdateService(_ context.Context, in *driver.UpdateServiceInput) (*driver.Service, error) {
+	if err := validateAuthType(in.AuthType); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -102,7 +120,7 @@ func (m *Mock) UpdateService(_ context.Context, in *driver.UpdateServiceInput) (
 
 	svc.LastUpdatedAt = m.now()
 
-	out := cloneService(svc)
+	out := m.cloneService(svc)
 
 	return &out, nil
 }
@@ -140,6 +158,7 @@ func (m *Mock) DeleteService(_ context.Context, identifier string) error {
 		m.listeners.Delete(lid)
 	}
 
+	m.statusSettle.Clear(id)
 	m.services.Delete(id)
 
 	return nil
@@ -149,5 +168,5 @@ func (m *Mock) ListServices(_ context.Context) ([]driver.Service, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return sortedValues(m.services.All(), cloneService), nil
+	return sortedValues(m.services.All(), m.cloneService), nil
 }

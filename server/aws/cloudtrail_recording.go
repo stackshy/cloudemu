@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	cloudtraildriver "github.com/stackshy/cloudemu/v2/services/cloudtrail/driver"
 )
@@ -14,13 +15,20 @@ import (
 // LookupEvents reflects real API activity. Requests whose operation cannot be
 // determined (e.g. an unrecognized shape) are skipped rather than logged blank.
 func recordManagementEvent(rec cloudtraildriver.EventRecorder, r *http.Request) {
+	auth := r.Header.Get("Authorization")
+	svc := awsquery.CredentialScopeService(auth)
+
 	name := requestEventName(r)
+	// VPC Lattice is REST-JSON: no X-Amz-Target or Action, so its operation is
+	// derived from the method and path.
+	if name == "" && svc == vpclatticesrv.SigningName {
+		name = vpclatticesrv.OperationName(r.Method, r.URL.Path)
+	}
+
 	if name == "" {
 		return
 	}
 
-	auth := r.Header.Get("Authorization")
-	svc := awsquery.CredentialScopeService(auth)
 	readOnly := isReadOnlyEvent(name)
 
 	// Don't record CloudTrail's own read-only operations (LookupEvents polling,

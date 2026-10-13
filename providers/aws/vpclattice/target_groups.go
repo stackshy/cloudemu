@@ -15,10 +15,14 @@ func targetGroupNotFound(id string) error {
 	return errors.Newf(errors.NotFound, "target group %q not found", id)
 }
 
-func cloneTargetGroup(t *driver.TargetGroup) driver.TargetGroup {
+// cloneTargetGroup deep-copies a target group and fills the read-time fields:
+// the status overlay and the ARNs of the services forwarding to it. Caller
+// holds m.mu.
+func (m *Mock) cloneTargetGroup(t *driver.TargetGroup) driver.TargetGroup {
 	out := *t
 	out.Config = append([]byte(nil), t.Config...)
-	out.ServiceARNs = append([]string(nil), t.ServiceARNs...)
+	out.ServiceARNs = m.targetGroupServiceARNs(t.ID)
+	out.Status = m.observe(t.ID, t.Status)
 
 	return out
 }
@@ -33,6 +37,10 @@ type tgConfigExtract struct {
 }
 
 func (m *Mock) CreateTargetGroup(_ context.Context, in *driver.CreateTargetGroupInput) (*driver.TargetGroup, error) {
+	if err := validateTargetGroupType(in.Type); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -64,8 +72,9 @@ func (m *Mock) CreateTargetGroup(_ context.Context, in *driver.CreateTargetGroup
 	m.targetGroups.Set(id, tg)
 	m.targets.Set(id, nil)
 	m.writeTags(tg.ARN, in.Tags)
+	m.beginSettle(id)
 
-	out := cloneTargetGroup(tg)
+	out := m.cloneTargetGroup(tg)
 
 	return &out, nil
 }
@@ -81,7 +90,7 @@ func (m *Mock) GetTargetGroup(_ context.Context, identifier string) (*driver.Tar
 		return nil, targetGroupNotFound(id)
 	}
 
-	out := cloneTargetGroup(tg)
+	out := m.cloneTargetGroup(tg)
 
 	return &out, nil
 }
@@ -105,7 +114,7 @@ func (m *Mock) UpdateTargetGroup(
 
 	tg.LastUpdatedAt = m.now()
 
-	out := cloneTargetGroup(tg)
+	out := m.cloneTargetGroup(tg)
 
 	return &out, nil
 }
@@ -137,6 +146,17 @@ func (m *Mock) DeleteTargetGroup(_ context.Context, identifier string) error {
 		return targetGroupNotFound(id)
 	}
 
+	// A target group a listener or rule still forwards to cannot be deleted.
+	if m.targetGroupInUse(id) {
+		return inUsef("target group %q is in use by a listener or rule", id)
+	}
+
+	cur, _ := m.targets.Get(id)
+	for i := range cur {
+		m.statusSettle.Clear(targetSettleKey(id, cur[i]))
+	}
+
+	m.statusSettle.Clear(id)
 	m.targetGroups.Delete(id)
 	m.targets.Delete(id)
 
@@ -147,5 +167,5 @@ func (m *Mock) ListTargetGroups(_ context.Context) ([]driver.TargetGroup, error)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return sortedValues(m.targetGroups.All(), cloneTargetGroup), nil
+	return sortedValues(m.targetGroups.All(), m.cloneTargetGroup), nil
 }
