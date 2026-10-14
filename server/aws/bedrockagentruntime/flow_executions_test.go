@@ -102,7 +102,7 @@ func TestSDKInvokeFlow(t *testing.T) {
 		}
 	}
 
-	require.NoError(t, stream.Err())
+	requireStreamDone(t, stream.Err())
 	assert.Equal(t, 1, outputs)
 	assert.NotZero(t, traces)
 	assert.Equal(t, rttypes.FlowCompletionReasonSuccess, completion)

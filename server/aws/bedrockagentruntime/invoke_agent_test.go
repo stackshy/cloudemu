@@ -55,7 +55,7 @@ func invoke(t *testing.T, s *stack, in *agentruntime.InvokeAgentInput) (*agentTu
 		}
 	}
 
-	require.NoError(t, stream.Err())
+	requireStreamDone(t, stream.Err())
 
 	return turn, nil
 }
@@ -358,7 +358,7 @@ func TestSDKInvokeAgentStreamFinalResponse(t *testing.T) {
 			}
 		}
 
-		require.NoError(t, events.Err())
+		requireStreamDone(t, events.Err())
 
 		return got
 	}

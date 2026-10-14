@@ -169,7 +169,7 @@ func TestSDKRetrieveAndGenerateFromKnowledgeBase(t *testing.T) {
 		}
 	}
 
-	require.NoError(t, es.Err())
+	requireStreamDone(t, es.Err())
 	_ = es.Close()
 	assert.Contains(t, text, faqDocs["refunds"])
 	assert.Equal(t, 1, citations)
@@ -250,7 +250,7 @@ func TestSDKRerankGenerateQueryOptimizeAgentic(t *testing.T) {
 		}
 	}
 
-	require.NoError(t, ops.Err())
+	requireStreamDone(t, ops.Err())
 	_ = ops.Close()
 	assert.True(t, analysis && optimized)
 
@@ -286,7 +286,7 @@ func TestSDKRerankGenerateQueryOptimizeAgentic(t *testing.T) {
 		}
 	}
 
-	require.NoError(t, as.Err())
+	requireStreamDone(t, as.Err())
 	_ = as.Close()
 	assert.Equal(t, 3, results)
 	assert.Contains(t, answer, faqDocs["refunds"])

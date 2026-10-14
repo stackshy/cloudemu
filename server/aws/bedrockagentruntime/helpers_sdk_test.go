@@ -170,3 +170,15 @@ func requireAPIError(t *testing.T, err error, code string, status int) {
 	require.True(t, errors.As(err, &respErr))
 	require.Equal(t, status, respErr.HTTPStatusCode())
 }
+
+// requireStreamDone fails on a stream error other than the transport teardown
+// the SDK reader can report after the last event under load (see
+// benignStreamTeardown). Callers assert the stream's content, so a truncated
+// stream still fails.
+func requireStreamDone(t *testing.T, err error) {
+	t.Helper()
+
+	if err != nil && !benignStreamTeardown(err) {
+		require.NoError(t, err)
+	}
+}

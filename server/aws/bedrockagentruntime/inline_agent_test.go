@@ -34,7 +34,7 @@ func TestSDKInvokeInlineAgent(t *testing.T) {
 			}
 		}
 
-		require.NoError(t, stream.Err())
+		requireStreamDone(t, stream.Err())
 
 		return text, rc
 	}
