@@ -384,6 +384,7 @@ func toIngestionJobJSON(j *badriver.IngestionJob) ingestionJobJSON {
 		Description:     j.Description,
 		Status:          j.Status,
 		Statistics:      toStatisticsJSON(j.Statistics),
+		FailureReasons:  j.FailureReasons,
 		StartedAt:       j.StartedAt,
 		UpdatedAt:       j.UpdatedAt,
 	}

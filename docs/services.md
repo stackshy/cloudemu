@@ -3728,7 +3728,7 @@ delete) is still enforced.
 | Kubernetes: data plane (30 resources, most × 7 verbs incl. Watch, + /scale and /status subresources) | 249 |
 | Resource Discovery (engine + AWS + Azure + GCP handlers) | 26 |
 | Generative AI: AWS Bedrock (control plane + runtime) | 65 |
-| Generative AI: AWS Bedrock Agent (control plane + runtime) | 32 |
+| Generative AI: AWS Bedrock Agent (control plane + runtime) | 35 (+76 optional) |
 | Databricks: Azure (control + data plane) | 70 |
 | Machine Learning: AWS SageMaker (control plane + runtime) | 207 |
 | Machine Learning: Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
@@ -3750,7 +3750,7 @@ delete) is still enforced.
 | Data Integration: AWS Glue | 299 |
 | Threat Detection: Amazon GuardDuty | 87 |
 | Streaming: Amazon MSK | 59 |
-| **Grand Total** | **2839** (+150 optional) |
+| **Grand Total** | **2842** (+226 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

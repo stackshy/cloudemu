@@ -26,9 +26,11 @@ const (
 //nolint:gochecknoglobals // fixed enum table from the service model.
 var ingestionJobStatuses = []string{"STARTING", "IN_PROGRESS", "COMPLETE", "FAILED", "STOPPING", "STOPPED"}
 
-// StartIngestionJob starts an ingestion job. It completes immediately, or
-// after a short IN_PROGRESS window when async settling is enabled.
-func (m *Mock) StartIngestionJob(_ context.Context, kbID, dsID, description string) (*driver.IngestionJob, error) {
+// StartIngestionJob starts an ingestion job. Over an S3 data source linked to
+// cloudemu S3 it syncs the bucket into the knowledge base. It completes
+// immediately, or after a short IN_PROGRESS window when async settling is
+// enabled.
+func (m *Mock) StartIngestionJob(ctx context.Context, kbID, dsID, description string) (*driver.IngestionJob, error) {
 	var v violations
 
 	v.description(description)
@@ -40,7 +42,8 @@ func (m *Mock) StartIngestionJob(_ context.Context, kbID, dsID, description stri
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.findDataSource(kbID, dsID) == nil {
+	ds := m.findDataSource(kbID, dsID)
+	if ds == nil {
 		return nil, errors.Newf(errors.NotFound, "data source %q not found", dsID)
 	}
 
@@ -56,10 +59,21 @@ func (m *Mock) StartIngestionJob(_ context.Context, kbID, dsID, description stri
 		DataSourceID:    dsID,
 		Description:     description,
 		Status:          driver.IngestionJobComplete,
-		Statistics:      m.ingestionStatistics(kbID, dsID),
 		StartedAt:       now,
 		UpdatedAt:       now,
 	}
+
+	stats, synced, serr := m.syncS3(ctx, kbID, ds)
+
+	switch {
+	case serr != nil:
+		job.Status, job.FailureReasons = driver.IngestionJobFailed, []string{errors.Message(serr)}
+	case synced:
+		job.Statistics = stats
+	default:
+		job.Statistics = m.ingestionStatistics(kbID, dsID)
+	}
+
 	m.jobs.Set(id, job)
 	m.jobSettle.Begin(id, driver.IngestionJobInProgress, m.opts.Clock.Now(),
 		m.opts.SettleDuration(settle.DefaultBedrockIngestionSettle))
@@ -158,6 +172,7 @@ func (m *Mock) findJob(kbID, dsID, jobID string) (*driver.IngestionJob, error) {
 // observeJob returns a copy of job with the status a reader sees now.
 func (m *Mock) observeJob(job *driver.IngestionJob) driver.IngestionJob {
 	out := *job
+	out.FailureReasons = slices.Clone(job.FailureReasons)
 	out.Status = m.jobSettle.State(job.ID, m.opts.Clock.Now(), job.Status)
 
 	return out

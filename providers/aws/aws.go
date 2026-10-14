@@ -393,6 +393,21 @@ func newProviderMocks(o *config.Options, g *GlobalServices) *Provider {
 	}
 }
 
+// wireBedrockAgentRuntime links Bedrock Agents to the services they use: the
+// control plane's ingestion jobs read S3; the runtime reads agents, aliases,
+// knowledge bases and flows from the control plane, answers with the Bedrock
+// model runtime, applies Bedrock guardrails, runs Lambda-backed action groups,
+// reads S3 external sources and publishes AWS/Bedrock/Agents metrics.
+func wireBedrockAgentRuntime(p *Provider) {
+	p.BedrockAgent.SetObjectStore(p.S3)
+	p.BedrockAgentRuntime.SetControlPlane(p.BedrockAgent)
+	p.BedrockAgentRuntime.SetModels(p.Bedrock)
+	p.BedrockAgentRuntime.SetGuardrails(p.Bedrock)
+	p.BedrockAgentRuntime.SetLambda(p.Lambda)
+	p.BedrockAgentRuntime.SetMonitoring(p.CloudWatch)
+	p.BedrockAgentRuntime.SetObjectStore(p.S3)
+}
+
 // newProvider builds a provider, using the supplied shared global services when
 // non-nil (multi-region) or a fresh bundle when nil (standalone). The global
 // struct fields are assigned BEFORE the cross-service Set* wiring runs, so every
@@ -430,6 +445,7 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	p.APIGateway.SetLogSink(p.CloudWatchLogs)
 	p.Athena.SetMonitoring(p.CloudWatch)
 	p.Athena.SetCatalog(p.Glue)
+	wireBedrockAgentRuntime(p)
 	p.RDS.SetSubnetResolver(p.VPC)
 	p.ElastiCache.SetSubnetResolver(p.VPC)
 	p.EC2.SetSubnetResolver(p.VPC)

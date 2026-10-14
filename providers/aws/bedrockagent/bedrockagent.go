@@ -75,6 +75,10 @@ type Mock struct {
 	// after.
 	mu sync.Mutex
 
+	// objects is S3, read by ingestion jobs over S3 data sources; nil when the
+	// mock is used alone.
+	objects ObjectReader
+
 	opts *config.Options
 }
 

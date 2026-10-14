@@ -26,7 +26,8 @@ func TestSDKValidationMessageOmitsInternalCodePrefix(t *testing.T) {
 		t.Fatalf("Retrieve with empty query: err = %v, want ValidationException", err)
 	}
 
-	if got := ve.ErrorMessage(); got != "retrievalQuery.text is required" {
-		t.Fatalf("message = %q, want the bare human message", got)
+	want := "1 validation error detected: Value null at 'retrievalQuery.text' failed to satisfy constraint: Member must not be null"
+	if got := ve.ErrorMessage(); got != want {
+		t.Fatalf("message = %q, want the bare AWS-style message %q", got, want)
 	}
 }

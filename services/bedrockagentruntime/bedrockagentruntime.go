@@ -107,6 +107,8 @@ func (b *BedrockAgentRuntime) rec(op string, input, output any, err error, dur t
 
 // InvokeAgent runs (emulated) agent inference and returns the assembled
 // completion.
+//
+//nolint:gocritic // in matches the driver interface signature; copied once on entry.
 func (b *BedrockAgentRuntime) InvokeAgent(ctx context.Context, in driver.InvokeAgentInput) (*driver.InvokeAgentResult, error) {
 	out, err := b.do(ctx, "InvokeAgent", in.AgentID, func() (any, error) { return b.driver.InvokeAgent(ctx, in) })
 	if err != nil {
@@ -127,6 +129,8 @@ func (b *BedrockAgentRuntime) Retrieve(ctx context.Context, in driver.RetrieveIn
 }
 
 // RetrieveAndGenerate queries a knowledge base and generates an answer.
+//
+//nolint:gocritic // in matches the driver interface signature; copied once on entry.
 func (b *BedrockAgentRuntime) RetrieveAndGenerate(
 	ctx context.Context, in driver.RetrieveAndGenerateInput,
 ) (*driver.RetrieveAndGenerateResult, error) {

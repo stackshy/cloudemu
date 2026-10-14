@@ -640,6 +640,16 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 		srv.Register(apigatewaysrv.NewDataPlane(d.APIGateway))
 	}
 
+	// bedrock-agent-runtime shares the /agents, /knowledgebases, /flows and
+	// /tags roots with the bedrock-agent control plane (and /tags with EKS) but
+	// matches only its own path shapes and methods. It registers here, before
+	// the query-protocol handlers, because the SDK and curl may send its JSON
+	// bodies with a form Content-Type the query handlers would otherwise claim
+	// and reject as InvalidAction; and before the control plane, EKS and S3.
+	if d.BedrockAgentRuntime != nil {
+		srv.Register(bedrockagentruntime.New(d.BedrockAgentRuntime))
+	}
+
 	if d.CloudWatch != nil {
 		// The VPC driver optionally supplies derived AWS/IPAM metrics; surface
 		// them through CloudWatch when it implements the capability.
@@ -1203,15 +1213,6 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 	// /v2/apis as a bucket path.
 	if d.APIGatewayV2 != nil {
 		srv.Register(apigatewayv2srv.New(d.APIGatewayV2))
-	}
-
-	// bedrock-agent-runtime (InvokeAgent / Retrieve / RetrieveAndGenerate) shares
-	// the /agents and /knowledgebases roots with the bedrock-agent control plane,
-	// but matches only the runtime suffixes (/text, /retrieve) and
-	// /retrieveAndGenerate. It MUST register before the control-plane handler so
-	// its more specific Matches wins for those paths, and both before S3.
-	if d.BedrockAgentRuntime != nil {
-		srv.Register(bedrockagentruntime.New(d.BedrockAgentRuntime))
 	}
 
 	// bedrock-agent control plane: agents, knowledge bases, data sources, flows,

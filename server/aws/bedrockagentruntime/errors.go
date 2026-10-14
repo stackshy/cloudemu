@@ -35,7 +35,12 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsInvalidArgument(err):
 		writeError(w, http.StatusBadRequest, "ValidationException", cerrors.Message(err))
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusBadRequest, "ValidationException", cerrors.Message(err))
+		// A state conflict: an ended session, an active session deleted, a
+		// finished flow execution stopped.
+		writeError(w, http.StatusConflict, "ConflictException", cerrors.Message(err))
+	case cerrors.GetCode(err) == cerrors.Unavailable:
+		// A resource the agent depends on (an action-group Lambda) failed.
+		writeError(w, http.StatusFailedDependency, "DependencyFailedException", cerrors.Message(err))
 	case cerrors.IsThrottled(err):
 		writeError(w, http.StatusTooManyRequests, "ThrottlingException", cerrors.Message(err))
 	case cerrors.IsPermissionDenied(err):

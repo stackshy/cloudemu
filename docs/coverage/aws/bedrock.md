@@ -75,4 +75,4 @@ AWS's `bedrock` service · portable interface `driver.Bedrock` · [AWS index](./
 
 ## Not in scope
 
-_Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
+- ApplyGuardrail, and the guardrails the agent runtime applies, evaluate only a guardrail's custom denied words (case-insensitive whole words or phrases): a match returns `GUARDRAIL_INTERVENED` with the blocked input or output message. Managed word lists, content filters, denied topics, PII and regex filters, contextual grounding and automated reasoning are stored but not evaluated, and no assessments are returned.

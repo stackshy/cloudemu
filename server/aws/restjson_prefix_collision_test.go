@@ -42,11 +42,14 @@ var restJSONTopLevelPrefixes = map[string][]string{
 	"kafka":      {"v1", "api", "replication"},
 
 	// Bare-root REST handlers.
-	"eks":                 {"clusters", "tags"},
-	"bedrockagent":        {"agents", "knowledgebases", "flows", "prompts", "tags", "resourcepolicy"},
-	"bedrockagentruntime": {"agents", "knowledgebases"},
-	"sagemakerruntime":    {"endpoints"},
-	"k8s":                 {"k8s"},
+	"eks":          {"clusters", "tags"},
+	"bedrockagent": {"agents", "knowledgebases", "flows", "prompts", "tags", "resourcepolicy"},
+	"bedrockagentruntime": {
+		"agents", "knowledgebases", "flows", "tags", "sessions", "rerank", "generateQuery", "optimize-prompt",
+		"agenticRetrieveStream", "retrieveAndGenerate", "retrieveAndGenerateStream",
+	},
+	"sagemakerruntime": {"endpoints"},
+	"k8s":              {"k8s"},
 	"guardduty": {
 		"detector", "admin", "invitation", "tags", "malware-scan", "malware-scans",
 		"malware-protection-plan", "object-malware-scan", "organization",
@@ -77,12 +80,16 @@ var sharedTopLevelPrefixes = map[string]map[string]bool{
 	// The generic /tags/{ResourceArn} REST surface is shared: each handler
 	// claims it only for ARNs it owns, so tag requests fall through to the
 	// owning service.
-	"tags": {"eks": true, "guardduty": true, "vpclattice": true, "bedrockagent": true},
+	"tags": {"eks": true, "guardduty": true, "vpclattice": true, "bedrockagent": true, "bedrockagentruntime": true},
 	// bedrock-agent-runtime shares the /agents and /knowledgebases roots with
 	// the bedrock-agent control plane, matching only the runtime suffixes; it
 	// registers first so its more-specific Matches wins.
 	"agents":         {"bedrockagent": true, "bedrockagentruntime": true},
 	"knowledgebases": {"bedrockagent": true, "bedrockagentruntime": true},
+	// The flow runtime (InvokeFlow, executions) lives under the control
+	// plane's /flows root on method and path shapes the control plane does
+	// not serve.
+	"flows": {"bedrockagent": true, "bedrockagentruntime": true},
 	// /resourcepolicy/{arn} is shared: bedrock-agent claims it only for
 	// knowledge-base ARNs, VPC Lattice only for its own identifiers.
 	"resourcepolicy": {"bedrockagent": true, "vpclattice": true},
