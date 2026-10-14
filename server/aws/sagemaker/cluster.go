@@ -7,49 +7,45 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
-// wireInstanceGroup is the JSON shape of a HyperPod instance group.
+// wireLifeCycleConfig is the JSON shape of ClusterLifeCycleConfig.
+type wireLifeCycleConfig struct {
+	SourceS3URI string `json:"SourceS3Uri"`
+	OnCreate    string `json:"OnCreate"`
+}
+
+// wireInstanceGroup is the JSON request shape of a HyperPod instance group
+// (ClusterInstanceGroupSpecification).
 type wireInstanceGroup struct {
-	InstanceGroupName string `json:"InstanceGroupName"`
-	InstanceType      string `json:"InstanceType"`
-	InstanceCount     int    `json:"InstanceCount"`
-	ExecutionRole     string `json:"ExecutionRole"`
+	InstanceGroupName string               `json:"InstanceGroupName"`
+	InstanceType      string               `json:"InstanceType"`
+	InstanceCount     int                  `json:"InstanceCount"`
+	MinInstanceCount  int                  `json:"MinInstanceCount"`
+	ThreadsPerCore    int                  `json:"ThreadsPerCore"`
+	ExecutionRole     string               `json:"ExecutionRole"`
+	LifeCycleConfig   *wireLifeCycleConfig `json:"LifeCycleConfig"`
 }
 
 func toGroupSpecs(in []wireInstanceGroup) []driver.ClusterInstanceGroupSpec {
 	out := make([]driver.ClusterInstanceGroupSpec, 0, len(in))
+
 	for _, g := range in {
-		out = append(out, driver.ClusterInstanceGroupSpec{
-			GroupName:     g.InstanceGroupName,
-			InstanceType:  g.InstanceType,
-			InstanceCount: g.InstanceCount,
-			ExecutionRole: g.ExecutionRole,
-		})
+		spec := driver.ClusterInstanceGroupSpec{
+			GroupName:        g.InstanceGroupName,
+			InstanceType:     g.InstanceType,
+			InstanceCount:    g.InstanceCount,
+			MinInstanceCount: g.MinInstanceCount,
+			ThreadsPerCore:   g.ThreadsPerCore,
+			ExecutionRole:    g.ExecutionRole,
+		}
+
+		if g.LifeCycleConfig != nil {
+			spec.LifeCycleConfig = &driver.LifeCycleConfig{SourceS3URI: g.LifeCycleConfig.SourceS3URI, OnCreate: g.LifeCycleConfig.OnCreate}
+		}
+
+		out = append(out, spec)
 	}
 
 	return out
-}
-
-func (h *Handler) routeCluster(w http.ResponseWriter, r *http.Request, op string) bool {
-	switch op {
-	case "CreateCluster":
-		h.createCluster(w, r)
-	case "DescribeCluster":
-		h.describeCluster(w, r)
-	case "ListClusters":
-		h.listClusters(w, r)
-	case "UpdateCluster":
-		h.updateCluster(w, r)
-	case "DeleteCluster":
-		h.deleteCluster(w, r)
-	case "ListClusterNodes":
-		h.listClusterNodes(w, r)
-	case "DescribeClusterNode":
-		h.describeClusterNode(w, r)
-	default:
-		return false
-	}
-
-	return true
 }
 
 //nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
@@ -79,23 +75,45 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 }
 
 func clusterToWire(c *driver.Cluster) map[string]any {
-	groups := make([]wireInstanceGroup, 0, len(c.InstanceGroups))
-	for _, g := range c.InstanceGroups {
-		groups = append(groups, wireInstanceGroup{
-			InstanceGroupName: g.GroupName,
-			InstanceType:      g.InstanceType,
-			InstanceCount:     g.InstanceCount,
-			ExecutionRole:     g.ExecutionRole,
-		})
+	groups := make([]map[string]any, 0, len(c.InstanceGroups))
+	for i := range c.InstanceGroups {
+		groups = append(groups, instanceGroupToWire(&c.InstanceGroups[i]))
 	}
 
-	return map[string]any{
+	resp := map[string]any{
 		"ClusterName":    c.ClusterName,
 		"ClusterArn":     c.ClusterARN,
 		"ClusterStatus":  c.Status,
 		"InstanceGroups": groups,
 		"CreationTime":   epoch(c.CreationTime),
 	}
+	setIf(resp, "FailureMessage", c.FailureMessage)
+
+	return resp
+}
+
+// instanceGroupToWire renders ClusterInstanceGroupDetails: current versus
+// target count, threads per core, lifecycle config and status.
+func instanceGroupToWire(g *driver.ClusterInstanceGroup) map[string]any {
+	out := map[string]any{
+		"InstanceGroupName": g.GroupName,
+		"InstanceType":      g.InstanceType,
+		"CurrentCount":      g.CurrentCount,
+		"TargetCount":       g.TargetCount,
+		"ThreadsPerCore":    g.ThreadsPerCore,
+		"ExecutionRole":     g.ExecutionRole,
+		"Status":            g.Status,
+	}
+
+	if g.MinCount > 0 {
+		out["MinCount"] = g.MinCount
+	}
+
+	if g.LifeCycleConfig != nil {
+		out["LifeCycleConfig"] = wireLifeCycleConfig{SourceS3URI: g.LifeCycleConfig.SourceS3URI, OnCreate: g.LifeCycleConfig.OnCreate}
+	}
+
+	return out
 }
 
 func (h *Handler) describeCluster(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +133,12 @@ func (h *Handler) describeCluster(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request) {
-	clusters, err := h.svc.ListClusters(r.Context())
+	req, ok := decodeListReq(w, r)
+	if !ok {
+		return
+	}
+
+	clusters, err := h.svc.ListClusters(r.Context(), req.options())
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -134,15 +157,20 @@ func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) updateCluster(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ClusterName    string              `json:"ClusterName"`
-		InstanceGroups []wireInstanceGroup `json:"InstanceGroups"`
+		ClusterName            string              `json:"ClusterName"`
+		InstanceGroups         []wireInstanceGroup `json:"InstanceGroups"`
+		InstanceGroupsToDelete []string            `json:"InstanceGroupsToDelete"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	c, err := h.svc.UpdateCluster(r.Context(), req.ClusterName, toGroupSpecs(req.InstanceGroups))
+	c, err := h.svc.UpdateCluster(r.Context(), driver.ClusterUpdate{
+		ClusterName:            req.ClusterName,
+		InstanceGroups:         toGroupSpecs(req.InstanceGroups),
+		InstanceGroupsToDelete: req.InstanceGroupsToDelete,
+	})
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -168,12 +196,20 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listClusterNodes(w http.ResponseWriter, r *http.Request) {
-	name, ok := decodeName1(w, r, "ClusterName")
-	if !ok {
+	var req struct {
+		listReq
+		ClusterName               string `json:"ClusterName"`
+		InstanceGroupNameContains string `json:"InstanceGroupNameContains"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) || rejectZeroMaxResults(w, &req.listReq) {
 		return
 	}
 
-	nodes, err := h.svc.ListClusterNodes(r.Context(), name)
+	opts := req.options()
+	opts.Filters["InstanceGroupNameContains"] = req.InstanceGroupNameContains
+
+	nodes, err := h.svc.ListClusterNodes(r.Context(), req.ClusterName, opts)
 	if err != nil {
 		writeDriverError(w, err)
 

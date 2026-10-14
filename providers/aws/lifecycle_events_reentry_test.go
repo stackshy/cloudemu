@@ -7,10 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/aws"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	ecsdriver "github.com/stackshy/cloudemu/v2/services/ecs/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	smdriver "github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 	sdriver "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
@@ -370,5 +372,91 @@ func TestEC2TerminatedEventAfterVolumeDetach(t *testing.T) {
 
 	if got, _ := seenState.Load().(string); got != "available" {
 		t.Fatalf("volume state seen by the terminated-event handler = %q, want available", got)
+	}
+}
+
+// TestSageMakerEndpointSettledEventHandlerReentersWithoutDeadlock pins that the
+// IN_SERVICE event an endpoint publishes when it settles under --async-settle is
+// never published while the endpoint lock is held. The event is noticed by a read
+// (which holds the lock while it observes), EventBridge invokes a Lambda target
+// synchronously, and a handler that reads the endpoint back would block forever
+// on the non-reentrant lock if the event were published under it. Every read path
+// is checked: for each, a fresh endpoint is settled and that path reads it first.
+func TestSageMakerEndpointSettledEventHandlerReentersWithoutDeadlock(t *testing.T) {
+	paths := map[string]func(p *aws.Provider, ctx context.Context) error{
+		"DescribeEndpoint": func(p *aws.Provider, ctx context.Context) error {
+			_, e := p.SageMaker.DescribeEndpoint(ctx, "ep")
+			return e
+		},
+		"ListEndpoints": func(p *aws.Provider, ctx context.Context) error {
+			_, e := p.SageMaker.ListEndpoints(ctx, smdriver.ListOptions{})
+			return e
+		},
+		"UpdateEndpoint": func(p *aws.Provider, ctx context.Context) error {
+			_, e := p.SageMaker.UpdateEndpoint(ctx, smdriver.UpdateEndpointSpec{EndpointName: "ep", ConfigName: "cfg"})
+			return e
+		},
+		"InvokeEndpoint": func(p *aws.Provider, ctx context.Context) error {
+			_, e := p.SageMaker.InvokeEndpoint(ctx, smdriver.InvokeEndpointInput{EndpointName: "ep", Body: []byte("x")})
+			return e
+		},
+		"AddTags": func(p *aws.Provider, ctx context.Context) error {
+			_, e := p.SageMaker.AddTags(ctx, "arn:aws:sagemaker:us-east-1:123456789012:endpoint/ep", []smdriver.Tag{{Key: "k", Value: "v"}})
+			return e
+		},
+	}
+
+	for name, first := range paths {
+		t.Run(name, func(t *testing.T) {
+			clock := config.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+			p := aws.New(config.WithClock(clock), config.WithAsyncSettle())
+			ctx := context.Background()
+
+			sageMakerEndpoint(t, p)
+
+			fn, err := p.Lambda.CreateFunction(ctx, sdriver.FunctionConfig{Name: "reactor"})
+			if err != nil {
+				t.Fatalf("CreateFunction: %v", err)
+			}
+
+			var calls atomic.Int32
+
+			p.Lambda.RegisterHandler("reactor", func(hctx context.Context, _ []byte) ([]byte, error) {
+				calls.Add(1)
+				_, readErr := p.SageMaker.DescribeEndpoint(hctx, "ep")
+
+				return nil, readErr
+			})
+
+			if _, err = p.EventBridge.PutRule(ctx, &ebdriver.RuleConfig{
+				Name:         "in-service",
+				EventPattern: `{"source":["aws.sagemaker"],"detail-type":["SageMaker Endpoint State Change"],"detail":{"EndpointStatus":["IN_SERVICE"]}}`,
+			}); err != nil {
+				t.Fatalf("PutRule: %v", err)
+			}
+
+			if err = p.EventBridge.PutTargets(ctx, "", "in-service", []ebdriver.Target{{ID: "fn", ARN: fn.ARN}}); err != nil {
+				t.Fatalf("PutTargets: %v", err)
+			}
+
+			clock.Advance(time.Hour)
+
+			done := make(chan error, 1)
+
+			go func() { done <- first(p, ctx) }()
+
+			select {
+			case err = <-done:
+				if err != nil {
+					t.Fatalf("%s: %v", name, err)
+				}
+			case <-time.After(reentryTimeout):
+				t.Fatalf("%s deadlocked: the settled event was published while the endpoint lock was held", name)
+			}
+
+			if calls.Load() != 1 {
+				t.Fatalf("%s: the settled event reached the handler %d times, want exactly 1", name, calls.Load())
+			}
+		})
 	}
 }

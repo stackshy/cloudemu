@@ -58,6 +58,16 @@ const (
 
 	DefaultStackSettle = 5 * time.Second // CloudFormation stack *_IN_PROGRESS->*_COMPLETE
 
+	DefaultEndpointSettle       = 2 * time.Second // SageMaker endpoint Creating->InService
+	DefaultEndpointUpdateSettle = 1 * time.Second // SageMaker endpoint Updating->InService
+	DefaultEndpointDeleteSettle = 1 * time.Second // SageMaker endpoint Deleting->gone
+	DefaultNotebookUpdateSettle = 2 * time.Second // SageMaker notebook instance Updating->Stopped
+	DefaultJobStageSettle       = 1 * time.Second // SageMaker job: time spent in each stage (Starting, Training, ...)
+	DefaultJobStopSettle        = 1 * time.Second // SageMaker job Stopping->Stopped
+	DefaultProjectSettle        = 3 * time.Second // SageMaker project CreateInProgress->CreateCompleted
+	DefaultScheduleSettle       = 3 * time.Second // SageMaker monitoring schedule Pending->Scheduled
+	DefaultWorkforceSettle      = 3 * time.Second // SageMaker workforce Initializing/Updating->Active
+
 	DefaultLatticeSettle = 2 * time.Second // VPC Lattice resource CREATE_IN_PROGRESS->ACTIVE
 
 	DefaultBedrockIngestionSettle = 2 * time.Second // Bedrock KB ingestion job IN_PROGRESS->COMPLETE

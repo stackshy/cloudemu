@@ -1,6 +1,8 @@
 package sagemaker
 
 import (
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -43,8 +45,16 @@ func decodeName(raw string) string {
 }
 
 func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, endpointName string) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxInvokeBytes))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxInvokeBytes))
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "ValidationError",
+				"Payload exceeds the 6291456 byte limit for real-time inference")
+
+			return
+		}
+
 		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationError", "failed to read request body")
 
 		return
@@ -57,6 +67,7 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, endpointName st
 		Body:                   body,
 		InferenceComponentName: r.Header.Get("X-Amzn-Sagemaker-Inference-Component"),
 		TargetModel:            r.Header.Get("X-Amzn-Sagemaker-Target-Model"),
+		TargetVariant:          r.Header.Get("X-Amzn-Sagemaker-Target-Variant"),
 	})
 	if err != nil {
 		writeRuntimeError(w, err)
@@ -64,8 +75,14 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, endpointName st
 		return
 	}
 
+	// The echoed body is caller-controlled, so a markup type is never served as
+	// markup and the type is not sniffed.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Even if a type slips past safeContentType, a sandboxed response cannot run script.
+	w.Header().Set("Content-Security-Policy", "sandbox")
+
 	if out.ContentType != "" {
-		w.Header().Set("Content-Type", out.ContentType)
+		w.Header().Set("Content-Type", safeContentType(out.ContentType))
 	}
 
 	if out.InvokedVariant != "" {
@@ -76,11 +93,32 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, endpointName st
 	_, _ = w.Write(out.Body)
 }
 
+// safeContentType maps a content type a browser would render as active
+// content to application/octet-stream.
+const contentTypeOctetStream = "application/octet-stream"
+
+func safeContentType(ct string) string {
+	media := strings.ToLower(strings.TrimSpace(strings.SplitN(ct, ";", 2)[0])) //nolint:mnd // protocol constant
+
+	switch {
+	case media == "text/html", media == "text/xml", media == "application/xml",
+		media == "text/xsl", media == "application/xslt+xml":
+		return contentTypeOctetStream
+	case strings.HasSuffix(media, "+xml"):
+		// application/xhtml+xml, image/svg+xml, application/rss+xml, ...: every
+		// +xml structured-syntax type is XML a browser may render as active content.
+		return contentTypeOctetStream
+	default:
+		return ct
+	}
+}
+
 func (h *Handler) invokeAsync(w http.ResponseWriter, r *http.Request, endpointName string) {
 	out, err := h.svc.InvokeEndpointAsync(r.Context(), driver.InvokeEndpointAsyncInput{
 		EndpointName: endpointName,
 		InputS3URI:   r.Header.Get("X-Amzn-Sagemaker-Inputlocation"),
-		ContentType:  r.Header.Get("Content-Type"),
+		ContentType:  r.Header.Get("X-Amzn-Sagemaker-Content-Type"),
+		InferenceID:  r.Header.Get("X-Amzn-Sagemaker-Inference-Id"),
 	})
 	if err != nil {
 		writeRuntimeError(w, err)
@@ -89,18 +127,26 @@ func (h *Handler) invokeAsync(w http.ResponseWriter, r *http.Request, endpointNa
 	}
 
 	w.Header().Set("X-Amzn-Sagemaker-Outputlocation", out.OutputS3URI)
-	w.Header().Set("X-Amzn-Sagemaker-Inferenceid", out.InferenceID)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]string{"InferenceId": out.InferenceID})
 }
 
 // writeRuntimeError maps driver errors for the restJson1 runtime surface.
 func writeRuntimeError(w http.ResponseWriter, err error) {
+	var modelErr *driver.ModelError
+	if errors.As(err, &modelErr) {
+		wire.WriteJSONError(w, http.StatusFailedDependency, driver.ExModelError, modelErr.Message)
+
+		return
+	}
+
 	switch {
-	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusNotFound, "ValidationError", err.Error())
+	case cerrors.IsNotFound(err), cerrors.IsInvalidArgument(err):
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationError", cerrors.Message(err))
 	case cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationError", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationError", cerrors.Message(err))
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalFailure", cerrors.Message(err))
 	}
 }

@@ -1,13 +1,15 @@
 // Package sagemaker provides an in-memory mock implementation of Amazon
 // SageMaker AI: training/processing/transform/tuning/AutoML/labeling/
 // compilation jobs, the model-and-endpoint inference stack, the model
-// registry, Studio, notebook instances, HyperPod clusters, Feature Store and
-// pipelines. Asynchronous jobs complete synchronously (straight to a terminal
-// state) so Describe/List calls are deterministic.
+// registry, Studio, notebook instances, HyperPod clusters, Feature Store,
+// pipelines, experiments and lineage, Model Monitor, projects, workforces and
+// images. Jobs complete synchronously (straight to a terminal state with
+// per-stage times) unless --async-settle is on, when they progress through
+// their stages as the clock advances, so Describe/List calls stay deterministic.
 //
-// This is the Layer-3 driver implementation. The portable Layer-1 wrapper that
-// adds recording/metrics/rate-limiting/error-injection/latency lives in the
-// module-root sagemaker package (sagemaker/sagemaker.go).
+// This is the Layer-3 driver implementation. The portable Layer-1 service that
+// adds recording/metrics/rate-limiting/error-injection/latency lives in
+// services/sagemaker.
 package sagemaker
 
 import (
@@ -15,8 +17,10 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
@@ -46,6 +50,9 @@ type Mock struct {
 
 	packageGroups *memstore.Store[*driver.ModelPackageGroup]
 	packages      *memstore.Store[*driver.ModelPackage] // keyed by package ARN
+	// packagePolicies holds each model package group's resource policy, keyed by
+	// group name.
+	packagePolicies *memstore.Store[string]
 
 	domains      *memstore.Store[*driver.Domain]
 	userProfiles *memstore.Store[*driver.UserProfile] // keyed by domainID\x00name
@@ -68,10 +75,83 @@ type Mock struct {
 
 	tags *memstore.Store[[]driver.Tag] // keyed by resource ARN
 
+	// monMu serializes Model Monitor state changes; monExecs holds materialized
+	// (history-preserving) executions, monSettle the --async-settle windows.
+	monMu        sync.Mutex
+	monSchedules *memstore.Store[*driver.MonitoringSchedule]
+	monDefs      *memstore.Store[*driver.MonitoringJobDefinition] // keyed by kind\x00name
+	monExecs     *memstore.Store[*driver.MonitoringExecution]
+	monAlerts    *memstore.Store[*driver.MonitoringAlert]
+	monSettle    *settle.Set
+
+	// entityMu serializes experiments, trials, trial components and lineage
+	// entities/associations (one lock for the whole experiment-tracking graph,
+	// so link updates and delete guards never deadlock).
+	entityMu        sync.Mutex
+	trialComponents *memstore.Store[*driver.TrialComponent] // keyed by lower-cased name
+	lineageEntities *memstore.Store[*driver.LineageEntity]  // keyed by ARN
+	associations    *memstore.Store[*driver.Association]    // keyed by source\x00destination
+	lineageGroup    *memstore.Store[string]                 // "default" -> creation time
+
+	// imageMu serializes image, image-version and alias changes (version numbers
+	// are minted under it).
+	imageMu         sync.Mutex
+	images          *memstore.Store[*driver.Image]
+	imageVersions   *memstore.Store[*driver.ImageVersion] // keyed by image\x00version
+	appImageConfigs *memstore.Store[*driver.AppImageConfig]
+
+	// wfMu guards the workforce singleton, the workteam cap and the workforce
+	// <-> workteam links; wfSettle holds --async-settle windows.
+	wfMu       sync.Mutex
+	workforces *memstore.Store[*driver.Workforce]
+	workteams  *memstore.Store[*driver.Workteam]
+	wfSettle   *settle.Set
+
+	// projMu guards the project cap and serializes project state changes;
+	// projSettle holds --async-settle windows.
+	projMu     sync.Mutex
+	projects   *memstore.Store[*driver.Project]
+	projSettle *settle.Set
+
+	// epMu serializes every endpoint mutation and guards epTrans, the in-flight
+	// (--async-settle) transitions overlaid on stored endpoints at read time.
+	epMu sync.Mutex
+
+	// epDueMu guards epDue, the settled-endpoint events noticed while epMu was
+	// held. They are published only after epMu is released (unlockEndpoints), so
+	// an event handler that reads the endpoint back cannot deadlock on epMu.
+	epDueMu sync.Mutex
+	epDue   []*driver.Endpoint
+
+	// evMu guards settledEmitted, the settled states already published under
+	// --async-settle (key: resource ARN + state).
+	evMu           sync.Mutex
+	settledEmitted map[string]struct{}
+
+	// invMu guards invFailures, the seeded per-endpoint model failures.
+	invMu       sync.Mutex
+	pipeMu      sync.Mutex // serializes pipeline update/delete against execution start/stop
+	invFailures map[string]int
+	epTrans     map[string]*endpointTransition
+
+	// nbMu serializes notebook-instance state changes; nbSettle holds the
+	// --async-settle Updating windows overlaid at read time.
+	nbMu     sync.Mutex
+	nbSettle *settle.Set
+
+	// clMu serializes cluster mutations and guards clTrans, the in-flight
+	// (--async-settle) windows overlaid on stored clusters at read time.
+	clMu    sync.Mutex
+	clTrans map[string]*clusterTransition
+
+	// tagMu serializes every read-modify-write of the ARN-keyed tag store.
+	tagMu sync.Mutex
+
 	// pkgMu serializes the read-compute-write of model-package version numbers
 	// so two concurrent CreateModelPackage calls can't mint the same ARN.
 	pkgMu sync.Mutex
 
+	events     awsevents.Emitter
 	monitoring mondriver.Monitoring
 }
 
@@ -92,6 +172,7 @@ func New(opts *config.Options) *Mock {
 		inferenceComponents: memstore.New[*driver.InferenceComponent](),
 		packageGroups:       memstore.New[*driver.ModelPackageGroup](),
 		packages:            memstore.New[*driver.ModelPackage](),
+		packagePolicies:     memstore.New[string](),
 		domains:             memstore.New[*driver.Domain](),
 		userProfiles:        memstore.New[*driver.UserProfile](),
 		spaces:              memstore.New[*driver.Space](),
@@ -107,6 +188,28 @@ func New(opts *config.Options) *Mock {
 		experiments:         memstore.New[*driver.Experiment](),
 		trials:              memstore.New[*driver.Trial](),
 		tags:                memstore.New[[]driver.Tag](),
+		projects:            memstore.New[*driver.Project](),
+		workforces:          memstore.New[*driver.Workforce](),
+		monSchedules:        memstore.New[*driver.MonitoringSchedule](),
+		monDefs:             memstore.New[*driver.MonitoringJobDefinition](),
+		monExecs:            memstore.New[*driver.MonitoringExecution](),
+		monAlerts:           memstore.New[*driver.MonitoringAlert](),
+		monSettle:           settle.NewSet(),
+		invFailures:         map[string]int{},
+		settledEmitted:      map[string]struct{}{},
+		trialComponents:     memstore.New[*driver.TrialComponent](),
+		lineageEntities:     memstore.New[*driver.LineageEntity](),
+		associations:        memstore.New[*driver.Association](),
+		lineageGroup:        memstore.New[string](),
+		images:              memstore.New[*driver.Image](),
+		imageVersions:       memstore.New[*driver.ImageVersion](),
+		appImageConfigs:     memstore.New[*driver.AppImageConfig](),
+		workteams:           memstore.New[*driver.Workteam](),
+		wfSettle:            settle.NewSet(),
+		projSettle:          settle.NewSet(),
+		epTrans:             map[string]*endpointTransition{},
+		nbSettle:            settle.NewSet(),
+		clTrans:             map[string]*clusterTransition{},
 	}
 }
 
@@ -115,8 +218,10 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
 }
 
+// now returns the Clock time as RFC3339Nano so times within one operation can
+// be ordered at sub-second precision (stage timelines, transition histories).
 func (m *Mock) now() string {
-	return m.opts.Clock.Now().UTC().Format(time.RFC3339)
+	return m.opts.Clock.Now().UTC().Format(time.RFC3339Nano)
 }
 
 // arn builds a SageMaker ARN for the given resource segment (e.g.
@@ -159,6 +264,13 @@ func copyVariants(in []driver.ProductionVariant) []driver.ProductionVariant {
 
 	out := make([]driver.ProductionVariant, len(in))
 	copy(out, in)
+
+	for i := range out {
+		if in[i].InitialVariantWeight != nil {
+			w := *in[i].InitialVariantWeight
+			out[i].InitialVariantWeight = &w
+		}
+	}
 
 	return out
 }

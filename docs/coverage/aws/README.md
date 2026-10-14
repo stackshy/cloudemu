@@ -71,7 +71,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [SQS](./sqs.md) | `messagequeue` | 14 |
 | [SSM](./ssm.md) | `parameterstore` | 9 |
 | [STS](./sts.md) | (provider-native) | 8 |
-| [SageMaker](./sagemaker.md) | `sagemaker` | 121 |
+| [SageMaker](./sagemaker.md) | `sagemaker` | 207 |
 | [SavingsPlans](./savingsplans.md) | (provider-native) | 9 |
 | [Scheduler](./scheduler.md) | `eventbridgescheduler` | 12 |
 | [SecretsManager](./secretsmanager.md) | `secrets` | 7 |

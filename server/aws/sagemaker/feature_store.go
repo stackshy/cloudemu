@@ -21,23 +21,6 @@ type wireFeatureValue struct {
 	ValueAsString string `json:"ValueAsString"`
 }
 
-func (h *Handler) routeFeatureStore(w http.ResponseWriter, r *http.Request, op string) bool {
-	switch op {
-	case "CreateFeatureGroup":
-		h.createFeatureGroup(w, r)
-	case "DescribeFeatureGroup":
-		h.describeFeatureGroup(w, r)
-	case "ListFeatureGroups":
-		h.listFeatureGroups(w, r)
-	case "DeleteFeatureGroup":
-		stopByName(w, r, "FeatureGroupName", h.svc.DeleteFeatureGroup)
-	default:
-		return false
-	}
-
-	return true
-}
-
 func (h *Handler) createFeatureGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		FeatureGroupName            string           `json:"FeatureGroupName"`
@@ -112,7 +95,12 @@ func (h *Handler) describeFeatureGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listFeatureGroups(w http.ResponseWriter, r *http.Request) {
-	groups, err := h.svc.ListFeatureGroups(r.Context())
+	req, ok := decodeListReq(w, r)
+	if !ok {
+		return
+	}
+
+	groups, err := h.svc.ListFeatureGroups(r.Context(), req.options())
 	if err != nil {
 		writeDriverError(w, err)
 
