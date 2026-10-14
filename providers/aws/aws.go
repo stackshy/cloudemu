@@ -400,6 +400,7 @@ func newProviderMocks(o *config.Options, g *GlobalServices) *Provider {
 // reads S3 external sources and publishes AWS/Bedrock/Agents metrics.
 func wireBedrockAgentRuntime(p *Provider) {
 	p.BedrockAgent.SetObjectStore(p.S3)
+	p.BedrockAgent.SetRoleAuthorizer(p.IAM)
 	p.BedrockAgentRuntime.SetControlPlane(p.BedrockAgent)
 	p.BedrockAgentRuntime.SetModels(p.Bedrock)
 	p.BedrockAgentRuntime.SetGuardrails(p.Bedrock)

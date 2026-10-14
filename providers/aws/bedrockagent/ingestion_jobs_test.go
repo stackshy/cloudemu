@@ -10,8 +10,10 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	iamprov "github.com/stackshy/cloudemu/v2/providers/aws/iam"
 	s3prov "github.com/stackshy/cloudemu/v2/providers/aws/s3"
 	"github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
+	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
 func mustDataSource(t *testing.T, m *Mock, kbID, dsType string) string {
@@ -207,4 +209,68 @@ func TestIngestionJobFailsWhenBucketIsGone(t *testing.T) {
 	require.Len(t, job.FailureReasons, 1)
 	assert.Contains(t, job.FailureReasons[0], "gone")
 	assert.Len(t, m.IndexedDocuments(kb.ID), 1, "a bucket that can't be read leaves the index as it was")
+}
+
+func TestIngestionJobReadsS3AsTheKnowledgeBaseRole(t *testing.T) {
+	ctx := context.Background()
+	opts := config.NewOptions(config.WithEnforceAuth())
+	m := New(opts)
+	s3 := s3prov.New(opts)
+	roles := iamprov.New(opts)
+	m.SetObjectStore(s3)
+	m.SetRoleAuthorizer(roles)
+
+	require.NoError(t, s3.CreateBucket(ctx, "docs"))
+	require.NoError(t, s3.PutObject(ctx, "docs", "public/a.txt", []byte("Alpha"), "", nil))
+	require.NoError(t, s3.PutObject(ctx, "docs", "private/b.txt", []byte("Beta"), "", nil))
+
+	kb := mustKB(t, m, "kb") // role "kb"
+	ds, err := m.CreateDataSource(ctx, driver.DataSourceConfig{
+		KnowledgeBaseID: kb.ID, Name: "s3", DataSourceConfiguration: []byte(`{"type":"S3","s3Configuration":{"bucketArn":"arn:aws:s3:::docs"}}`),
+	})
+	require.NoError(t, err)
+
+	start := func() *driver.IngestionJob {
+		t.Helper()
+
+		job, err := m.StartIngestionJob(ctx, kb.ID, ds.ID, "")
+		require.NoError(t, err)
+
+		return job
+	}
+
+	job := start()
+	assert.Equal(t, driver.IngestionJobFailed, job.Status, "the knowledge base's role does not exist")
+	assert.Contains(t, job.FailureReasons[0], "can't be assumed")
+
+	_, err = roles.CreateRole(ctx, iamdriver.RoleConfig{Name: "kb"})
+	require.NoError(t, err)
+
+	job = start()
+	assert.Equal(t, driver.IngestionJobFailed, job.Status, "a role with no policy can't list the bucket")
+	assert.Contains(t, job.FailureReasons[0], "s3:ListBucket")
+
+	require.NoError(t, roles.PutRolePolicy(ctx, "kb", "s3", `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Action":"s3:ListBucket","Resource":"arn:aws:s3:::docs"},
+		{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::docs/public/*"}]}`))
+
+	job = start()
+	assert.Equal(t, driver.IngestionJobComplete, job.Status)
+	assert.Equal(t, int64(1), job.Statistics.NumberOfNewDocumentsIndexed, "only the object the role can read is indexed")
+	assert.Equal(t, int64(1), job.Statistics.NumberOfDocumentsFailed)
+	require.Len(t, m.IndexedDocuments(kb.ID), 1)
+	assert.Equal(t, "Alpha", m.IndexedDocuments(kb.ID)[0].Text)
+
+	open := New(config.NewOptions())
+	open.SetObjectStore(s3)
+	open.SetRoleAuthorizer(roles)
+	openKB := mustKB(t, open, "other")
+	openDS, err := open.CreateDataSource(ctx, driver.DataSourceConfig{
+		KnowledgeBaseID: openKB.ID, Name: "s3", DataSourceConfiguration: []byte(`{"type":"S3","s3Configuration":{"bucketArn":"arn:aws:s3:::docs"}}`),
+	})
+	require.NoError(t, err)
+
+	openJob, err := open.StartIngestionJob(ctx, openKB.ID, openDS.ID, "")
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), openJob.Statistics.NumberOfNewDocumentsIndexed, "without --enforce-auth the role is not checked")
 }

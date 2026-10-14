@@ -11,11 +11,14 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
+	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 // S3 data-source sync constants.
 const (
+	s3ARNPrefix      = "arn:aws:s3:::"
+	roleARNMarker    = ":role/"
 	metadataSuffix   = ".metadata.json"
 	bucketARNMarker  = ":::"
 	maxSyncListPages = 1000
@@ -37,6 +40,19 @@ type ObjectReader interface {
 // SetObjectStore links the mock to S3, so ingestion jobs over S3 data sources
 // index the bucket's objects and S3 documents ingested directly are read.
 func (m *Mock) SetObjectStore(r ObjectReader) { m.objects = r }
+
+// RoleAuthorizer is the part of IAM an ingestion job uses to read S3 as the
+// knowledge base's service role.
+type RoleAuthorizer interface {
+	GetRole(ctx context.Context, name string) (*iamdriver.RoleInfo, error)
+	EvaluatePermission(ctx context.Context, req iamdriver.EvalRequest) iamdriver.Decision
+}
+
+// SetRoleAuthorizer links the mock to IAM. Under --enforce-auth an ingestion
+// job then reads the bucket as the knowledge base's role, as Bedrock does: a
+// role that does not exist or can't list the bucket fails the job, and objects
+// it can't read count as failed documents.
+func (m *Mock) SetRoleAuthorizer(a RoleAuthorizer) { m.roles = a }
 
 // s3SourceConfig is the S3 part of a data source configuration.
 type s3SourceConfig struct {
@@ -69,6 +85,16 @@ func (m *Mock) syncS3(ctx context.Context, kbID string, ds *driver.DataSource) (
 
 	_, bucket, _ := strings.Cut(cfg.S3Configuration.BucketArn, bucketARNMarker)
 
+	access, err := m.roleAccess(ctx, kbID)
+	if err != nil {
+		return stats, true, err
+	}
+
+	if !access.allows(ctx, "s3:ListBucket", s3ARNPrefix+bucket) {
+		return stats, true, errors.Newf(errors.PermissionDenied,
+			"%s is not authorized to perform: s3:ListBucket on resource: %s%s", access.roleARN, s3ARNPrefix, bucket)
+	}
+
 	all, err := m.listObjects(ctx, bucket, cfg.S3Configuration.InclusionPrefixes)
 	if err != nil {
 		return stats, true, err
@@ -80,6 +106,14 @@ func (m *Mock) syncS3(ctx context.Context, kbID string, ds *driver.DataSource) (
 
 	for _, o := range objects {
 		stats.NumberOfDocumentsScanned++
+
+		if !access.allows(ctx, "s3:GetObject", s3ARNPrefix+bucket+"/"+o.key) {
+			stats.NumberOfDocumentsFailed++
+			seen[documentKey(kbID, ds.ID, driver.DocumentIdentifier{DataSourceType: driver.DocumentSourceS3,
+				S3URI: s3URIPrefix + bucket + "/" + o.key})] = true
+
+			continue
+		}
 
 		seen[m.indexObject(ctx, kbID, ds.ID, bucket, o, &stats)] = true
 	}
@@ -139,6 +173,51 @@ func (m *Mock) pruneSynced(kbID, dsID string, seen map[string]bool) int64 {
 	}
 
 	return deleted
+}
+
+// roleAccess is how an ingestion job may read S3: as the knowledge base's
+// role under --enforce-auth, without checks otherwise.
+type roleAccess struct {
+	roles    RoleAuthorizer
+	roleName string
+	roleARN  string
+}
+
+// roleAccess resolves the knowledge base's service role when access is
+// enforced; a role that does not exist fails the job.
+func (m *Mock) roleAccess(ctx context.Context, kbID string) (roleAccess, error) {
+	if m.roles == nil || !m.opts.EnforceAuth {
+		return roleAccess{}, nil
+	}
+
+	kb, ok := m.knowledge.Get(kbID)
+	if !ok {
+		return roleAccess{}, errors.Newf(errors.NotFound, "knowledge base %q not found", kbID)
+	}
+
+	name := kb.RoleArn
+	if _, rest, found := strings.Cut(kb.RoleArn, roleARNMarker); found {
+		name = path.Base(rest)
+	}
+
+	if _, err := m.roles.GetRole(ctx, name); err != nil {
+		return roleAccess{}, errors.Newf(errors.PermissionDenied,
+			"The knowledge base's service role %s can't be assumed: %s", kb.RoleArn, errors.Message(err))
+	}
+
+	return roleAccess{roles: m.roles, roleName: name, roleARN: kb.RoleArn}, nil
+}
+
+// allows reports whether the role may perform action on resource; with no
+// role (access not enforced) everything is allowed.
+func (a roleAccess) allows(ctx context.Context, action, resource string) bool {
+	if a.roles == nil {
+		return true
+	}
+
+	return a.roles.EvaluatePermission(ctx, iamdriver.EvalRequest{
+		Principal: a.roleName, Action: action, Resource: resource, ResourceKnown: true,
+	}) == iamdriver.DecisionAllowed
 }
 
 // listObjects lists the bucket's objects under the inclusion prefixes (all of

@@ -78,6 +78,9 @@ type Mock struct {
 	// objects is S3, read by ingestion jobs over S3 data sources; nil when the
 	// mock is used alone.
 	objects ObjectReader
+	// roles is IAM, used to read S3 as a knowledge base's role under
+	// --enforce-auth; nil when the mock is used alone.
+	roles RoleAuthorizer
 
 	opts *config.Options
 }
