@@ -1058,7 +1058,8 @@ func TestAnswerContextAndConversationHistory(t *testing.T) {
 }
 
 func TestOpenAPIParsingAndAPICalls(t *testing.T) {
-	jsonDoc := `{"paths":{"/orders/{id}":{"parameters":[],"summary":"x","get":{"parameters":[` +
+	jsonDoc := `{"paths":{"/orders/{id}":{"summary":"x","parameters":[` +
+		`{"name":"region","in":"header"},{"name":"id","in":"path","schema":{"type":"string"}}],"get":{"parameters":[` +
 		`{"name":"id","in":"path","required":true,"schema":{"type":"integer"}},{"in":"query"},{"name":"verbose"}]}}}}`
 	yamlDoc := "paths:\n  /refunds:\n    post:\n      requestBody:\n        content:\n          application/json:\n" +
 		"            schema:\n              properties:\n                amount: {type: number}\n                note: {}\n" +
@@ -1066,7 +1067,10 @@ func TestOpenAPIParsingAndAPICalls(t *testing.T) {
 
 	apis := parseOpenAPI(jsonDoc)
 	require.Len(t, apis, 1, "path-level keys that are not methods are skipped")
-	assert.Equal(t, []paramDef{{name: "id", typ: "integer", required: true}, {name: "verbose", typ: "string"}}, apis[0].params)
+	assert.Equal(t, []paramDef{
+		{name: "id", typ: "integer", required: true, in: "path"}, {name: "verbose", typ: "string"},
+		{name: "region", typ: "string", in: "header"},
+	}, apis[0].params, "path-level parameters are added; the operation's id overrides the path's")
 	assert.Empty(t, apis[0].bodyType)
 
 	apis = parseOpenAPI(yamlDoc)
@@ -1094,4 +1098,56 @@ func TestOpenAPIParsingAndAPICalls(t *testing.T) {
 	text, err := applyLambdaResponse(ts, "fn", []byte("plain text reply"))
 	require.NoError(t, err)
 	assert.Equal(t, "plain text reply", text, "a reply that is not JSON is the observation")
+}
+
+// TestLambdaReadsMemoryDuringItsTurn has an action-group Lambda read agent
+// memory on its own session's second turn (the session is stored by then).
+// The idle sweep in GetAgentMemory must skip the busy session, not wait for
+// the lock the calling turn holds.
+func TestLambdaReadsMemoryDuringItsTurn(t *testing.T) {
+	l := newLinked(t)
+	ctx := context.Background()
+	agentID := l.agent(t, func(c *badriver.AgentConfig) {
+		c.MemoryConfiguration = json.RawMessage(`{"enabledMemoryTypes":["SESSION_SUMMARY"]}`)
+	})
+
+	var memErr error
+
+	lam := &fakeLambda{body: `{"response":{"functionResponse":{"responseBody":{"TEXT":{"body":"personalized"}}}}}`}
+	lam.call = func() {
+		_, _, memErr = l.rt.GetAgentMemory(ctx, agentID, "TSTALIASID", "m1", driver.MemoryTypeSessionSummary, driver.Page{})
+	}
+	l.rt.SetLambda(lam)
+
+	_, err := l.cp.CreateAgentActionGroup(ctx, badriver.ActionGroupConfig{
+		AgentID: agentID, AgentVersion: "DRAFT", Name: "profile",
+		Executor:       json.RawMessage(`{"lambda":"arn:aws:lambda:us-east-1:123456789012:function:profile"}`),
+		FunctionSchema: json.RawMessage(`{"functions":[{"name":"personalize"}]}`),
+	})
+	require.NoError(t, err)
+	l.prepare(t, agentID)
+
+	turn := func(text string) error {
+		done := make(chan error, 1)
+
+		go func() {
+			_, err := l.rt.InvokeAgent(ctx, driver.InvokeAgentInput{
+				AgentID: agentID, AgentAliasID: "TSTALIASID", SessionID: "s1", InputText: text, MemoryID: "m1",
+			})
+			done <- err
+		}()
+
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(5 * time.Second):
+			t.Fatal("the turn deadlocked: its Lambda read agent memory")
+
+			return nil
+		}
+	}
+
+	require.NoError(t, turn("hello"), "first turn stores the session")
+	require.NoError(t, turn("personalize my offers"), "second turn's Lambda reads memory")
+	require.NoError(t, memErr)
 }

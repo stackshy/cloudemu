@@ -65,6 +65,7 @@ type paramDef struct {
 	name     string
 	typ      string
 	required bool
+	in       string // an OpenAPI parameter's location (path, query, header)
 }
 
 // apiDef is one operation of an API-schema action group: its parameters and,
@@ -128,8 +129,6 @@ type executorJSON struct {
 	CustomControl string `json:"customControl"`
 }
 
-// apiSchemaJSON is the apiSchema union; only an inline JSON OpenAPI payload is
-// read (an S3 schema or a YAML payload exposes no APIs to the emulator).
 // toActionGroup converts a stored, enabled action group the runtime can call.
 // The AMAZON.* and ANTHROPIC.* built-in signatures are not callable actions.
 func toActionGroup(g *badriver.ActionGroup) (actionGroup, bool) {

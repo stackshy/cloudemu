@@ -69,3 +69,72 @@ func TestSDKInvokeInlineAgent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "PREPARED", string(prepared.AgentStatus))
 }
+
+// TestSDKInlineAgentRequestShapes sends an inline agent the request members
+// the other tests leave out: a Lambda action group with typed function
+// parameters, a knowledge base with a result count, a guardrail, and
+// inlineSessionState with an API-type returnControl result and history.
+func TestSDKInlineAgentRequestShapes(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+	kbID, _ := s.newKnowledgeBase(t, "faq", map[string]string{"refunds": "Refunds take 5 days."})
+
+	guardrailID := s.newGuardrail(t)
+
+	out, err := s.runtime.InvokeInlineAgent(ctx, &agentruntime.InvokeInlineAgentInput{
+		SessionId: aws.String("inline-shapes"), FoundationModel: aws.String(claudeModel), Instruction: aws.String(instruction),
+		InputText: aws.String("refunds"),
+		ActionGroups: []rttypes.AgentActionGroup{{
+			ActionGroupName:     aws.String("tools"),
+			ActionGroupExecutor: &rttypes.ActionGroupExecutorMemberLambda{Value: "arn:aws:lambda:us-east-1:123456789012:function:none"},
+			FunctionSchema: &rttypes.FunctionSchemaMemberFunctions{Value: []rttypes.FunctionDefinition{{
+				Name:       aws.String("lookup_order"),
+				Parameters: map[string]rttypes.ParameterDetail{"order_id": {Type: rttypes.ParameterTypeString, Required: aws.Bool(true)}},
+			}}},
+		}},
+		KnowledgeBases: []rttypes.KnowledgeBase{{
+			KnowledgeBaseId: aws.String(kbID), Description: aws.String("faq"),
+			RetrievalConfiguration: &rttypes.KnowledgeBaseRetrievalConfiguration{
+				VectorSearchConfiguration: &rttypes.KnowledgeBaseVectorSearchConfiguration{NumberOfResults: aws.Int32(1)},
+			},
+		}},
+		GuardrailConfiguration: &rttypes.GuardrailConfigurationWithArn{
+			GuardrailIdentifier: aws.String(guardrailID), GuardrailVersion: aws.String("DRAFT"),
+		},
+		InlineSessionState: &rttypes.InlineSessionState{
+			ConversationHistory: &rttypes.ConversationHistory{Messages: []rttypes.Message{
+				{Role: rttypes.ConversationRoleUser, Content: []rttypes.ContentBlock{&rttypes.ContentBlockMemberText{Value: "hi"}}},
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	text := ""
+	stream := out.GetStream()
+
+	for ev := range stream.Events() {
+		if c, ok := ev.(*rttypes.InlineAgentResponseStreamMemberChunk); ok {
+			text += string(c.Value.Bytes)
+		}
+	}
+
+	requireStreamDone(t, stream.Err())
+	_ = stream.Close()
+	assert.Contains(t, text, "Refunds take 5 days.")
+
+	_, err = s.runtime.InvokeInlineAgent(ctx, &agentruntime.InvokeInlineAgentInput{
+		SessionId: aws.String("inline-shapes"), FoundationModel: aws.String(claudeModel), Instruction: aws.String(instruction),
+		InlineSessionState: &rttypes.InlineSessionState{
+			InvocationId: aws.String("00000000-0000-4000-8000-000000000000"),
+			ReturnControlInvocationResults: []rttypes.InvocationResultMember{&rttypes.InvocationResultMemberMemberApiResult{
+				Value: rttypes.ApiResult{ActionGroup: aws.String("tools"), ApiPath: aws.String("/orders"), HttpMethod: aws.String("GET"),
+					ResponseBody: map[string]rttypes.ContentBody{"application/json": {Body: aws.String(`{"ok":true}`)}}},
+			}},
+		},
+	})
+	requireAPIError(t, err, "ValidationException", http.StatusBadRequest)
+
+	status, errType := s.raw(t, http.MethodPatch, "/tags/arn:aws:bedrock:us-east-1:123456789012:session/00000000-0000-4000-8000-000000000000", "")
+	assert.Equal(t, http.StatusMethodNotAllowed, status)
+	assert.Equal(t, "ValidationException", errType)
+}

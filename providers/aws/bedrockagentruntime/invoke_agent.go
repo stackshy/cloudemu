@@ -203,6 +203,35 @@ type turnLock struct {
 func (m *Mock) lockConversation(key string) func() {
 	m.turnLocksMu.Lock()
 
+	l := m.turnLockOf(key)
+	l.refs++
+	m.turnLocksMu.Unlock()
+
+	l.mu.Lock()
+
+	return m.releaseTurnLock(key, l)
+}
+
+// tryLockConversation takes the conversation's turn lock only when no turn
+// holds it, and reports whether it did. A caller that must not wait for a
+// turn in progress (or for the turn that called it) uses it.
+func (m *Mock) tryLockConversation(key string) (unlock func(), ok bool) {
+	m.turnLocksMu.Lock()
+	defer m.turnLocksMu.Unlock()
+
+	l := m.turnLockOf(key)
+	if !l.mu.TryLock() {
+		return nil, false
+	}
+
+	l.refs++
+
+	return m.releaseTurnLock(key, l), true
+}
+
+// turnLockOf returns the conversation's turn lock, adding it when there is
+// none. Callers hold turnLocksMu.
+func (m *Mock) turnLockOf(key string) *turnLock {
 	if m.turnLocks == nil {
 		m.turnLocks = map[string]*turnLock{}
 	}
@@ -213,11 +242,12 @@ func (m *Mock) lockConversation(key string) func() {
 		m.turnLocks[key] = l
 	}
 
-	l.refs++
-	m.turnLocksMu.Unlock()
+	return l
+}
 
-	l.mu.Lock()
-
+// releaseTurnLock returns the unlock of a held turn lock, which removes the
+// lock once no turn holds or waits for it.
+func (m *Mock) releaseTurnLock(key string, l *turnLock) func() {
 	return func() {
 		l.mu.Unlock()
 

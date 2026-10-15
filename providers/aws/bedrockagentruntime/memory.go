@@ -148,16 +148,36 @@ func (m *Mock) endIdleConversations(ctx context.Context, agentID, aliasID string
 			continue
 		}
 
-		unlock := m.lockConversation(key)
+		m.endIfIdle(cfg, key)
+	}
+}
 
-		if conv, ok := m.conversations.Get(key); ok {
-			c := cloneConversation(conv)
-			if m.idledOut(cfg, &c) {
-				m.endConversation(cfg, &c)
-				m.conversations.Delete(key)
-			}
+// endIfIdle ends one conversation when it is idle. A conversation with a turn
+// in progress is not idle, so it is skipped rather than waited for: waiting
+// would block behind a slow turn, and deadlock when that turn's action-group
+// Lambda is the one reading agent memory.
+func (m *Mock) endIfIdle(cfg *agentConfig, key string) {
+	conv, ok := m.conversations.Get(key)
+	if !ok {
+		return
+	}
+
+	if c := cloneConversation(conv); !m.idledOut(cfg, &c) {
+		return
+	}
+
+	unlock, locked := m.tryLockConversation(key)
+	if !locked {
+		return
+	}
+	defer unlock()
+
+	// Read again under the lock: a turn may have run since.
+	if conv, ok = m.conversations.Get(key); ok {
+		c := cloneConversation(conv)
+		if m.idledOut(cfg, &c) {
+			m.endConversation(cfg, &c)
+			m.conversations.Delete(key)
 		}
-
-		unlock()
 	}
 }

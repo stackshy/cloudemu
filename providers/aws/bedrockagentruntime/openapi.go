@@ -69,7 +69,8 @@ func parseOpenAPI(text string) []apiDef {
 			}
 
 			op, _ := doc.Paths[path][method].(map[string]any)
-			api := apiDef{path: path, method: strings.ToUpper(method), params: operationParams(op)}
+			params := mergeParams(operationParams(doc.Paths[path]), operationParams(op))
+			api := apiDef{path: path, method: strings.ToUpper(method), params: params}
 			api.bodyType, api.body = requestBodyProperties(op)
 			out = append(out, api)
 		}
@@ -78,7 +79,33 @@ func parseOpenAPI(text string) []apiDef {
 	return out
 }
 
-// operationParams reads an operation's parameters (path, query and header).
+// mergeParams adds a path item's parameters to an operation's, as OpenAPI
+// does: an operation parameter with the same name and location overrides the
+// path item's.
+func mergeParams(pathLevel, operation []paramDef) []paramDef {
+	out := append([]paramDef{}, operation...)
+
+	for _, p := range pathLevel {
+		overridden := false
+
+		for _, o := range operation {
+			if o.name == p.name && o.in == p.in {
+				overridden = true
+
+				break
+			}
+		}
+
+		if !overridden {
+			out = append(out, p)
+		}
+	}
+
+	return out
+}
+
+// operationParams reads the parameters of an operation or a path item (path,
+// query and header).
 func operationParams(op map[string]any) []paramDef {
 	list, _ := op["parameters"].([]any)
 	out := make([]paramDef, 0, len(list))
@@ -92,7 +119,8 @@ func operationParams(op map[string]any) []paramDef {
 		}
 
 		required, _ := p["required"].(bool)
-		out = append(out, paramDef{name: name, typ: schemaType(p["schema"]), required: required})
+		in, _ := p["in"].(string)
+		out = append(out, paramDef{name: name, typ: schemaType(p["schema"]), required: required, in: in})
 	}
 
 	return out
