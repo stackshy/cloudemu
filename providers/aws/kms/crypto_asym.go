@@ -98,7 +98,7 @@ func (m *Mock) GetPublicKey(_ context.Context, in driver.GetPublicKeyInput) (*dr
 	kd.mu.RLock()
 	defer kd.mu.RUnlock()
 
-	if uerr := requireUsable(kd); uerr != nil {
+	if uerr := m.requireUsable(kd); uerr != nil {
 		return nil, uerr
 	}
 
@@ -119,7 +119,95 @@ func (m *Mock) GetPublicKey(_ context.Context, in driver.GetPublicKeyInput) (*dr
 		KeyUsage:             kd.meta.KeyUsage,
 		EncryptionAlgorithms: driver.EncryptionAlgorithmsFor(kd.meta.KeySpec, kd.meta.KeyUsage),
 		SigningAlgorithms:    driver.SigningAlgorithmsFor(kd.meta.KeySpec, kd.meta.KeyUsage),
+
+		KeyAgreementAlgorithms: driver.KeyAgreementAlgorithmsFor(kd.meta.KeySpec, kd.meta.KeyUsage),
 	}, nil
+}
+
+// DeriveSharedSecret performs ECDH between the private half of a KEY_AGREEMENT
+// ECC key and the peer's public key (DER SubjectPublicKeyInfo on the same
+// curve), returning the raw shared secret: the x-coordinate of the shared
+// point, exactly what the peer computes locally with its own private key and
+// this key's public key (GetPublicKey).
+func (m *Mock) DeriveSharedSecret(
+	_ context.Context, in driver.DeriveSharedSecretInput,
+) (*driver.DeriveSharedSecretOutput, error) {
+	if in.KeyAgreementAlgorithm != driver.KeyAgreementECDH {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"1 validation error detected: Value '%s' at 'keyAgreementAlgorithm' failed to satisfy constraint: "+
+				"Member must satisfy enum value set: [ECDH]", in.KeyAgreementAlgorithm)
+	}
+
+	if len(in.PublicKey) == 0 {
+		return nil, errors.New(errors.InvalidArgument, "PublicKey is required")
+	}
+
+	kd, err := m.getKey(in.KeyID)
+	if err != nil {
+		return nil, err
+	}
+
+	kd.mu.RLock()
+	defer kd.mu.RUnlock()
+
+	if uerr := m.requireUsable(kd); uerr != nil {
+		return nil, uerr
+	}
+
+	if kd.meta.KeyUsage != driver.UsageKeyAgreement {
+		return nil, driver.ErrInvalidKeyUsage
+	}
+
+	priv, ok := kd.privKey.(*ecdsa.PrivateKey)
+	if !ok {
+		return nil, driver.ErrInvalidKeyUsage
+	}
+
+	secret, err := ecdhSharedSecret(priv, in.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return &driver.DeriveSharedSecretOutput{
+		KeyID:                 kd.meta.KeyID,
+		SharedSecret:          secret,
+		KeyAgreementAlgorithm: driver.KeyAgreementECDH,
+		KeyOrigin:             kd.meta.Origin,
+	}, nil
+}
+
+// ecdhSharedSecret computes the ECDH shared secret of priv and a peer public
+// key given as DER SubjectPublicKeyInfo. The peer key must be an EC key on the
+// same curve as priv.
+func ecdhSharedSecret(priv *ecdsa.PrivateKey, peerDER []byte) ([]byte, error) {
+	parsed, err := x509.ParsePKIXPublicKey(peerDER)
+	if err != nil {
+		return nil, errors.New(errors.InvalidArgument,
+			"PublicKey must be a DER-encoded X.509 public key (SubjectPublicKeyInfo, RFC 5280)")
+	}
+
+	peer, ok := parsed.(*ecdsa.PublicKey)
+	if !ok || peer.Curve != priv.Curve {
+		return nil, errors.New(errors.InvalidArgument,
+			"PublicKey must be an elliptic curve public key on the same curve as the KMS key")
+	}
+
+	ecdhPriv, err := priv.ECDH()
+	if err != nil {
+		return nil, errors.Newf(errors.Internal, "convert private key: %v", err)
+	}
+
+	ecdhPeer, err := peer.ECDH()
+	if err != nil {
+		return nil, errors.New(errors.InvalidArgument, "PublicKey is not a valid point on the key's curve")
+	}
+
+	secret, err := ecdhPriv.ECDH(ecdhPeer)
+	if err != nil {
+		return nil, errors.Newf(errors.InvalidArgument, "derive shared secret: %v", err)
+	}
+
+	return secret, nil
 }
 
 func publicKeyOf(priv crypto.PrivateKey) crypto.PublicKey {
@@ -187,7 +275,7 @@ func (m *Mock) Sign(_ context.Context, in driver.SignInput) (*driver.SignOutput,
 	kd.mu.RLock()
 	defer kd.mu.RUnlock()
 
-	if uerr := requireUsable(kd); uerr != nil {
+	if uerr := m.requireUsable(kd); uerr != nil {
 		return nil, uerr
 	}
 
@@ -241,7 +329,7 @@ func (m *Mock) Verify(_ context.Context, in driver.VerifyInput) (*driver.VerifyO
 	kd.mu.RLock()
 	defer kd.mu.RUnlock()
 
-	if uerr := requireUsable(kd); uerr != nil {
+	if uerr := m.requireUsable(kd); uerr != nil {
 		return nil, uerr
 	}
 
@@ -294,7 +382,7 @@ func (m *Mock) GenerateMac(_ context.Context, in driver.GenerateMacInput) (*driv
 	kd.mu.RLock()
 	defer kd.mu.RUnlock()
 
-	if uerr := requireUsable(kd); uerr != nil {
+	if uerr := m.requireUsable(kd); uerr != nil {
 		return nil, uerr
 	}
 
@@ -322,7 +410,7 @@ func (m *Mock) VerifyMac(_ context.Context, in driver.VerifyMacInput) (*driver.V
 	kd.mu.RLock()
 	defer kd.mu.RUnlock()
 
-	if uerr := requireUsable(kd); uerr != nil {
+	if uerr := m.requireUsable(kd); uerr != nil {
 		return nil, uerr
 	}
 

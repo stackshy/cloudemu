@@ -94,6 +94,21 @@ type getPublicKeyResponse struct {
 	KeyUsage              string   `json:"KeyUsage"`
 	EncryptionAlgorithms  []string `json:"EncryptionAlgorithms,omitempty"`
 	SigningAlgorithms     []string `json:"SigningAlgorithms,omitempty"`
+
+	KeyAgreementAlgorithms []string `json:"KeyAgreementAlgorithms,omitempty"`
+}
+
+type deriveSharedSecretRequest struct {
+	KeyID                 string `json:"KeyId"`
+	KeyAgreementAlgorithm string `json:"KeyAgreementAlgorithm"`
+	PublicKey             []byte `json:"PublicKey"`
+}
+
+type deriveSharedSecretResponse struct {
+	KeyID                 string `json:"KeyId"`
+	SharedSecret          []byte `json:"SharedSecret"`
+	KeyAgreementAlgorithm string `json:"KeyAgreementAlgorithm"`
+	KeyOrigin             string `json:"KeyOrigin"`
 }
 
 type signRequest struct {

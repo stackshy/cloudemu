@@ -59,6 +59,7 @@ func New(k kmsdriver.KMS) *Handler {
 		"Verify":                              h.verify,
 		"GenerateMac":                         h.generateMac,
 		"VerifyMac":                           h.verifyMac,
+		"DeriveSharedSecret":                  h.deriveSharedSecret,
 
 		"CreateGrant":          h.createGrant,
 		"ListGrants":           h.listGrants,
@@ -79,6 +80,13 @@ func New(k kmsdriver.KMS) *Handler {
 		"DeleteImportedKeyMaterial": h.deleteImportedKeyMaterial,
 		"ReplicateKey":              h.replicateKey,
 		"UpdatePrimaryRegion":       h.updatePrimaryRegion,
+
+		"CreateCustomKeyStore":     h.createCustomKeyStore,
+		"DescribeCustomKeyStores":  h.describeCustomKeyStores,
+		"UpdateCustomKeyStore":     h.updateCustomKeyStore,
+		"DeleteCustomKeyStore":     h.deleteCustomKeyStore,
+		"ConnectCustomKeyStore":    h.connectCustomKeyStore,
+		"DisconnectCustomKeyStore": h.disconnectCustomKeyStore,
 	}
 
 	return h
@@ -157,6 +165,18 @@ func sentinelException(err error) string {
 // their real typed exceptions rather than a generic ValidationException.
 func writeErr(w http.ResponseWriter, err error) {
 	msg := cerrors.Message(err)
+
+	var apiErr *kmsdriver.APIError
+	if errors.As(err, &apiErr) {
+		status := http.StatusBadRequest
+		if cerrors.GetCode(err) == cerrors.Internal {
+			status = http.StatusInternalServerError
+		}
+
+		wire.WriteJSONError(w, status, apiErr.Exception, msg)
+
+		return
+	}
 
 	if exc := sentinelException(err); exc != "" {
 		wire.WriteJSONError(w, http.StatusBadRequest, exc, msg)

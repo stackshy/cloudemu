@@ -108,7 +108,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `keyspaces` | [Keyspaces](./aws/keyspaces.md) | - | - | - | 18 |
 | `kinesis` | [Kinesis](./aws/kinesis.md) | - | - | - | 39 |
 | `kinesisvideo` | [KinesisVideo](./aws/kinesisvideo.md) | - | - | - | 17 |
-| `kms` | [KMS](./aws/kms.md) | - | - | - | 46 |
+| `kms` | [KMS](./aws/kms.md) | - | - | - | 53 |
 | `kms-gcp` | - | - | [KMS](./gcp/kms.md) | - | 22 |
 | `kusto` | - | [Kusto](./azure/kusto.md) | - | - | 14 |
 | `loadbalancer` | [ELB](./aws/elb.md) | [LB](./azure/lb.md) | [LB](./gcp/lb.md) | - | 19 |

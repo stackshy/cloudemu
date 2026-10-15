@@ -148,9 +148,16 @@ func symmetricGCM(material []byte) (cipher.AEAD, error) {
 // requireUsable reports whether a key may be used for a cryptographic
 // operation, returning the sentinel that maps to the precise KMS exception:
 // Disabled → DisabledException, any other non-Enabled state → KMSInvalidState.
-func requireUsable(kd *keyData) error {
+func (m *Mock) requireUsable(kd *keyData) error {
 	switch kd.meta.KeyState {
 	case driver.StateEnabled:
+		// A key in a custom key store is only usable while its store is
+		// CONNECTED; real KMS fails crypto on a disconnected store's keys with
+		// KMSInvalidStateException.
+		if kd.meta.CustomKeyStoreID != "" && !m.customKeyStoreConnected(kd.meta.CustomKeyStoreID) {
+			return driver.ErrKeyInvalidState
+		}
+
 		return nil
 	case driver.StateDisabled:
 		return driver.ErrKeyDisabled
@@ -170,7 +177,7 @@ func (m *Mock) Encrypt(_ context.Context, in driver.EncryptInput) (*driver.Encry
 	kd.mu.RLock()
 	defer kd.mu.RUnlock()
 
-	if uerr := requireUsable(kd); uerr != nil {
+	if uerr := m.requireUsable(kd); uerr != nil {
 		return nil, uerr
 	}
 
@@ -290,7 +297,7 @@ func (m *Mock) decryptWrapped(in driver.DecryptInput) (out *driver.DecryptOutput
 	kd.mu.RLock()
 	defer kd.mu.RUnlock()
 
-	if uerr := requireUsable(kd); uerr != nil {
+	if uerr := m.requireUsable(kd); uerr != nil {
 		return nil, true, uerr
 	}
 
@@ -318,7 +325,7 @@ func (m *Mock) decryptRawAsymmetric(in driver.DecryptInput) (*driver.DecryptOutp
 	kd.mu.RLock()
 	defer kd.mu.RUnlock()
 
-	if uerr := requireUsable(kd); uerr != nil {
+	if uerr := m.requireUsable(kd); uerr != nil {
 		return nil, uerr
 	}
 

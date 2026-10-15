@@ -35,9 +35,23 @@ func (m *Mock) CreateKey(ctx context.Context, in driver.CreateKeyInput) (*driver
 		return nil, err
 	}
 
+	if err := validateTags(in.Tags); err != nil {
+		return nil, err
+	}
+
 	origin := in.Origin
 	if origin == "" {
 		origin = driver.OriginAWSKMS
+	}
+
+	// Keys placed in a custom key store are checked (and inserted) under the
+	// store lock, so a concurrent DeleteCustomKeyStore can't miss them.
+	m.cksMu.Lock()
+	defer m.cksMu.Unlock()
+
+	store, err := m.customKeyStoreForNewKey(&in, origin, spec, usage)
+	if err != nil {
+		return nil, err
 	}
 
 	id := newKeyID(in.MultiRegion)
@@ -62,9 +76,7 @@ func (m *Mock) CreateKey(ctx context.Context, in driver.CreateKeyInput) (*driver
 		policies: map[string]string{driver.DefaultPolicyName: defaultKeyPolicy(in.Policy, m.opts.AccountID)},
 	}
 
-	kd.meta.EncryptionAlgorithms = driver.EncryptionAlgorithmsFor(spec, usage)
-	kd.meta.SigningAlgorithms = driver.SigningAlgorithmsFor(spec, usage)
-	kd.meta.MacAlgorithms = driver.MacAlgorithmsFor(spec, usage)
+	setDerivedMetadata(&kd.meta, store, in.XksKeyID)
 
 	if in.MultiRegion {
 		kd.meta.MultiRegionKeyType = "PRIMARY"
@@ -80,6 +92,21 @@ func (m *Mock) CreateKey(ctx context.Context, in driver.CreateKeyInput) (*driver
 	out := kd.meta
 
 	return &out, nil
+}
+
+// setDerivedMetadata fills the algorithm lists KMS advertises for the key's
+// spec+usage and, for a key in a custom key store, its store placement.
+func setDerivedMetadata(md *driver.KeyMetadata, store *driver.CustomKeyStore, xksKeyID string) {
+	md.EncryptionAlgorithms = driver.EncryptionAlgorithmsFor(md.KeySpec, md.KeyUsage)
+	md.SigningAlgorithms = driver.SigningAlgorithmsFor(md.KeySpec, md.KeyUsage)
+	md.MacAlgorithms = driver.MacAlgorithmsFor(md.KeySpec, md.KeyUsage)
+	md.KeyAgreementAlgorithms = driver.KeyAgreementAlgorithmsFor(md.KeySpec, md.KeyUsage)
+
+	if store != nil {
+		md.CustomKeyStoreID = store.CustomKeyStoreID
+		md.CloudHsmClusterID = store.CloudHsmClusterID
+		md.XksKeyID = xksKeyID
+	}
 }
 
 // populateKeyMaterial fills in a new key's material based on its origin and
@@ -154,6 +181,8 @@ func validateSpec(spec string) error {
 }
 
 // validateSpecUsage rejects spec/usage combinations KMS does not allow.
+//
+//nolint:gocyclo // one case per key-spec family in the KMS key spec reference
 func validateSpecUsage(spec, usage string) error {
 	switch {
 	case spec == driver.SpecSymmetricDefault && usage != driver.UsageEncryptDecrypt:
@@ -165,9 +194,9 @@ func validateSpecUsage(spec, usage string) error {
 	case strings.HasPrefix(spec, "RSA_") && usage != driver.UsageEncryptDecrypt && usage != driver.UsageSignVerify:
 		return errors.Newf(errors.InvalidArgument,
 			"RSA keys support ENCRYPT_DECRYPT or SIGN_VERIFY, got %q", usage)
-	case strings.HasPrefix(spec, "ECC_") && usage != driver.UsageSignVerify:
+	case strings.HasPrefix(spec, "ECC_") && usage != driver.UsageSignVerify && usage != driver.UsageKeyAgreement:
 		return errors.Newf(errors.InvalidArgument,
-			"ECC keys only support SIGN_VERIFY, got %q", usage)
+			"ECC NIST keys support SIGN_VERIFY or KEY_AGREEMENT, got %q", usage)
 	default:
 		return nil
 	}

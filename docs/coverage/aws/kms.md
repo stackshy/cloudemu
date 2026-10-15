@@ -3,20 +3,26 @@
 
 AWS's `kms` service · portable interface `driver.KMS` · [AWS index](./README.md)
 
-## Operations (46)
+## Operations (53)
 
 | Operation | Description |
 | --- | --- |
 | `CancelKeyDeletion` |  |
+| `ConnectCustomKeyStore` |  |
 | `CreateAlias` | Aliases. |
+| `CreateCustomKeyStore` |  |
 | `CreateGrant` | Grants. |
 | `CreateKey` | Key lifecycle. |
 | `Decrypt` |  |
 | `DeleteAlias` |  |
+| `DeleteCustomKeyStore` |  |
 | `DeleteImportedKeyMaterial` |  |
+| `DeriveSharedSecret` |  |
+| `DescribeCustomKeyStores` | DescribeCustomKeyStores returns every store, or only the one matching id |
 | `DescribeKey` |  |
 | `DisableKey` |  |
 | `DisableKeyRotation` |  |
+| `DisconnectCustomKeyStore` |  |
 | `EnableKey` |  |
 | `EnableKeyRotation` | Rotation. |
 | `Encrypt` |  |
@@ -49,6 +55,7 @@ AWS's `kms` service · portable interface `driver.KMS` · [AWS index](./README.m
 | `TagResource` | Tags. |
 | `UntagResource` |  |
 | `UpdateAlias` |  |
+| `UpdateCustomKeyStore` |  |
 | `UpdateKeyDescription` |  |
 | `UpdatePrimaryRegion` |  |
 | `Verify` |  |
@@ -65,6 +72,7 @@ Crypto is the cryptographic surface of KMS. It is embedded in the KMS
 | Operation | Description |
 | --- | --- |
 | `Decrypt` |  |
+| `DeriveSharedSecret` |  |
 | `Encrypt` |  |
 | `GenerateDataKey` |  |
 | `GenerateDataKeyPair` |  |
@@ -77,6 +85,19 @@ Crypto is the cryptographic surface of KMS. It is embedded in the KMS
 | `Sign` |  |
 | `Verify` |  |
 | `VerifyMac` |  |
+
+### CustomKeyStores
+
+CustomKeyStores is the custom key store surface of KMS.
+
+| Operation | Description |
+| --- | --- |
+| `ConnectCustomKeyStore` |  |
+| `CreateCustomKeyStore` |  |
+| `DeleteCustomKeyStore` |  |
+| `DescribeCustomKeyStores` | DescribeCustomKeyStores returns every store, or only the one matching id |
+| `DisconnectCustomKeyStore` |  |
+| `UpdateCustomKeyStore` |  |
 
 ### KeyImport
 
@@ -112,4 +133,6 @@ Management is the grants/rotation/policy surface of KMS.
 
 ## Not in scope
 
-_Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
+- Custom key stores are control-plane only. There is no CloudHSM cluster or external key store proxy to reach, so `ConnectCustomKeyStore` moves a store straight to `CONNECTED` and never reports `CONNECTING`, `FAILED` or a `ConnectionErrorCode`, and `CreateCustomKeyStore` does not contact a `PUBLIC_ENDPOINT` proxy. Cluster existence and activity, cluster relatedness (`CloudHsmClusterNotRelatedException`), the trust anchor, the `kmsuser` password and the proxy credentials are not checked. Keys in a store use locally generated key material, so crypto works the same as for `AWS_KMS` keys while the store is connected and fails with `KMSInvalidStateException` while it is not.
+- `DeriveSharedSecret` returns the raw ECDH secret only. The Nitro Enclave / NitroTPM `Recipient` attestation flow (`CiphertextForRecipient`), `DryRun` and grant tokens are not emulated.
+- SM2 (China Regions only), `ECC_SECG_P256K1`, ML-DSA and `ECC_NIST_EDWARDS25519` key specs are not supported, so `KEY_AGREEMENT` keys are limited to `ECC_NIST_P256`, `ECC_NIST_P384` and `ECC_NIST_P521`.

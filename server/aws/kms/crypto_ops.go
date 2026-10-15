@@ -120,6 +120,7 @@ func (h *Handler) generateDataKeyPair(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // templated KMS wire handler; the decode/call/respond shape is intrinsic
 func (h *Handler) generateDataKeyPairWithoutPlaintext(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *generateDataKeyPairRequest) (any, error) {
 		out, err := h.kms.GenerateDataKeyPairWithoutPlaintext(ctx, kmsdriver.GenerateDataKeyPairInput{
@@ -164,6 +165,25 @@ func (h *Handler) getPublicKey(w http.ResponseWriter, r *http.Request) {
 			KeyUsage:              out.KeyUsage,
 			EncryptionAlgorithms:  out.EncryptionAlgorithms,
 			SigningAlgorithms:     out.SigningAlgorithms,
+
+			KeyAgreementAlgorithms: out.KeyAgreementAlgorithms,
+		}, nil
+	})
+}
+
+//nolint:dupl // templated KMS wire handler; the decode/call/respond shape is intrinsic
+func (h *Handler) deriveSharedSecret(w http.ResponseWriter, r *http.Request) {
+	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *deriveSharedSecretRequest) (any, error) {
+		out, err := h.kms.DeriveSharedSecret(ctx, kmsdriver.DeriveSharedSecretInput{
+			KeyID: req.KeyID, KeyAgreementAlgorithm: req.KeyAgreementAlgorithm, PublicKey: req.PublicKey,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		return deriveSharedSecretResponse{
+			KeyID: out.KeyID, SharedSecret: out.SharedSecret,
+			KeyAgreementAlgorithm: out.KeyAgreementAlgorithm, KeyOrigin: out.KeyOrigin,
 		}, nil
 	})
 }

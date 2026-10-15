@@ -27,6 +27,9 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request) {
 		MultiRegion: req.MultiRegion,
 		Policy:      req.Policy,
 		Tags:        tagsToMap(req.Tags),
+
+		CustomKeyStoreID: req.CustomKeyStoreID,
+		XksKeyID:         req.XksKeyID,
 	})
 	if err != nil {
 		writeErr(w, err)

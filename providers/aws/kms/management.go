@@ -42,6 +42,16 @@ func (m *Mock) CreateGrant(_ context.Context, in driver.CreateGrantInput) (strin
 		return "", "", errors.New(errors.InvalidArgument, "GranteePrincipal is required")
 	}
 
+	if err := validateGrantPrincipal("GranteePrincipal", in.GranteePrincipal); err != nil {
+		return "", "", err
+	}
+
+	if in.RetiringPrincipal != "" {
+		if err := validateGrantPrincipal("RetiringPrincipal", in.RetiringPrincipal); err != nil {
+			return "", "", err
+		}
+	}
+
 	if len(in.Operations) == 0 {
 		return "", "", errors.New(errors.InvalidArgument, "at least one grant operation is required")
 	}
@@ -165,7 +175,7 @@ func (m *Mock) EnableKeyRotation(_ context.Context, keyID string, rotationPeriod
 	}
 
 	return m.mutateKey(keyID, func(kd *keyData) error {
-		if kd.meta.KeySpec != driver.SpecSymmetricDefault || kd.meta.Origin == driver.OriginExternal {
+		if kd.meta.KeySpec != driver.SpecSymmetricDefault || kd.meta.Origin != driver.OriginAWSKMS {
 			return driver.ErrUnsupportedOperation
 		}
 
@@ -173,7 +183,7 @@ func (m *Mock) EnableKeyRotation(_ context.Context, keyID string, rotationPeriod
 		// state: a disabled key reports DisabledException and a pending-deletion
 		// key reports KMSInvalidStateException, matching real KMS's key-state
 		// table. Real KMS silently no-ops none of these. It rejects them.
-		if err := requireUsable(kd); err != nil {
+		if err := m.requireUsable(kd); err != nil {
 			return err
 		}
 
@@ -187,11 +197,11 @@ func (m *Mock) EnableKeyRotation(_ context.Context, keyID string, rotationPeriod
 // DisableKeyRotation turns off automatic rotation.
 func (m *Mock) DisableKeyRotation(_ context.Context, keyID string) error {
 	return m.mutateKey(keyID, func(kd *keyData) error {
-		if kd.meta.KeySpec != driver.SpecSymmetricDefault || kd.meta.Origin == driver.OriginExternal {
+		if kd.meta.KeySpec != driver.SpecSymmetricDefault || kd.meta.Origin != driver.OriginAWSKMS {
 			return driver.ErrUnsupportedOperation
 		}
 
-		if err := requireUsable(kd); err != nil {
+		if err := m.requireUsable(kd); err != nil {
 			return err
 		}
 
@@ -246,11 +256,11 @@ func (m *Mock) ListKeyRotations(_ context.Context, keyID string) ([]driver.Rotat
 // RotateKeyOnDemand rotates the key material now and records the rotation.
 func (m *Mock) RotateKeyOnDemand(_ context.Context, keyID string) error {
 	return m.mutateKey(keyID, func(kd *keyData) error {
-		if kd.meta.KeySpec != driver.SpecSymmetricDefault || kd.meta.Origin == driver.OriginExternal {
+		if kd.meta.KeySpec != driver.SpecSymmetricDefault || kd.meta.Origin != driver.OriginAWSKMS {
 			return driver.ErrUnsupportedOperation
 		}
 
-		if err := requireUsable(kd); err != nil {
+		if err := m.requireUsable(kd); err != nil {
 			return err
 		}
 
