@@ -48,3 +48,11 @@ type AgentCollaborators interface {
 	DisassociateAgentCollaborator(ctx context.Context, agentID, version, collaboratorID string) error
 	ListAgentCollaborators(ctx context.Context, agentID, version string, page Page) ([]AgentCollaborator, string, error)
 }
+
+// AgentInUseDeleter deletes an agent the way DeleteAgent's
+// skipResourceInUseCheck asks: an agent whose alias another agent's
+// collaborator uses is in use, and is kept (ConflictException) unless
+// skipResourceInUseCheck is set. Plain DeleteAgent deletes without the check.
+type AgentInUseDeleter interface {
+	DeleteAgentChecked(ctx context.Context, agentID string, skipResourceInUseCheck bool) (string, error)
+}

@@ -2,9 +2,12 @@ package bedrockagent
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"slices"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
@@ -233,8 +236,41 @@ func validateActionGroup(cfg driver.ActionGroupConfig) error {
 	v.clientToken(cfg.ClientToken)
 	v.enum("parentActionGroupSignature", cfg.ParentActionGroupSignature, actionGroupSignatures...)
 	v.enum("actionGroupState", cfg.State, driver.ActionGroupEnabled, driver.ActionGroupDisabled)
+	v.actionGroupSchemas(cfg.APISchema, cfg.FunctionSchema)
 
 	return v.err()
+}
+
+// actionGroupSchemas checks that an action group defines its actions one way
+// (apiSchema or functionSchema, not both) and that an inline apiSchema
+// payload is an OpenAPI document in JSON or YAML.
+func (v *violations) actionGroupSchemas(apiSchema, functionSchema json.RawMessage) {
+	hasAPI, hasFunctions := present(apiSchema), present(functionSchema)
+	if hasAPI && hasFunctions {
+		v.addf("An action group takes either apiSchema or functionSchema, not both")
+	}
+
+	if !hasAPI {
+		return
+	}
+
+	var schema struct {
+		Payload *string `json:"payload"`
+	}
+
+	if json.Unmarshal(apiSchema, &schema) != nil || schema.Payload == nil {
+		return
+	}
+
+	var doc map[string]any
+	if json.Unmarshal([]byte(*schema.Payload), &doc) != nil && yaml.Unmarshal([]byte(*schema.Payload), &doc) != nil || len(doc) == 0 {
+		v.addf("apiSchema.payload must be an OpenAPI document in JSON or YAML")
+	}
+}
+
+// present reports whether a JSON member was sent with a value.
+func present(raw json.RawMessage) bool {
+	return len(raw) > 0 && string(raw) != "null"
 }
 
 // cloneActionGroup returns a value copy that shares no map or RawMessage with

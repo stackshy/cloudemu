@@ -80,7 +80,11 @@ func (m *Mock) ListPrompts(_ context.Context, page driver.Page) ([]driver.Prompt
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (m *Mock) UpdatePrompt(_ context.Context, id string, cfg driver.PromptConfig) (*driver.Prompt, error) {
-	id, _ = splitPromptIdentifier(id)
+	id, version := splitPromptIdentifier(id)
+	if version != "" {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"Prompt version %s of %s can't be updated: versions are immutable. Update the prompt's DRAFT instead.", version, id)
+	}
 
 	if err := validatePrompt(cfg); err != nil {
 		return nil, err
@@ -112,9 +116,13 @@ func (m *Mock) UpdatePrompt(_ context.Context, id string, cfg driver.PromptConfi
 }
 
 // DeletePrompt deletes a prompt, every version of it and their tags, and
-// returns its identifier.
-func (m *Mock) DeletePrompt(_ context.Context, id string) (string, error) {
-	id, _ = splitPromptIdentifier(id)
+// returns its identifier. A version-qualified identifier (prompt/ID:N)
+// deletes only that version.
+func (m *Mock) DeletePrompt(ctx context.Context, id string) (string, error) {
+	id, version := splitPromptIdentifier(id)
+	if version != "" {
+		return id, m.DeletePromptVersion(ctx, id, version)
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()

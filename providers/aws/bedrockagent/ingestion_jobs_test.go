@@ -67,6 +67,13 @@ func TestIngestionJobsSortByStatus(t *testing.T) {
 	running, err := m.StartIngestionJob(ctx, kb.ID, dsID, "")
 	require.NoError(t, err)
 
+	_, err = m.StartIngestionJob(ctx, kb.ID, dsID, "")
+	assert.True(t, cerrors.IsFailedPrecondition(err), "one running job per data source")
+
+	other := mustDataSource(t, m, kb.ID, "S3")
+	_, err = m.StartIngestionJob(ctx, kb.ID, other, "")
+	require.NoError(t, err, "another data source can run its own job")
+
 	jobs, _, err := m.ListIngestionJobs(ctx, driver.ListIngestionJobsInput{
 		KnowledgeBaseID: kb.ID, DataSourceID: dsID, SortBy: &driver.IngestionJobSort{Attribute: "STATUS", Order: "ASCENDING"},
 	})

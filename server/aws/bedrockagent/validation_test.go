@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsba "github.com/aws/aws-sdk-go-v2/service/bedrockagent"
 	batypes "github.com/aws/aws-sdk-go-v2/service/bedrockagent/types"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	providerba "github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
@@ -148,5 +149,63 @@ func TestListBoundsValidation(t *testing.T) {
 	_, err = client.ListPrompts(ctx, &awsba.ListPromptsInput{NextToken: aws.String("not-a-token")})
 	if !errors.As(err, &ve) {
 		t.Fatalf("bad nextToken: expected ValidationException, got %T: %v", err, err)
+	}
+}
+
+// TestRawRequestsTheSDKNeverSends covers what only a hand-written request
+// reaches: a method a path does not take, an unknown sub-path and a body
+// that is not JSON.
+func TestRawRequestsTheSDKNeverSends(t *testing.T) {
+	h := serverba.New(providerba.New(config.NewOptions()))
+
+	cases := []struct {
+		method, path, body, errType string
+		status                      int
+	}{
+		{http.MethodPatch, "/agents/", "", "ValidationException", http.StatusMethodNotAllowed},
+		{http.MethodPatch, "/knowledgebases/", "", "ValidationException", http.StatusMethodNotAllowed},
+		{http.MethodPatch, "/flows/", "", "ValidationException", http.StatusMethodNotAllowed},
+		{http.MethodPut, "/agents/", "{", "ValidationException", http.StatusBadRequest},
+		{http.MethodPut, "/knowledgebases/", "{", "ValidationException", http.StatusBadRequest},
+		{http.MethodPost, "/flows/", "{", "ValidationException", http.StatusBadRequest},
+	}
+
+	for _, c := range cases {
+		status, errType, msg := rawCall(t, h, c.method, c.path, c.body)
+		assert.Equal(t, c.status, status, "%s %s: %s", c.method, c.path, msg)
+		assert.Equal(t, c.errType, errType, "%s %s", c.method, c.path)
+	}
+
+	status, _, _ := rawCall(t, h, http.MethodGet, "/agents/ABCDEFGHIJ/agentversions/DRAFT/nothing/", "")
+	assert.Equal(t, http.StatusNotFound, status, "an unknown sub-path")
+}
+
+// TestRawWrongMethodsAndBodiesOnEveryRoute sends each route a method it does
+// not take and each write route a body that is not JSON: every one is a
+// client error, never a 200 or a 5xx.
+func TestRawWrongMethodsAndBodiesOnEveryRoute(t *testing.T) {
+	h := serverba.New(providerba.New(config.NewOptions()))
+	a, kb, ds, f, p := "/agents/ABCDEFGHIJ", "/knowledgebases/ABCDEFGHIJ", "/datasources/ABCDEFGHIJ", "/flows/ABCDEFGHIJ", "/prompts/ABCDEFGHIJ"
+	routes := []string{
+		a + "/", a + "/agentaliases/", a + "/agentaliases/ABCDEFGHIJ/", a + "/agentversions/", a + "/agentversions/1/",
+		a + "/agentversions/DRAFT/actiongroups/", a + "/agentversions/DRAFT/actiongroups/ABCDEFGHIJ/",
+		a + "/agentversions/DRAFT/knowledgebases/", a + "/agentversions/DRAFT/knowledgebases/ABCDEFGHIJ/",
+		a + "/agentversions/DRAFT/agentcollaborators/", a + "/agentversions/DRAFT/agentcollaborators/ABCDEFGHIJ/",
+		kb, kb + "/datasources/", kb + ds, kb + ds + "/ingestionjobs/", kb + ds + "/ingestionjobs/ABCDEFGHIJ",
+		kb + ds + "/documents", kb + ds + "/documents/getDocuments", kb + ds + "/documents/deleteDocuments",
+		"/prompts/", p + "/", p + "/versions",
+		f + "/", f + "/versions/", f + "/versions/1/", f + "/aliases", f + "/aliases/ABCDEFGHIJ",
+		"/tags/arn:aws:bedrock:us-east-1:123456789012:agent/ABCDEFGHIJ",
+		"/resourcepolicy/arn:aws:bedrock:us-east-1:123456789012:knowledge-base/ABCDEFGHIJ",
+	}
+
+	for _, path := range routes {
+		status, _, msg := rawCall(t, h, http.MethodPatch, path, "")
+		assert.True(t, status >= 400 && status < 500, "PATCH %s: %d %s", path, status, msg)
+
+		for _, method := range []string{http.MethodPut, http.MethodPost} {
+			status, _, msg = rawCall(t, h, method, path, "{")
+			assert.True(t, status >= 400 && status < 500, "%s %s with a broken body: %d %s", method, path, status, msg)
+		}
 	}
 }

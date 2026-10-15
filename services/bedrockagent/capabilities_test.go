@@ -184,6 +184,11 @@ func TestServiceEveryCapabilityMethod(t *testing.T) {
 		"DisassociateAgentCollaborator": func(svc *BedrockAgent) error {
 			return svc.DisassociateAgentCollaborator(ctx, "MISSING000", "MISSING000", "MISSING000")
 		},
+		"DeleteAgentChecked": func(svc *BedrockAgent) error {
+			_, err := svc.DeleteAgentChecked(ctx, "MISSING000", false)
+
+			return err
+		},
 		"ListAgentCollaborators": func(svc *BedrockAgent) error {
 			_, _, err := svc.ListAgentCollaborators(ctx, "MISSING000", "MISSING000", driver.Page{})
 

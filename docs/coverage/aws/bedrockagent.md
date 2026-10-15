@@ -68,6 +68,14 @@ AgentCollaborators manages the collaborator agents of a supervisor agent.
 | `ListAgentCollaborators` |  |
 | `UpdateAgentCollaborator` |  |
 
+### AgentInUseDeleter
+
+AgentInUseDeleter deletes an agent the way DeleteAgent's
+
+| Operation | Description |
+| --- | --- |
+| `DeleteAgentChecked` |  |
+
 ### AgentKnowledgeBases
 
 AgentKnowledgeBases associates knowledge bases with an agent version.
@@ -162,7 +170,7 @@ ResourcePolicies attaches resource-based policies to knowledge bases.
 
 ## Not in scope
 
-- Agents, aliases, versions, flows, knowledge bases and data sources are created directly in their final state (`PREPARED`, `ACTIVE`, `AVAILABLE`). Ingestion jobs complete at once; with `--async-settle` they report `IN_PROGRESS` for two seconds first, which is the only window in which `StopIngestionJob` succeeds. A stop of a finished job is a `ConflictException`.
+- Aliases, versions, knowledge bases and data sources are created directly in their final state (`PREPARED`, `ACTIVE`, `AVAILABLE`). Agents and flows start `NOT_PREPARED` / `NotPrepared`; PrepareAgent and PrepareFlow prepare them at once, any change to the draft makes it unprepared again, and cutting an agent version (an alias created or updated without `routingConfiguration`) prepares the draft too. Ingestion jobs complete at once; with `--async-settle` they report `IN_PROGRESS` for two seconds first, which is the only window in which `StopIngestionJob` succeeds. A stop of a finished job is a `ConflictException`.
 - `PrepareAgent` does not cut a version, as in AWS. A version is cut when `CreateAgentAlias` or `UpdateAgentAlias` is called without `routingConfiguration`; it copies DRAFT with its action groups, knowledge-base associations and collaborators. Agent and flow versions report `PREPARED` / `Prepared` whatever DRAFT's status was.
 - Every agent has the `TSTALIASID` test alias routed to DRAFT; it is listed and readable and can't be updated or deleted. Flows have no synthesized test alias.
 - `promptOverrideConfiguration` returns what the caller set. AWS's default prompt templates are not reproduced, so an agent created without overrides reports an empty `promptConfigurations` list.
@@ -173,3 +181,6 @@ ResourcePolicies attaches resource-based policies to knowledge bases.
 - Document `metadata` is accepted and stored but not returned or used for filtering.
 - Where AWS does not document the exact message (for example a missing VECTOR `storageConfiguration`, a bad `nextToken`, an alias name in use, a version in use, a non-supervisor agent given a collaborator), the emulator returns the documented exception with its own wording.
 - `clientToken` is validated but does not make a create idempotent.
+- The operations served are the 75 of the pinned SDK (`aws-sdk-go-v2/service/bedrockagent` v1.58.0). Newer API operations, such as Create/Get/List/DeleteVpcConfiguration, are not served.
+- `DeleteAgent` refuses (ConflictException) an agent whose alias another agent's collaborator uses, unless `skipResourceInUseCheck` is set; the Go library's plain `DeleteAgent` deletes without the check. An alias of a regular (non-test) agent may route to `DRAFT`, which the API's routing pattern allows.
+- StartIngestionJob is refused (ConflictException) while another job of the same data source is still running.

@@ -78,3 +78,39 @@ func TestSDKPromptVersions(t *testing.T) {
 	_, err = client.ListTagsForResource(ctx, &awsba.ListTagsForResourceInput{ResourceArn: v2.Arn})
 	requireAPIError(t, err, "ResourceNotFoundException", http.StatusNotFound)
 }
+
+// TestSDKVersionQualifiedPromptIdentifier covers a prompt ARN ending in :N:
+// DeletePrompt removes only that version, UpdatePrompt refuses it, and a
+// promptVersion that disagrees with the suffix is rejected.
+func TestSDKVersionQualifiedPromptIdentifier(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	created, err := client.CreatePrompt(ctx, &awsba.CreatePromptInput{Name: aws.String("cleanup")})
+	require.NoError(t, err)
+
+	for range 2 {
+		_, err = client.CreatePromptVersion(ctx, &awsba.CreatePromptVersionInput{PromptIdentifier: created.Id})
+		require.NoError(t, err)
+	}
+
+	v2 := aws.ToString(created.Arn) + ":2"
+
+	_, err = client.UpdatePrompt(ctx, &awsba.UpdatePromptInput{PromptIdentifier: aws.String(v2), Name: aws.String("x")})
+	requireAPIError(t, err, "ValidationException", http.StatusBadRequest)
+
+	_, err = client.DeletePrompt(ctx, &awsba.DeletePromptInput{PromptIdentifier: aws.String(v2), PromptVersion: aws.String("1")})
+	requireAPIError(t, err, "ValidationException", http.StatusBadRequest)
+
+	del, err := client.DeletePrompt(ctx, &awsba.DeletePromptInput{PromptIdentifier: aws.String(v2)})
+	require.NoError(t, err)
+	assert.Equal(t, "2", aws.ToString(del.Version))
+
+	draft, err := client.GetPrompt(ctx, &awsba.GetPromptInput{PromptIdentifier: created.Id})
+	require.NoError(t, err, "the prompt itself survives")
+	assert.Equal(t, "cleanup", aws.ToString(draft.Name))
+
+	versions, err := client.ListPrompts(ctx, &awsba.ListPromptsInput{PromptIdentifier: created.Id})
+	require.NoError(t, err)
+	assert.Len(t, versions.PromptSummaries, 2, "DRAFT and version 1 remain")
+}

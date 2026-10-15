@@ -280,6 +280,19 @@ func (b *BedrockAgent) ListAgentKnowledgeBases(
 	})
 }
 
+// DeleteAgentChecked deletes an agent unless another agent's collaborator uses
+// one of its aliases, or skipResourceInUseCheck is set.
+func (b *BedrockAgent) DeleteAgentChecked(ctx context.Context, agentID string, skipResourceInUseCheck bool) (string, error) {
+	c, err := capabilityOf[driver.AgentInUseDeleter](b, "DeleteAgentChecked")
+	if err != nil {
+		return "", err
+	}
+
+	return call(ctx, b, "DeleteAgentChecked", agentID, func() (string, error) {
+		return c.DeleteAgentChecked(ctx, agentID, skipResourceInUseCheck)
+	})
+}
+
 // AssociateAgentCollaborator adds a collaborator to a supervisor agent's DRAFT.
 //
 //nolint:gocritic // the argument matches the driver interface signature; copied once on entry.

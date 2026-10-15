@@ -52,3 +52,29 @@ func TestPromptVersionErrorsAndCopies(t *testing.T) {
 	_, _, err = m.ListPromptVersions(ctx, "MISSING000", driver.Page{})
 	assert.True(t, cerrors.IsNotFound(err))
 }
+
+func TestVersionQualifiedPromptIdentifierInTheLibrary(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	p, err := m.CreatePrompt(ctx, driver.PromptConfig{Name: "p"})
+	require.NoError(t, err)
+
+	_, err = m.CreatePromptVersion(ctx, p.ID, "", nil)
+	require.NoError(t, err)
+
+	_, err = m.UpdatePrompt(ctx, p.ARN+":1", driver.PromptConfig{Name: "p"})
+	assert.True(t, cerrors.IsInvalidArgument(err), "versions are immutable")
+
+	assert.True(t, cerrors.IsInvalidArgument(m.DeletePromptVersion(ctx, p.ARN+":1", "2")), "suffix and promptVersion disagree")
+
+	id, err := m.DeletePrompt(ctx, p.ARN+":1")
+	require.NoError(t, err)
+	assert.Equal(t, p.ID, id)
+
+	_, err = m.GetPrompt(ctx, p.ID)
+	require.NoError(t, err, "only the version is deleted")
+
+	_, err = m.GetPromptVersion(ctx, p.ID, "1")
+	assert.True(t, cerrors.IsNotFound(err))
+}

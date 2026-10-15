@@ -2,6 +2,7 @@ package bedrockagent
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 
@@ -24,6 +25,9 @@ func TestActionGroupValidation(t *testing.T) {
 		"bad state":        {AgentID: agentID, AgentVersion: driver.DraftVersion, Name: "g", State: "ON"},
 		"bad signature":    {AgentID: agentID, AgentVersion: driver.DraftVersion, Name: "g", ParentActionGroupSignature: "AMAZON.Other"},
 		"short token":      {AgentID: agentID, AgentVersion: driver.DraftVersion, Name: "g", ClientToken: "abc"},
+		"both schemas": {AgentID: agentID, AgentVersion: driver.DraftVersion, Name: "g",
+			APISchema: json.RawMessage(`{"payload":"openapi: 3.0.0"}`), FunctionSchema: json.RawMessage(`{"functions":[{"name":"f"}]}`)},
+		"payload not a document": {AgentID: agentID, AgentVersion: driver.DraftVersion, Name: "g", APISchema: json.RawMessage(`{"payload":"abc"}`)},
 	}
 
 	for name, cfg := range cases {
@@ -38,6 +42,17 @@ func TestActionGroupValidation(t *testing.T) {
 
 	_, _, err = m.ListAgentActionGroups(ctx, agentID, "4", driver.Page{})
 	assert.True(t, cerrors.IsNotFound(err), "version 4 does not exist")
+
+	for name, payload := range map[string]string{
+		"json": `{"openapi":"3.0.0","paths":{"/orders":{"get":{}}}}`,
+		"yaml": "openapi: 3.0.0\npaths:\n  /orders:\n    get: {}\n",
+	} {
+		raw, _ := json.Marshal(map[string]string{"payload": payload})
+		_, err = m.CreateAgentActionGroup(ctx, driver.ActionGroupConfig{
+			AgentID: agentID, AgentVersion: driver.DraftVersion, Name: "ok_" + name, APISchema: raw,
+		})
+		assert.NoError(t, err, "an OpenAPI payload in %s is accepted", name)
+	}
 }
 
 func TestActionGroupReadsDoNotAliasState(t *testing.T) {

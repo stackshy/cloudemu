@@ -118,8 +118,20 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 	writeJSONStatus(w, http.StatusAccepted, agentEnvelope{Agent: toAgentJSON(agent)})
 }
 
+// deleteAgent handles DeleteAgent. A backend that can check whether the agent
+// is in use honors skipResourceInUseCheck; any other deletes outright.
 func (h *Handler) deleteAgent(w http.ResponseWriter, r *http.Request, id string) {
-	status, err := h.agent.DeleteAgent(r.Context(), id)
+	var (
+		status string
+		err    error
+	)
+
+	if c, ok := h.agent.(badriver.AgentInUseDeleter); ok {
+		status, err = c.DeleteAgentChecked(r.Context(), id, queryBool(r, "skipResourceInUseCheck"))
+	} else {
+		status, err = h.agent.DeleteAgent(r.Context(), id)
+	}
+
 	if err != nil {
 		writeErr(w, err)
 

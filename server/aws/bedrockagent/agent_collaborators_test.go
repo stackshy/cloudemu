@@ -81,3 +81,37 @@ func TestSDKAgentCollaborators(t *testing.T) {
 	})
 	requireAPIError(t, err, "ResourceNotFoundException", http.StatusNotFound)
 }
+
+// TestSDKDeleteAgentInUseByCollaborator covers DeleteAgent's
+// skipResourceInUseCheck: an agent whose alias a supervisor uses is kept
+// (409) unless the check is skipped.
+func TestSDKDeleteAgentInUseByCollaborator(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+	supervisor := createAgent(t, client, "supervisor", batypes.AgentCollaborationSupervisor)
+	worker := createAgent(t, client, "worker", "")
+	spare := createAgent(t, client, "spare", "")
+
+	alias, err := client.CreateAgentAlias(ctx, &awsba.CreateAgentAliasInput{AgentId: aws.String(worker), AgentAliasName: aws.String("live")})
+	require.NoError(t, err)
+
+	_, err = client.AssociateAgentCollaborator(ctx, &awsba.AssociateAgentCollaboratorInput{
+		AgentId: aws.String(supervisor), AgentVersion: aws.String("DRAFT"),
+		AgentDescriptor:          &batypes.AgentDescriptor{AliasArn: alias.AgentAlias.AgentAliasArn},
+		CollaboratorName:         aws.String("worker"),
+		CollaborationInstruction: aws.String("Handle the worker tasks."),
+	})
+	require.NoError(t, err)
+
+	_, err = client.DeleteAgent(ctx, &awsba.DeleteAgentInput{AgentId: aws.String(worker)})
+	requireAPIError(t, err, "ConflictException", http.StatusConflict)
+
+	_, err = client.DeleteAgent(ctx, &awsba.DeleteAgentInput{AgentId: aws.String(spare)})
+	require.NoError(t, err, "an agent no one uses is deleted")
+
+	_, err = client.DeleteAgent(ctx, &awsba.DeleteAgentInput{AgentId: aws.String(worker), SkipResourceInUseCheck: true})
+	require.NoError(t, err, "skipResourceInUseCheck deletes an agent in use")
+
+	_, err = client.DeleteAgent(ctx, &awsba.DeleteAgentInput{AgentId: aws.String(supervisor)})
+	require.NoError(t, err, "a supervisor is not in use by its own collaborators")
+}
