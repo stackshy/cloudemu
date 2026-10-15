@@ -3,6 +3,7 @@ package bedrockagent
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	badriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
 )
@@ -33,8 +34,21 @@ func (h *Handler) servePromptCollection(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) servePromptItem(w http.ResponseWriter, r *http.Request, id string) {
-	if version := r.URL.Query().Get("promptVersion"); version != "" &&
-		(r.Method == http.MethodGet || r.Method == http.MethodDelete) {
+	version := r.URL.Query().Get("promptVersion")
+
+	if suffix := promptSuffixVersion(id); suffix != "" && r.Method == http.MethodDelete {
+		if version != "" && version != suffix {
+			writeError(w, http.StatusBadRequest, "ValidationException",
+				"promptIdentifier names version "+suffix+" but promptVersion is "+version)
+
+			return
+		}
+
+		// A version-qualified identifier deletes only that version.
+		version = suffix
+	}
+
+	if version != "" && (r.Method == http.MethodGet || r.Method == http.MethodDelete) {
 		withCapability(h, w, "PromptVersions", func(c badriver.PromptVersions) { servePromptVersion(w, r, c, id, version) })
 
 		return
@@ -184,4 +198,12 @@ func toPromptSummaryJSON(p *badriver.Prompt) promptSummaryJSON {
 		CreatedAt:   p.CreatedAt,
 		UpdatedAt:   p.UpdatedAt,
 	}
+}
+
+// promptSuffixVersion returns the version a prompt/ID:N identifier names, or
+// "" for an unqualified identifier.
+func promptSuffixVersion(identifier string) string {
+	_, version, _ := strings.Cut(resourceIDOf(identifier, "prompt/"), ":")
+
+	return version
 }

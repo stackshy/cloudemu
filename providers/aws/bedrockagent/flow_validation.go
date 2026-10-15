@@ -67,7 +67,7 @@ func (*Mock) ValidateFlowDefinition(_ context.Context, definition json.RawMessag
 
 		for _, n := range def.Nodes {
 			if !reached[n.Name] {
-				c.add(validationUnreachable, "Node %s can't be reached from an Input node.", n.Name)
+				c.addf(validationUnreachable, "Node %s can't be reached from an Input node.", n.Name)
 			}
 		}
 	}
@@ -84,7 +84,7 @@ type flowChecks struct {
 	found []driver.FlowValidation
 }
 
-func (c *flowChecks) add(typ, format string, args ...any) {
+func (c *flowChecks) addf(typ, format string, args ...any) {
 	c.found = append(c.found, driver.FlowValidation{
 		Message: fmt.Sprintf(format, args...), Severity: driver.FlowValidationError, Type: typ,
 	})
@@ -108,11 +108,11 @@ func (c *flowChecks) checkNodes(def *flowDefinition) (nodes map[string]bool, sta
 	}
 
 	if len(starts) == 0 {
-		c.add(validationMissingStart, "The flow has no Input node.")
+		c.addf(validationMissingStart, "The flow has no Input node.")
 	}
 
 	if !hasEnd {
-		c.add(validationMissingEnd, "The flow has no Output node.")
+		c.addf(validationMissingEnd, "The flow has no Output node.")
 	}
 
 	return nodes, starts
@@ -125,16 +125,16 @@ func (c *flowChecks) checkConnections(def *flowDefinition, nodes map[string]bool
 
 	for _, conn := range def.Connections {
 		if !nodes[conn.Source] {
-			c.add(validationUnknownSource, "Connection %s has an unknown source node %s.", conn.Name, conn.Source)
+			c.addf(validationUnknownSource, "Connection %s has an unknown source node %s.", conn.Name, conn.Source)
 		}
 
 		if !nodes[conn.Target] {
-			c.add(validationUnknownTarget, "Connection %s has an unknown target node %s.", conn.Name, conn.Target)
+			c.addf(validationUnknownTarget, "Connection %s has an unknown target node %s.", conn.Name, conn.Target)
 		}
 
 		key := conn.Source + "\x00" + conn.Target + "\x00" + string(conn.Configuration)
 		if seen[key] {
-			c.add(validationDuplicateConns, "Connection %s duplicates another connection from %s to %s.",
+			c.addf(validationDuplicateConns, "Connection %s duplicates another connection from %s to %s.",
 				conn.Name, conn.Source, conn.Target)
 		}
 

@@ -2,8 +2,8 @@ package bedrockagentruntime
 
 import (
 	"context"
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -107,7 +107,13 @@ func TestAgentTurnFeatures(t *testing.T) {
 		AgentID: agentID, AgentVersion: "DRAFT", Name: "tools",
 		Executor:       json.RawMessage(`{"lambda":"arn:aws:lambda:us-east-1:123456789012:function:weather:live"}`),
 		FunctionSchema: json.RawMessage(`{"functions":[{"name":"get_weather","parameters":{"city":{"type":"string"}}}]}`),
-		APISchema:      json.RawMessage(`{"payload":"{\"paths\":{\"/orders\":{\"get\":{}}}}"}`),
+	})
+	require.NoError(t, err)
+
+	_, err = l.cp.CreateAgentActionGroup(ctx, badriver.ActionGroupConfig{
+		AgentID: agentID, AgentVersion: "DRAFT", Name: "orders",
+		Executor:  json.RawMessage(`{"lambda":"arn:aws:lambda:us-east-1:123456789012:function:weather:live"}`),
+		APISchema: json.RawMessage(`{"payload":"{\"paths\":{\"/orders\":{\"get\":{}}}}"}`),
 	})
 	require.NoError(t, err)
 	l.prepare(t, agentID)

@@ -185,3 +185,29 @@ func TestAgentVersionErrors(t *testing.T) {
 	_, err = m.DeleteAgentAlias(ctx, agentID, "MISSING000")
 	assert.True(t, cerrors.IsNotFound(err))
 }
+
+// TestAliasCutPreparesDraft follows Terraform's aws_bedrockagent_agent_alias:
+// after CreateAgentAlias it polls GetAgent until the agent is PREPARED, so
+// cutting a version from an unprepared DRAFT must prepare DRAFT too.
+func TestAliasCutPreparesDraft(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	agentID := mustAgent(t, m, "unprepared")
+
+	agent, err := m.GetAgent(ctx, agentID)
+	require.NoError(t, err)
+	require.Equal(t, driver.AgentNotPrepared, agent.Status)
+
+	alias, err := m.CreateAgentAlias(ctx, driver.AgentAliasConfig{AgentID: agentID, Name: "live"})
+	require.NoError(t, err)
+	assert.Equal(t, "1", alias.RoutingConfiguration[0].AgentVersion)
+
+	agent, err = m.GetAgent(ctx, agentID)
+	require.NoError(t, err)
+	assert.Equal(t, driver.AgentPrepared, agent.Status, "the waiter sees PREPARED at once")
+	assert.NotEmpty(t, agent.PreparedAt)
+
+	version, err := m.GetAgentVersion(ctx, agentID, "1")
+	require.NoError(t, err)
+	assert.Equal(t, agentVersionPrepared, version.Status)
+}

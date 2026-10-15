@@ -3115,6 +3115,15 @@
         ]
       },
       {
+        "name": "AgentInUseDeleter",
+        "doc": "AgentInUseDeleter deletes an agent the way DeleteAgent's",
+        "operations": [
+          {
+            "name": "DeleteAgentChecked"
+          }
+        ]
+      },
+      {
         "name": "AgentKnowledgeBases",
         "doc": "AgentKnowledgeBases associates knowledge bases with an agent version.",
         "operations": [

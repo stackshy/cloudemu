@@ -302,11 +302,20 @@ func (m *Mock) resolveAliasRouting(agentID string, routes []driver.AgentAliasRou
 }
 
 // cutAgentVersion snapshots an agent's DRAFT and every DRAFT child as the next
-// numbered version. Callers hold m.mu, so the snapshot is consistent.
+// numbered version. Bedrock prepares the draft when it versions it, so DRAFT
+// is PREPARED afterwards too (Terraform's alias waiter polls GetAgent for
+// PREPARED). Callers hold m.mu, so the snapshot is consistent.
 func (m *Mock) cutAgentVersion(agentID string) string {
 	draft, _ := m.agents.Get(agentID)
 	version := m.nextVersion(agentSeqKey(agentID))
 	now := m.now()
+
+	if draft.Status != driver.AgentPrepared {
+		prepared := cloneAgent(draft)
+		prepared.Status, prepared.PreparedAt, prepared.UpdatedAt = driver.AgentPrepared, now, now
+		m.agents.Set(agentID, &prepared)
+		draft = &prepared
+	}
 
 	snap := cloneAgent(draft)
 	snap.Version = version

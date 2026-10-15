@@ -477,3 +477,169 @@ func TestSDKAgentConfigurationRoundTrip(t *testing.T) {
 	})
 	requireAPIError(t, err, "ValidationException", http.StatusBadRequest)
 }
+
+// TestSDKUnknownResourcesOnEveryFamily sends each operation family an id that
+// does not exist: every one answers ResourceNotFoundException (404).
+func TestSDKUnknownResourcesOnEveryFamily(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+	missing := aws.String("MISSING000")
+	draft := aws.String("DRAFT")
+
+	calls := map[string]func() error{
+		"GetAgent":    func() error { _, err := client.GetAgent(ctx, &awsba.GetAgentInput{AgentId: missing}); return err },
+		"DeleteAgent": func() error { _, err := client.DeleteAgent(ctx, &awsba.DeleteAgentInput{AgentId: missing}); return err },
+		"PrepareAgent": func() error {
+			_, err := client.PrepareAgent(ctx, &awsba.PrepareAgentInput{AgentId: missing})
+			return err
+		},
+		"UpdateAgent": func() error {
+			_, err := client.UpdateAgent(ctx, &awsba.UpdateAgentInput{AgentId: missing, AgentName: aws.String("a"),
+				FoundationModel: aws.String(claudeModel), AgentResourceRoleArn: aws.String(roleArn)})
+			return err
+		},
+		"GetKnowledgeBase": func() error {
+			_, err := client.GetKnowledgeBase(ctx, &awsba.GetKnowledgeBaseInput{KnowledgeBaseId: missing})
+			return err
+		},
+		"DeleteKnowledgeBase": func() error {
+			_, err := client.DeleteKnowledgeBase(ctx, &awsba.DeleteKnowledgeBaseInput{KnowledgeBaseId: missing})
+			return err
+		},
+		"ListDataSources": func() error {
+			_, err := client.ListDataSources(ctx, &awsba.ListDataSourcesInput{KnowledgeBaseId: missing})
+			return err
+		},
+		"GetDataSource": func() error {
+			_, err := client.GetDataSource(ctx, &awsba.GetDataSourceInput{KnowledgeBaseId: missing, DataSourceId: missing})
+			return err
+		},
+		"DeleteDataSource": func() error {
+			_, err := client.DeleteDataSource(ctx, &awsba.DeleteDataSourceInput{KnowledgeBaseId: missing, DataSourceId: missing})
+			return err
+		},
+		"StartIngestionJob": func() error {
+			_, err := client.StartIngestionJob(ctx, &awsba.StartIngestionJobInput{KnowledgeBaseId: missing, DataSourceId: missing})
+			return err
+		},
+		"ListKnowledgeBaseDocuments": func() error {
+			_, err := client.ListKnowledgeBaseDocuments(ctx, &awsba.ListKnowledgeBaseDocumentsInput{KnowledgeBaseId: missing, DataSourceId: missing})
+			return err
+		},
+		"GetFlow": func() error { _, err := client.GetFlow(ctx, &awsba.GetFlowInput{FlowIdentifier: missing}); return err },
+		"DeleteFlow": func() error {
+			_, err := client.DeleteFlow(ctx, &awsba.DeleteFlowInput{FlowIdentifier: missing})
+			return err
+		},
+		"PrepareFlow": func() error {
+			_, err := client.PrepareFlow(ctx, &awsba.PrepareFlowInput{FlowIdentifier: missing})
+			return err
+		},
+		"UpdateFlow": func() error {
+			_, err := client.UpdateFlow(ctx, &awsba.UpdateFlowInput{FlowIdentifier: missing, Name: aws.String("f"), ExecutionRoleArn: aws.String(roleArn)})
+			return err
+		},
+		"ListFlowVersions": func() error {
+			_, err := client.ListFlowVersions(ctx, &awsba.ListFlowVersionsInput{FlowIdentifier: missing})
+			return err
+		},
+		"ListFlowAliases": func() error {
+			_, err := client.ListFlowAliases(ctx, &awsba.ListFlowAliasesInput{FlowIdentifier: missing})
+			return err
+		},
+		"GetPrompt": func() error {
+			_, err := client.GetPrompt(ctx, &awsba.GetPromptInput{PromptIdentifier: missing})
+			return err
+		},
+		"DeletePrompt": func() error {
+			_, err := client.DeletePrompt(ctx, &awsba.DeletePromptInput{PromptIdentifier: missing})
+			return err
+		},
+		"CreatePromptVersion": func() error {
+			_, err := client.CreatePromptVersion(ctx, &awsba.CreatePromptVersionInput{PromptIdentifier: missing})
+			return err
+		},
+		"ListAgentActionGroups": func() error {
+			_, err := client.ListAgentActionGroups(ctx, &awsba.ListAgentActionGroupsInput{AgentId: missing, AgentVersion: draft})
+			return err
+		},
+		"ListAgentKnowledgeBases": func() error {
+			_, err := client.ListAgentKnowledgeBases(ctx, &awsba.ListAgentKnowledgeBasesInput{AgentId: missing, AgentVersion: draft})
+			return err
+		},
+		"ListAgentVersions": func() error {
+			_, err := client.ListAgentVersions(ctx, &awsba.ListAgentVersionsInput{AgentId: missing})
+			return err
+		},
+		"ListAgentAliases": func() error {
+			_, err := client.ListAgentAliases(ctx, &awsba.ListAgentAliasesInput{AgentId: missing})
+			return err
+		},
+	}
+
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			requireAPIError(t, call(), "ResourceNotFoundException", http.StatusNotFound)
+		})
+	}
+}
+
+// TestSDKUpdateFlowKnowledgeBaseAndDataSource round-trips the update
+// operations of flows, knowledge bases and data sources.
+func TestSDKUpdateFlowKnowledgeBaseAndDataSource(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	flowID, _ := createFlow(t, client, "pipeline")
+
+	flow, err := client.UpdateFlow(ctx, &awsba.UpdateFlowInput{
+		FlowIdentifier: aws.String(flowID), Name: aws.String("pipeline2"), ExecutionRoleArn: aws.String(roleArn),
+		Description: aws.String("renamed"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "pipeline2", aws.ToString(flow.Name))
+	assert.Equal(t, batypes.FlowStatusNotPrepared, flow.Status)
+
+	kbID := createKnowledgeBase(t, client, "faq")
+
+	kb, err := client.UpdateKnowledgeBase(ctx, &awsba.UpdateKnowledgeBaseInput{
+		KnowledgeBaseId: aws.String(kbID), Name: aws.String("faq2"), RoleArn: aws.String(roleArn),
+		Description: aws.String("renamed"),
+		KnowledgeBaseConfiguration: &batypes.KnowledgeBaseConfiguration{
+			Type:                             batypes.KnowledgeBaseTypeVector,
+			VectorKnowledgeBaseConfiguration: &batypes.VectorKnowledgeBaseConfiguration{EmbeddingModelArn: aws.String(embedArn)},
+		},
+		StorageConfiguration: &batypes.StorageConfiguration{
+			Type: batypes.KnowledgeBaseStorageTypeOpensearchServerless,
+			OpensearchServerlessConfiguration: &batypes.OpenSearchServerlessConfiguration{
+				CollectionArn: aws.String("arn:aws:aoss:us-east-1:123456789012:collection/abc"), VectorIndexName: aws.String("idx"),
+				FieldMapping: &batypes.OpenSearchServerlessFieldMapping{
+					MetadataField: aws.String("m"), TextField: aws.String("t"), VectorField: aws.String("v"),
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "faq2", aws.ToString(kb.KnowledgeBase.Name))
+
+	ds, err := client.CreateDataSource(ctx, &awsba.CreateDataSourceInput{
+		KnowledgeBaseId: aws.String(kbID), Name: aws.String("docs"),
+		DataSourceConfiguration: &batypes.DataSourceConfiguration{
+			Type: batypes.DataSourceTypeS3, S3Configuration: &batypes.S3DataSourceConfiguration{BucketArn: aws.String(bucketArn)},
+		},
+	})
+	require.NoError(t, err)
+
+	updated, err := client.UpdateDataSource(ctx, &awsba.UpdateDataSourceInput{
+		KnowledgeBaseId: aws.String(kbID), DataSourceId: ds.DataSource.DataSourceId, Name: aws.String("docs2"),
+		DataSourceConfiguration: &batypes.DataSourceConfiguration{
+			Type: batypes.DataSourceTypeS3, S3Configuration: &batypes.S3DataSourceConfiguration{BucketArn: aws.String(bucketArn)},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "docs2", aws.ToString(updated.DataSource.Name))
+
+	got, err := client.GetDataSource(ctx, &awsba.GetDataSourceInput{KnowledgeBaseId: aws.String(kbID), DataSourceId: ds.DataSource.DataSourceId})
+	require.NoError(t, err)
+	assert.Equal(t, "docs2", aws.ToString(got.DataSource.Name))
+}

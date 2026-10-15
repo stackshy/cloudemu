@@ -47,6 +47,11 @@ func (m *Mock) StartIngestionJob(ctx context.Context, kbID, dsID, description st
 		return nil, errors.Newf(errors.NotFound, "data source %q not found", dsID)
 	}
 
+	if running := m.runningJob(kbID, dsID); running != "" {
+		return nil, errors.Newf(errors.FailedPrecondition,
+			"Ingestion job %s is already running on data source %s. Wait for it to finish or stop it first.", running, dsID)
+	}
+
 	id, err := newID(m.jobs)
 	if err != nil {
 		return nil, err
@@ -81,6 +86,20 @@ func (m *Mock) StartIngestionJob(ctx context.Context, kbID, dsID, description st
 	result := m.observeJob(job)
 
 	return &result, nil
+}
+
+// runningJob returns the id of the data source's ingestion job that is still
+// IN_PROGRESS, or "": Bedrock runs one ingestion job per data source at a
+// time. Callers hold mu.
+func (m *Mock) runningJob(kbID, dsID string) string {
+	for _, job := range m.jobs.SortedValues() {
+		if job.KnowledgeBaseID == kbID && job.DataSourceID == dsID &&
+			m.observeJob(job).Status == driver.IngestionJobInProgress {
+			return job.ID
+		}
+	}
+
+	return ""
 }
 
 // GetIngestionJob returns an ingestion job of a data source.

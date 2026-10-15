@@ -99,9 +99,13 @@ func (m *Mock) ListPromptVersions(_ context.Context, promptID string, page drive
 // DeletePromptVersion deletes one numbered version of a prompt and its tags,
 // leaving the prompt and its other versions.
 func (m *Mock) DeletePromptVersion(_ context.Context, promptID, version string) error {
-	promptID, _ = splitPromptIdentifier(promptID)
+	promptID, suffix := splitPromptIdentifier(promptID)
 
 	var v violations
+
+	if suffix != "" && suffix != version {
+		v.addf("promptIdentifier names version %s but promptVersion is %s", suffix, version)
+	}
 
 	v.numericVersion("promptVersion", version)
 

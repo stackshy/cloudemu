@@ -3,6 +3,7 @@ package bedrockagent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -143,13 +144,28 @@ func (m *Mock) UpdateAgent(_ context.Context, agentID string, cfg driver.AgentCo
 // DeleteAgent deletes an agent and, cascading like real AWS, its aliases,
 // versions, action groups, knowledge-base associations and collaborators,
 // along with their tags.
-func (m *Mock) DeleteAgent(_ context.Context, agentID string) (string, error) {
+func (m *Mock) DeleteAgent(ctx context.Context, agentID string) (string, error) {
+	return m.DeleteAgentChecked(ctx, agentID, true)
+}
+
+// DeleteAgentChecked deletes an agent as DeleteAgent does, but first refuses
+// (ConflictException) when another agent's collaborator uses one of its
+// aliases, unless skipResourceInUseCheck is set.
+func (m *Mock) DeleteAgentChecked(_ context.Context, agentID string, skipResourceInUseCheck bool) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	agent, ok := m.agents.Get(agentID)
 	if !ok {
 		return "", agentNotFound(agentID)
+	}
+
+	if !skipResourceInUseCheck {
+		if user := m.collaboratorUsing(agentID); user != nil {
+			return "", errors.Newf(errors.FailedPrecondition,
+				"Agent %s is in use: agent %s uses its alias %s as collaborator %s. "+
+					"Disassociate the collaborator or set skipResourceInUseCheck.", agentID, user.AgentID, user.AliasARN, user.Name)
+		}
 	}
 
 	m.agents.Delete(agentID)
@@ -160,6 +176,22 @@ func (m *Mock) DeleteAgent(_ context.Context, agentID string) (string, error) {
 	m.versionSeq.Delete(agentSeqKey(agentID))
 
 	return statusDeleting, nil
+}
+
+// collaboratorUsing returns a collaborator of another agent whose alias ARN
+// belongs to agentID, or nil. Callers hold m.mu.
+func (m *Mock) collaboratorUsing(agentID string) *driver.AgentCollaborator {
+	marker := ":agent-alias/" + agentID + "/"
+
+	for _, c := range m.collaborators.SortedValues() {
+		if c.AgentID != agentID && strings.Contains(c.AliasARN, marker) {
+			found := *c
+
+			return &found
+		}
+	}
+
+	return nil
 }
 
 // deleteAliasesForAgent removes every alias belonging to agentID. All() returns
