@@ -50,7 +50,7 @@ func (m *Mock) StartMessageMoveTask(_ context.Context, sourceARN, destARN string
 	}
 
 	sourceURL := m.urlForARN(sourceARN)
-	if sourceURL == "" {
+	if _, ok := m.accessQueue(sourceURL); !ok {
 		return "", errors.Newf(errors.NotFound, "no queue found for source arn %q", sourceARN)
 	}
 

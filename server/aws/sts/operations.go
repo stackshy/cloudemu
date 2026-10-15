@@ -73,7 +73,7 @@ func (h *Handler) assumeRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	assumedArn := "arn:aws:sts::" + h.accountID + ":assumed-role/" + roleName + "/" + sessionName
-	assumedRoleID := assumedRoleIDPrefix + ":" + sessionName
+	assumedRoleID := h.assumedRoleID(r, roleArn, roleName, sessionName)
 
 	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: assumedArn, UserID: assumedRoleID},
 		roleOwner(roleName))
@@ -95,10 +95,24 @@ func (h *Handler) assumeRole(w http.ResponseWriter, r *http.Request) {
 }
 
 // assumedRoleIDPrefix is the synthetic AssumedRoleId prefix (real STS uses the
-// "AROA" prefix followed by a unique id) reported by every AssumeRole-family
-// operation, and used to derive the identity a minted session is recorded
-// under for GetCallerIdentity.
+// role's unique "AROA..." id) reported by an AssumeRole-family operation when
+// the role is not known to the IAM driver, and used to derive the identity a
+// minted session is recorded under for GetCallerIdentity.
 const assumedRoleIDPrefix = "AROACLOUDEMU0000000000"
+
+// assumedRoleID is the AssumedRoleId of a session of the role roleArn names:
+// "<role id>:<session name>", where the role id is the role's unique id as
+// IAM reports it (RoleId), as real STS returns it. When no IAM driver is wired
+// or the role is unknown it falls back to assumedRoleIDPrefix.
+func (h *Handler) assumedRoleID(r *http.Request, roleArn, roleName, sessionName string) string {
+	prefix := assumedRoleIDPrefix
+
+	if role, ok := h.requestedRole(r, roleArn, roleName); ok && role.ID != "" {
+		prefix = role.ID
+	}
+
+	return prefix + ":" + sessionName
+}
 
 // trustAllows reports whether the caller may assume the role RoleArn names.
 //
@@ -150,7 +164,7 @@ func (h *Handler) assumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Reque
 		provider = "cloudemu.local"
 	}
 
-	assumedRoleID := assumedRoleIDPrefix + ":" + sessionName
+	assumedRoleID := h.assumedRoleID(r, r.Form.Get("RoleArn"), roleName, sessionName)
 
 	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: assumedArn, UserID: assumedRoleID},
 		roleOwner(roleName))
@@ -185,7 +199,7 @@ func (h *Handler) assumeRoleWithSAML(w http.ResponseWriter, r *http.Request) {
 	roleName := roleNameFromArn(r.Form.Get("RoleArn"))
 	sessionName := "cloudemu-saml-session"
 	assumedArn := "arn:aws:sts::" + h.accountID + ":assumed-role/" + roleName + "/" + sessionName
-	assumedRoleID := assumedRoleIDPrefix + ":" + sessionName
+	assumedRoleID := h.assumedRoleID(r, r.Form.Get("RoleArn"), roleName, sessionName)
 
 	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: assumedArn, UserID: assumedRoleID},
 		roleOwner(roleName))

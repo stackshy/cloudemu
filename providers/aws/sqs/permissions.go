@@ -11,7 +11,7 @@ import (
 // the given SQS actions on the queue, mutating the stored access policy. It is
 // AWS-specific and used directly by the SQS wire handler.
 func (m *Mock) AddPermission(_ context.Context, queueURL, label string, accountIDs, actions []string) error {
-	qd, ok := m.queues.Get(queueURL)
+	qd, ok := m.accessQueue(queueURL)
 	if !ok {
 		return errors.Newf(errors.NotFound, "queue %q not found", queueURL)
 	}
@@ -50,7 +50,7 @@ func (m *Mock) AddPermission(_ context.Context, queueURL, label string, accountI
 // RemovePermission removes the statement whose Sid equals label. It is
 // AWS-specific and used directly by the SQS wire handler.
 func (m *Mock) RemovePermission(_ context.Context, queueURL, label string) error {
-	qd, ok := m.queues.Get(queueURL)
+	qd, ok := m.accessQueue(queueURL)
 	if !ok {
 		return errors.Newf(errors.NotFound, "queue %q not found", queueURL)
 	}

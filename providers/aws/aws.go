@@ -611,7 +611,9 @@ func awsDrivers(p *Provider) *resourcediscovery.Drivers {
 // background ticker calls each one on its interval. New time-driven services
 // register here.
 func (p *Provider) Tickables() []config.Tickable {
-	return []config.Tickable{p.CloudWatch, p.SSM, p.CloudFormation}
+	// SQS runs before CloudWatch so the alarms evaluated in the same tick see
+	// the queue gauges it just published.
+	return []config.Tickable{p.SQS, p.CloudWatch, p.SSM, p.CloudFormation}
 }
 
 // Close tears down any real engines wired into the provider via
