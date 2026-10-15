@@ -255,6 +255,33 @@ func writeCBORError(w http.ResponseWriter, status int, errType, msg string) {
 		return
 	}
 
+	writeCBORErrorBody(w, status, errType, msg)
+}
+
+// writeShapedError writes an error whose model shape name differs from its
+// awsQuery code, such as DashboardNotFoundError (code ResourceNotFound). The
+// shape goes in __type and the code in X-Amzn-Query-Error, which is how an
+// awsQueryCompatible service answers in both JSON and rpc-v2-cbor.
+func writeShapedError(w http.ResponseWriter, status int, shape, code, msg string) {
+	if jw, ok := w.(*jsonWriter); ok {
+		jw.writeShapedError(status, shape, code, msg)
+		return
+	}
+
+	w.Header().Set(queryErrorHeader, code+";"+faultOf(status))
+	writeCBORErrorBody(w, status, shape, msg)
+}
+
+// faultOf is the awsQuery fault of an error status.
+func faultOf(status int) string {
+	if status >= http.StatusInternalServerError {
+		return "Receiver"
+	}
+
+	return "Sender"
+}
+
+func writeCBORErrorBody(w http.ResponseWriter, status int, errType, msg string) {
 	payload := map[string]any{
 		"__type":  errType,
 		"message": msg,
@@ -305,7 +332,13 @@ func writeCBORResponse(w http.ResponseWriter, payload any) {
 // writeDriverErr maps CloudEmu errors to CloudWatch error responses.
 func writeDriverErr(w http.ResponseWriter, err error) {
 	if we, ok := asWireError(err); ok {
+		if we.shape != "" {
+			writeShapedError(w, we.status, we.shape, we.code, we.msg)
+			return
+		}
+
 		writeCBORError(w, we.status, we.code, we.msg)
+
 		return
 	}
 

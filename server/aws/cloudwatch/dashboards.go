@@ -101,7 +101,7 @@ func (h *Handler) getDashboard(w http.ResponseWriter, r *http.Request, body []by
 
 	d, err := store.GetDashboard(r.Context(), in.DashboardName)
 	if err != nil {
-		writeDriverErr(w, err)
+		writeDriverErr(w, dashboardErr(err))
 		return
 	}
 
@@ -196,7 +196,7 @@ func (h *Handler) deleteDashboards(w http.ResponseWriter, r *http.Request, body 
 	}
 
 	if err := store.DeleteDashboards(r.Context(), in.DashboardNames); err != nil {
-		writeDriverErr(w, err)
+		writeDriverErr(w, dashboardErr(err))
 		return
 	}
 
