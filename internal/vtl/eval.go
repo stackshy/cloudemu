@@ -697,7 +697,9 @@ func toInt(v any) (int, bool) {
 			return 0, false
 		}
 
-		return int(int32(t)), true
+		// Go through the int64 branch so the narrowing sits behind an
+		// integer bound check as well.
+		return toInt(int64(t))
 	default:
 		return 0, false
 	}
