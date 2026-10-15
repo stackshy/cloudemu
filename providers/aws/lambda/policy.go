@@ -33,7 +33,9 @@ func policyKey(qualifier string) string {
 // published version or alias. AWS stores a separate policy per qualifier. The
 // statements are evaluated by the wire server's Lambda handler, and only under
 // EnforceAuth (see PolicyStatements).
-func (m *Mock) AddPermission(_ context.Context, functionName, qualifier string, stmt driver.PermissionStatement) error {
+//
+//nolint:gocritic // hugeParam: stmt mirrors the policyManager interface signature.
+func (m *Mock) AddPermission(ctx context.Context, functionName, qualifier string, stmt driver.PermissionStatement) error {
 	if stmt.StatementID == "" {
 		return cerrors.New(cerrors.InvalidArgument, "StatementId is required")
 	}
@@ -58,13 +60,13 @@ func (m *Mock) AddPermission(_ context.Context, functionName, qualifier string, 
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	// A qualifier must name a version/alias that exists; a grant on a missing one
 	// is a ResourceNotFoundException, matching real Lambda. Routing key is nil:
 	// this only validates existence, not which weighted version traffic hits.
-	if _, err := m.resolveQualifier(&fd, qualifier, nil); err != nil {
+	if _, err := m.resolveQualifier(ctx, &fd, qualifier, nil); err != nil {
 		return err
 	}
 
@@ -89,7 +91,7 @@ func (m *Mock) AddPermission(_ context.Context, functionName, qualifier string, 
 
 // RemovePermission drops a statement from a function's (qualifier-scoped)
 // resource-based policy.
-func (m *Mock) RemovePermission(_ context.Context, functionName, qualifier, statementID string) error {
+func (m *Mock) RemovePermission(ctx context.Context, functionName, qualifier, statementID string) error {
 	// $LATEST has no policy of its own (AddPermission refuses it), so a
 	// $LATEST-qualified remove is refused too rather than editing the
 	// unqualified function's policy.
@@ -102,7 +104,7 @@ func (m *Mock) RemovePermission(_ context.Context, functionName, qualifier, stat
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	key := policyKey(qualifier)
@@ -120,13 +122,13 @@ func (m *Mock) RemovePermission(_ context.Context, functionName, qualifier, stat
 // JSON document, matching the shape the AWS SDK expects (IAM policy with Sid/
 // Principal/Action/Resource per statement). Returns NotFound when no policy
 // exists for the qualifier.
-func (m *Mock) GetPolicy(_ context.Context, functionName, qualifier string) (string, error) {
+func (m *Mock) GetPolicy(ctx context.Context, functionName, qualifier string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return "", cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return "", m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	key := policyKey(qualifier)
@@ -216,13 +218,13 @@ func statementCondition(s *driver.PermissionStatement) map[string]any {
 // policy for qualifier, and the function ARN that policy applies to (the
 // qualified ARN for a version or alias). A qualifier with no policy returns no
 // statements; a missing function is NotFound.
-func (m *Mock) PolicyStatements(_ context.Context, functionName, qualifier string) (string, []driver.PermissionStatement, error) {
+func (m *Mock) PolicyStatements(ctx context.Context, functionName, qualifier string) (string, []driver.PermissionStatement, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return "", nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return "", nil, m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	key := policyKey(qualifier)

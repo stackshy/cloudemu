@@ -3,7 +3,6 @@ package lambda
 import (
 	"context"
 
-	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
@@ -16,13 +15,13 @@ import (
 // surface.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) SetFunctionAWSConfig(_ context.Context, name string, cfg driver.AWSFunctionConfig, create bool) error {
+func (m *Mock) SetFunctionAWSConfig(ctx context.Context, name string, cfg driver.AWSFunctionConfig, create bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(name)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+		return m.errFunctionNotFound(ctx, name, "")
 	}
 
 	if create {
@@ -78,18 +77,23 @@ func overlayAWSConfig(dst *driver.AWSFunctionConfig, cfg driver.AWSFunctionConfi
 
 // GetFunctionAWSConfig returns a copy of the stored AWS-only settings for a
 // function.
-func (m *Mock) GetFunctionAWSConfig(_ context.Context, name string) (driver.AWSFunctionConfig, error) {
+func (m *Mock) GetFunctionAWSConfig(ctx context.Context, name string) (driver.AWSFunctionConfig, error) {
 	fd, ok := m.funcs.Get(name)
 	if !ok {
-		return driver.AWSFunctionConfig{}, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+		return driver.AWSFunctionConfig{}, m.errFunctionNotFound(ctx, name, "")
 	}
 
+	return cloneAWSConfig(&fd.awsConfig), nil
+}
+
+// cloneAWSConfig deep-copies a function's AWS-only settings.
+func cloneAWSConfig(c *driver.AWSFunctionConfig) driver.AWSFunctionConfig {
 	return driver.AWSFunctionConfig{
-		VPCConfig:        cloneVPCConfig(fd.awsConfig.VPCConfig),
-		DeadLetterConfig: cloneDeadLetterConfig(fd.awsConfig.DeadLetterConfig),
-		TracingConfig:    cloneTracingConfig(fd.awsConfig.TracingConfig),
-		Architectures:    cloneArchitectures(fd.awsConfig.Architectures),
-		EphemeralStorage: cloneEphemeralStorage(fd.awsConfig.EphemeralStorage),
-		Layers:           cloneLayers(fd.awsConfig.Layers),
-	}, nil
+		VPCConfig:        cloneVPCConfig(c.VPCConfig),
+		DeadLetterConfig: cloneDeadLetterConfig(c.DeadLetterConfig),
+		TracingConfig:    cloneTracingConfig(c.TracingConfig),
+		Architectures:    cloneArchitectures(c.Architectures),
+		EphemeralStorage: cloneEphemeralStorage(c.EphemeralStorage),
+		Layers:           cloneLayers(c.Layers),
+	}
 }

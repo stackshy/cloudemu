@@ -147,6 +147,24 @@ func (c *checkSet) requestTags(tags map[string]string) {
 }
 
 // resourceTags sets aws:ResourceTag/* from the tags of the function name.
+// codeSigningConfigTags sets the aws:ResourceTag/ condition keys from a code
+// signing config's tags.
+func (c *checkSet) codeSigningConfigTags(arn string) {
+	tagger, ok := c.h.fn.(codeSigningTagger)
+	if !ok {
+		return
+	}
+
+	tags, err := tagger.ListCodeSigningConfigTags(c.r.Context(), arn)
+	if err != nil {
+		return
+	}
+
+	for k, v := range tags {
+		c.cond[condResourceTagPrefix+k] = v
+	}
+}
+
 func (c *checkSet) resourceTags(name string) {
 	tagger, ok := c.h.fn.(functionTagger)
 	if !ok {
@@ -298,11 +316,53 @@ var iamRules = map[opID]iamRule{
 	opListProvisionedConcurrency:   onFunction,
 
 	opGetFunctionCodeSigningConfig:    onFunction,
+	opPutFunctionCodeSigningConfig:    putFunctionCodeSigningChecks,
 	opDeleteFunctionCodeSigningConfig: onFunction,
+
+	opCreateCodeSigningConfig:          onAny,
+	opListCodeSigningConfigs:           onAny,
+	opGetCodeSigningConfig:             onCodeSigningConfig,
+	opUpdateCodeSigningConfig:          onCodeSigningConfig,
+	opDeleteCodeSigningConfig:          onCodeSigningConfig,
+	opListFunctionsByCodeSigningConfig: onCodeSigningConfig,
+
+	opGetAccountSettings: onAny,
 
 	opPutFunctionConcurrency:    onFunction,
 	opGetFunctionConcurrency:    onFunction,
 	opDeleteFunctionConcurrency: onFunction,
+}
+
+// onCodeSigningConfig: the operation's own action on the code signing config
+// ARN the request names.
+func onCodeSigningConfig(c *checkSet, op opID) bool {
+	c.add(action(op), c.args.item, awsauthz.Required)
+	c.codeSigningConfigTags(c.args.item)
+
+	return true
+}
+
+// putFunctionCodeSigningChecks: lambda:PutFunctionCodeSigningConfig on both the
+// function and the code signing config it attaches (the Service Authorization
+// Reference lists both resource types as required).
+func putFunctionCodeSigningChecks(c *checkSet, op opID) bool {
+	var req struct {
+		CodeSigningConfigArn string `json:"CodeSigningConfigArn"`
+	}
+
+	if !awsauthz.JSONBody(c.r, &req) {
+		return false
+	}
+
+	c.add(action(op), c.unqualified(), awsauthz.Required)
+
+	if req.CodeSigningConfigArn != "" {
+		c.add(action(op), req.CodeSigningConfigArn, awsauthz.Required)
+	}
+
+	c.resourceTags(c.args.name)
+
+	return true
 }
 
 // invokeChecks: lambda:InvokeFunction on the function, version or alias. The
@@ -411,8 +471,14 @@ func tagChecks(c *checkSet, op opID) bool {
 		resource = c.unqualified()
 	}
 
-	c.add(action(op), resource, awsauthz.Required)
-	c.resourceTags(c.args.name)
+	// A code signing config ARN is its own resource, with its own tags.
+	if isCodeSigningConfigARN(c.args.item) {
+		c.add(action(op), c.args.item, awsauthz.Required)
+		c.codeSigningConfigTags(c.args.item)
+	} else {
+		c.add(action(op), resource, awsauthz.Required)
+		c.resourceTags(c.args.name)
+	}
 
 	switch op {
 	case opTagResource:

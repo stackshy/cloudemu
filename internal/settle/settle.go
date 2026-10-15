@@ -78,6 +78,9 @@ const (
 	DefaultRestoreExpeditedSettle = 1 * time.Second
 	DefaultRestoreStandardSettle  = 3 * time.Second
 	DefaultRestoreBulkSettle      = 5 * time.Second
+
+	DefaultLambdaCreateSettle = 1 * time.Second // Lambda function State Pending->Active
+	DefaultLambdaUpdateSettle = 1 * time.Second // Lambda LastUpdateStatus InProgress->Successful
 )
 
 // Window is a read-time overlay describing a resource still settling into its

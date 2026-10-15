@@ -24,13 +24,13 @@ const (
 // provisioned concurrency is carved out of the reserved budget. It also blocks
 // a reservation that would push the account's shared unreserved-concurrency
 // pool below its 100-execution minimum, exactly as real Lambda does.
-func (m *Mock) PutFunctionConcurrency(_ context.Context, cfg driver.ConcurrencyConfig) error {
+func (m *Mock) PutFunctionConcurrency(ctx context.Context, cfg driver.ConcurrencyConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
+		return m.errFunctionNotFound(ctx, cfg.FunctionName, "")
 	}
 
 	if provisioned := sumProvisionedConcurrency(&fd); cfg.ReservedConcurrentExecutions < provisioned {
@@ -81,10 +81,10 @@ func (m *Mock) sumReservedConcurrencyExcept(excludeName string) int {
 }
 
 // GetFunctionConcurrency retrieves the concurrency configuration for a function.
-func (m *Mock) GetFunctionConcurrency(_ context.Context, functionName string) (*driver.ConcurrencyConfig, error) {
+func (m *Mock) GetFunctionConcurrency(ctx context.Context, functionName string) (*driver.ConcurrencyConfig, error) {
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return nil, m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	if fd.concurrency == nil {
@@ -100,13 +100,13 @@ func (m *Mock) GetFunctionConcurrency(_ context.Context, functionName string) (*
 // function. Real Lambda blocks removing reserved concurrency entirely while
 // any provisioned concurrency is still configured on the function (the same
 // invariant PutFunctionConcurrency enforces for lowering it).
-func (m *Mock) DeleteFunctionConcurrency(_ context.Context, functionName string) error {
+func (m *Mock) DeleteFunctionConcurrency(ctx context.Context, functionName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	if provisioned := sumProvisionedConcurrency(&fd); provisioned > 0 {

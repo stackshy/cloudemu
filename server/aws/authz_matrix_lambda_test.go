@@ -390,10 +390,8 @@ func TestAuthzMatrixLambdaUnroutedOps(t *testing.T) {
 	u := userWithPolicy(t, cloud, "s3all", allow("s3:*", "lambda:*"))
 
 	for _, rq := range []sreq{
-		{method: http.MethodGet, path: "/2016-08-19/account-settings", service: "lambda"},
 		{path: "/2014-11-13/functions/fn1/invoke-async/", ctype: "application/json", body: `{}`, service: "lambda"},
 		{path: "/2021-11-15/functions/fn1/response-streaming-invocations", ctype: "application/json", body: `{}`, service: "lambda"},
-		{path: "/2020-04-22/code-signing-configs/", ctype: "application/json", body: `{}`, service: "lambda"},
 		{method: http.MethodPut, path: "/2021-07-20/functions/fn1/runtime-management-config", ctype: "application/json",
 			body: `{}`, service: "lambda"},
 	} {
@@ -407,6 +405,51 @@ func TestAuthzMatrixLambdaUnroutedOps(t *testing.T) {
 		if bucketExists(t, cloud, b) {
 			t.Errorf("an unrouted Lambda request created bucket %s", b)
 		}
+	}
+}
+
+// TestAuthzMatrixLambdaAccountAndCodeSigning checks GetAccountSettings and the
+// code signing config operations are routed to Lambda and authorized on their
+// own IAM actions: GetAccountSettings and CreateCodeSigningConfig on "*", the
+// rest on the code signing config ARN.
+func TestAuthzMatrixLambdaAccountAndCodeSigning(t *testing.T) {
+	ts, cloud := matrixServer(t, nil)
+	newFunction(t, cloud, "fn1", nil)
+
+	u := userWithPolicy(t, cloud, "acct", allow("lambda:GetAccountSettings"))
+
+	status, body := doSigned(t, ts, u, sreq{method: http.MethodGet, path: "/2016-08-19/account-settings", service: "lambda"})
+	if status != http.StatusOK || !strings.Contains(body, `"ConcurrentExecutions":1000`) {
+		t.Fatalf("GetAccountSettings: status %d %s, want 200", status, body)
+	}
+
+	create := sreq{
+		path: "/2020-04-22/code-signing-configs", ctype: "application/json", service: "lambda",
+		body: `{"AllowedPublishers":{"SigningProfileVersionArns":["arn:aws:signer:us-east-1:123456789012:/signing-profiles/p/v"]}}`,
+	}
+
+	status, body = doSigned(t, ts, u, create)
+	wantDenied(t, status, body, lambdaDeny)
+
+	creator := userWithPolicy(t, cloud, "csc", allow("lambda:CreateCodeSigningConfig"))
+
+	status, body = doSigned(t, ts, creator, create)
+	if status != http.StatusCreated {
+		t.Fatalf("CreateCodeSigningConfig: status %d %s, want 201", status, body)
+	}
+
+	i := strings.Index(body, "arn:aws:lambda:")
+	if i < 0 {
+		t.Fatalf("no code signing config ARN in %s", body)
+	}
+
+	arn := body[i : i+strings.Index(body[i:], `"`)]
+
+	status, body = doSigned(t, ts, creator, sreq{method: http.MethodGet, path: "/2020-04-22/code-signing-configs/" + arn, service: "lambda"})
+	wantDenied(t, status, body, lambdaDeny)
+
+	if bucketExists(t, cloud, "2016-08-19") || bucketExists(t, cloud, "2020-04-22") {
+		t.Error("a Lambda request created an S3 bucket")
 	}
 }
 

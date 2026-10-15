@@ -11,13 +11,13 @@ import (
 )
 
 // CreateAlias creates a new alias pointing to a specific function version.
-func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.Alias, error) {
+func (m *Mock) CreateAlias(ctx context.Context, cfg driver.AliasConfig) (*driver.Alias, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
+		return nil, m.errFunctionNotFound(ctx, cfg.FunctionName, "")
 	}
 
 	if fd.aliases.Has(cfg.Name) {
@@ -56,13 +56,13 @@ func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 }
 
 // UpdateAlias updates an existing alias configuration.
-func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.Alias, error) {
+func (m *Mock) UpdateAlias(ctx context.Context, cfg driver.AliasConfig) (*driver.Alias, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
+		return nil, m.errFunctionNotFound(ctx, cfg.FunctionName, "")
 	}
 
 	ad, ok := fd.aliases.Get(cfg.Name)
@@ -121,13 +121,13 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 // provisioned concurrency config and event invoke config. Real Lambda keeps
 // these as sub-resources of the alias ARN, so a later alias with the same name
 // starts with none of them instead of inheriting the old grants.
-func (m *Mock) DeleteAlias(_ context.Context, functionName, aliasName string) error {
+func (m *Mock) DeleteAlias(ctx context.Context, functionName, aliasName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	if !fd.aliases.Has(aliasName) {
@@ -166,10 +166,10 @@ func withoutKey[V any](src map[string]V, key string) map[string]V {
 }
 
 // GetAlias retrieves a specific alias for a function.
-func (m *Mock) GetAlias(_ context.Context, functionName, aliasName string) (*driver.Alias, error) {
+func (m *Mock) GetAlias(ctx context.Context, functionName, aliasName string) (*driver.Alias, error) {
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return nil, m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	ad, ok := fd.aliases.Get(aliasName)
@@ -185,10 +185,10 @@ func (m *Mock) GetAlias(_ context.Context, functionName, aliasName string) (*dri
 }
 
 // ListAliases returns all aliases for a function.
-func (m *Mock) ListAliases(_ context.Context, functionName string) ([]driver.Alias, error) {
+func (m *Mock) ListAliases(ctx context.Context, functionName string) ([]driver.Alias, error) {
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return nil, m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	all := fd.aliases.All()
