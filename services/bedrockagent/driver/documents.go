@@ -54,3 +54,15 @@ type KnowledgeBaseDocuments interface {
 	ListKnowledgeBaseDocuments(ctx context.Context, kbID, dsID string, page Page) ([]DocumentDetail, string, error)
 	DeleteKnowledgeBaseDocuments(ctx context.Context, kbID, dsID string, ids []DocumentIdentifier) ([]DocumentDetail, error)
 }
+
+// IndexedDocument is the text of a document ingested into a knowledge base, as
+// the runtime retrieves it. Text is empty when the content is not inline text
+// (an S3 location or binary bytes).
+type IndexedDocument struct {
+	KnowledgeBaseID string
+	DataSourceID    string
+	Identifier      DocumentIdentifier
+	Text            string
+	MimeType        string
+	Attributes      map[string]any // inline metadata: string, float64, bool or []string
+}

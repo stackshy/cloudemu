@@ -3,6 +3,7 @@ package bedrockagent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
@@ -14,13 +15,19 @@ const (
 	maxDocumentsPerCall = 10
 	maxCustomDocIDLen   = 2048
 	s3URIPrefix         = "s3://"
+	mimeTextPlain       = "text/plain"
 )
 
-// storedDocument is a document ingested into a data source.
+// storedDocument is a document ingested into a data source. Text is the text
+// read from S3 (an S3 document, or one an ingestion job synced: Synced, with
+// the object's ETag); CUSTOM documents keep their text in Content.
 type storedDocument struct {
 	Detail   driver.DocumentDetail `json:"detail"`
 	Content  json.RawMessage       `json:"content,omitempty"`
 	Metadata json.RawMessage       `json:"metadata,omitempty"`
+	Text     string                `json:"text,omitempty"`
+	ETag     string                `json:"etag,omitempty"`
+	Synced   bool                  `json:"synced,omitempty"`
 }
 
 // documentContent is the part of the DocumentContent union the mock reads.
@@ -41,7 +48,7 @@ type documentContent struct {
 
 // IngestKnowledgeBaseDocuments adds or replaces documents of a CUSTOM or S3
 // data source; each is INDEXED at once.
-func (m *Mock) IngestKnowledgeBaseDocuments(_ context.Context, kbID, dsID string, docs []driver.KnowledgeBaseDocument) (
+func (m *Mock) IngestKnowledgeBaseDocuments(ctx context.Context, kbID, dsID string, docs []driver.KnowledgeBaseDocument) (
 	[]driver.DocumentDetail, error,
 ) {
 	if err := checkDocumentCount("documents", len(docs)); err != nil {
@@ -76,7 +83,8 @@ func (m *Mock) IngestKnowledgeBaseDocuments(_ context.Context, kbID, dsID string
 			Status: driver.DocumentIndexed, UpdatedAt: now,
 		}
 		m.documents.Set(documentKey(kbID, dsID, ids[i]), &storedDocument{
-			Detail: detail, Content: copyRaw(d.Content), Metadata: copyRaw(d.Metadata),
+			Detail: detail, Content: copyRaw(d.Content), Metadata: m.resolveS3Metadata(ctx, copyRaw(d.Metadata)),
+			Text: m.s3DocumentText(ctx, ids[i]),
 		})
 
 		out = append(out, detail)
@@ -271,4 +279,83 @@ func documentKey(kbID, dsID string, id driver.DocumentIdentifier) string {
 	}
 
 	return versionKey(kbID, dsID, id.DataSourceType+":"+name)
+}
+
+// inlineContent is the inline part of a CUSTOM document's content.
+type inlineContent struct {
+	Custom *struct {
+		InlineContent *struct {
+			Type        string `json:"type"`
+			TextContent *struct {
+				Data string `json:"data"`
+			} `json:"textContent"`
+			ByteContent *struct {
+				Data     []byte `json:"data"`
+				MimeType string `json:"mimeType"`
+			} `json:"byteContent"`
+		} `json:"inlineContent"`
+	} `json:"custom"`
+}
+
+// IndexedDocuments returns every document ingested into a knowledge base,
+// sorted by data source and identifier, with the text the runtime searches.
+// The bedrock-agent-runtime mock reads it; it is not an AWS operation.
+func (m *Mock) IndexedDocuments(kbID string) []driver.IndexedDocument {
+	docs := childrenOf(m.documents, kbID, func(d *storedDocument) *storedDocument { return d })
+	out := make([]driver.IndexedDocument, 0, len(docs))
+
+	for _, d := range docs {
+		text, mime := documentText(d.Content)
+		if d.Text != "" {
+			text, mime = d.Text, mimeTextPlain
+		}
+
+		out = append(out, driver.IndexedDocument{
+			KnowledgeBaseID: d.Detail.KnowledgeBaseID,
+			DataSourceID:    d.Detail.DataSourceID,
+			Identifier:      d.Detail.Identifier,
+			Text:            text,
+			MimeType:        mime,
+			Attributes:      documentAttributes(d.Metadata),
+		})
+	}
+
+	return out
+}
+
+// documentText extracts inline text from a document's content: TEXT inline
+// content, or BYTE content whose MIME type is text.
+func documentText(raw json.RawMessage) (text, mime string) {
+	var c inlineContent
+	if json.Unmarshal(raw, &c) != nil || c.Custom == nil || c.Custom.InlineContent == nil {
+		return "", ""
+	}
+
+	in := c.Custom.InlineContent
+
+	switch {
+	case in.TextContent != nil:
+		return in.TextContent.Data, mimeTextPlain
+	case in.ByteContent != nil && strings.HasPrefix(in.ByteContent.MimeType, "text/"):
+		return string(in.ByteContent.Data), in.ByteContent.MimeType
+	default:
+		return "", ""
+	}
+}
+
+// s3DocumentText reads the text of an S3 document ingested directly, when the
+// object exists in cloudemu S3 and is a text type.
+func (m *Mock) s3DocumentText(ctx context.Context, id driver.DocumentIdentifier) string {
+	if m.objects == nil || id.DataSourceType != driver.DocumentSourceS3 {
+		return ""
+	}
+
+	bucket, key, ok := strings.Cut(strings.TrimPrefix(id.S3URI, s3URIPrefix), "/")
+	if !ok {
+		return ""
+	}
+
+	text, _ := m.readText(ctx, bucket, key, "")
+
+	return text
 }

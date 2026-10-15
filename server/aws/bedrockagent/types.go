@@ -210,6 +210,7 @@ type ingestionJobJSON struct {
 	Description     string                   `json:"description,omitempty"`
 	Status          string                   `json:"status"`
 	Statistics      *ingestionStatisticsJSON `json:"statistics,omitempty"`
+	FailureReasons  []string                 `json:"failureReasons,omitempty"`
 	StartedAt       string                   `json:"startedAt"`
 	UpdatedAt       string                   `json:"updatedAt"`
 }

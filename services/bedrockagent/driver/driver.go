@@ -41,6 +41,7 @@ const (
 	IngestionJobComplete   = "COMPLETE"
 	IngestionJobInProgress = "IN_PROGRESS"
 	IngestionJobStopped    = "STOPPED"
+	IngestionJobFailed     = "FAILED"
 )
 
 // Flow status values (PascalCase, per FlowStatus).
@@ -195,6 +196,7 @@ type IngestionJob struct {
 	Description     string
 	Status          string
 	Statistics      IngestionJobStatistics
+	FailureReasons  []string // why a FAILED job failed
 	StartedAt       string
 	UpdatedAt       string
 }

@@ -300,8 +300,9 @@ type ApplyGuardrailInput struct {
 }
 
 // ApplyGuardrailOutput is the result of evaluating content against a guardrail.
-// The emulator never intervenes, so Action is always NONE and no policy units
-// are consumed.
+// The emulator evaluates the custom denied words of the word policy: a match
+// returns GUARDRAIL_INTERVENED with the guardrail's blocked message as the only
+// output; anything else returns NONE with the content unchanged.
 type ApplyGuardrailOutput struct {
 	Action  string
 	Outputs []string

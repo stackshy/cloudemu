@@ -239,6 +239,7 @@ func TestSDKDuplicateBrokerConflict(t *testing.T) {
 		DeploymentMode:     mqtypes.DeploymentModeSingleInstance,
 		HostInstanceType:   aws.String("mq.t3.micro"),
 		PubliclyAccessible: aws.Bool(false),
+		Users:              []mqtypes.User{{Username: aws.String("admin"), Password: aws.String("SuperSecret1234")}},
 	})
 
 	var cf *mqtypes.ConflictException

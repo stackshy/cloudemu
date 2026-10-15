@@ -3298,6 +3298,170 @@
         "name": "RetrieveAndGenerate"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "AgentMemory",
+        "doc": "AgentMemory reads and deletes an agent's session-summary memory.",
+        "operations": [
+          {
+            "name": "DeleteAgentMemory"
+          },
+          {
+            "name": "GetAgentMemory"
+          }
+        ]
+      },
+      {
+        "name": "AgenticRetriever",
+        "doc": "AgenticRetriever plans and runs retrievals over knowledge bases.",
+        "operations": [
+          {
+            "name": "AgenticRetrieveStream"
+          }
+        ]
+      },
+      {
+        "name": "DocumentReader",
+        "doc": "DocumentReader locates the content of ingested knowledge-base documents.",
+        "operations": [
+          {
+            "name": "GetDocumentContent"
+          }
+        ]
+      },
+      {
+        "name": "FlowExecutions",
+        "doc": "FlowExecutions invokes flows and manages their asynchronous executions.",
+        "operations": [
+          {
+            "name": "GetExecutionFlowSnapshot"
+          },
+          {
+            "name": "GetFlowExecution"
+          },
+          {
+            "name": "InvokeFlow"
+          },
+          {
+            "name": "ListFlowExecutionEvents"
+          },
+          {
+            "name": "ListFlowExecutions"
+          },
+          {
+            "name": "StartFlowExecution"
+          },
+          {
+            "name": "StopFlowExecution"
+          }
+        ]
+      },
+      {
+        "name": "InlineAgents",
+        "doc": "InlineAgents runs agents defined inline in the request.",
+        "operations": [
+          {
+            "name": "InvokeInlineAgent"
+          }
+        ]
+      },
+      {
+        "name": "Invocations",
+        "doc": "Invocations records invocations and their steps in a session.",
+        "operations": [
+          {
+            "name": "CreateInvocation"
+          },
+          {
+            "name": "GetInvocationStep"
+          },
+          {
+            "name": "ListInvocationSteps"
+          },
+          {
+            "name": "ListInvocations"
+          },
+          {
+            "name": "PutInvocationStep"
+          }
+        ]
+      },
+      {
+        "name": "PromptOptimizer",
+        "doc": "PromptOptimizer rewrites a prompt for a target model.",
+        "operations": [
+          {
+            "name": "OptimizePrompt"
+          }
+        ]
+      },
+      {
+        "name": "QueryGenerator",
+        "doc": "QueryGenerator turns natural language into SQL (TEXT_TO_SQL).",
+        "operations": [
+          {
+            "name": "GenerateQuery"
+          }
+        ]
+      },
+      {
+        "name": "Reranker",
+        "doc": "Reranker orders documents by relevance to a query.",
+        "operations": [
+          {
+            "name": "Rerank"
+          }
+        ]
+      },
+      {
+        "name": "Sessions",
+        "doc": "Sessions manages session-management sessions.",
+        "operations": [
+          {
+            "name": "CreateSession"
+          },
+          {
+            "name": "DeleteSession"
+          },
+          {
+            "name": "EndSession"
+          },
+          {
+            "name": "GetSession"
+          },
+          {
+            "name": "ListSessions"
+          },
+          {
+            "name": "UpdateSession"
+          }
+        ]
+      },
+      {
+        "name": "StreamingRetrieveAndGenerate",
+        "doc": "StreamingRetrieveAndGenerate answers RetrieveAndGenerateStream.",
+        "operations": [
+          {
+            "name": "RetrieveAndGenerateStream"
+          }
+        ]
+      },
+      {
+        "name": "Tagger",
+        "doc": "Tagger tags runtime resources (sessions) by ARN.",
+        "operations": [
+          {
+            "name": "ListTagsForResource"
+          },
+          {
+            "name": "TagResource"
+          },
+          {
+            "name": "UntagResource"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "BedrockAgentRuntime"
     }
@@ -6270,7 +6434,8 @@
     "providers": {
       "aws": "DynamoDB",
       "azure": "CosmosDB",
-      "gcp": "Firestore"
+      "gcp": "Firestore",
+      "oci": "NoSQL"
     }
   },
   {
@@ -17509,7 +17674,8 @@
     "providers": {
       "aws": "SecretsManager",
       "azure": "KeyVault",
-      "gcp": "SecretManager"
+      "gcp": "SecretManager",
+      "oci": "Vault"
     }
   },
   {
