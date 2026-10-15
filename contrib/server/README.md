@@ -53,16 +53,16 @@ docker pull ghcr.io/stackshy/cloudemu:engines
 
 # No-arg run is pure in-memory (identical to `cloudemu serve`); every engine
 # defaults to off until you opt in:
-docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 \
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4571:4571 \
   ghcr.io/stackshy/cloudemu:engines
 
 # Real Postgres + Redis via env (no Docker socket needed):
-docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 \
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4571:4571 \
   -e CLOUDEMU_DB=postgres -e CLOUDEMU_CACHE=redis \
   ghcr.io/stackshy/cloudemu:engines
 
 # Docker-backed engines need the host docker socket:
-docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 \
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4571:4571 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e CLOUDEMU_DB=mysql -e CLOUDEMU_CONTAINERS=docker \
   ghcr.io/stackshy/cloudemu:engines

@@ -33,6 +33,9 @@ func TestMyApp(t *testing.T) {
 
 Methods: `AWSEndpoint`, `AzureEndpoint`, `GCPEndpoint`, `OCIEndpoint`, `KubernetesEndpoint`,
 `Reset`, `Seed`, plus the embedded Testcontainers container (`Terminate`, …).
+`OCIEndpoint` needs an image from a release that starts OCI by default; until
+that release is published, `:latest` doesn't listen on the OCI port, so pin a
+newer image with `cloudemu.WithImage(...)`.
 Pin a version or use a local image with `cloudemu.WithImage("...")`.
 
 `cloudemu.WithEnforceAuth(token)` starts the server with `--enforce-auth` and

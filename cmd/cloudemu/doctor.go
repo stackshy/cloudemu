@@ -47,18 +47,34 @@ func defaultPortChecks() []portCheck {
 	serveflags.RegisterCommon(fs, &c, func(string) string { return "" })
 	_ = fs.Parse(nil)
 
+	return portChecks(&c)
+}
+
+// portChecks returns the ports a serve started with c would bind: a provider
+// left out of --providers is only a warning, and an empty --k8s-port is skipped.
+func portChecks(c *serveflags.CommonConfig) []portCheck {
 	started := map[string]bool{}
 	for _, p := range strings.Split(c.Providers, ",") {
 		started[strings.TrimSpace(p)] = true
 	}
 
-	return []portCheck{
+	checks := []portCheck{
 		{"AWS", c.AWSPort, started["aws"]},
 		{"Azure", c.AzurePort, started["azure"]},
 		{"GCP", c.GCPPort, started["gcp"]},
 		{"Kubernetes", c.K8sPort, true},
 		{"OCI", c.OCIPort, started["oci"]},
 	}
+
+	out := checks[:0]
+
+	for _, p := range checks {
+		if p.port != "" {
+			out = append(out, p)
+		}
+	}
+
+	return out
 }
 
 // checkPortFree reports whether a TCP listener can be bound at hostPort right
@@ -126,7 +142,7 @@ func writeDoctorReport(
 			continue
 		}
 
-		fmt.Fprintf(w, "  %s %-14s %s  in use (not started by default)\n", markWarn, p.label, hostPort)
+		fmt.Fprintf(w, "  %s %-14s %s  in use (not in --providers, so serve won't bind it)\n", markWarn, p.label, hostPort)
 	}
 
 	fmt.Fprintln(w)
@@ -170,11 +186,16 @@ func portFlagHint(label string) string {
 func runDoctor(args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 
-	host := fs.String("host", "127.0.0.1", "host/interface the emulator would bind (mirrors serve --host)")
+	// The same flags as serve, so `cloudemu doctor <serve args>` checks the ports
+	// that serve would bind, for the providers it would start.
+	var c serveflags.CommonConfig
+
+	serveflags.RegisterCommon(fs, &c, os.Getenv)
 
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: cloudemu doctor [flags]\n\n"+
-			"Preflight check: build version, default ports free, docker availability.\n\nFlags:\n")
+		fmt.Fprintf(fs.Output(), "Usage: cloudemu doctor [serve flags]\n\n"+
+			"Preflight check: build version, the ports serve would bind are free, docker availability.\n"+
+			"Pass the same --providers and port flags you give serve.\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
 
@@ -182,7 +203,7 @@ func runDoctor(args []string) error {
 		return err
 	}
 
-	blockers := writeDoctorReport(os.Stdout, *host, defaultPortChecks(), checkPortFree, exec.LookPath)
+	blockers := writeDoctorReport(os.Stdout, c.Host, portChecks(&c), checkPortFree, exec.LookPath)
 	if blockers > 0 {
 		return errPreflightBlocker
 	}

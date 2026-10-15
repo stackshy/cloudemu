@@ -69,7 +69,7 @@ func adminBaseURL(dir string) (string, error) {
 		return "", err
 	}
 
-	// Azure and Kubernetes are HTTPS, so this picks aws, then gcp.
+	// Azure and Kubernetes are HTTPS, so this picks aws, then gcp, then oci.
 	for _, k := range endpointOrder() {
 		if ep := eps[k]; strings.HasPrefix(ep, "http://") {
 			return strings.TrimRight(ep, "/"), nil

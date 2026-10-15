@@ -275,12 +275,15 @@ reconcile invoices. A live pricing-API integration is planned.
 ## Preflight check (`cloudemu doctor`)
 
 A quick check to run before `cloudemu serve`, with no server needed. It confirms
-the default ports are free, prints the build version, and reports whether
-`docker` is available (only needed for the `:engines` image):
+the ports serve would bind are free, prints the build version, and reports
+whether `docker` is available (only needed for the `:engines` image). It takes
+the same flags as `serve`, so pass the `--providers`, `--host` and port flags you
+start serve with:
 
 ```sh
-cloudemu doctor                 # check 127.0.0.1
-cloudemu doctor --host 0.0.0.0  # check the interface you'll bind serve to
+cloudemu doctor                              # the default set on 127.0.0.1
+cloudemu doctor --host 0.0.0.0               # check the interface you'll bind serve to
+cloudemu doctor --providers aws,azure,gcp    # OCI left out: a busy 4571 only warns
 ```
 
 ```text
@@ -300,8 +303,8 @@ Ports on 127.0.0.1 (free = free at check time; a port can still be taken before 
 [ ok ] all preflight checks passed, ready to `cloudemu serve`.
 ```
 
-An in-use port that `serve` binds by default (AWS/Azure/GCP/OCI/Kubernetes) is a
-blocker: the line is marked `[fail]`, the summary says how many failed, and the
+An in-use port that `serve` would bind (AWS/Azure/GCP/OCI/Kubernetes, for the
+providers you pass) is a blocker: the line is marked `[fail]`, the summary says how many failed, and the
 command exits non-zero, so you can use it as a CI gate. A missing `docker` only
 produces `[warn]`, never a failure. The default ports are read from `serve` itself,
 so they always match what `cloudemu serve` binds.
@@ -460,7 +463,7 @@ generated cert's SANs with `--tls-host <name>` and trust that cert in your clien
 | `--k8s-progression` | `false` | client-created Pods start Pending and move to Running on a ticker (env `CLOUDEMU_K8S_PROGRESSION`) |
 | `--k8s-progression-interval` | (built-in) | tick interval for `--k8s-progression` (env `CLOUDEMU_K8S_PROGRESSION_INTERVAL`) |
 | `--tick-interval` | `1s` | how often time-driven work runs, such as CloudWatch alarms, Azure Monitor metric alerts and GCP alert policies firing their actions; `0` turns it off (env `CLOUDEMU_TICK_INTERVAL`) |
-| `--enforce-auth` | `false` | require authentication: SigV4 verification for AWS (long-term IAM keys and STS temporary credentials), Bearer-token claim checks for Azure (see `cloudemu serve -h` for the exact scope). The `/_cloudemu` endpoints then need the admin token |
+| `--enforce-auth` | `false` | require authentication: SigV4 verification for AWS (long-term IAM keys and STS temporary credentials), Bearer-token claim checks for Azure (see `cloudemu serve -h` for the exact scope). GCP and OCI requests are not checked, so bind those listeners only where that's acceptable. The `/_cloudemu` endpoints then need the admin token, on every port |
 | `--admin-token` | (random) | with `--enforce-auth`, the bearer token for `/_cloudemu/*` except `health`; unset means a random token printed once on stderr (env `CLOUDEMU_ADMIN_TOKEN`) |
 | `--admin-token-file` | (none) | with `--enforce-auth`, write the admin token here (mode 0600) instead of printing it; `start` sets it to `~/.cloudemu/admin-token` (env `CLOUDEMU_ADMIN_TOKEN_FILE`) |
 | `--vcr` | (off) | record or replay the wire protocol: `record` \| `replay` (requires `--vcr-cassette`) |
