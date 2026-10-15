@@ -4,14 +4,23 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math/big"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stackshy/cloudemu/v2/services/kinesis/driver"
 )
 
 const (
+	// defaultGetRecordsLimit is both the GetRecords default and its maximum
+	// Limit: real Kinesis documents Limit's valid range as 1..10000 and throws
+	// InvalidArgumentException for a value above 10,000.
 	defaultGetRecordsLimit = 10000
+	// maxPartitionKeyLen is the PartitionKey length cap (Unicode characters)
+	// on PutRecord and every PutRecords entry.
+	maxPartitionKeyLen = 256
 	// maxRecordBytes is Kinesis's per-record data cap (1 MiB) when the stream has
 	// no explicit MaxRecordSize configured.
 	maxRecordBytes = 1 << 20
@@ -52,6 +61,48 @@ func validateBatchSize(sd *streamData, entries []driver.PutRecordsRequestEntry) 
 
 	if total > maxBatchBytes {
 		return invalidArg("PutRecords batch of %d bytes exceeds the %d-byte limit", total, maxBatchBytes)
+	}
+
+	return nil
+}
+
+// partitionKeyTooLong reports whether a partition key exceeds the 256-character
+// model constraint. Length is counted in Unicode characters, not bytes.
+func partitionKeyTooLong(key string) bool {
+	return utf8.RuneCountInString(key) > maxPartitionKeyLen
+}
+
+// partitionKeyLengthError renders the model-constraint failure real Kinesis
+// returns for over-long partition keys, at the given member path(s).
+func partitionKeyLengthError(violations []string) error {
+	noun := "error"
+	if len(violations) > 1 {
+		noun = "errors"
+	}
+
+	return validationErr("%d validation %s detected: %s", len(violations), noun, strings.Join(violations, "; "))
+}
+
+func partitionKeyViolation(key, path string) string {
+	return fmt.Sprintf("Value '%s' at '%s' failed to satisfy constraint: "+
+		"Member must have length less than or equal to %d", key, path, maxPartitionKeyLen)
+}
+
+// validateBatchPartitionKeys rejects the whole PutRecords request when any
+// entry's PartitionKey exceeds 256 characters, as request validation does in
+// real Kinesis (no records are written).
+func validateBatchPartitionKeys(entries []driver.PutRecordsRequestEntry) error {
+	var violations []string
+
+	for i := range entries {
+		if partitionKeyTooLong(entries[i].PartitionKey) {
+			violations = append(violations,
+				partitionKeyViolation(entries[i].PartitionKey, fmt.Sprintf("records.%d.member.partitionKey", i+1)))
+		}
+	}
+
+	if len(violations) > 0 {
+		return partitionKeyLengthError(violations)
 	}
 
 	return nil
@@ -118,6 +169,10 @@ func (m *Mock) PutRecord(ctx context.Context, in driver.PutRecordInput) (*driver
 		return nil, invalidArg("PartitionKey is required")
 	}
 
+	if partitionKeyTooLong(in.PartitionKey) {
+		return nil, partitionKeyLengthError([]string{partitionKeyViolation(in.PartitionKey, "partitionKey")})
+	}
+
 	sd, err := m.resolve(in.StreamName, in.StreamARN)
 	if err != nil {
 		return nil, err
@@ -169,6 +224,10 @@ func (m *Mock) PutRecords(
 	if len(entries) > maxBatchRecords {
 		return nil, 0, invalidArg("a PutRecords request may contain at most %d records, got %d",
 			maxBatchRecords, len(entries))
+	}
+
+	if err := validateBatchPartitionKeys(entries); err != nil {
+		return nil, 0, err
 	}
 
 	sd, err := m.resolve(name, arn)
@@ -335,10 +394,16 @@ func positionFor(shard *shardState, in *driver.GetShardIteratorInput) (int, erro
 		}
 
 		return indexByTimestamp(shard.records, in.Timestamp), nil
-	case driver.IteratorAtSequenceNumber:
-		return indexBySeq(shard.records, in.StartingSequenceNumber, false)
-	case driver.IteratorAfterSequenceNumber:
-		return indexBySeq(shard.records, in.StartingSequenceNumber, true)
+	case driver.IteratorAtSequenceNumber, driver.IteratorAfterSequenceNumber:
+		// The shard's own starting sequence number precedes every record; it is
+		// what a SubscribeToShard continuation carries before any data arrives.
+		if in.StartingSequenceNumber != "" &&
+			in.StartingSequenceNumber == shard.shard.SequenceNumberRange.StartingSequenceNumber {
+			return 0, nil
+		}
+
+		return indexBySeq(shard.records, in.StartingSequenceNumber,
+			in.ShardIteratorType == driver.IteratorAfterSequenceNumber)
 	default:
 		return 0, invalidArg("unsupported ShardIteratorType %q", in.ShardIteratorType)
 	}
@@ -370,8 +435,15 @@ func indexBySeq(records []driver.Record, seq string, after bool) (int, error) {
 
 // GetRecords returns records from the iterator position and advances it, then
 // publishes the stream-level GetRecords.* metrics for the successful read.
+// A zero limit means Limit was omitted (the 10,000 default); a negative limit
+// or one above 10,000 is rejected with InvalidArgumentException rather than
+// silently clamped, as real Kinesis does.
 func (m *Mock) GetRecords(ctx context.Context, shardIterator string, limit int32) (*driver.GetRecordsOutput, error) {
 	start := m.now()
+
+	if limit < 0 || limit > defaultGetRecordsLimit {
+		return nil, invalidArg("Limit %d is invalid: it must be between 1 and %d", limit, defaultGetRecordsLimit)
+	}
 
 	tok, err := decodeIterator(shardIterator)
 	if err != nil {
@@ -397,7 +469,7 @@ func (m *Mock) readRecords(tok iteratorToken, limit int32) (*driver.GetRecordsOu
 			createdAt.Format(time.RFC1123))
 	}
 
-	sd, ok := m.streams.Get(tok.StreamName)
+	sd, ok := m.lookup(tok.StreamName)
 	if !ok {
 		return nil, errNotFoundName(tok.StreamName)
 	}
@@ -410,7 +482,7 @@ func (m *Mock) readRecords(tok iteratorToken, limit int32) (*driver.GetRecordsOu
 		return nil, expiredIterator("shard %q no longer exists", tok.ShardID)
 	}
 
-	if limit <= 0 || limit > defaultGetRecordsLimit {
+	if limit == 0 {
 		limit = defaultGetRecordsLimit
 	}
 

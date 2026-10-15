@@ -120,6 +120,8 @@ func TestSDKSubscribeToShard(t *testing.T) {
 		gotData  string
 	)
 
+	// The subscription stays open (live push), so stop reading once the
+	// already-written record has been delivered.
 	for ev := range stream.Events() {
 		if e, ok := ev.(*kinesistypes.SubscribeToShardEventStreamMemberSubscribeToShardEvent); ok {
 			sawEvent = true
@@ -130,6 +132,10 @@ func TestSDKSubscribeToShard(t *testing.T) {
 
 			if aws.ToString(e.Value.ContinuationSequenceNumber) == "" {
 				t.Fatal("expected a continuation sequence number")
+			}
+
+			if gotData != "" {
+				break
 			}
 		}
 	}

@@ -68,14 +68,25 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 
 // snapshotStreams promotes each stored streamData to its exported form.
 func (m *Mock) snapshotStreams() map[string]*streamDataSnapshot {
-	if m.streams.Len() == 0 {
+	live := m.liveStreams()
+	if len(live) == 0 {
 		return nil
 	}
 
-	out := make(map[string]*streamDataSnapshot, m.streams.Len())
+	out := make(map[string]*streamDataSnapshot, len(live))
 
-	for name, sd := range m.streams.All() {
+	for name, sd := range live {
 		sd.mu.RLock()
+
+		// A stream already in DELETING is committed to removal: the transient
+		// settle window isn't serialized, so restoring it would resurrect the
+		// stream as ACTIVE forever. Leave it out instead.
+		if sd.deleting {
+			sd.mu.RUnlock()
+
+			continue
+		}
+
 		out[name] = &streamDataSnapshot{
 			Desc: sd.desc, Shards: snapshotShards(sd.shards), Consumers: sd.consumers,
 			Tags: sd.tags, Policy: sd.policy, MaxRecKiB: sd.maxRecKiB,

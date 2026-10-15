@@ -3364,7 +3364,10 @@ streams records to a registered consumer as an
 `application/vnd.amazon.eventstream` response: it resolves the consumer's shard
 from the requested `StartingPosition`, emits the `initial-response` frame the SDK
 awaits, then a `SubscribeToShardEvent` frame carrying the records, continuation
-sequence number, and `MillisBehindLatest`. Polling via
+sequence number, and `MillisBehindLatest`. The connection then stays open and
+pushes a new event whenever records land on the shard, for up to 5 minutes (as
+real Kinesis does), until the client disconnects, or until the shard is closed
+(the final event carries `ChildShards` and no continuation). Polling via
 `GetShardIterator`/`GetRecords` covers the same read path.
 
 **Total: 39 operations.**

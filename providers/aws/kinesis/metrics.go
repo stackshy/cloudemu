@@ -16,6 +16,17 @@ const (
 	unitBytes        = "Bytes"
 	unitCount        = "Count"
 	unitMilliseconds = "Milliseconds"
+
+	// Throttling metrics. The emulator enforces no shard throughput limits
+	// (it never returns ProvisionedThroughputExceededException), so the
+	// throttled count of every put/get is truly 0. Like IncomingRecords and the
+	// other per-operation stream metrics, they get one sample per PutRecord,
+	// PutRecords or GetRecords call, carrying that call's throttled count, so
+	// Average/Maximum/Minimum read as the Kinesis metrics page describes ("When
+	// the Maximum statistic has a value of 0 (zero), no records were throttled")
+	// and nothing is published for an idle stream.
+	metricWriteThrottled = "WriteProvisionedThroughputExceeded"
+	metricReadThrottled  = "ReadProvisionedThroughputExceeded"
 )
 
 // SetMonitoring wires the CloudWatch backend that receives the stream-level
@@ -59,6 +70,7 @@ func (m *Mock) emitPutRecordMetrics(ctx context.Context, stream string, size int
 		{MetricName: "PutRecord.Bytes", Value: float64(size), Unit: unitBytes},
 		{MetricName: "PutRecord.Success", Value: 1, Unit: unitCount},
 		{MetricName: "PutRecord.Latency", Value: m.sinceMillis(start), Unit: unitMilliseconds},
+		{MetricName: metricWriteThrottled, Value: 0, Unit: unitCount},
 	})
 }
 
@@ -80,7 +92,9 @@ func (m *Mock) emitPutRecordsMetrics(ctx context.Context, stream string, o putRe
 		{MetricName: "PutRecords.TotalRecords", Value: float64(o.total), Unit: unitCount},
 		{MetricName: "PutRecords.SuccessfulRecords", Value: float64(succeeded), Unit: unitCount},
 		{MetricName: "PutRecords.FailedRecords", Value: float64(o.failed), Unit: unitCount},
+		{MetricName: "PutRecords.ThrottledRecords", Value: 0, Unit: unitCount},
 		{MetricName: "PutRecords.Latency", Value: m.sinceMillis(start), Unit: unitMilliseconds},
+		{MetricName: metricWriteThrottled, Value: 0, Unit: unitCount},
 	})
 }
 
@@ -104,5 +118,6 @@ func (m *Mock) emitGetRecordsMetrics(ctx context.Context, stream string, recs []
 		{MetricName: "GetRecords.Success", Value: 1, Unit: unitCount},
 		{MetricName: "GetRecords.IteratorAgeMilliseconds", Value: age, Unit: unitMilliseconds},
 		{MetricName: "GetRecords.Latency", Value: m.sinceMillis(start), Unit: unitMilliseconds},
+		{MetricName: metricReadThrottled, Value: 0, Unit: unitCount},
 	})
 }

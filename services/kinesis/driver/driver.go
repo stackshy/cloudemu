@@ -202,11 +202,14 @@ type SubscribeToShardInput struct {
 }
 
 // SubscribeToShardResult carries one enhanced fan-out event's worth of records
-// plus the continuation cursor used to resume the subscription.
+// plus the continuation cursor used to resume the subscription. At the end of a
+// closed shard ContinuationSequenceNumber is empty and ChildShards lists the
+// shard's children, matching the SubscribeToShardEvent shard-end contract.
 type SubscribeToShardResult struct {
 	Records                    []Record
 	ContinuationSequenceNumber string
 	MillisBehindLatest         int64
+	ChildShards                []ChildShard
 }
 
 // ShardFilter narrows ListShards to a subset of shards. Type is one of the

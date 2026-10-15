@@ -5,6 +5,10 @@ package driver
 const (
 	ExExpiredIterator = "ExpiredIteratorException"
 	ExInvalidArgument = "InvalidArgumentException"
+	// ExValidation is the request-shape (model constraint) failure real Kinesis
+	// returns as "1 validation error detected: Value ... failed to satisfy
+	// constraint ...", e.g. a PartitionKey longer than 256 characters.
+	ExValidation = "ValidationException"
 )
 
 // APIError tags a canonical cloudemu error with the Kinesis exception name it

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
@@ -24,11 +25,21 @@ const targetPrefix = "Kinesis_20131202."
 type Handler struct {
 	kinesis kinesisdriver.Kinesis
 	routes  map[string]http.HandlerFunc
+
+	// subscriptionLifetime bounds one SubscribeToShard connection and
+	// subscriptionPoll is how often it pushes newly arrived records; see
+	// streaming_ops.go. Tests shorten them so they never wait real minutes.
+	subscriptionLifetime time.Duration
+	subscriptionPoll     time.Duration
 }
 
 // New returns a Kinesis handler backed by d.
 func New(d kinesisdriver.Kinesis) *Handler {
-	h := &Handler{kinesis: d}
+	h := &Handler{
+		kinesis:              d,
+		subscriptionLifetime: defaultSubscriptionLifetime,
+		subscriptionPoll:     defaultSubscriptionPoll,
+	}
 	h.routes = map[string]http.HandlerFunc{
 		"CreateStream":                  h.createStream,
 		"DeleteStream":                  h.deleteStream,
