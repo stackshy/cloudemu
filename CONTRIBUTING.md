@@ -52,7 +52,7 @@ Fix every issue. If you need a `//nolint` directive, add a comment explaining wh
 ### Adding a feature to an existing service
 
 1. Add types and methods to the driver interface (`services/<service>/driver/driver.go`).
-2. Implement them in all 3 providers (AWS, Azure, GCP).
+2. Implement them in every provider that has the service: AWS, Azure and GCP, plus OCI where it emulates it.
 3. Wire them through the portable API layer (`services/<service>/<service>.go`).
 4. Add integration tests to `cloudemu_test.go`.
 5. Add unit tests to each provider's test file.
@@ -69,7 +69,7 @@ Fix every issue. If you need a `//nolint` directive, add a comment explaining wh
 
 ### Rules
 
-- All 3 providers (AWS, Azure, GCP) must implement the same behavior.
+- Every provider that implements a service (AWS, Azure, GCP, and OCI where present) must implement the same behavior. OCI-only operations go in an `Extras` interface next to the handler; see [docs/oci-conventions.md](docs/oci-conventions.md).
 - Use `cerrors.New()` / `cerrors.Newf()` for error codes.
 - Use `config.FakeClock` for deterministic time in tests.
 - Use `memstore.Store[V]` for in-memory storage.

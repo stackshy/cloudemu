@@ -1,5 +1,5 @@
 // Command cloudemu runs the in-memory cloud emulator as a long-lived,
-// out-of-process HTTP server. Point real AWS, Azure, and GCP SDK clients at
+// out-of-process HTTP server. Point real AWS, Azure, GCP and OCI SDK clients at
 // the printed endpoints and they talk to cloudemu over the network exactly as
 // they would to the real cloud: no code changes, no accounts, no Docker.
 //
@@ -12,7 +12,7 @@ import (
 	"os"
 )
 
-const usage = `cloudemu: in-memory AWS/Azure/GCP emulator
+const usage = `cloudemu: in-memory AWS/Azure/GCP/OCI emulator
 
 Usage:
   cloudemu start [flags]     Start the emulator in the background (accepts serve flags)

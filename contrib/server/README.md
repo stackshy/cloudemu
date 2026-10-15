@@ -26,8 +26,8 @@ go run . --db=postgres --cache=redis
 # Persist object-storage bytes to a real local filesystem (no Docker):
 go run . --storage=localfs --storage-dir ./objects
 
-# Add the OCI endpoint and the shared Kubernetes data-plane:
-go run . --providers aws,azure,gcp,oci --k8s-port 4570
+# Start only some providers (all four start by default):
+go run . --providers aws,oci
 
 # Everything real (Docker required for compute/containers):
 go run . --all-real
@@ -135,13 +135,13 @@ Flag names and defaults mirror `cloudemu serve`.
 
 | Flag                  | Default                                  | Meaning                                    |
 |-----------------------|------------------------------------------|--------------------------------------------|
-| `--providers`         | `aws,azure,gcp`                          | providers to start (`aws,azure,gcp,oci`; OCI opt-in) |
+| `--providers`         | `aws,azure,gcp,oci`                      | providers to start                          |
 | `--host`              | `127.0.0.1`                              | bind host (`0.0.0.0` exposes on network)   |
 | `--advertise-host`    | *(derives from `--host`)*                | host the Kubernetes endpoint is advertised at (its kubeconfig/TLS cert) |
 | `--aws-port`          | `4566`                                   | AWS endpoint (HTTP)                        |
 | `--azure-port`        | `4568`                                   | Azure endpoint (HTTPS, self-signed)        |
 | `--gcp-port`          | `4569`                                   | GCP endpoint (HTTP)                        |
-| `--oci-port`          | `4571`                                   | OCI endpoint (HTTP; only bound when `oci` is in `--providers`) |
+| `--oci-port`          | `4571`                                   | OCI endpoint (HTTP)                        |
 | `--k8s-port`          | `4570`                                   | shared Kubernetes data-plane (HTTPS); empty disables it |
 | `--account-id`        | `000000000000`                           | AWS/GCP/OCI account id                      |
 | `--azure-subscription`| `00000000-0000-0000-0000-000000000000`   | Azure subscription id (GUID)               |
@@ -159,7 +159,7 @@ Flag names and defaults mirror `cloudemu serve`.
 | `--endpoints-file`    | *(none)*                                 | write the resolved endpoints as JSON to this path |
 | `--shutdown-timeout`  | `10s`                                    | grace period for in-flight requests        |
 
-The OCI endpoint (`--providers` includes `oci`) and the shared Kubernetes
+The OCI endpoint and the shared Kubernetes
 data-plane (`--k8s-port`) are wired through the same `server/serverkit` assembly
 as `cloudemu serve`. The Kubernetes port serves HTTPS with its own self-signed
 serving certificate (`--tls-cert`/`--tls-key` apply only to the Azure endpoint).

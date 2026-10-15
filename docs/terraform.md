@@ -213,6 +213,14 @@ with `azurerm` v4 against `azurerm_resource_group` and `azurerm_storage_account`
 > by hand, but neither is covered by the suite yet. Fixtures for either are
 > welcome.
 
+## OCI
+
+The `oracle/oci` provider builds HTTPS endpoints from the region and realm and
+has no per-service endpoint override, so it can't be pointed at CloudEmu's
+plain-HTTP OCI listener today. Drive OCI resources through the `oci-go-sdk` (or
+another OCI SDK) with the client's endpoint set to CloudEmu instead; see
+[integration.md](integration.md).
+
 ## What's verified
 
 The `contrib/terraform` suite checks `apply → plan(no-diff) → destroy` against a

@@ -31,7 +31,7 @@ func TestMyApp(t *testing.T) {
 }
 ```
 
-Methods: `AWSEndpoint`, `AzureEndpoint`, `GCPEndpoint`, `KubernetesEndpoint`,
+Methods: `AWSEndpoint`, `AzureEndpoint`, `GCPEndpoint`, `OCIEndpoint`, `KubernetesEndpoint`,
 `Reset`, `Seed`, plus the embedded Testcontainers container (`Terminate`, …).
 Pin a version or use a local image with `cloudemu.WithImage("...")`.
 

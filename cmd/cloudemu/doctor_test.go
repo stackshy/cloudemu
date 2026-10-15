@@ -54,14 +54,14 @@ func TestDockerLine(t *testing.T) {
 }
 
 // TestWriteDoctorReportBlockingPort verifies a required port in use is a blocker
-// (fail marker, non-zero return) while an opt-in OCI port in use is only a warn.
+// (fail marker, non-zero return) while a port not started by default is only a warn.
 func TestWriteDoctorReportBlockingPort(t *testing.T) {
 	ports := []portCheck{
 		{"AWS", "4566", true},
-		{"OCI (opt-in)", "4571", false},
+		{"OCI", "4571", false},
 	}
 
-	// AWS busy (required → blocker), OCI busy (opt-in → warn only).
+	// AWS busy (required → blocker), OCI busy (not required here → warn only).
 	portFree := func(hostPort string) bool { return false }
 	found := func(string) (string, error) { return "/usr/bin/docker", nil }
 
@@ -79,7 +79,7 @@ func TestWriteDoctorReportBlockingPort(t *testing.T) {
 	}
 
 	if !strings.Contains(out, markWarn) {
-		t.Fatalf("report missing warn marker for the in-use opt-in OCI port:\n%s", out)
+		t.Fatalf("report missing warn marker for the in-use optional port:\n%s", out)
 	}
 
 	if !strings.Contains(out, "required port(s) in use") {
@@ -131,11 +131,11 @@ func TestDefaultPortChecks(t *testing.T) {
 		port     string
 		required bool
 	}{
-		"AWS":          {"4566", true},
-		"Azure":        {"4568", true},
-		"GCP":          {"4569", true},
-		"Kubernetes":   {"4570", true},
-		"OCI (opt-in)": {"4571", false},
+		"AWS":        {"4566", true},
+		"Azure":      {"4568", true},
+		"GCP":        {"4569", true},
+		"Kubernetes": {"4570", true},
+		"OCI":        {"4571", true},
 	}
 
 	got := defaultPortChecks()

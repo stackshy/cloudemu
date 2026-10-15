@@ -4,7 +4,7 @@
 
 CloudEmu keeps what a service does separate from which cloud provides it. There are three layers: a provider-agnostic portable API, a small driver interface per service, and an in-memory provider mock per cloud. Every provider implements the same driver interface, so the cross-cutting behaviors (recording, metrics, rate limiting, error injection, latency) and the wire servers work the same way for every cloud.
 
-AWS, Azure and GCP are fully implemented. OCI is a fourth provider that is still being built (see [below](#fourth-provider-oci-in-progress)). The generated [capability coverage](coverage/README.md) is the source of truth for which services exist.
+AWS, Azure, GCP and OCI are all supported. OCI covers a smaller set of services than the other three (see [below](#fourth-provider-oci)). The generated [capability coverage](coverage/README.md) is the source of truth for which services exist.
 
 ## The three layers
 
@@ -126,11 +126,11 @@ Don't "update" shared state with `v, _ := store.Get(k); mutate(v); store.Set(k, 
 
 CI has a `Race` job. On pull requests it runs a fast subset under `-race`, and the full `go test -race ./...` sweep runs nightly (#587).
 
-## Fourth provider: OCI (in progress)
+## Fourth provider: OCI
 
-OCI (`providers/oci/`) has the same three-layer shape: a `memstore`-backed mock per service that implements the shared driver, plus a `server/oci/<service>/` handler. The foundation is in place: identity options, OCID generation in `internal/idgen/ocid.go`, `services/scope` compartment scoping, the `server/wire/ocirest` format, and the `server/oci/workrequest` async envelope. Services are added one PR at a time; see [oci-conventions.md](oci-conventions.md).
+OCI (`providers/oci/`) has the same three-layer shape: a `memstore`-backed mock per service that implements the shared driver, plus a `server/oci/<service>/` handler. Underneath sit identity options, OCID generation in `internal/idgen/ocid.go`, `services/scope` compartment scoping, the `server/wire/ocirest` format, and the `server/oci/workrequest` async envelope. OCI-only operations live in a consumer-side `Extras` interface next to each handler; see [oci-conventions.md](oci-conventions.md).
 
-Until every service is in, OCI differs in two documented ways:
+It serves Identity, VCN, Compute and Block Volume, Object Storage, NoSQL, Vault, Logging, Monitoring and Notifications, all on one listener (`--oci-port`, default 4571), and it starts with the other providers by default. It differs from the other three in two ways:
 
-- The provider is only partly populated. `providers/oci.Provider` declares each service as a bare driver interface, so a service that hasn't been added yet is `nil` instead of a compile error. The generated [capability coverage](coverage/README.md) is the source of truth for what exists.
-- Resource discovery has no OCI branch. The ARN/ID formatters in `services/resourcediscovery` fall through to a default for OCI, so discovery doesn't return native OCIDs yet. This will be filled in as services that produce discoverable resources are added.
+- The provider covers fewer services. `providers/oci.Provider` declares each service as a bare driver interface, so a service OCI doesn't emulate yet is `nil` rather than a compile error. The generated [capability coverage](coverage/README.md) is the source of truth for what exists.
+- Resource discovery has no OCI branch. The ARN/ID formatters in `services/resourcediscovery` fall through to a default for OCI, so discovery doesn't return native OCIDs yet.

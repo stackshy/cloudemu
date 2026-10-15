@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/serveflags"
 )
@@ -28,10 +29,9 @@ const (
 // The doctor echoes serve's canonical enginesImagePointer (defined in serve.go)
 // so the two commands can't drift on where the real engines live.
 
-// portCheck is one default endpoint the emulator would bind. required marks a
-// port the default provider set (aws,azure,gcp) plus the k8s data-plane bind on
-// startup: an in-use required port is a genuine blocker. OCI is opt-in, so a
-// busy OCI port is only a warning.
+// portCheck is one endpoint the emulator can bind. required marks a port that
+// serve binds by default, the default providers' plus the k8s data-plane: an
+// in-use required port is a genuine blocker, any other is only a warning.
 type portCheck struct {
 	label    string
 	port     string
@@ -47,12 +47,17 @@ func defaultPortChecks() []portCheck {
 	serveflags.RegisterCommon(fs, &c, func(string) string { return "" })
 	_ = fs.Parse(nil)
 
+	started := map[string]bool{}
+	for _, p := range strings.Split(c.Providers, ",") {
+		started[strings.TrimSpace(p)] = true
+	}
+
 	return []portCheck{
-		{"AWS", c.AWSPort, true},
-		{"Azure", c.AzurePort, true},
-		{"GCP", c.GCPPort, true},
+		{"AWS", c.AWSPort, started["aws"]},
+		{"Azure", c.AzurePort, started["azure"]},
+		{"GCP", c.GCPPort, started["gcp"]},
 		{"Kubernetes", c.K8sPort, true},
-		{"OCI (opt-in)", c.OCIPort, false},
+		{"OCI", c.OCIPort, started["oci"]},
 	}
 }
 
@@ -121,7 +126,7 @@ func writeDoctorReport(
 			continue
 		}
 
-		fmt.Fprintf(w, "  %s %-14s %s  in use (opt-in; only bound when you start OCI)\n", markWarn, p.label, hostPort)
+		fmt.Fprintf(w, "  %s %-14s %s  in use (not started by default)\n", markWarn, p.label, hostPort)
 	}
 
 	fmt.Fprintln(w)
