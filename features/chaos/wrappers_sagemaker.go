@@ -7,7 +7,7 @@ import (
 )
 
 // chaosSageMaker wraps a SageMaker service. It consults the engine on the
-// calls most worth failing in tests (job submission, endpoint creation, the
+// calls most worth failing in tests (job submission, endpoint creation and update, pipeline starts, the
 // inference runtime, and the Feature Store online store) and delegates every
 // other operation through the embedded driver.Service unchanged.
 type chaosSageMaker struct {
@@ -89,4 +89,32 @@ func (c *chaosSageMaker) GetRecord(ctx context.Context, groupName, recordID stri
 	}
 
 	return c.Service.GetRecord(ctx, groupName, recordID)
+}
+
+//nolint:gocritic // cfg matches the driver signature; delegated unchanged on success.
+func (c *chaosSageMaker) CreateHyperParameterTuningJob(
+	ctx context.Context, cfg driver.HyperParameterTuningJobConfig,
+) (*driver.HyperParameterTuningJob, error) {
+	if err := applyChaos(ctx, c.engine, "sagemaker", "CreateHyperParameterTuningJob"); err != nil {
+		return nil, err
+	}
+
+	return c.Service.CreateHyperParameterTuningJob(ctx, cfg)
+}
+
+//nolint:gocritic // spec matches the driver signature; delegated unchanged on success.
+func (c *chaosSageMaker) UpdateEndpoint(ctx context.Context, spec driver.UpdateEndpointSpec) (*driver.Endpoint, error) {
+	if err := applyChaos(ctx, c.engine, "sagemaker", "UpdateEndpoint"); err != nil {
+		return nil, err
+	}
+
+	return c.Service.UpdateEndpoint(ctx, spec)
+}
+
+func (c *chaosSageMaker) StartPipelineExecution(ctx context.Context, pipelineName string) (*driver.PipelineExecution, error) {
+	if err := applyChaos(ctx, c.engine, "sagemaker", "StartPipelineExecution"); err != nil {
+		return nil, err
+	}
+
+	return c.Service.StartPipelineExecution(ctx, pipelineName)
 }

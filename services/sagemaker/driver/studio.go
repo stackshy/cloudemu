@@ -64,6 +64,8 @@ type UserProfile struct {
 	ExecutionRoleARN string
 	Status           string
 	CreationTime     string
+	// LastModifiedTime equals CreationTime: there is no UpdateUserProfile yet.
+	LastModifiedTime string
 	Tags             []Tag
 }
 
@@ -81,7 +83,9 @@ type Space struct {
 	SpaceARN     string
 	Status       string
 	CreationTime string
-	Tags         []Tag
+	// LastModifiedTime equals CreationTime: there is no UpdateSpace yet.
+	LastModifiedTime string
+	Tags             []Tag
 }
 
 // AppSpec describes a Studio app to create.
@@ -109,21 +113,21 @@ type App struct {
 type studioAPI interface {
 	CreateDomain(ctx context.Context, cfg DomainSpec) (*Domain, error)
 	DescribeDomain(ctx context.Context, domainID string) (*Domain, error)
-	ListDomains(ctx context.Context) ([]Domain, error)
+	ListDomains(ctx context.Context, opts ListOptions) (ListPage[Domain], error)
 	DeleteDomain(ctx context.Context, domainID string) error
 
 	CreateUserProfile(ctx context.Context, cfg UserProfileSpec) (*UserProfile, error)
 	DescribeUserProfile(ctx context.Context, domainID, name string) (*UserProfile, error)
-	ListUserProfiles(ctx context.Context, domainID string) ([]UserProfile, error)
+	ListUserProfiles(ctx context.Context, domainID string, opts ListOptions) (ListPage[UserProfile], error)
 	DeleteUserProfile(ctx context.Context, domainID, name string) error
 
 	CreateSpace(ctx context.Context, cfg SpaceSpec) (*Space, error)
 	DescribeSpace(ctx context.Context, domainID, name string) (*Space, error)
-	ListSpaces(ctx context.Context, domainID string) ([]Space, error)
+	ListSpaces(ctx context.Context, domainID string, opts ListOptions) (ListPage[Space], error)
 	DeleteSpace(ctx context.Context, domainID, name string) error
 
 	CreateApp(ctx context.Context, cfg AppSpec) (*App, error)
 	DescribeApp(ctx context.Context, in AppSpec) (*App, error)
-	ListApps(ctx context.Context, domainID string) ([]App, error)
+	ListApps(ctx context.Context, domainID string, opts ListOptions) (ListPage[App], error)
 	DeleteApp(ctx context.Context, in AppSpec) error
 }

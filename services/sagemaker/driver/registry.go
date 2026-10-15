@@ -58,16 +58,41 @@ type ModelPackage struct {
 	Tags           []Tag
 }
 
+// Model package group policy and batch-describe limits.
+const (
+	MaxBatchDescribePackages = 100
+	MaxGroupPolicyLength     = 20480
+)
+
+// BatchPackageError reports why one ARN of a BatchDescribeModelPackage request
+// could not be described.
+type BatchPackageError struct {
+	Code    string
+	Message string
+}
+
+// BatchDescribeResult is the outcome of BatchDescribeModelPackage: the packages
+// found and, per missing ARN, why it was not.
+type BatchDescribeResult struct {
+	Packages map[string]ModelPackage
+	Errors   map[string]BatchPackageError
+}
+
 // registryAPI covers the model registry (groups + versioned packages).
 type registryAPI interface {
 	CreateModelPackageGroup(ctx context.Context, cfg ModelPackageGroupSpec) (*ModelPackageGroup, error)
 	DescribeModelPackageGroup(ctx context.Context, name string) (*ModelPackageGroup, error)
-	ListModelPackageGroups(ctx context.Context) ([]ModelPackageGroup, error)
+	ListModelPackageGroups(ctx context.Context, opts ListOptions) (ListPage[ModelPackageGroup], error)
 	DeleteModelPackageGroup(ctx context.Context, name string) error
 
 	CreateModelPackage(ctx context.Context, cfg ModelPackageSpec) (*ModelPackage, error)
 	DescribeModelPackage(ctx context.Context, arn string) (*ModelPackage, error)
-	ListModelPackages(ctx context.Context, groupName string) ([]ModelPackage, error)
+	ListModelPackages(ctx context.Context, groupName string, opts ListOptions) (ListPage[ModelPackage], error)
 	UpdateModelPackage(ctx context.Context, arn, approvalStatus string) (*ModelPackage, error)
 	DeleteModelPackage(ctx context.Context, arn string) error
+	BatchDescribeModelPackage(ctx context.Context, arns []string) (*BatchDescribeResult, error)
+
+	PutModelPackageGroupPolicy(ctx context.Context, groupName, policy string) (string, error)
+	GetModelPackageGroupPolicy(ctx context.Context, groupName string) (string, error)
+	DeleteModelPackageGroupPolicy(ctx context.Context, groupName string) error
 }

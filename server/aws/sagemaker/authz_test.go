@@ -49,3 +49,24 @@ func TestIAMChecksFollowsDispatch(t *testing.T) {
 		}
 	}
 }
+
+// TestAuthz_NewOps_Enforced pins that every control-plane operation the handler
+// serves maps to the IAM action sagemaker:<Op>, so a policy naming that action
+// (and no other) is what enforcement checks.
+func TestAuthz_NewOps_Enforced(t *testing.T) { // T22
+	h := New(nil)
+
+	for op := range h.ops {
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		req.Header.Set("X-Amz-Target", targetPrefix+op)
+
+		checks, ok := h.IAMChecks(req, awsauthz.Scope{})
+		if !ok || len(checks) != 1 || checks[0].Action != "sagemaker:"+op {
+			t.Errorf("%s: got %+v ok=%v, want sagemaker:%s", op, checks, ok, op)
+		}
+	}
+
+	if len(h.ops) < 200 {
+		t.Errorf("handler serves %d ops, expected the full control-plane surface", len(h.ops))
+	}
+}

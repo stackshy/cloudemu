@@ -131,13 +131,13 @@
   },
   {
     "name": "sagemaker runtime missing endpoint",
-    "status": 404,
-    "body": "{\"Message\":\"NotFound: endpoint \\\"e\\\" not found\",\"__type\":\"ValidationError\"}\n"
+    "status": 400,
+    "body": "{\"Message\":\"Endpoint e of account 123456789012 not found.\",\"__type\":\"ValidationError\"}\n"
   },
   {
     "name": "sagemaker feature store DELETE",
     "status": 400,
-    "body": "{\"Message\":\"NotFound: feature group \\\"g\\\" not found\",\"__type\":\"ResourceNotFound\"}\n"
+    "body": "{\"Message\":\"feature group \\\"g\\\" not found\",\"__type\":\"ResourceNotFound\"}\n"
   },
   {
     "name": "sagemaker feature store POST",

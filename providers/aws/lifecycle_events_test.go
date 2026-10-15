@@ -10,6 +10,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/providers/aws"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ec2"
+	smmock "github.com/stackshy/cloudemu/v2/providers/aws/sagemaker"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ssm"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
@@ -18,6 +19,7 @@ import (
 	gluedriver "github.com/stackshy/cloudemu/v2/services/glue/driver"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	psdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
+	smdriver "github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 	sfndriver "github.com/stackshy/cloudemu/v2/services/sfn/driver"
 )
 
@@ -984,5 +986,348 @@ func TestStepFunctionsRedriveFirstObservationKeepsOriginalFailure(t *testing.T) 
 	want := []string{"RUNNING", "FAILED", "RUNNING", "SUCCEEDED"}
 	if got := statuses(t, drain()); len(got) != len(want) || got[1] != "FAILED" || got[3] != "SUCCEEDED" {
 		t.Fatalf("events = %v, want %v", got, want)
+	}
+}
+
+// sageMakerEndpoint creates a model, endpoint config and endpoint named "ep".
+func sageMakerEndpoint(t *testing.T, p *aws.Provider) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	if _, err := p.SageMaker.CreateModel(ctx, smdriver.ModelConfig{ModelName: "mdl"}); err != nil {
+		t.Fatalf("CreateModel: %v", err)
+	}
+
+	if _, err := p.SageMaker.CreateEndpointConfig(ctx, smdriver.EndpointConfigSpec{
+		ConfigName: "cfg",
+		ProductionVariants: []smdriver.ProductionVariant{
+			{VariantName: "AllTraffic", ModelName: "mdl", InstanceType: "ml.m5.large", InitialInstanceCount: 1, InitialVariantWeight: weightPtr(1.0)},
+		},
+	}); err != nil {
+		t.Fatalf("CreateEndpointConfig: %v", err)
+	}
+
+	if _, err := p.SageMaker.CreateEndpoint(ctx, smdriver.EndpointSpec{EndpointName: "ep", ConfigName: "cfg"}); err != nil {
+		t.Fatalf("CreateEndpoint: %v", err)
+	}
+}
+
+// statusSequence returns "<detail-type>|<status>" per event, reading the status
+// from the key the given detail field holds.
+func statusSequence(t *testing.T, evs []lifecycleEvent, field string) []string {
+	t.Helper()
+
+	var out []string
+
+	for i := range evs {
+		d := detailOf(t, &evs[i])
+		st, _ := d[field].(string)
+		out = append(out, evs[i].DetailType+"|"+st)
+	}
+
+	return out
+}
+
+func requireSequence(t *testing.T, got, want []string) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("sequence = %v, want %v", got, want)
+	}
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("sequence[%d] = %q, want %q (all: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+// TestSageMakerEvents_AllTypes pins every SageMaker state-change event: source,
+// detail-type, ordered statuses, resource ARNs and the per-type time format.
+func TestSageMakerEvents_AllTypes(t *testing.T) { // T136
+	p := aws.New()
+	ctx := context.Background()
+	drain := captureEvents(t, p, `{"source":["aws.sagemaker"]}`)
+
+	if _, err := p.SageMaker.CreateTrainingJob(ctx, smdriver.TrainingJobConfig{JobName: "tj", OutputS3URI: "s3://b"}); err != nil {
+		t.Fatalf("CreateTrainingJob: %v", err)
+	}
+
+	evs := drain()
+	requireSequence(t, statusSequence(t, evs, "TrainingJobStatus"), []string{
+		"SageMaker Training Job State Change|InProgress", "SageMaker Training Job State Change|Completed",
+	})
+	requireEnvelope(t, &evs[0], "aws.sagemaker", "SageMaker Training Job State Change")
+
+	if want := "arn:aws:sagemaker:us-east-1:" + testAccountID + ":training-job/tj"; len(evs[0].Resources) != 1 || evs[0].Resources[0] != want {
+		t.Fatalf("resources = %v, want [%s]", evs[0].Resources, want)
+	}
+
+	if _, ok := detailOf(t, &evs[0])["CreationTime"].(string); !ok {
+		t.Fatalf("training CreationTime must be a string epoch-millis: %s", evs[0].Detail)
+	}
+
+	if _, err := p.SageMaker.CreateProcessingJob(ctx, smdriver.ProcessingJobConfig{JobName: "pj"}); err != nil {
+		t.Fatalf("CreateProcessingJob: %v", err)
+	}
+
+	evs = drain()
+	requireSequence(t, statusSequence(t, evs, "ProcessingJobStatus"), []string{
+		"SageMaker Processing Job State Change|InProgress", "SageMaker Processing Job State Change|Completed",
+	})
+
+	if _, ok := detailOf(t, &evs[0])["CreationTime"].(float64); !ok {
+		t.Fatalf("processing CreationTime must be a number: %s", evs[0].Detail)
+	}
+
+	if _, err := p.SageMaker.CreateTransformJob(ctx, smdriver.TransformJobConfig{JobName: "xf", ModelName: "mdl"}); err != nil {
+		t.Fatalf("CreateTransformJob: %v", err)
+	}
+
+	requireSequence(t, statusSequence(t, drain(), "TransformJobStatus"), []string{
+		"SageMaker Transform Job State Change|InProgress", "SageMaker Transform Job State Change|Completed",
+	})
+
+	if _, err := p.SageMaker.CreateHyperParameterTuningJob(ctx, smdriver.HyperParameterTuningJobConfig{JobName: "hp"}); err != nil {
+		t.Fatalf("CreateHyperParameterTuningJob: %v", err)
+	}
+
+	requireSequence(t, statusSequence(t, drain(), "HyperParameterTuningJobStatus"), []string{
+		"SageMaker HyperParameter Tuning Job State Change|InProgress", "SageMaker HyperParameter Tuning Job State Change|Completed",
+	})
+
+	sageMakerEndpoint(t, p)
+	requireSequence(t, statusSequence(t, drain(), "EndpointStatus"), []string{
+		"SageMaker Endpoint State Change|CREATING", "SageMaker Endpoint State Change|IN_SERVICE",
+	})
+
+	if err := p.SageMaker.DeleteEndpoint(ctx, "ep"); err != nil {
+		t.Fatalf("DeleteEndpoint: %v", err)
+	}
+
+	requireSequence(t, statusSequence(t, drain(), "EndpointStatus"), []string{"SageMaker Endpoint State Change|DELETING"})
+}
+
+func TestSageMakerEvents_ModelPackageAndPipeline(t *testing.T) { // T136
+	p := aws.New()
+	ctx := context.Background()
+	drain := captureEvents(t, p, `{"source":["aws.sagemaker"]}`)
+
+	if _, err := p.SageMaker.CreateModelPackageGroup(ctx, smdriver.ModelPackageGroupSpec{GroupName: "grp"}); err != nil {
+		t.Fatalf("CreateModelPackageGroup: %v", err)
+	}
+
+	pkg, err := p.SageMaker.CreateModelPackage(ctx, smdriver.ModelPackageSpec{GroupName: "grp"})
+	if err != nil {
+		t.Fatalf("CreateModelPackage: %v", err)
+	}
+
+	if _, err := p.SageMaker.UpdateModelPackage(ctx, pkg.PackageARN, "Approved"); err != nil {
+		t.Fatalf("UpdateModelPackage: %v", err)
+	}
+
+	evs := drain()
+	requireSequence(t, statusSequence(t, evs, "ModelApprovalStatus"), []string{
+		"SageMaker Model Package State Change|PendingManualApproval", "SageMaker Model Package State Change|Approved",
+	})
+
+	if f, _ := detailOf(t, &evs[1])["UpdatedModelPackageFields"].([]any); len(f) != 1 || f[0] != "ModelApprovalStatus" {
+		t.Fatalf("UpdatedModelPackageFields = %v", f)
+	}
+
+	if _, err := p.SageMaker.CreatePipeline(ctx, smdriver.PipelineSpec{PipelineName: "pl"}); err != nil {
+		t.Fatalf("CreatePipeline: %v", err)
+	}
+
+	ex, err := p.SageMaker.StartPipelineExecution(ctx, "pl")
+	if err != nil {
+		t.Fatalf("StartPipelineExecution: %v", err)
+	}
+
+	evs = drain()
+	requireSequence(t, statusSequence(t, evs, "currentPipelineExecutionStatus"), []string{
+		"SageMaker Model Building Pipeline Execution Status Change|Executing",
+		"SageMaker Model Building Pipeline Execution Status Change|Succeeded",
+	})
+
+	if len(evs[1].Resources) != 2 || evs[1].Resources[1] != ex.ExecutionARN {
+		t.Fatalf("pipeline event resources = %v, want [pipeline, %s]", evs[1].Resources, ex.ExecutionARN)
+	}
+
+	if prev := detailOf(t, &evs[1])["previousPipelineExecutionStatus"]; prev != "Executing" {
+		t.Fatalf("previous status = %v, want Executing", prev)
+	}
+}
+
+func TestSageMakerEvents_RuleMatchAndContentFilter(t *testing.T) { // T137
+	p := aws.New()
+	ctx := context.Background()
+	drain := captureEvents(t, p,
+		`{"source":["aws.sagemaker"],"detail-type":["SageMaker Training Job State Change"],"detail":{"TrainingJobStatus":["Completed"]}}`)
+
+	if _, err := p.SageMaker.CreateTrainingJob(ctx, smdriver.TrainingJobConfig{JobName: "tj"}); err != nil {
+		t.Fatalf("CreateTrainingJob: %v", err)
+	}
+
+	evs := drain()
+	if len(evs) != 1 || detailOf(t, &evs[0])["TrainingJobStatus"] != "Completed" {
+		t.Fatalf("status filter delivered %d events, want exactly the Completed one", len(evs))
+	}
+
+	other := aws.New()
+	miss := captureEvents(t, other, `{"source":["aws.sagemaker"],"detail-type":["SageMaker Endpoint State Change"]}`)
+
+	if _, err := other.SageMaker.CreateTrainingJob(ctx, smdriver.TrainingJobConfig{JobName: "tj"}); err != nil {
+		t.Fatalf("CreateTrainingJob: %v", err)
+	}
+
+	if got := miss(); len(got) != 0 {
+		t.Fatalf("mismatched detail-type delivered %d events", len(got))
+	}
+}
+
+func TestSageMakerEvents_UnwiredAndPublishError(t *testing.T) { // T138
+	m := smmock.New(config.NewOptions())
+	ctx := context.Background()
+
+	if _, err := m.CreateTrainingJob(ctx, smdriver.TrainingJobConfig{JobName: "tj"}); err != nil {
+		t.Fatalf("unwired CreateTrainingJob: %v", err)
+	}
+
+	m.SetEventPublisher(nil)
+
+	if _, err := m.CreateTrainingJob(ctx, smdriver.TrainingJobConfig{JobName: "tj2"}); err != nil {
+		t.Fatalf("CreateTrainingJob after SetEventPublisher(nil): %v", err)
+	}
+
+	// A wired bus with no rules still lets every call succeed.
+	p := aws.New()
+	if _, err := p.SageMaker.CreateTrainingJob(ctx, smdriver.TrainingJobConfig{JobName: "tj"}); err != nil {
+		t.Fatalf("CreateTrainingJob with no rules: %v", err)
+	}
+}
+
+// TestSageMakerEvents_AsyncSettleTransitions pins the --async-settle contract:
+// the first state is published when the call returns, the terminal state is
+// published once when the resource settles (the first read after it), and
+// repeated reads never publish duplicates. A rule on EndpointStatus IN_SERVICE
+// therefore fires under async settle, which is what people wire these events for.
+func TestSageMakerEvents_AsyncSettleTransitions(t *testing.T) { // T139
+	clock := config.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	p := aws.New(config.WithClock(clock), config.WithAsyncSettle())
+	ctx := context.Background()
+	drain := captureEvents(t, p, `{"source":["aws.sagemaker"],"detail-type":["SageMaker Endpoint State Change"]}`)
+
+	sageMakerEndpoint(t, p)
+	requireSequence(t, statusSequence(t, drain(), "EndpointStatus"), []string{"SageMaker Endpoint State Change|CREATING"})
+
+	// Still settling: a read publishes nothing.
+	if _, err := p.SageMaker.DescribeEndpoint(ctx, "ep"); err != nil {
+		t.Fatalf("DescribeEndpoint: %v", err)
+	}
+
+	if got := drain(); len(got) != 0 {
+		t.Fatalf("a read while Creating published %d events, want none", len(got))
+	}
+
+	clock.Advance(time.Hour)
+
+	for range 3 {
+		if _, err := p.SageMaker.DescribeEndpoint(ctx, "ep"); err != nil {
+			t.Fatalf("DescribeEndpoint: %v", err)
+		}
+	}
+
+	requireSequence(t, statusSequence(t, drain(), "EndpointStatus"), []string{"SageMaker Endpoint State Change|IN_SERVICE"})
+
+	// An update settles the same way: UPDATING at the call, IN_SERVICE once settled.
+	if _, err := p.SageMaker.CreateEndpointConfig(ctx, smdriver.EndpointConfigSpec{
+		ConfigName:         "cfg2",
+		ProductionVariants: []smdriver.ProductionVariant{{VariantName: "AllTraffic", ModelName: "mdl", InstanceType: "ml.m5.large", InitialInstanceCount: 2, InitialVariantWeight: weightPtr(1.0)}},
+	}); err != nil {
+		t.Fatalf("CreateEndpointConfig: %v", err)
+	}
+
+	if _, err := p.SageMaker.UpdateEndpoint(ctx, smdriver.UpdateEndpointSpec{EndpointName: "ep", ConfigName: "cfg2"}); err != nil {
+		t.Fatalf("UpdateEndpoint: %v", err)
+	}
+
+	requireSequence(t, statusSequence(t, drain(), "EndpointStatus"), []string{"SageMaker Endpoint State Change|UPDATING"})
+
+	clock.Advance(time.Hour)
+
+	for range 2 {
+		if _, err := p.SageMaker.DescribeEndpoint(ctx, "ep"); err != nil {
+			t.Fatalf("DescribeEndpoint: %v", err)
+		}
+	}
+
+	requireSequence(t, statusSequence(t, drain(), "EndpointStatus"), []string{"SageMaker Endpoint State Change|IN_SERVICE"})
+}
+
+// TestSageMakerEvents_AsyncSettleTerminalJob: a training job publishes InProgress
+// at the call and Completed once, when it settles (any read after that).
+func TestSageMakerEvents_AsyncSettleTerminalJob(t *testing.T) {
+	clock := config.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	p := aws.New(config.WithClock(clock), config.WithAsyncSettle())
+	ctx := context.Background()
+	drain := captureEvents(t, p, `{"source":["aws.sagemaker"],"detail-type":["SageMaker Training Job State Change"]}`)
+
+	if _, err := p.SageMaker.CreateTrainingJob(ctx, smdriver.TrainingJobConfig{JobName: "tj"}); err != nil {
+		t.Fatalf("CreateTrainingJob: %v", err)
+	}
+
+	requireSequence(t, statusSequence(t, drain(), "TrainingJobStatus"), []string{"SageMaker Training Job State Change|InProgress"})
+
+	clock.Advance(time.Hour)
+
+	for range 3 {
+		if _, err := p.SageMaker.DescribeTrainingJob(ctx, "tj"); err != nil {
+			t.Fatalf("DescribeTrainingJob: %v", err)
+		}
+	}
+
+	requireSequence(t, statusSequence(t, drain(), "TrainingJobStatus"), []string{"SageMaker Training Job State Change|Completed"})
+
+	// Listing settled jobs again publishes nothing more.
+	if _, err := p.SageMaker.ListTrainingJobs(ctx, smdriver.ListOptions{}); err != nil {
+		t.Fatalf("ListTrainingJobs: %v", err)
+	}
+
+	if got := drain(); len(got) != 0 {
+		t.Fatalf("a repeat list published %d events, want none", len(got))
+	}
+}
+
+// weightPtr returns a pointer to a variant weight (the driver field is a pointer: nil means "omitted").
+func weightPtr(v float64) *float64 { return &v }
+
+// A training job that has not started or finished carries no start or end time
+// in its event, rather than the string "0".
+func TestSageMakerEvents_UnsetTrainingTimesAreOmitted(t *testing.T) {
+	clock := config.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	p := aws.New(config.WithClock(clock), config.WithAsyncSettle())
+	ctx := context.Background()
+	drain := captureEvents(t, p, `{"source":["aws.sagemaker"],"detail-type":["SageMaker Training Job State Change"]}`)
+
+	if _, err := p.SageMaker.CreateTrainingJob(ctx, smdriver.TrainingJobConfig{JobName: "tj"}); err != nil {
+		t.Fatalf("CreateTrainingJob: %v", err)
+	}
+
+	evs := drain()
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want 1 (InProgress)", len(evs))
+	}
+
+	d := detailOf(t, &evs[0])
+	for _, key := range []string{"TrainingEndTime"} {
+		if v, present := d[key]; present {
+			t.Fatalf("an unfinished job's event carries %s = %v, want it omitted", key, v)
+		}
+	}
+
+	if d["CreationTime"] == nil || d["CreationTime"] == "0" {
+		t.Fatalf("CreationTime = %v, want the creation time in epoch milliseconds", d["CreationTime"])
 	}
 }

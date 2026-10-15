@@ -83,28 +83,31 @@ type Trial struct {
 	ExperimentName string
 	CreationTime   string
 	Tags           []Tag
+	// TrialComponentNames lists the trial components associated with the trial
+	// (sorted); the component records the matching back-link.
+	TrialComponentNames []string
 }
 
 // pipelineAPI covers pipelines (+ executions) and experiments/trials.
 type pipelineAPI interface {
 	CreatePipeline(ctx context.Context, cfg PipelineSpec) (*Pipeline, error)
 	DescribePipeline(ctx context.Context, name string) (*Pipeline, error)
-	ListPipelines(ctx context.Context) ([]Pipeline, error)
+	ListPipelines(ctx context.Context, opts ListOptions) (ListPage[Pipeline], error)
 	UpdatePipeline(ctx context.Context, name, definition string) (*Pipeline, error)
 	DeletePipeline(ctx context.Context, name string) error
 
 	StartPipelineExecution(ctx context.Context, pipelineName string) (*PipelineExecution, error)
 	DescribePipelineExecution(ctx context.Context, executionARN string) (*PipelineExecution, error)
-	ListPipelineExecutions(ctx context.Context, pipelineName string) ([]PipelineExecution, error)
+	ListPipelineExecutions(ctx context.Context, pipelineName string, opts ListOptions) (ListPage[PipelineExecution], error)
 	StopPipelineExecution(ctx context.Context, executionARN string) error
 
 	CreateExperiment(ctx context.Context, cfg ExperimentSpec) (*Experiment, error)
 	DescribeExperiment(ctx context.Context, name string) (*Experiment, error)
-	ListExperiments(ctx context.Context) ([]Experiment, error)
+	ListExperiments(ctx context.Context, opts ListOptions) (ListPage[Experiment], error)
 	DeleteExperiment(ctx context.Context, name string) error
 
 	CreateTrial(ctx context.Context, cfg TrialSpec) (*Trial, error)
 	DescribeTrial(ctx context.Context, name string) (*Trial, error)
-	ListTrials(ctx context.Context, experimentName string) ([]Trial, error)
+	ListTrials(ctx context.Context, experimentName string, opts ListOptions) (ListPage[Trial], error)
 	DeleteTrial(ctx context.Context, name string) error
 }
