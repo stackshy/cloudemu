@@ -3,6 +3,7 @@ package mq
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/services/mq/driver"
 )
@@ -14,7 +15,12 @@ func (m *Mock) CreateUser(_ context.Context, brokerID string, user *driver.User)
 		return badRequest("username is required")
 	}
 
-	if err := validatePassword(user.Password); err != nil {
+	b, ok := m.brokers.Get(brokerID)
+	if !ok {
+		return notFound("Broker %s not found", brokerID)
+	}
+
+	if err := validateUser(strings.ToUpper(rawString(b.Config, "engineType")), user); err != nil {
 		return err
 	}
 
