@@ -33,6 +33,10 @@ func (m *Mock) CreateComputeEnvironment(
 		return nil, cerrors.New(cerrors.InvalidArgument, "computeEnvironmentName is required")
 	}
 
+	if err := validateTags(in.Tags); err != nil {
+		return nil, err
+	}
+
 	if in.Type != driver.CETypeManaged && in.Type != driver.CETypeUnmanaged {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "type must be MANAGED or UNMANAGED, got %q", in.Type)
 	}

@@ -15,7 +15,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [AppSync](./appsync.md) | `appsync` | 17 |
 | [Athena](./athena.md) | `athena` | 26 |
 | [Backup](./backup.md) | `backup` | 25 |
-| [Batch](./batch.md) | `batch` | 14 |
+| [Batch](./batch.md) | `batch` | 24 |
 | [Bedrock](./bedrock.md) | `bedrock` | 65 |
 | [BedrockAgent](./bedrockagent.md) | `bedrockagent` | 32 |
 | [BedrockAgentRuntime](./bedrockagentruntime.md) | `bedrockagentruntime` | 3 |

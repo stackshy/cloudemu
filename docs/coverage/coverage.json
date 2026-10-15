@@ -2656,6 +2656,9 @@
     "interface": "Batch",
     "operations": [
       {
+        "name": "CancelJob"
+      },
+      {
         "name": "CreateComputeEnvironment",
         "doc": "Compute environments."
       },
@@ -2664,10 +2667,17 @@
         "doc": "Job queues."
       },
       {
+        "name": "CreateSchedulingPolicy",
+        "doc": "Scheduling policies."
+      },
+      {
         "name": "DeleteComputeEnvironment"
       },
       {
         "name": "DeleteJobQueue"
+      },
+      {
+        "name": "DeleteSchedulingPolicy"
       },
       {
         "name": "DeregisterJobDefinition"
@@ -2682,6 +2692,18 @@
         "name": "DescribeJobQueues"
       },
       {
+        "name": "DescribeJobs"
+      },
+      {
+        "name": "DescribeSchedulingPolicies"
+      },
+      {
+        "name": "ListJobs"
+      },
+      {
+        "name": "ListSchedulingPolicies"
+      },
+      {
         "name": "ListTagsForResource"
       },
       {
@@ -2689,8 +2711,15 @@
         "doc": "Job definitions."
       },
       {
+        "name": "SubmitJob",
+        "doc": "Jobs."
+      },
+      {
         "name": "TagResource",
-        "doc": "Tags (by ARN), shared across all three resource kinds."
+        "doc": "Tags (by ARN), shared across every taggable resource kind."
+      },
+      {
+        "name": "TerminateJob"
       },
       {
         "name": "UntagResource"
@@ -2700,6 +2729,9 @@
       },
       {
         "name": "UpdateJobQueue"
+      },
+      {
+        "name": "UpdateSchedulingPolicy"
       }
     ],
     "providers": {

@@ -2,8 +2,8 @@
 // awsRestjson1) as a server.Handler. Point the real
 // aws-sdk-go-v2/service/batch client (or the `aws batch` CLI, or the
 // aws_batch_* Terraform resources) at a Server registered with this handler and
-// the compute-environment, job-queue, and job-definition operations work
-// end-to-end against an in-memory driver.
+// the compute-environment, job-queue, job-definition, scheduling-policy and job
+// operations work end-to-end against an in-memory driver.
 //
 // Batch routes by HTTP verb + a fixed operation path under the /v1/ prefix
 // (e.g. POST /v1/createcomputeenvironment); there is no X-Amz-Target header.
@@ -35,6 +35,16 @@ const (
 	opRegisterJobDefinition       = "registerjobdefinition"
 	opDescribeJobDefinitions      = "describejobdefinitions"
 	opDeregisterJobDefinition     = "deregisterjobdefinition"
+	opCreateSchedulingPolicy      = "createschedulingpolicy"
+	opDescribeSchedulingPolicies  = "describeschedulingpolicies"
+	opListSchedulingPolicies      = "listschedulingpolicies"
+	opUpdateSchedulingPolicy      = "updateschedulingpolicy"
+	opDeleteSchedulingPolicy      = "deleteschedulingpolicy"
+	opSubmitJob                   = "submitjob"
+	opDescribeJobs                = "describejobs"
+	opListJobs                    = "listjobs"
+	opCancelJob                   = "canceljob"
+	opTerminateJob                = "terminatejob"
 	opTags                        = "tags"
 )
 
@@ -63,6 +73,16 @@ var knownOps = map[string]bool{
 	opRegisterJobDefinition:       true,
 	opDescribeJobDefinitions:      true,
 	opDeregisterJobDefinition:     true,
+	opCreateSchedulingPolicy:      true,
+	opDescribeSchedulingPolicies:  true,
+	opListSchedulingPolicies:      true,
+	opUpdateSchedulingPolicy:      true,
+	opDeleteSchedulingPolicy:      true,
+	opSubmitJob:                   true,
+	opDescribeJobs:                true,
+	opListJobs:                    true,
+	opCancelJob:                   true,
+	opTerminateJob:                true,
 	opTags:                        true,
 }
 
@@ -118,7 +138,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request, op string) {
 	if h.serveComputeEnvironmentOp(w, r, op) ||
 		h.serveJobQueueOp(w, r, op) ||
-		h.serveJobDefinitionOp(w, r, op) {
+		h.serveJobDefinitionOp(w, r, op) ||
+		h.serveSchedulingPolicyOp(w, r, op) ||
+		h.serveJobOp(w, r, op) {
 		return
 	}
 
@@ -173,6 +195,48 @@ func (h *Handler) serveJobDefinitionOp(w http.ResponseWriter, r *http.Request, o
 		h.describeJobDefinitions(w, r)
 	case opDeregisterJobDefinition:
 		h.deregisterJobDefinition(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// serveSchedulingPolicyOp handles the scheduling-policy operations, or returns
+// false if op is not one of them.
+func (h *Handler) serveSchedulingPolicyOp(w http.ResponseWriter, r *http.Request, op string) bool {
+	switch op {
+	case opCreateSchedulingPolicy:
+		h.createSchedulingPolicy(w, r)
+	case opDescribeSchedulingPolicies:
+		h.describeSchedulingPolicies(w, r)
+	case opListSchedulingPolicies:
+		h.listSchedulingPolicies(w, r)
+	case opUpdateSchedulingPolicy:
+		h.updateSchedulingPolicy(w, r)
+	case opDeleteSchedulingPolicy:
+		h.deleteSchedulingPolicy(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// serveJobOp handles the job operations, or returns false if op is not one of
+// them.
+func (h *Handler) serveJobOp(w http.ResponseWriter, r *http.Request, op string) bool {
+	switch op {
+	case opSubmitJob:
+		h.submitJob(w, r)
+	case opDescribeJobs:
+		h.describeJobs(w, r)
+	case opListJobs:
+		h.listJobs(w, r)
+	case opCancelJob:
+		h.cancelJob(w, r)
+	case opTerminateJob:
+		h.terminateJob(w, r)
 	default:
 		return false
 	}

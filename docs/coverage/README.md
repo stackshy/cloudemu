@@ -33,7 +33,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `backup` | [Backup](./aws/backup.md) | - | - | - | 25 |
 | `backupdr` | - | - | [BackupDR](./gcp/backupdr.md) | - | 6 |
 | `bastion` | - | [Bastion](./azure/bastion.md) | - | - | 4 |
-| `batch` | [Batch](./aws/batch.md) | - | - | - | 14 |
+| `batch` | [Batch](./aws/batch.md) | - | - | - | 24 |
 | `batch-azure` | - | [Batch](./azure/batch.md) | - | - | 17 |
 | `bedrock` | [Bedrock](./aws/bedrock.md) | - | - | - | 65 |
 | `bedrockagent` | [BedrockAgent](./aws/bedrockagent.md) | - | - | - | 32 |

@@ -1,7 +1,10 @@
 // Package batch provides an in-memory mock implementation of AWS Batch: the
-// compute-environment, job-queue, and job-definition control plane. Resources
-// provision synchronously (VALID/ACTIVE immediately), ARNs and ECS cluster ARNs
-// are synthesized, and job-definition revisions increment on re-register.
+// compute-environment, job-queue, job-definition and scheduling-policy control
+// plane plus the job lifecycle. Resources provision synchronously
+// (VALID/ACTIVE immediately), ARNs and ECS cluster ARNs are synthesized, and
+// job-definition revisions increment on re-register. Jobs run no workload: a
+// submitted job walks SUBMITTED -> RUNNABLE -> STARTING -> RUNNING ->
+// SUCCEEDED on the configured clock (instantly unless AsyncSettle is on).
 package batch
 
 import (
@@ -11,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/batch/driver"
@@ -24,6 +28,8 @@ const (
 	kindComputeEnvironment = "compute-environment"
 	kindJobQueue           = "job-queue"
 	kindJobDefinition      = "job-definition"
+	kindSchedulingPolicy   = "scheduling-policy"
+	kindJob                = "job"
 )
 
 // Mock is an in-memory implementation of AWS Batch. Each resource kind lives in
@@ -33,14 +39,25 @@ const (
 // reads are copy-on-write (mutations build fresh values, never mutating stored
 // ones in place).
 type Mock struct {
-	computeEnvs  *memstore.Store[driver.ComputeEnvironment]
-	jobQueues    *memstore.Store[driver.JobQueue]
-	jobDefs      *memstore.Store[driver.JobDefinition]
-	jobDefMaxRev *memstore.Store[int32]
+	computeEnvs   *memstore.Store[driver.ComputeEnvironment]
+	jobQueues     *memstore.Store[driver.JobQueue]
+	jobDefs       *memstore.Store[driver.JobDefinition]
+	jobDefMaxRev  *memstore.Store[int32]
+	schedPolicies *memstore.Store[driver.SchedulingPolicy]
+	jobs          *memstore.Store[jobRecord]
+	jobSeq        *memstore.Store[int64]
 
 	// registerMu serializes job-definition revision allocation so two concurrent
 	// RegisterJobDefinition calls for the same name can't claim the same revision.
 	registerMu sync.Mutex
+
+	// jobsMu serializes job submission (sequence allocation), cancel/terminate
+	// decisions and the event-emission bookkeeping on job records.
+	jobsMu sync.Mutex
+
+	// events publishes "Batch Job State Change" events to the EventBridge
+	// default bus once wired by the provider factory.
+	events awsevents.Emitter
 
 	opts *config.Options
 }
@@ -48,11 +65,14 @@ type Mock struct {
 // New creates a new AWS Batch mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		computeEnvs:  memstore.New[driver.ComputeEnvironment](),
-		jobQueues:    memstore.New[driver.JobQueue](),
-		jobDefs:      memstore.New[driver.JobDefinition](),
-		jobDefMaxRev: memstore.New[int32](),
-		opts:         opts,
+		computeEnvs:   memstore.New[driver.ComputeEnvironment](),
+		jobQueues:     memstore.New[driver.JobQueue](),
+		jobDefs:       memstore.New[driver.JobDefinition](),
+		jobDefMaxRev:  memstore.New[int32](),
+		schedPolicies: memstore.New[driver.SchedulingPolicy](),
+		jobs:          memstore.New[jobRecord](),
+		jobSeq:        memstore.New[int64](),
+		opts:          opts,
 	}
 }
 

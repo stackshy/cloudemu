@@ -38,8 +38,12 @@ func (m *Mock) RegisterJobDefinition(
 		return nil, cerrors.New(cerrors.InvalidArgument, "jobDefinitionName is required")
 	}
 
-	if in.Type == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "type is required (container or multinode)")
+	if err := validateTags(in.Tags); err != nil {
+		return nil, err
+	}
+
+	if err := validateJobDefinitionType(&in); err != nil {
+		return nil, err
 	}
 
 	caps := in.PlatformCapabilities
@@ -179,4 +183,29 @@ func (m *Mock) sortedJobDefs() []driver.JobDefinition {
 	})
 
 	return out
+}
+
+// validateJobDefinitionType enforces the RegisterJobDefinition type enum
+// (container | multinode) and the properties each type requires: a container
+// job definition needs containerProperties, ecsProperties or eksProperties; a
+// multinode one needs nodeProperties.
+func validateJobDefinitionType(in *driver.RegisterJobDefinitionInput) error {
+	switch in.Type {
+	case "":
+		return cerrors.New(cerrors.InvalidArgument, "type is required (container or multinode)")
+	case driver.JDTypeContainer:
+		if !isSet(in.ContainerProperties) && !isSet(in.EcsProperties) && !isSet(in.EksProperties) {
+			return cerrors.New(cerrors.InvalidArgument,
+				"a container job definition requires containerProperties, ecsProperties or eksProperties")
+		}
+	case driver.JDTypeMultiNode:
+		if !isSet(in.NodeProperties) {
+			return cerrors.New(cerrors.InvalidArgument, "a multinode job definition requires nodeProperties")
+		}
+	default:
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"invalid job definition type %q; valid values are container and multinode", in.Type)
+	}
+
+	return nil
 }

@@ -3,25 +3,40 @@
 
 AWS's `batch` service · portable interface `driver.Batch` · [AWS index](./README.md)
 
-## Operations (14)
+## Operations (24)
 
 | Operation | Description |
 | --- | --- |
+| `CancelJob` |  |
 | `CreateComputeEnvironment` | Compute environments. |
 | `CreateJobQueue` | Job queues. |
+| `CreateSchedulingPolicy` | Scheduling policies. |
 | `DeleteComputeEnvironment` |  |
 | `DeleteJobQueue` |  |
+| `DeleteSchedulingPolicy` |  |
 | `DeregisterJobDefinition` |  |
 | `DescribeComputeEnvironments` |  |
 | `DescribeJobDefinitions` |  |
 | `DescribeJobQueues` |  |
+| `DescribeJobs` |  |
+| `DescribeSchedulingPolicies` |  |
+| `ListJobs` |  |
+| `ListSchedulingPolicies` |  |
 | `ListTagsForResource` |  |
 | `RegisterJobDefinition` | Job definitions. |
-| `TagResource` | Tags (by ARN), shared across all three resource kinds. |
+| `SubmitJob` | Jobs. |
+| `TagResource` | Tags (by ARN), shared across every taggable resource kind. |
+| `TerminateJob` |  |
 | `UntagResource` |  |
 | `UpdateComputeEnvironment` |  |
 | `UpdateJobQueue` |  |
+| `UpdateSchedulingPolicy` |  |
 
 ## Not in scope
 
-_Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
+- Jobs run no workload: a job always succeeds (container `exitCode` 0) once its dependencies succeed. By default it is `SUCCEEDED` as soon as it is submitted; with `--async-settle` it spends about one second each in `SUBMITTED`, `RUNNABLE`, `STARTING` and `RUNNING` (and stays `PENDING` while a dependency is unfinished). `attempts` is always empty, and retry strategies and timeouts are stored and echoed but never applied.
+- `CancelJob` on a `PENDING` job takes effect at once. Real Batch waits for the job's dependencies to finish first.
+- Array jobs: children are derived from the parent, not stored one by one. `SEQUENTIAL` and `N_TO_N` dependencies are honoured. An array parent reports `PENDING` while any child is unfinished. Multi-node parallel jobs run as a single job: `ListJobs` with `multiNodeJobId` returns an empty list.
+- Fair-share scheduling policies are stored, validated and bound to queues, but they never change the order in which jobs run. Jobs never stay `RUNNABLE` because no capacity is free, so "Batch Job Queue Blocked" events are never sent.
+- "Batch Job State Change" events go to the EventBridge default bus on the serve scheduler's tick (and on any Batch job API call), one per status the job passed through; none is sent for the initial submission. In library mode, nothing ticks, so events are published when a job API call sees the change or when `Tick` is called. A job that fails reports only `FAILED`, without the earlier steps. Array children send no events of their own. Real Batch sends no state-change events for compute environments or job queues, so the emulator sends none either.
+- Error messages are written by the emulator. The exception type (`ClientException`, HTTP 400) is the documented one.
