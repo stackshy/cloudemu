@@ -35,6 +35,8 @@ func (m *Mock) GetAgentMemory(ctx context.Context, agentID, aliasID, memoryID, m
 		return nil, "", err
 	}
 
+	m.endIdleConversations(ctx, agentID, aliasID)
+
 	prefix := agentID + "/" + aliasID + "/" + memoryID + "/"
 
 	var out []driver.MemorySummary
@@ -122,4 +124,40 @@ func (v *violations) memoryID(value string, required bool) {
 
 	v.maxLen("memoryId", value, maxSessionIDLen)
 	v.pattern("memoryId", value, memoryIDRE, memoryIDPattern)
+}
+
+// endIdleConversations ends the alias's conversations that passed the agent's
+// idle TTL, writing their session summaries, as AWS does when a session times
+// out; otherwise a timed-out session would show in memory only once its
+// sessionId was invoked again. An agent the runtime can't resolve (for example
+// an unprepared draft) is left alone.
+func (m *Mock) endIdleConversations(ctx context.Context, agentID, aliasID string) {
+	if m.cp == nil {
+		return
+	}
+
+	cfg, err := m.resolveAgent(ctx, agentID, aliasID)
+	if err != nil {
+		return
+	}
+
+	prefix := agentID + "/" + aliasID + "/"
+
+	for key := range m.conversations.All() {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+
+		unlock := m.lockConversation(key)
+
+		if conv, ok := m.conversations.Get(key); ok {
+			c := cloneConversation(conv)
+			if m.idledOut(cfg, &c) {
+				m.endConversation(cfg, &c)
+				m.conversations.Delete(key)
+			}
+		}
+
+		unlock()
+	}
 }

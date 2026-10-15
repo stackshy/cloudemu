@@ -77,11 +77,14 @@ type Mock struct {
 	// versus settle.
 	mu sync.Mutex
 
-	// turnLocks holds one mutex per conversation key: the turns of one
-	// conversation run one at a time, without holding mu, so a turn's calls
-	// out (model, Lambda, guardrail) never block other sessions and a Lambda
-	// action group can call back into the runtime.
-	turnLocks sync.Map
+	// turnLocks holds one lock per conversation key while turns of it run or
+	// wait: the turns of one conversation run one at a time, without holding
+	// mu, so a turn's calls out (model, Lambda, guardrail) never block other
+	// sessions and a Lambda action group can call back into the runtime. A lock
+	// is removed when no turn holds or waits for it, so caller-chosen session
+	// ids don't accumulate. Guarded by turnLocksMu.
+	turnLocks   map[string]*turnLock
+	turnLocksMu sync.Mutex
 }
 
 // New creates a new Bedrock Agent runtime mock.

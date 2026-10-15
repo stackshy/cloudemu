@@ -181,6 +181,19 @@ func overlap(query, doc map[string]bool) float64 {
 	return float64(hit*scoreScale/len(query)) / scoreScale
 }
 
+// relevant keeps the ranked chunks that share a word with the query: a
+// generated answer uses only those, while Retrieve still returns its top
+// results whatever their score, as a vector search does.
+func relevant(ranked []driver.RetrievalResult) []driver.RetrievalResult {
+	for i, r := range ranked {
+		if r.Score <= 0 {
+			return ranked[:i]
+		}
+	}
+
+	return ranked
+}
+
 // knowledgeBaseID returns the id of a knowledge-base id or ARN.
 func knowledgeBaseID(identifier string) string {
 	if _, id, ok := strings.Cut(identifier, kbARNMarker); ok {
@@ -299,6 +312,8 @@ func (m *Mock) ragSources(ctx context.Context, in *driver.RetrieveAndGenerateInp
 	if in.NumberOfResults != nil {
 		n = int(*in.NumberOfResults)
 	}
+
+	ranked = relevant(ranked)
 
 	return ranked[:min(n, len(ranked))], nil
 }

@@ -3,7 +3,9 @@ package bedrockagentruntime_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -181,4 +183,21 @@ func requireStreamDone(t *testing.T, err error) {
 	if err != nil && !benignStreamTeardown(err) {
 		require.NoError(t, err)
 	}
+}
+
+// raw sends a request the SDK would never send (a broken body, a bad query)
+// straight to the stack and returns the status and the error type.
+func (s *stack) raw(t *testing.T, method, path, body string) (status int, errType string) {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(context.Background(), method, s.url+path, strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+
+	_ = resp.Body.Close()
+
+	return resp.StatusCode, resp.Header.Get("X-Amzn-Errortype")
 }

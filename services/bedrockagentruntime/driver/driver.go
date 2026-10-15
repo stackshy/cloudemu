@@ -55,6 +55,14 @@ type SessionState struct {
 	InvocationID            string
 	ReturnControlResults    []InvocationResult
 	KnowledgeBases          []KnowledgeBaseConfig // per-call retrieval settings of the agent's knowledge bases
+	History                 []HistoryMessage      // conversationHistory: earlier turns a new session starts from
+}
+
+// HistoryMessage is one message of sessionState.conversationHistory: a user
+// or assistant turn's text.
+type HistoryMessage struct {
+	Role string
+	Text string
 }
 
 // KnowledgeBaseConfig overrides how one of an agent's knowledge bases is
@@ -93,7 +101,27 @@ type InvocationInput struct {
 	APIPath     string
 	HTTPMethod  string
 	Parameters  []Parameter
+	RequestBody *RequestBody // an API operation's body, when it takes one
 }
+
+// RequestBody is the body of an API-schema action call: its content type and
+// the properties read from the input.
+type RequestBody struct {
+	ContentType string
+	Properties  []Parameter
+}
+
+// ResourceError is an error about a resource the operation depends on; the
+// wire layer reports ResourceName (DependencyFailedException.resourceName).
+type ResourceError struct {
+	Err          error
+	ResourceName string
+}
+
+func (e *ResourceError) Error() string { return e.Err.Error() }
+
+// Unwrap returns the underlying error, so its code is still read.
+func (e *ResourceError) Unwrap() error { return e.Err }
 
 // ReturnControl hands an action-group call back to the caller.
 type ReturnControl struct {

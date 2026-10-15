@@ -39,7 +39,9 @@ func (m *Mock) InvokeInlineAgent(ctx context.Context, in driver.InlineAgentInput
 			continue
 		}
 
-		cfg.actionGroups = append(cfg.actionGroups, inlineActionGroup(&in.ActionGroups[i]))
+		g := inlineActionGroup(&in.ActionGroups[i])
+		g.apis = m.openAPIOperations(ctx, in.ActionGroups[i].APISchema)
+		cfg.actionGroups = append(cfg.actionGroups, g)
 	}
 
 	kbs, err := m.inlineKnowledgeBases(ctx, in.KnowledgeBases)
@@ -78,8 +80,6 @@ func inlineActionGroup(g *driver.InlineActionGroup) actionGroup {
 
 		out.functions = append(out.functions, fd)
 	}
-
-	out.apis = parseOpenAPI(g.APISchema)
 
 	return out
 }

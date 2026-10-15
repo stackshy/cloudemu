@@ -3,7 +3,6 @@ package bedrockagentruntime
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 	badriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
@@ -68,9 +67,14 @@ type paramDef struct {
 	required bool
 }
 
+// apiDef is one operation of an API-schema action group: its parameters and,
+// when it takes a body, the body's content type and properties.
 type apiDef struct {
-	path   string
-	method string
+	path     string
+	method   string
+	params   []paramDef
+	bodyType string
+	body     []paramDef
 }
 
 // knowledgeBaseRef is a knowledge base an agent searches.
@@ -126,10 +130,6 @@ type executorJSON struct {
 
 // apiSchemaJSON is the apiSchema union; only an inline JSON OpenAPI payload is
 // read (an S3 schema or a YAML payload exposes no APIs to the emulator).
-type apiSchemaJSON struct {
-	Payload string `json:"payload"`
-}
-
 // toActionGroup converts a stored, enabled action group the runtime can call.
 // The AMAZON.* and ANTHROPIC.* built-in signatures are not callable actions.
 func toActionGroup(g *badriver.ActionGroup) (actionGroup, bool) {
@@ -159,35 +159,7 @@ func toActionGroup(g *badriver.ActionGroup) (actionGroup, bool) {
 		}
 	}
 
-	out.apis = parseOpenAPI(g.APISchema)
-
 	return out, true
-}
-
-// parseOpenAPI lists the operations of an inline JSON OpenAPI document.
-func parseOpenAPI(raw json.RawMessage) []apiDef {
-	var schema apiSchemaJSON
-	if json.Unmarshal(raw, &schema) != nil || schema.Payload == "" {
-		return nil
-	}
-
-	var doc struct {
-		Paths map[string]map[string]json.RawMessage `json:"paths"`
-	}
-
-	if json.Unmarshal([]byte(schema.Payload), &doc) != nil {
-		return nil
-	}
-
-	var out []apiDef
-
-	for _, path := range sortedKeys(doc.Paths) {
-		for _, method := range sortedKeys(doc.Paths[path]) {
-			out = append(out, apiDef{path: path, method: strings.ToUpper(method)})
-		}
-	}
-
-	return out
 }
 
 // agentConfigJSON pieces of the agent's stored configuration.

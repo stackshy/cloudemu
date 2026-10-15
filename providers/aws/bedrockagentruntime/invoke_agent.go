@@ -191,13 +191,44 @@ func (m *Mock) runTurn(ctx context.Context, cfg *agentConfig, req turnRequest) (
 	return res, nil
 }
 
-// lockConversation takes the conversation's turn lock and returns its unlock.
-func (m *Mock) lockConversation(key string) func() {
-	v, _ := m.turnLocks.LoadOrStore(key, &sync.Mutex{})
-	mu, _ := v.(*sync.Mutex)
-	mu.Lock()
+// turnLock serializes the turns of one conversation; refs counts the turns
+// holding or waiting for it.
+type turnLock struct {
+	mu   sync.Mutex
+	refs int
+}
 
-	return mu.Unlock
+// lockConversation takes the conversation's turn lock and returns its unlock,
+// which removes the lock once no other turn holds or waits for it.
+func (m *Mock) lockConversation(key string) func() {
+	m.turnLocksMu.Lock()
+
+	if m.turnLocks == nil {
+		m.turnLocks = map[string]*turnLock{}
+	}
+
+	l, ok := m.turnLocks[key]
+	if !ok {
+		l = &turnLock{}
+		m.turnLocks[key] = l
+	}
+
+	l.refs++
+	m.turnLocksMu.Unlock()
+
+	l.mu.Lock()
+
+	return func() {
+		l.mu.Unlock()
+
+		m.turnLocksMu.Lock()
+		defer m.turnLocksMu.Unlock()
+
+		l.refs--
+		if l.refs == 0 {
+			delete(m.turnLocks, key)
+		}
+	}
 }
 
 // answer produces the turn's answer chunk, or nil when the turn hands control
@@ -380,6 +411,7 @@ func (m *Mock) lookupKnowledgeBases(ts *turnState, userText string) []driver.Ret
 			n = int(*kb.numberOfResults)
 		}
 
+		ranked = relevant(ranked)
 		out = append(out, ranked[:min(n, len(ranked))]...)
 	}
 
@@ -531,11 +563,33 @@ func (m *Mock) openConversation(cfg *agentConfig, req turnRequest) *conversation
 
 	conv := &conversation{
 		AgentID: cfg.agentID, AliasID: cfg.aliasID, SessionID: req.sessionID, MemoryID: req.memoryID,
-		StartedAt: now, LastActiveAt: now,
+		StartedAt: now, LastActiveAt: now, Turns: historyTurns(req.state),
 	}
 	mergeAttributes(conv, req.state)
 
 	return conv
+}
+
+// historyTurns turns sessionState.conversationHistory into the earlier turns
+// of a new conversation: each user message, with the assistant message that
+// follows it when there is one.
+func historyTurns(st *driver.SessionState) []turn {
+	if st == nil {
+		return nil
+	}
+
+	var out []turn
+
+	for _, msg := range st.History {
+		switch {
+		case msg.Role == "user":
+			out = append(out, turn{User: msg.Text})
+		case msg.Role == "assistant" && len(out) > 0 && out[len(out)-1].Assistant == "":
+			out[len(out)-1].Assistant = msg.Text
+		}
+	}
+
+	return out
 }
 
 // closeTurn records the turn, then ends the conversation on endSession.

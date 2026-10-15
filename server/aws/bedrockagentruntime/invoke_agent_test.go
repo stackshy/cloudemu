@@ -370,3 +370,118 @@ func TestSDKInvokeAgentStreamFinalResponse(t *testing.T) {
 	assert.Greater(t, len(pieces), 1, "streamFinalResponse streams the answer in pieces")
 	assert.Equal(t, whole[0], strings.Join(pieces, ""), "the pieces add up to the same answer")
 }
+
+// refundsSchema is a YAML OpenAPI document: POST /refunds with a required
+// orderId query parameter and a JSON body with an amount.
+const refundsSchema = `openapi: 3.0.0
+paths:
+  /refunds:
+    post:
+      parameters:
+        - name: orderId
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: number
+              required: [amount]
+`
+
+// TestSDKAPISchemaActionGroups covers OpenAPI action groups: a YAML schema
+// sends the Lambda the operation's parameters and requestBody, a schema in S3
+// hands them back through returnControl, and a FAILURE response is a
+// DependencyFailedException naming the function.
+func TestSDKAPISchemaActionGroups(t *testing.T) {
+	s := newStack(t)
+	ctx := context.Background()
+
+	_, err := s.provider.Lambda.CreateFunction(ctx, serverlessdriver.FunctionConfig{
+		Name: "refunds", Runtime: "python3.12", Handler: "index.handler", Role: roleARN,
+	})
+	require.NoError(t, err)
+
+	var event map[string]any
+
+	failing := false
+
+	s.provider.Lambda.RegisterHandler("refunds", func(_ context.Context, payload []byte) ([]byte, error) {
+		require.NoError(t, json.Unmarshal(payload, &event))
+
+		state := ""
+		if failing {
+			state = `"responseState":"FAILURE",`
+		}
+
+		return []byte(`{"messageVersion":"1.0","response":{"functionResponse":{` + state +
+			`"responseBody":{"TEXT":{"body":"Refund created."}}}}}`), nil
+	})
+
+	const fn = "arn:aws:lambda:us-east-1:123456789012:function:refunds"
+
+	lambdaAgent := s.newAgent(t, "refunds", nil)
+	_, err = s.agent.CreateAgentActionGroup(ctx, &awsba.CreateAgentActionGroupInput{
+		AgentId: aws.String(lambdaAgent), AgentVersion: aws.String("DRAFT"), ActionGroupName: aws.String("refunds"),
+		ActionGroupExecutor: &batypes.ActionGroupExecutorMemberLambda{Value: fn},
+		ApiSchema:           &batypes.APISchemaMemberPayload{Value: refundsSchema},
+	})
+	require.NoError(t, err)
+	s.prepare(t, lambdaAgent)
+
+	turn, err := invoke(t, s, &agentruntime.InvokeAgentInput{
+		AgentId: aws.String(lambdaAgent), AgentAliasId: aws.String("TSTALIASID"), SessionId: aws.String("s-1"),
+		InputText: aws.String("please do refunds orderId=7 amount=3"),
+	})
+	require.NoError(t, err)
+	assert.Contains(t, turn.text, "Refund created.")
+	assert.Equal(t, "/refunds", event["apiPath"])
+	assert.Equal(t, "POST", event["httpMethod"])
+	assert.Equal(t, []any{map[string]any{"name": "orderId", "type": "string", "value": "7"}}, event["parameters"])
+	assert.Equal(t, map[string]any{"content": map[string]any{"application/json": map[string]any{
+		"properties": []any{map[string]any{"name": "amount", "type": "number", "value": "3"}},
+	}}}, event["requestBody"], "the documented requestBody.content.<type>.properties")
+
+	failing = true
+
+	_, err = s.runtime.InvokeAgent(ctx, &agentruntime.InvokeAgentInput{
+		AgentId: aws.String(lambdaAgent), AgentAliasId: aws.String("TSTALIASID"), SessionId: aws.String("s-2"),
+		InputText: aws.String("please do refunds orderId=8 amount=1"),
+	})
+	requireAPIError(t, err, "DependencyFailedException", http.StatusFailedDependency)
+
+	var dep *rttypes.DependencyFailedException
+	require.ErrorAs(t, err, &dep)
+	assert.Equal(t, fn, aws.ToString(dep.ResourceName))
+
+	require.NoError(t, s.provider.S3.CreateBucket(ctx, "schemas"))
+	require.NoError(t, s.provider.S3.PutObject(ctx, "schemas", "refunds.yaml", []byte(refundsSchema), "", nil))
+
+	rcAgent := s.newAgent(t, "returner", nil)
+	_, err = s.agent.CreateAgentActionGroup(ctx, &awsba.CreateAgentActionGroupInput{
+		AgentId: aws.String(rcAgent), AgentVersion: aws.String("DRAFT"), ActionGroupName: aws.String("refunds"),
+		ActionGroupExecutor: &batypes.ActionGroupExecutorMemberCustomControl{Value: batypes.CustomControlMethodReturnControl},
+		ApiSchema: &batypes.APISchemaMemberS3{Value: batypes.S3Identifier{
+			S3BucketName: aws.String("schemas"), S3ObjectKey: aws.String("refunds.yaml"),
+		}},
+	})
+	require.NoError(t, err)
+	s.prepare(t, rcAgent)
+
+	handed, err := invoke(t, s, &agentruntime.InvokeAgentInput{
+		AgentId: aws.String(rcAgent), AgentAliasId: aws.String("TSTALIASID"), SessionId: aws.String("s-3"),
+		InputText: aws.String("refunds orderId=9 amount=1"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, handed.returnControl, "a schema in S3 is read")
+
+	api, ok := handed.returnControl.InvocationInputs[0].(*rttypes.InvocationInputMemberMemberApiInvocationInput)
+	require.True(t, ok)
+	assert.Equal(t, "9", aws.ToString(api.Value.Parameters[0].Value))
+	assert.Equal(t, "1", aws.ToString(api.Value.RequestBody.Content["application/json"].Properties[0].Value))
+}

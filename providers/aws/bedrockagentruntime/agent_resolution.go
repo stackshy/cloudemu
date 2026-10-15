@@ -147,6 +147,7 @@ func (m *Mock) loadAgentChildren(ctx context.Context, cfg *agentConfig) error {
 
 	for i := range groups {
 		if g, ok := toActionGroup(&groups[i]); ok {
+			g.apis = m.openAPIOperations(ctx, groups[i].APISchema)
 			cfg.actionGroups = append(cfg.actionGroups, g)
 		}
 	}

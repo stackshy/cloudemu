@@ -161,3 +161,68 @@ func TestSDKInvocationSteps(t *testing.T) {
 	})
 	requireAPIError(t, err, "ResourceNotFoundException", http.StatusNotFound)
 }
+
+// TestRawRequestErrorsOnEveryRoute sends each runtime route what only a hand
+// written request carries: a body that is not JSON, unknown resources and bad
+// paging. Every answer is a typed 4xx exception.
+func TestRawRequestErrorsOnEveryRoute(t *testing.T) {
+	s := newStack(t)
+	const (
+		agent   = "/agents/ABCDEFGHIJ/agentAliases/TSTALIASID"
+		session = "/sessions/00000000-0000-4000-8000-000000000000"
+		flow    = "/flows/ABCDEFGHIJ/aliases/TSTALIASID"
+		kb      = "/knowledgebases/ABCDEFGHIJ"
+	)
+
+	broken := []struct{ method, path string }{
+		{http.MethodPost, agent + "/sessions/s-1/text"},
+		{http.MethodPost, "/agents/inline-1"},
+		{http.MethodPost, kb + "/retrieve"},
+		{http.MethodPost, "/retrieveAndGenerate"},
+		{http.MethodPost, "/retrieveAndGenerateStream"},
+		{http.MethodPost, "/rerank"},
+		{http.MethodPost, "/generateQuery"},
+		{http.MethodPost, "/optimize-prompt"},
+		{http.MethodPost, "/agenticRetrieveStream"},
+		{http.MethodPut, "/sessions/"},
+		{http.MethodPut, session},
+		{http.MethodPut, session + "/invocations/"},
+		{http.MethodPut, session + "/invocationSteps/"},
+		{http.MethodPost, session + "/invocationSteps/"},
+		{http.MethodPost, session + "/invocationSteps/00000000-0000-4000-8000-000000000000"},
+		{http.MethodPost, flow},
+		{http.MethodPost, flow + "/executions"},
+		{http.MethodPost, kb + "/datasources/ABCDEFGHIJ/documents/doc/content"},
+		{http.MethodPost, "/tags/arn:aws:bedrock:us-east-1:123456789012:session/00000000-0000-4000-8000-000000000000"},
+	}
+
+	for _, c := range broken {
+		status, errType := s.raw(t, c.method, c.path, "{")
+		assert.Equal(t, http.StatusBadRequest, status, "%s %s with a broken body", c.method, c.path)
+		assert.Equal(t, "ValidationException", errType, "%s %s", c.method, c.path)
+	}
+
+	unknown := []struct{ method, path, body string }{
+		{http.MethodPatch, session, ""},
+		{http.MethodPost, session + "/invocationSteps/00000000-0000-4000-8000-000000000000",
+			`{"invocationIdentifier":"00000000-0000-4000-8000-000000000000"}`},
+		{http.MethodPost, session + "/invocations/", ""},
+		{http.MethodPost, session + "/invocationSteps/", ""},
+		{http.MethodGet, agent + "/memories?memoryType=SESSION_SUMMARY&memoryId=m1", ""},
+		{http.MethodDelete, agent + "/memories", ""},
+		{http.MethodGet, flow + "/executions/e1", ""},
+		{http.MethodGet, flow + "/executions/e1/events?eventType=Flow", ""},
+		{http.MethodGet, flow + "/executions/e1/flowsnapshot", ""},
+		{http.MethodGet, "/flows/ABCDEFGHIJ/executions", ""},
+		{http.MethodGet, kb + "/datasources/ABCDEFGHIJ/documents/doc/content?X-Cloudemu-Content=nope", ""},
+		{http.MethodPost, "/sessions/?maxResults=0", ""},
+		{http.MethodPost, "/sessions/?maxResults=abc", ""},
+		{http.MethodPost, session + "/invocations/?maxResults=-1", ""},
+	}
+
+	for _, c := range unknown {
+		status, errType := s.raw(t, c.method, c.path, c.body)
+		assert.True(t, status >= 400 && status < 500, "%s %s: %d %s", c.method, c.path, status, errType)
+		assert.NotEmpty(t, errType, "%s %s: a typed exception", c.method, c.path)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/services/bedrockagentruntime/driver"
 )
@@ -48,6 +49,14 @@ type sessionStateJSON struct {
 		KnowledgeBaseID        string                      `json:"knowledgeBaseId"`
 		RetrievalConfiguration *retrievalConfigurationJSON `json:"retrievalConfiguration"`
 	} `json:"knowledgeBaseConfigurations"`
+	ConversationHistory *struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"messages"`
+	} `json:"conversationHistory"`
 }
 
 type invokeAgentRequest struct {
@@ -75,6 +84,17 @@ func (s *sessionStateJSON) toDriver() *driver.SessionState {
 	out := &driver.SessionState{
 		SessionAttributes: s.SessionAttributes, PromptSessionAttributes: s.PromptSessionAttributes,
 		InvocationID: s.InvocationID,
+	}
+
+	if h := s.ConversationHistory; h != nil {
+		for _, msg := range h.Messages {
+			var text strings.Builder
+			for _, c := range msg.Content {
+				text.WriteString(c.Text)
+			}
+
+			out.History = append(out.History, driver.HistoryMessage{Role: msg.Role, Text: text.String()})
+		}
 	}
 
 	for _, kb := range s.KnowledgeBaseConfigurations {
@@ -241,11 +261,34 @@ type functionInvocationJSON struct {
 }
 
 type apiInvocationJSON struct {
-	ActionGroup          string          `json:"actionGroup"`
-	APIPath              string          `json:"apiPath"`
-	HTTPMethod           string          `json:"httpMethod"`
-	Parameters           []parameterJSON `json:"parameters"`
-	ActionInvocationType string          `json:"actionInvocationType"`
+	ActionGroup          string           `json:"actionGroup"`
+	APIPath              string           `json:"apiPath"`
+	HTTPMethod           string           `json:"httpMethod"`
+	Parameters           []parameterJSON  `json:"parameters"`
+	RequestBody          *requestBodyJSON `json:"requestBody,omitempty"`
+	ActionInvocationType string           `json:"actionInvocationType"`
+}
+
+// requestBodyJSON is ApiRequestBody: content type -> properties.
+type requestBodyJSON struct {
+	Content map[string]propertiesJSON `json:"content"`
+}
+
+type propertiesJSON struct {
+	Properties []parameterJSON `json:"properties"`
+}
+
+func toRequestBodyJSON(b *driver.RequestBody) *requestBodyJSON {
+	if b == nil {
+		return nil
+	}
+
+	props := make([]parameterJSON, 0, len(b.Properties))
+	for _, p := range b.Properties {
+		props = append(props, parameterJSON(p))
+	}
+
+	return &requestBodyJSON{Content: map[string]propertiesJSON{b.ContentType: {Properties: props}}}
 }
 
 func toAgentEvents(res *driver.InvokeAgentResult) []streamEvent {
@@ -289,7 +332,7 @@ func toReturnControlJSON(rc *driver.ReturnControl) returnControlJSON {
 
 		out.InvocationInputs = append(out.InvocationInputs, invocationInputJSON{APIInvocationInput: &apiInvocationJSON{
 			ActionGroup: in.ActionGroup, APIPath: in.APIPath, HTTPMethod: in.HTTPMethod, Parameters: params,
-			ActionInvocationType: "RESULT",
+			RequestBody: toRequestBodyJSON(in.RequestBody), ActionInvocationType: "RESULT",
 		}})
 	}
 

@@ -2,6 +2,7 @@ package bedrockagentruntime
 
 import (
 	"context"
+	"fmt"
 	"encoding/json"
 	"testing"
 	"time"
@@ -887,4 +888,204 @@ func TestExpiredDocTokensAreSwept(t *testing.T) {
 
 	_, _, err = l.rt.ReadDocumentContent(ctx, fresh.Token)
 	require.NoError(t, err)
+}
+
+// kbWithTeams creates a knowledge base whose two documents carry a "team"
+// attribute, for filter tests.
+func (l *linked) kbWithTeams(t *testing.T) string {
+	t.Helper()
+
+	ctx := context.Background()
+	kbID, dsID := l.kb(t, nil)
+
+	for id, team := range map[string]string{"billing-doc": "billing", "support-doc": "support"} {
+		content, _ := json.Marshal(map[string]any{"dataSourceType": "CUSTOM", "custom": map[string]any{
+			"customDocumentIdentifier": map[string]string{"id": id}, "sourceType": "IN_LINE",
+			"inlineContent": map[string]any{"type": "TEXT", "textContent": map[string]string{"data": "refund policy of " + team}},
+		}})
+		meta := json.RawMessage(`{"type":"IN_LINE_ATTRIBUTE","inlineAttributes":[{"key":"team","value":{"type":"STRING","stringValue":"` + team + `"}}]}`)
+		_, err := l.cp.IngestKnowledgeBaseDocuments(ctx, kbID, dsID, []badriver.KnowledgeBaseDocument{{Content: content, Metadata: meta}})
+		require.NoError(t, err)
+	}
+
+	return kbID
+}
+
+// TestLambdaResponseContract follows the agents Lambda response format: the
+// returned session attributes and knowledge-base settings shape the turn and
+// the next ones, FAILURE is a DependencyFailedException naming the function,
+// and REPROMPT is read as the observation.
+func TestLambdaResponseContract(t *testing.T) {
+	l := newLinked(t)
+	ctx := context.Background()
+	kbID := l.kbWithTeams(t)
+	lam := &fakeLambda{}
+	l.rt.SetLambda(lam)
+
+	const fn = "arn:aws:lambda:us-east-1:123456789012:function:tools"
+
+	agentID := l.agent(t, nil)
+	_, err := l.cp.AssociateAgentKnowledgeBase(ctx, badriver.AgentKnowledgeBaseConfig{
+		AgentID: agentID, AgentVersion: "DRAFT", KnowledgeBaseID: kbID, Description: "policies",
+	})
+	require.NoError(t, err)
+	_, err = l.cp.CreateAgentActionGroup(ctx, badriver.ActionGroupConfig{
+		AgentID: agentID, AgentVersion: "DRAFT", Name: "tools", Executor: json.RawMessage(`{"lambda":"` + fn + `"}`),
+		FunctionSchema: json.RawMessage(`{"functions":[{"name":"lookup"}]}`),
+	})
+	require.NoError(t, err)
+	l.prepare(t, agentID)
+
+	turn := func(session, body string) (*driver.InvokeAgentResult, error) {
+		lam.body = body
+
+		return l.rt.InvokeAgent(ctx, driver.InvokeAgentInput{AgentID: agentID, AgentAliasID: "TSTALIASID", SessionID: session,
+			InputText: "lookup the refund policy"})
+	}
+
+	res, err := turn("s1", `{"response":{"functionResponse":{"responseBody":{"TEXT":{"body":"looked up"}}}},`+
+		`"sessionAttributes":{"cart":"42"},"promptSessionAttributes":{"tone":"brief"},`+
+		`"knowledgeBasesConfiguration":[{"knowledgeBaseId":"`+kbID+`","retrievalConfiguration":`+
+		`{"vectorSearchConfiguration":{"filter":{"equals":{"key":"team","value":"support"}}}}}]}`)
+	require.NoError(t, err)
+	assert.Contains(t, res.Completion, "looked up")
+	assert.Contains(t, res.Completion, "refund policy of support")
+	assert.NotContains(t, res.Completion, "refund policy of billing", "the Lambda's knowledge-base filter applies to the turn")
+
+	conv, _ := l.rt.conversations.Get(agentID + "/TSTALIASID/s1")
+	assert.Equal(t, map[string]string{"cart": "42"}, conv.SessionAttributes)
+	assert.Equal(t, map[string]string{"tone": "brief"}, conv.PromptSessionAttributes)
+
+	_, err = turn("s1", `{"response":{"functionResponse":{"responseBody":{"TEXT":{"body":"again"}}}}}`)
+	require.NoError(t, err)
+
+	var event lambdaEvent
+	require.NoError(t, json.Unmarshal(lam.payload, &event))
+	assert.Equal(t, map[string]string{"cart": "42"}, event.SessionAttributes, "the next turn's event carries what the Lambda set")
+
+	_, err = turn("s2", `{"response":{"functionResponse":{"responseState":"FAILURE","responseBody":{"TEXT":{"body":"card declined"}}}}}`)
+	require.Equal(t, cerrors.Unavailable, cerrors.GetCode(err))
+
+	var re *driver.ResourceError
+	require.ErrorAs(t, err, &re)
+	assert.Equal(t, fn, re.ResourceName)
+	assert.Contains(t, err.Error(), "card declined")
+
+	res, err = turn("s3", `{"response":{"functionResponse":{"responseState":"REPROMPT","responseBody":{"TEXT":{"body":"need order id"}}}}}`)
+	require.NoError(t, err)
+	assert.Contains(t, res.Completion, "need order id")
+
+	_, err = turn("s4", `{"response":{"functionResponse":{"responseBody":{"TEXT":{"body":"x"}}}},`+
+		`"knowledgeBasesConfiguration":[{"knowledgeBaseId":"OTHERKB000"}]}`)
+	assert.Equal(t, cerrors.Unavailable, cerrors.GetCode(err), "a knowledge base the agent doesn't use")
+}
+
+func TestTurnLocksAreReleased(t *testing.T) {
+	l := newLinked(t)
+	agentID := l.agent(t, nil)
+
+	for i := range 20 {
+		_, err := l.rt.InvokeAgent(context.Background(), driver.InvokeAgentInput{
+			AgentID: agentID, AgentAliasID: "TSTALIASID", SessionID: fmt.Sprintf("s-%d", i), InputText: "hi",
+		})
+		require.NoError(t, err)
+	}
+
+	l.rt.turnLocksMu.Lock()
+	defer l.rt.turnLocksMu.Unlock()
+
+	assert.Empty(t, l.rt.turnLocks, "no lock outlives its turns")
+}
+
+func TestIdleSessionSummaryWithoutAnotherTurn(t *testing.T) {
+	l := newLinked(t)
+	ctx := context.Background()
+	agentID := l.agent(t, func(c *badriver.AgentConfig) {
+		c.IdleSessionTTLInSeconds = 60
+		c.MemoryConfiguration = json.RawMessage(`{"enabledMemoryTypes":["SESSION_SUMMARY"]}`)
+	})
+
+	_, err := l.rt.InvokeAgent(ctx, driver.InvokeAgentInput{
+		AgentID: agentID, AgentAliasID: "TSTALIASID", SessionID: "s1", InputText: "book a window seat", MemoryID: "m1",
+	})
+	require.NoError(t, err)
+
+	mem, _, err := l.rt.GetAgentMemory(ctx, agentID, "TSTALIASID", "m1", driver.MemoryTypeSessionSummary, driver.Page{})
+	require.NoError(t, err)
+	assert.Empty(t, mem, "the session is still open")
+
+	l.clock.Advance(61 * time.Second)
+
+	mem, _, err = l.rt.GetAgentMemory(ctx, agentID, "TSTALIASID", "m1", driver.MemoryTypeSessionSummary, driver.Page{})
+	require.NoError(t, err)
+	require.Len(t, mem, 1, "the timed-out session is summarized without another turn")
+	assert.Contains(t, mem[0].SummaryText, "window seat")
+	assert.False(t, l.rt.conversations.Has(agentID+"/TSTALIASID/s1"))
+}
+
+func TestAnswerContextAndConversationHistory(t *testing.T) {
+	l := newLinked(t)
+	ctx := context.Background()
+	kbID, _ := l.kb(t, map[string]string{"refunds": "Refunds take 5 days.", "shipping": "Shipping takes 2 days."})
+	agentID := l.agent(t, nil)
+
+	_, err := l.cp.AssociateAgentKnowledgeBase(ctx, badriver.AgentKnowledgeBaseConfig{
+		AgentID: agentID, AgentVersion: "DRAFT", KnowledgeBaseID: kbID, Description: "faq",
+	})
+	require.NoError(t, err)
+	l.prepare(t, agentID)
+
+	res, err := l.rt.InvokeAgent(ctx, driver.InvokeAgentInput{
+		AgentID: agentID, AgentAliasID: "TSTALIASID", SessionID: "s1", InputText: "refunds?",
+		SessionState: &driver.SessionState{History: []driver.HistoryMessage{
+			{Role: "user", Text: "hi"}, {Role: "assistant", Text: "hello"}, {Role: "user", Text: "who are you"},
+		}},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, res.Completion, "Refunds take 5 days.")
+	assert.NotContains(t, res.Completion, "Shipping", "a chunk sharing no word with the question is not context")
+
+	conv, _ := l.rt.conversations.Get(agentID + "/TSTALIASID/s1")
+	require.Len(t, conv.Turns, 3, "two turns from conversationHistory, then this one")
+	assert.Equal(t, turn{User: "hi", Assistant: "hello"}, conv.Turns[0])
+	assert.Equal(t, "who are you", conv.Turns[1].User)
+}
+
+func TestOpenAPIParsingAndAPICalls(t *testing.T) {
+	jsonDoc := `{"paths":{"/orders/{id}":{"parameters":[],"summary":"x","get":{"parameters":[` +
+		`{"name":"id","in":"path","required":true,"schema":{"type":"integer"}},{"in":"query"},{"name":"verbose"}]}}}}`
+	yamlDoc := "paths:\n  /refunds:\n    post:\n      requestBody:\n        content:\n          application/json:\n" +
+		"            schema:\n              properties:\n                amount: {type: number}\n                note: {}\n" +
+		"              required: [amount, 3]\n"
+
+	apis := parseOpenAPI(jsonDoc)
+	require.Len(t, apis, 1, "path-level keys that are not methods are skipped")
+	assert.Equal(t, []paramDef{{name: "id", typ: "integer", required: true}, {name: "verbose", typ: "string"}}, apis[0].params)
+	assert.Empty(t, apis[0].bodyType)
+
+	apis = parseOpenAPI(yamlDoc)
+	require.Len(t, apis, 1)
+	assert.Equal(t, "application/json", apis[0].bodyType)
+	assert.Equal(t, []paramDef{{name: "amount", typ: "number", required: true}, {name: "note", typ: "string"}}, apis[0].body)
+
+	assert.Empty(t, parseOpenAPI("::: not yaml"))
+	assert.Empty(t, parseOpenAPI(""))
+
+	call := apiInvocation("g", &apis[0], "refunds amount=5")
+	require.NotNil(t, call.RequestBody)
+	assert.Equal(t, []driver.Parameter{{Name: "amount", Type: "number", Value: "5"}}, call.RequestBody.Properties)
+
+	body := toLambdaRequestBody(call.RequestBody)
+	assert.Equal(t, "5", body.Content["application/json"].Properties[0].Value)
+	assert.Nil(t, toLambdaRequestBody(nil))
+
+	l := newLinked(t)
+	assert.Empty(t, l.rt.openAPIOperations(context.Background(), json.RawMessage(`{"s3":{"s3BucketName":"b","s3ObjectKey":"k"}}`)),
+		"an S3 schema the runtime can't read has no operations")
+	assert.Empty(t, l.rt.openAPIOperations(context.Background(), json.RawMessage(`not json`)))
+
+	ts := &turnState{conv: &conversation{}}
+	text, err := applyLambdaResponse(ts, "fn", []byte("plain text reply"))
+	require.NoError(t, err)
+	assert.Equal(t, "plain text reply", text, "a reply that is not JSON is the observation")
 }
