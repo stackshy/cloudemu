@@ -79,6 +79,7 @@ cloudemu (standalone server)
   AWS         http://127.0.0.1:4566
   Azure       https://127.0.0.1:4568   (self-signed TLS)
   GCP         http://127.0.0.1:4569
+  OCI         http://127.0.0.1:4571
   Kubernetes  https://127.0.0.1:4570
 ```
 
