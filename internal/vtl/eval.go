@@ -691,13 +691,15 @@ func toInt(v any) (int, bool) {
 			return 0, false
 		}
 
-		return int(t), true
+		return int(int32(t)), true
 	case float64:
 		if math.IsNaN(t) || t < math.MinInt32 || t > math.MaxInt32 {
 			return 0, false
 		}
 
-		return int(t), true
+		// Go through the int64 branch so the narrowing sits behind an
+		// integer bound check as well.
+		return toInt(int64(t))
 	default:
 		return 0, false
 	}
