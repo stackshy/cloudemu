@@ -413,6 +413,7 @@ generated cert's SANs with `--tls-host <name>` and trust that cert in your clien
 | `--host` | `127.0.0.1` | bind interface (`0.0.0.0` to expose on the network) |
 | `--advertise-host` | (derived) | host/IP the Kubernetes endpoint is advertised at + its cert SAN; defaults to `--host`, or `127.0.0.1` when binding all interfaces |
 | `--aws-port` / `--azure-port` / `--gcp-port` / `--k8s-port` / `--oci-port` | `4566`/`4568`/`4569`/`4570`/`4571` | listen ports (empty `--k8s-port` disables Kubernetes; OCI only served when `oci` is in `--providers`) |
+| `--oci-kms-endpoint-domain` | (empty) | OCI Vault: report each vault's KMS endpoints as `<label>-management.<domain>` / `<label>-crypto.<domain>` (e.g. `kms.localhost`; those hosts must resolve to the emulator) instead of the plain OCI address (env `CLOUDEMU_OCI_KMS_ENDPOINT_DOMAIN`) |
 | `--gcp-grpc-port` | (empty) | port for the GCP gRPC transport (health + reflection); empty disables it. Point `*_EMULATOR_HOST` clients here |
 | `--account-id` | `000000000000` | AWS account ID (also used for GCP/OCI) |
 | `--azure-subscription` | `00000000-0000-0000-0000-000000000000` | Azure subscription id (a GUID). Resource ids and Resource Graph scoping use it; discovery is subscription-transparent, so a query scoped to any subscription returns the estate rendered under it |

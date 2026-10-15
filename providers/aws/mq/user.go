@@ -3,6 +3,7 @@ package mq
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/services/mq/driver"
 )
@@ -12,6 +13,15 @@ import (
 func (m *Mock) CreateUser(_ context.Context, brokerID string, user *driver.User) error {
 	if user.Username == "" {
 		return badRequest("username is required")
+	}
+
+	b, ok := m.brokers.Get(brokerID)
+	if !ok {
+		return notFound("Broker %s not found", brokerID)
+	}
+
+	if err := validateUser(strings.ToUpper(rawString(b.Config, "engineType")), user); err != nil {
+		return err
 	}
 
 	return m.mutateBrokerUsers(brokerID, func(users []driver.User) ([]driver.User, error) {
@@ -50,6 +60,12 @@ func (m *Mock) DescribeUser(_ context.Context, brokerID, username string) (*driv
 // UpdateUser replaces a broker user's attributes. An empty password preserves
 // the stored one, so an update that changes only the groups keeps the password.
 func (m *Mock) UpdateUser(_ context.Context, brokerID string, user *driver.User) error {
+	if user.Password != "" {
+		if err := validatePassword(user.Password); err != nil {
+			return err
+		}
+	}
+
 	return m.mutateBrokerUsers(brokerID, func(users []driver.User) ([]driver.User, error) {
 		i := findUser(users, user.Username)
 		if i < 0 {

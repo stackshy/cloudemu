@@ -120,6 +120,7 @@ func TestDuplicateBrokerNameConflict(t *testing.T) {
 		BrokerName: "test-broker",
 		EngineType: "ActiveMQ",
 		Config:     brokerConfig(),
+		Users:      []driver.User{{Username: "admin", Password: "SuperSecret1234"}},
 	})
 
 	var apiErr *driver.APIError
@@ -177,6 +178,7 @@ func TestRabbitMQEndpoints(t *testing.T) {
 			"engineType":     json.RawMessage(`"RabbitMQ"`),
 			"deploymentMode": json.RawMessage(`"SINGLE_INSTANCE"`),
 		},
+		Users: []driver.User{{Username: "admin", Password: "SuperSecret1234"}},
 	})
 	requireNoError(t, err)
 
@@ -323,4 +325,105 @@ func asAPIError(err error, target **driver.APIError) bool {
 	}
 
 	return false
+}
+
+// CreateBroker refuses what Amazon MQ's API refuses: an unknown engine type or
+// deployment mode, no users, and a password that breaks the password rules.
+func TestCreateBrokerValidation(t *testing.T) {
+	valid := func() *driver.CreateBrokerInput {
+		return &driver.CreateBrokerInput{
+			BrokerName: "checked",
+			EngineType: "ActiveMQ",
+			Config:     brokerConfig(),
+			Users:      []driver.User{{Username: "admin", Password: "SuperSecret1234"}},
+		}
+	}
+
+	cases := map[string]func(*driver.CreateBrokerInput){
+		"unknown engine type": func(in *driver.CreateBrokerInput) { in.EngineType = "KAFKA" },
+		"unknown deployment mode": func(in *driver.CreateBrokerInput) {
+			in.Config["deploymentMode"] = json.RawMessage(`"EVERYWHERE"`)
+		},
+		"no users":              func(in *driver.CreateBrokerInput) { in.Users = nil },
+		"password under 12":     func(in *driver.CreateBrokerInput) { in.Users[0].Password = "short1234" },
+		"password with a comma": func(in *driver.CreateBrokerInput) { in.Users[0].Password = "Super,Secret1234" },
+		"password of 3 unique":  func(in *driver.CreateBrokerInput) { in.Users[0].Password = "abcabcabcabc" },
+		"ActiveMQ with a RabbitMQ mode": func(in *driver.CreateBrokerInput) {
+			in.Config["deploymentMode"] = json.RawMessage(`"CLUSTER_MULTI_AZ"`)
+		},
+		"RabbitMQ with an ActiveMQ mode": func(in *driver.CreateBrokerInput) {
+			rabbit(in)
+			in.Config["deploymentMode"] = json.RawMessage(`"ACTIVE_STANDBY_MULTI_AZ"`)
+		},
+		"RabbitMQ with two users": func(in *driver.CreateBrokerInput) {
+			rabbit(in)
+			in.Users = append(in.Users, driver.User{Username: "second", Password: "SuperSecret1234"})
+		},
+		"RabbitMQ guest user":     func(in *driver.CreateBrokerInput) { rabbit(in); in.Users[0].Username = "guest" },
+		"RabbitMQ tilde username": func(in *driver.CreateBrokerInput) { rabbit(in); in.Users[0].Username = "ad~min" },
+		"username with a bang":    func(in *driver.CreateBrokerInput) { in.Users[0].Username = "a!" },
+		"one-character username":  func(in *driver.CreateBrokerInput) { in.Users[0].Username = "a" },
+	}
+
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			in := valid()
+			mutate(in)
+
+			_, err := newMock().CreateBroker(context.Background(), in)
+
+			var apiErr *driver.APIError
+			if !asAPIError(err, &apiErr) || apiErr.Exception != driver.ExBadRequest {
+				t.Fatalf("got %v, want BadRequestException", err)
+			}
+		})
+	}
+
+	_, err := newMock().CreateBroker(context.Background(), valid())
+	requireNoError(t, err)
+
+	// Only SIMPLE authentication needs users: an OAuth 2.0 broker
+	// (CONFIG_MANAGED) may be created with none.
+	oauth := valid()
+	rabbit(oauth)
+	oauth.Config["authenticationStrategy"] = json.RawMessage(`"CONFIG_MANAGED"`)
+	oauth.Users = nil
+
+	_, err = newMock().CreateBroker(context.Background(), oauth)
+	requireNoError(t, err)
+}
+
+// rabbit turns a CreateBroker input into a RabbitMQ one.
+func rabbit(in *driver.CreateBrokerInput) {
+	in.EngineType = "RabbitMQ"
+	in.Config["engineType"] = json.RawMessage(`"RABBITMQ"`)
+	in.Config["deploymentMode"] = json.RawMessage(`"SINGLE_INSTANCE"`)
+}
+
+// CreateUser and UpdateUser apply the same password rules as CreateBroker.
+func TestUserPasswordValidation(t *testing.T) {
+	m := newMock()
+	b := createBroker(t, m)
+	ctx := context.Background()
+
+	var apiErr *driver.APIError
+
+	err := m.CreateUser(ctx, b.BrokerID, &driver.User{Username: "ops", Password: "short"})
+	if !asAPIError(err, &apiErr) || apiErr.Exception != driver.ExBadRequest {
+		t.Fatalf("CreateUser short password: got %v, want BadRequestException", err)
+	}
+
+	err = m.CreateUser(ctx, b.BrokerID, &driver.User{Username: "o!ps", Password: "AnotherSecret99"})
+	if !asAPIError(err, &apiErr) || apiErr.Exception != driver.ExBadRequest {
+		t.Fatalf("CreateUser bad username: got %v, want BadRequestException", err)
+	}
+
+	requireNoError(t, m.CreateUser(ctx, b.BrokerID, &driver.User{Username: "ops", Password: "AnotherSecret99"}))
+
+	err = m.UpdateUser(ctx, b.BrokerID, &driver.User{Username: "ops", Password: "a:b=c,d"})
+	if !asAPIError(err, &apiErr) || apiErr.Exception != driver.ExBadRequest {
+		t.Fatalf("UpdateUser bad password: got %v, want BadRequestException", err)
+	}
+
+	requireNoError(t, m.UpdateUser(ctx, b.BrokerID, &driver.User{Username: "ops", Groups: []string{"g"}}))
 }

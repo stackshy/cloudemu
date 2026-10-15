@@ -83,6 +83,8 @@ type CommonConfig struct {
 	Region            string
 	ProjectID         string
 
+	OCIKMSEndpointDomain string
+
 	Latency  time.Duration
 	TLSCert  string
 	TLSKey   string
@@ -135,6 +137,10 @@ func RegisterCommon(fs *flag.FlagSet, c *CommonConfig, getenv func(string) strin
 	fs.StringVar(&c.GCPGRPCPort, "gcp-grpc-port", "",
 		"port for the GCP gRPC transport (health+reflection; empty disables it). Point *_EMULATOR_HOST clients here")
 	fs.StringVar(&c.OCIPort, "oci-port", "4571", "port for the OCI endpoint (HTTP)")
+	fs.StringVar(&c.OCIKMSEndpointDomain, "oci-kms-endpoint-domain", getenv("CLOUDEMU_OCI_KMS_ENDPOINT_DOMAIN"),
+		"OCI Vault: report each vault's KMS endpoints as <label>-management.<domain> and <label>-crypto.<domain> "+
+			"(e.g. kms.localhost; the hosts must resolve to the emulator) instead of the plain OCI address "+
+			"(env CLOUDEMU_OCI_KMS_ENDPOINT_DOMAIN)")
 	fs.StringVar(&c.K8sPort, "k8s-port", "4570", "port for the shared Kubernetes data-plane (HTTPS); empty to disable")
 	fs.StringVar(&c.AccountID, "account-id", "000000000000", "AWS account ID (also GCP/OCI) reported by the emulator")
 	fs.StringVar(&c.AzureSubscription, "azure-subscription", "00000000-0000-0000-0000-000000000000",
@@ -309,6 +315,7 @@ func (c *CommonConfig) ToServerkitConfig(providers []string) serverkit.Config {
 		K8sNodes:               c.K8sNodes,
 		TickInterval:           c.TickInterval,
 		AzureSubscription:      c.AzureSubscription,
+		OCIKMSEndpointDomain:   c.OCIKMSEndpointDomain,
 		Admin:                  c.Admin,
 		AdminToken:             c.AdminToken,
 		AdminTokenFile:         c.AdminTokenFile,

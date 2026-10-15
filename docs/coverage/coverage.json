@@ -6434,7 +6434,8 @@
     "providers": {
       "aws": "DynamoDB",
       "azure": "CosmosDB",
-      "gcp": "Firestore"
+      "gcp": "Firestore",
+      "oci": "NoSQL"
     }
   },
   {
@@ -17673,7 +17674,8 @@
     "providers": {
       "aws": "SecretsManager",
       "azure": "KeyVault",
-      "gcp": "SecretManager"
+      "gcp": "SecretManager",
+      "oci": "Vault"
     }
   },
   {

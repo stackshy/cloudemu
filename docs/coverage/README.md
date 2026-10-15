@@ -67,7 +67,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cosmospostgresql` | - | [CosmosPostgreSQL](./azure/cosmospostgresql.md) | - | - | 34 |
 | `costexplorer` | [CostExplorer](./aws/costexplorer.md) | - | - | - | 4 |
 | `costmanagement` | - | [Costmanagement](./azure/costmanagement.md) | - | - | 1 |
-| `database` | [DynamoDB](./aws/dynamodb.md) | [CosmosDB](./azure/cosmosdb.md) | [Firestore](./gcp/firestore.md) | - | 24 |
+| `database` | [DynamoDB](./aws/dynamodb.md) | [CosmosDB](./azure/cosmosdb.md) | [Firestore](./gcp/firestore.md) | [NoSQL](./oci/nosql.md) | 24 |
 | `databricks` | - | [Databricks](./azure/databricks.md) | - | - | 46 |
 | `datacatalog` | - | - | [DataCatalog](./gcp/datacatalog.md) | - | 21 |
 | `datafactory` | - | [DataFactory](./azure/datafactory.md) | - | - | 6 |
@@ -155,7 +155,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `sagemaker` | [SageMaker](./aws/sagemaker.md) | - | - | - | 207 |
 | `savingsplans` | [SavingsPlans](./aws/savingsplans.md) | - | - | - | 9 |
 | `scheduler` | - | - | [Scheduler](./gcp/scheduler.md) | - | 8 |
-| `secrets` | [SecretsManager](./aws/secretsmanager.md) | [KeyVault](./azure/keyvault.md) | [SecretManager](./gcp/secretmanager.md) | - | 7 |
+| `secrets` | [SecretsManager](./aws/secretsmanager.md) | [KeyVault](./azure/keyvault.md) | [SecretManager](./gcp/secretmanager.md) | [Vault](./oci/vault.md) | 7 |
 | `securesourcemanager` | - | - | [SecureSourceManager](./gcp/securesourcemanager.md) | - | 10 |
 | `serverless` | [Lambda](./aws/lambda.md) | [Functions](./azure/functions.md) | [CloudFunctions](./gcp/cloudfunctions.md) | - | 27 |
 | `servicedirectory` | - | - | [ServiceDirectory](./gcp/servicedirectory.md) | - | 15 |
