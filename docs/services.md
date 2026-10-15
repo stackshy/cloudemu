@@ -1,6 +1,6 @@
 # Provider Resource Reference
 
-This is a hand-maintained reference for the core service categories on all three cloud providers. For the complete, current list of every service and operation (173 service interfaces and 3,700+ operations: 76 AWS · 75 Azure · 55 GCP), see the generated [capability coverage](coverage/README.md). It is built from the driver interfaces, so it always matches the code.
+This is a hand-maintained reference for the core service categories on all four cloud providers. For the complete, current list of every service and operation (177 service interfaces and 4,000+ operations: 76 AWS · 77 Azure · 57 GCP · 10 OCI), see the generated [capability coverage](coverage/README.md). It is built from the driver interfaces, so it always matches the code.
 
 > Every operation here is served from an in-memory backend by default. Selected data-plane services (relational database, cache, functions, compute, containers, object storage) can additionally be backed by opt-in [real engines](features.md#11-real-data-plane-engines-opt-in) for real SQL/Redis/function execution.
 

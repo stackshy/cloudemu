@@ -7,7 +7,7 @@ To use cloudemu with an existing application, run it as a server and point your 
 Start the server, then change the endpoint on the client your app already builds:
 
 ```bash
-docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 \
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4571:4571 \
   ghcr.io/stackshy/cloudemu:latest   # Apple Silicon: add --platform linux/amd64 if needed
 ```
 
@@ -18,7 +18,7 @@ export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-e
 aws s3 mb s3://demo && aws s3 ls
 ```
 
-[integration.md](integration.md) shows where to set the endpoint in each SDK (AWS `BaseEndpoint`, GCP `option.WithEndpoint`, Azure ARM override) and how to make it configurable in your app. Server flags, ports and TLS are in [standalone-server.md](standalone-server.md).
+[integration.md](integration.md) shows where to set the endpoint in each SDK (AWS `BaseEndpoint`, GCP `option.WithEndpoint`, Azure ARM override, OCI client `Host`) and how to make it configurable in your app. Server flags, ports and TLS are in [standalone-server.md](standalone-server.md).
 
 The rest of this page covers library mode: the typed Go API and the in-process server, for Go unit tests.
 
@@ -82,6 +82,18 @@ gcp := cloudemu.NewGCP()
 // gcp.LB, gcp.PubSub, gcp.Memorystore, gcp.SecretManager,
 // gcp.CloudLogging, gcp.FCM, gcp.ArtifactRegistry, gcp.Eventarc
 ```
+
+### OCI
+
+```go
+oci := cloudemu.NewOCI()
+
+// oci.Identity, oci.VCN, oci.Compute, oci.ObjectStorage, oci.NoSQL,
+// oci.Vault, oci.Logging, oci.Monitoring, oci.Notifications
+```
+
+OCI services that aren't emulated yet are `nil` on the provider. The generated
+[OCI coverage](coverage/oci/README.md) lists what exists.
 
 ## Basic Storage Example
 
@@ -287,6 +299,9 @@ aws = cloudemu.NewAWS(
 | `WithRegion(region)` | `"us-east-1"` | Cloud region string |
 | `WithAccountID(id)` | `"123456789012"` | AWS account ID / Azure subscription ID |
 | `WithProjectID(id)` | `"mock-project"` | GCP project ID |
+| `WithTenancyOCID(id)` | `"ocid1.tenancy.oc1..aaaaaaaacloudemulocaltenancy"` | OCI tenancy, which is also the root compartment |
+| `WithCompartmentID(id)` | the tenancy | OCI compartment new resources default to |
+| `WithRealm(realm)` | `"oc1"` | OCI realm used in minted OCIDs |
 | `WithLatency(d)` | `0` | Simulated latency added to all operations |
 
 ### Real-engine options (opt-in)

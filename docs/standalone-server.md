@@ -1,7 +1,7 @@
 # Standalone server (`cloudemu serve`)
 
 `cloudemu serve` runs the emulator as a long-running HTTP server in its own
-process. Point AWS, Azure and GCP SDK clients (in any language) at the endpoints
+process. Point AWS, Azure, GCP and OCI SDK clients (in any language) at the endpoints
 it prints, and they talk to cloudemu the same way they would talk to the real
 cloud. You don't need an account or network access, and your code doesn't change.
 
@@ -42,7 +42,7 @@ go run ./cmd/cloudemu serve
 You don't need Go for this. The published image runs `serve --host 0.0.0.0`:
 
 ```sh
-docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 ghcr.io/stackshy/cloudemu:latest
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 -p 4571:4571 ghcr.io/stackshy/cloudemu:latest
 ```
 
 The container binds `0.0.0.0`, but the Kubernetes data plane advertises
@@ -79,6 +79,7 @@ cloudemu (standalone server)
   AWS         http://127.0.0.1:4566
   Azure       https://127.0.0.1:4568   (self-signed TLS)
   GCP         http://127.0.0.1:4569
+  OCI         http://127.0.0.1:4571
   Kubernetes  https://127.0.0.1:4570
 ```
 
@@ -274,12 +275,15 @@ reconcile invoices. A live pricing-API integration is planned.
 ## Preflight check (`cloudemu doctor`)
 
 A quick check to run before `cloudemu serve`, with no server needed. It confirms
-the default ports are free, prints the build version, and reports whether
-`docker` is available (only needed for the `:engines` image):
+the ports serve would bind are free, prints the build version, and reports
+whether `docker` is available (only needed for the `:engines` image). It takes
+the same flags as `serve`, so pass the `--providers`, `--host` and port flags you
+start serve with:
 
 ```sh
-cloudemu doctor                 # check 127.0.0.1
-cloudemu doctor --host 0.0.0.0  # check the interface you'll bind serve to
+cloudemu doctor                              # the default set on 127.0.0.1
+cloudemu doctor --host 0.0.0.0               # check the interface you'll bind serve to
+cloudemu doctor --providers aws,azure,gcp    # OCI left out: a busy 4571 only warns
 ```
 
 ```text
@@ -292,17 +296,17 @@ Ports on 127.0.0.1 (free = free at check time; a port can still be taken before 
   [ ok ] Azure          127.0.0.1:4568  free (at check time)
   [ ok ] GCP            127.0.0.1:4569  free (at check time)
   [ ok ] Kubernetes     127.0.0.1:4570  free (at check time)
-  [ ok ] OCI (opt-in)   127.0.0.1:4571  free (at check time)
+  [ ok ] OCI            127.0.0.1:4571  free (at check time)
 
 [ ok ] docker found at /usr/bin/docker (only needed for the :engines image)
 ...
 [ ok ] all preflight checks passed, ready to `cloudemu serve`.
 ```
 
-An in-use required port (AWS/Azure/GCP/Kubernetes) is a blocker: the line is
-marked `[fail]`, the summary says how many failed, and the command exits non-zero,
-so you can use it as a CI gate. The opt-in OCI port and a missing `docker` only
-produce `[warn]`, never a failure. The default ports are read from `serve` itself,
+An in-use port that `serve` would bind (AWS/Azure/GCP/OCI/Kubernetes, for the
+providers you pass) is a blocker: the line is marked `[fail]`, the summary says how many failed, and the
+command exits non-zero, so you can use it as a CI gate. A missing `docker` only
+produces `[warn]`, never a failure. The default ports are read from `serve` itself,
 so they always match what `cloudemu serve` binds.
 
 ## Ports
@@ -313,9 +317,11 @@ so they always match what `cloudemu serve` binds.
 | Azure      | `4568`  | HTTPS    | the ARM SDK requires TLS                 |
 | GCP        | `4569`  | HTTP     |                                          |
 | Kubernetes | `4570`  | HTTPS    | shared data-plane for EKS/AKS/GKE        |
+| OCI        | `4571`  | HTTP     | every OCI service on one listener        |
 
-Override them with `--aws-port`, `--azure-port`, `--gcp-port` and `--k8s-port`.
-Start only some providers with `--providers=aws,gcp`. Bind another interface with
+Override them with `--aws-port`, `--azure-port`, `--gcp-port`, `--k8s-port` and
+`--oci-port`. All four providers start by default; start only some with
+`--providers=aws,gcp`. Bind another interface with
 `--host 0.0.0.0` (the default, `127.0.0.1`, keeps it local). Run
 [`cloudemu doctor`](#preflight-check-cloudemu-doctor) first to check that these
 ports are free.
@@ -356,6 +362,27 @@ client, _ := storage.NewClient(ctx,
     option.WithEndpoint("http://127.0.0.1:4569"),
     option.WithoutAuthentication())
 ```
+
+### OCI (`oci-go-sdk`)
+
+Every OCI service is served on one port, so each client's `Host` is the same
+address. Any configuration provider works, because cloudemu doesn't verify
+request signatures; a raw provider with a throwaway RSA key is enough:
+
+```go
+cp := common.NewRawConfigurationProvider(
+    "ocid1.tenancy.oc1..aaaaaaaacloudemulocaltenancy", // the default --oci-tenancy
+    "ocid1.user.oc1..local", "us-ashburn-1", "aa:bb", privateKeyPEM, nil)
+
+objects, _ := objectstorage.NewObjectStorageClientWithConfigurationProvider(cp)
+objects.Host = "http://127.0.0.1:4571"
+```
+
+The tenancy OCID is also the root compartment, so it works as `compartmentId`
+straight away. Other languages: point the client's service endpoint at the same
+address (Python `service_endpoint=`, Java `setEndpoint`). See the per-service
+notes in [services.md](services.md) for OCI specifics such as Vault's KMS
+endpoints.
 
 ### Azure (`azure-sdk-for-go`)
 
@@ -409,10 +436,10 @@ generated cert's SANs with `--tls-host <name>` and trust that cert in your clien
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `--providers` | `aws,azure,gcp` | which providers to start |
+| `--providers` | `aws,azure,gcp,oci` | which providers to start |
 | `--host` | `127.0.0.1` | bind interface (`0.0.0.0` to expose on the network) |
 | `--advertise-host` | (derived) | host/IP the Kubernetes endpoint is advertised at + its cert SAN; defaults to `--host`, or `127.0.0.1` when binding all interfaces |
-| `--aws-port` / `--azure-port` / `--gcp-port` / `--k8s-port` / `--oci-port` | `4566`/`4568`/`4569`/`4570`/`4571` | listen ports (empty `--k8s-port` disables Kubernetes; OCI only served when `oci` is in `--providers`) |
+| `--aws-port` / `--azure-port` / `--gcp-port` / `--k8s-port` / `--oci-port` | `4566`/`4568`/`4569`/`4570`/`4571` | listen ports (empty `--k8s-port` disables Kubernetes) |
 | `--oci-kms-endpoint-domain` | (empty) | OCI Vault: report each vault's KMS endpoints as `<label>-management.<domain>` / `<label>-crypto.<domain>` (e.g. `kms.localhost`; those hosts must resolve to the emulator) instead of the plain OCI address (env `CLOUDEMU_OCI_KMS_ENDPOINT_DOMAIN`) |
 | `--gcp-grpc-port` | (empty) | port for the GCP gRPC transport (health + reflection); empty disables it. Point `*_EMULATOR_HOST` clients here |
 | `--account-id` | `000000000000` | AWS account ID (also used for GCP/OCI) |
@@ -436,7 +463,7 @@ generated cert's SANs with `--tls-host <name>` and trust that cert in your clien
 | `--k8s-progression` | `false` | client-created Pods start Pending and move to Running on a ticker (env `CLOUDEMU_K8S_PROGRESSION`) |
 | `--k8s-progression-interval` | (built-in) | tick interval for `--k8s-progression` (env `CLOUDEMU_K8S_PROGRESSION_INTERVAL`) |
 | `--tick-interval` | `1s` | how often time-driven work runs, such as CloudWatch alarms, Azure Monitor metric alerts and GCP alert policies firing their actions; `0` turns it off (env `CLOUDEMU_TICK_INTERVAL`) |
-| `--enforce-auth` | `false` | require authentication: SigV4 verification for AWS (long-term IAM keys and STS temporary credentials), Bearer-token claim checks for Azure (see `cloudemu serve -h` for the exact scope). The `/_cloudemu` endpoints then need the admin token |
+| `--enforce-auth` | `false` | require authentication: SigV4 verification for AWS (long-term IAM keys and STS temporary credentials), Bearer-token claim checks for Azure (see `cloudemu serve -h` for the exact scope). GCP and OCI requests are not checked, so bind those listeners only where that's acceptable. The `/_cloudemu` endpoints then need the admin token, on every port |
 | `--admin-token` | (random) | with `--enforce-auth`, the bearer token for `/_cloudemu/*` except `health`; unset means a random token printed once on stderr (env `CLOUDEMU_ADMIN_TOKEN`) |
 | `--admin-token-file` | (none) | with `--enforce-auth`, write the admin token here (mode 0600) instead of printing it; `start` sets it to `~/.cloudemu/admin-token` (env `CLOUDEMU_ADMIN_TOKEN_FILE`) |
 | `--vcr` | (off) | record or replay the wire protocol: `record` \| `replay` (requires `--vcr-cassette`) |

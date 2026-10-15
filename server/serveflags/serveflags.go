@@ -124,9 +124,7 @@ type CommonConfig struct {
 // (cmd passes os.Getenv; tests pass a stub) so the environment fallbacks stay
 // testable. The engine selectors are registered separately by each entrypoint.
 func RegisterCommon(fs *flag.FlagSet, c *CommonConfig, getenv func(string) string) {
-	// OCI is not started by default: it stays opt-in until its services land, so
-	// the default set never binds a port that serves nothing.
-	fs.StringVar(&c.Providers, "providers", "aws,azure,gcp", "comma-separated providers to start: aws,azure,gcp,oci")
+	fs.StringVar(&c.Providers, "providers", "aws,azure,gcp,oci", "comma-separated providers to start: aws,azure,gcp,oci")
 	fs.StringVar(&c.Host, "host", "127.0.0.1", "host/interface to bind (use 0.0.0.0 to expose on the network)")
 	fs.StringVar(&c.AdvertiseHost, "advertise-host", "",
 		"host/IP the Kubernetes data-plane endpoint is advertised at in kubeconfigs and its TLS cert "+

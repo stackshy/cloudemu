@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/serveflags"
 )
@@ -28,10 +29,9 @@ const (
 // The doctor echoes serve's canonical enginesImagePointer (defined in serve.go)
 // so the two commands can't drift on where the real engines live.
 
-// portCheck is one default endpoint the emulator would bind. required marks a
-// port the default provider set (aws,azure,gcp) plus the k8s data-plane bind on
-// startup: an in-use required port is a genuine blocker. OCI is opt-in, so a
-// busy OCI port is only a warning.
+// portCheck is one endpoint the emulator can bind. required marks a port that
+// serve binds by default, the default providers' plus the k8s data-plane: an
+// in-use required port is a genuine blocker, any other is only a warning.
 type portCheck struct {
 	label    string
 	port     string
@@ -47,13 +47,34 @@ func defaultPortChecks() []portCheck {
 	serveflags.RegisterCommon(fs, &c, func(string) string { return "" })
 	_ = fs.Parse(nil)
 
-	return []portCheck{
-		{"AWS", c.AWSPort, true},
-		{"Azure", c.AzurePort, true},
-		{"GCP", c.GCPPort, true},
-		{"Kubernetes", c.K8sPort, true},
-		{"OCI (opt-in)", c.OCIPort, false},
+	return portChecks(&c)
+}
+
+// portChecks returns the ports a serve started with c would bind: a provider
+// left out of --providers is only a warning, and an empty --k8s-port is skipped.
+func portChecks(c *serveflags.CommonConfig) []portCheck {
+	started := map[string]bool{}
+	for _, p := range strings.Split(c.Providers, ",") {
+		started[strings.TrimSpace(p)] = true
 	}
+
+	checks := []portCheck{
+		{"AWS", c.AWSPort, started["aws"]},
+		{"Azure", c.AzurePort, started["azure"]},
+		{"GCP", c.GCPPort, started["gcp"]},
+		{"Kubernetes", c.K8sPort, true},
+		{"OCI", c.OCIPort, started["oci"]},
+	}
+
+	out := checks[:0]
+
+	for _, p := range checks {
+		if p.port != "" {
+			out = append(out, p)
+		}
+	}
+
+	return out
 }
 
 // checkPortFree reports whether a TCP listener can be bound at hostPort right
@@ -121,7 +142,7 @@ func writeDoctorReport(
 			continue
 		}
 
-		fmt.Fprintf(w, "  %s %-14s %s  in use (opt-in; only bound when you start OCI)\n", markWarn, p.label, hostPort)
+		fmt.Fprintf(w, "  %s %-14s %s  in use (not in --providers, so serve won't bind it)\n", markWarn, p.label, hostPort)
 	}
 
 	fmt.Fprintln(w)
@@ -165,11 +186,16 @@ func portFlagHint(label string) string {
 func runDoctor(args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 
-	host := fs.String("host", "127.0.0.1", "host/interface the emulator would bind (mirrors serve --host)")
+	// The same flags as serve, so `cloudemu doctor <serve args>` checks the ports
+	// that serve would bind, for the providers it would start.
+	var c serveflags.CommonConfig
+
+	serveflags.RegisterCommon(fs, &c, os.Getenv)
 
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: cloudemu doctor [flags]\n\n"+
-			"Preflight check: build version, default ports free, docker availability.\n\nFlags:\n")
+		fmt.Fprintf(fs.Output(), "Usage: cloudemu doctor [serve flags]\n\n"+
+			"Preflight check: build version, the ports serve would bind are free, docker availability.\n"+
+			"Pass the same --providers and port flags you give serve.\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
 
@@ -177,7 +203,7 @@ func runDoctor(args []string) error {
 		return err
 	}
 
-	blockers := writeDoctorReport(os.Stdout, *host, defaultPortChecks(), checkPortFree, exec.LookPath)
+	blockers := writeDoctorReport(os.Stdout, c.Host, portChecks(&c), checkPortFree, exec.LookPath)
 	if blockers > 0 {
 		return errPreflightBlocker
 	}

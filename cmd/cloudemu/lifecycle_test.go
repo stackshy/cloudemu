@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -261,5 +262,55 @@ func TestRunStartAlreadyRunning(t *testing.T) {
 func TestRunLifecycleUnknown(t *testing.T) {
 	if err := runLifecycle("bogus", nil); err == nil {
 		t.Fatal("runLifecycle(bogus) = nil, want error")
+	}
+}
+
+// TestWriteEndpointsIncludesOCI pins the printed order to serve's banner, with
+// OCI between GCP and Kubernetes now that it starts by default.
+func TestWriteEndpointsIncludesOCI(t *testing.T) {
+	var sb strings.Builder
+
+	writeEndpoints(&sb, map[string]string{
+		"aws":        "http://127.0.0.1:4566",
+		"azure":      "https://127.0.0.1:4568",
+		"gcp":        "http://127.0.0.1:4569",
+		"oci":        "http://127.0.0.1:4571",
+		"kubernetes": "https://127.0.0.1:4570",
+	})
+
+	out := sb.String()
+	order := []string{"aws", "azure", "gcp", "oci", "kubernetes"}
+	last := -1
+
+	for _, k := range order {
+		i := strings.Index(out, "  "+k+" ")
+		if i < 0 {
+			t.Fatalf("endpoint list missing %q:\n%s", k, out)
+		}
+
+		if i < last {
+			t.Fatalf("%q printed out of order:\n%s", k, out)
+		}
+
+		last = i
+	}
+}
+
+// TestWaitServerReadyProbesOCIOnly covers an OCI-only daemon: its endpoint is
+// probed rather than reported as "no endpoints to probe".
+func TestWaitServerReadyProbesOCIOnly(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	eps := map[string]string{"oci": "http://" + ln.Addr().String()}
+	if err := waitServerReady(eps, 2*time.Second); err != nil {
+		t.Fatalf("waitServerReady(oci only) = %v, want nil", err)
+	}
+
+	if !daemonReachable(eps) {
+		t.Fatal("daemonReachable(oci only) = false, want true")
 	}
 }

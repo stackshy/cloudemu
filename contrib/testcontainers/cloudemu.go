@@ -34,6 +34,7 @@ const (
 	azurePort = "4568/tcp"
 	gcpPort   = "4569/tcp"
 	k8sPort   = "4570/tcp"
+	ociPort   = "4571/tcp"
 )
 
 // adminTokenEnv is the server's environment fallback for --admin-token.
@@ -103,7 +104,7 @@ func WithEnforceAuth(adminToken string) testcontainers.CustomizeRequestOption {
 // Run starts a cloudemu container and waits until the AWS endpoint answers.
 func Run(ctx context.Context, opts ...testcontainers.ContainerCustomizer) (*Container, error) {
 	base := []testcontainers.ContainerCustomizer{
-		testcontainers.WithExposedPorts(awsPort, azurePort, gcpPort, k8sPort),
+		testcontainers.WithExposedPorts(awsPort, azurePort, gcpPort, k8sPort, ociPort),
 		testcontainers.WithWaitStrategy(
 			wait.ForHTTP("/").WithPort(awsPort).WithStartupTimeout(startupTimeout),
 		),
@@ -141,6 +142,11 @@ func (c *Container) AzureEndpoint(ctx context.Context) (string, error) {
 // GCPEndpoint is the host URL for the GCP surface.
 func (c *Container) GCPEndpoint(ctx context.Context) (string, error) {
 	return c.PortEndpoint(ctx, gcpPort, "http")
+}
+
+// OCIEndpoint is the host URL for the OCI surface.
+func (c *Container) OCIEndpoint(ctx context.Context) (string, error) {
+	return c.PortEndpoint(ctx, ociPort, "http")
 }
 
 // KubernetesEndpoint is the host URL for the shared Kubernetes data-plane.

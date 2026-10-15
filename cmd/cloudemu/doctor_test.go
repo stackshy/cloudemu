@@ -2,9 +2,12 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"net"
 	"strings"
 	"testing"
+
+	"github.com/stackshy/cloudemu/v2/server/serveflags"
 )
 
 // TestCheckPortFree probes a port the test itself binds (expect in use) and an
@@ -54,14 +57,14 @@ func TestDockerLine(t *testing.T) {
 }
 
 // TestWriteDoctorReportBlockingPort verifies a required port in use is a blocker
-// (fail marker, non-zero return) while an opt-in OCI port in use is only a warn.
+// (fail marker, non-zero return) while a port not started by default is only a warn.
 func TestWriteDoctorReportBlockingPort(t *testing.T) {
 	ports := []portCheck{
 		{"AWS", "4566", true},
-		{"OCI (opt-in)", "4571", false},
+		{"OCI", "4571", false},
 	}
 
-	// AWS busy (required → blocker), OCI busy (opt-in → warn only).
+	// AWS busy (required → blocker), OCI busy (not required here → warn only).
 	portFree := func(hostPort string) bool { return false }
 	found := func(string) (string, error) { return "/usr/bin/docker", nil }
 
@@ -79,7 +82,7 @@ func TestWriteDoctorReportBlockingPort(t *testing.T) {
 	}
 
 	if !strings.Contains(out, markWarn) {
-		t.Fatalf("report missing warn marker for the in-use opt-in OCI port:\n%s", out)
+		t.Fatalf("report missing warn marker for the in-use optional port:\n%s", out)
 	}
 
 	if !strings.Contains(out, "required port(s) in use") {
@@ -131,11 +134,11 @@ func TestDefaultPortChecks(t *testing.T) {
 		port     string
 		required bool
 	}{
-		"AWS":          {"4566", true},
-		"Azure":        {"4568", true},
-		"GCP":          {"4569", true},
-		"Kubernetes":   {"4570", true},
-		"OCI (opt-in)": {"4571", false},
+		"AWS":        {"4566", true},
+		"Azure":      {"4568", true},
+		"GCP":        {"4569", true},
+		"Kubernetes": {"4570", true},
+		"OCI":        {"4571", true},
 	}
 
 	got := defaultPortChecks()
@@ -153,5 +156,37 @@ func TestDefaultPortChecks(t *testing.T) {
 			t.Fatalf("port %q = {%s, required=%v}, want {%s, required=%v}",
 				p.label, p.port, p.required, exp.port, exp.required)
 		}
+	}
+}
+
+// TestPortChecksFollowServeFlags makes "required" follow the providers the user
+// actually starts: OCI left out of --providers is only a warning, and an empty
+// --k8s-port drops the Kubernetes check.
+func TestPortChecksFollowServeFlags(t *testing.T) {
+	var c serveflags.CommonConfig
+
+	fs := flag.NewFlagSet("doctor-test", flag.ContinueOnError)
+	serveflags.RegisterCommon(fs, &c, func(string) string { return "" })
+
+	if err := fs.Parse([]string{"--providers", "aws,azure,gcp", "--k8s-port", "", "--oci-port", "5571"}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	got := map[string]portCheck{}
+	for _, p := range portChecks(&c) {
+		got[p.label] = p
+	}
+
+	if _, ok := got["Kubernetes"]; ok {
+		t.Fatal("an empty --k8s-port should drop the Kubernetes check")
+	}
+
+	oci, ok := got["OCI"]
+	if !ok || oci.required || oci.port != "5571" {
+		t.Fatalf("OCI check = %+v (present %v), want port 5571, not required", oci, ok)
+	}
+
+	if !got["AWS"].required {
+		t.Fatal("AWS is in --providers, so its port should be required")
 	}
 }
