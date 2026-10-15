@@ -248,10 +248,22 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request, name str
 
 // Update operations.
 
+// describeUpdate answers DescribeUpdate. An update of a nodegroup or add-on is
+// found only when the request names that nodegroup or add-on (nodegroupName,
+// addonName), and a cluster update only when it names neither, as in real EKS:
+// the parameter is required for a nodegroup or add-on update (EKS API
+// Reference, DescribeUpdate).
 func (h *Handler) describeUpdate(w http.ResponseWriter, r *http.Request, clusterName, updateID string) {
 	upd, err := h.eks.DescribeUpdate(r.Context(), clusterName, updateID)
 	if err != nil {
 		writeErr(w, err)
+
+		return
+	}
+
+	q := r.URL.Query()
+	if upd.NodegroupName != q.Get("nodegroupName") || upd.AddonName != q.Get("addonName") {
+		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "No update found for ID: "+updateID)
 
 		return
 	}
