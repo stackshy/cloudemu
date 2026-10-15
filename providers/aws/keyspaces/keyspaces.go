@@ -7,6 +7,7 @@ package keyspaces
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -57,7 +58,7 @@ func New(opts *config.Options) *Mock {
 		opts:        opts,
 	}
 
-	for _, sys := range []string{"system", "system_schema", "system_multiregion_info"} {
+	for _, sys := range systemKeyspaceNames() {
 		m.keyspaces.Set(sys, ksdriver.Keyspace{
 			Name: sys, ARN: m.keyspaceARN(sys), ReplicationStrategy: ksdriver.SingleRegion,
 			ReplicationRegions: []string{opts.Region},
@@ -79,13 +80,51 @@ func tableKey(keyspace, table string) string { return keyspace + "/" + table }
 
 func typeKey(keyspace, name string) string { return keyspace + "/" + name }
 
+// maxNameLen is the documented maximum length of keyspace, table, and
+// user-defined type names (API reference KeyspaceName/TableName/TypeName:
+// "Maximum length of 48"; devguide quotas: "Max UDT name length 48").
+const maxNameLen = 48
+
+// keyspaceTableNamePattern is the documented KeyspaceName/TableName pattern
+// ([a-zA-Z0-9][a-zA-Z0-9_]{0,47}), anchored: alphanumerics and underscores
+// only, not starting with an underscore. A leading digit is allowed.
+var keyspaceTableNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_]{0,47}$`)
+
+// validName validates a keyspace or table name against the documented
+// KeyspaceName/TableName constraints.
 func validName(kind, name string) error {
 	if name == "" {
 		return cerrors.Newf(cerrors.InvalidArgument, "%s name is required", kind)
 	}
 
+	if len(name) > maxNameLen {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"%s name %q must be at most %d characters", kind, name, maxNameLen)
+	}
+
+	if !keyspaceTableNamePattern.MatchString(name) {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"%s name %q must match pattern [a-zA-Z0-9][a-zA-Z0-9_]{0,47}", kind, name)
+	}
+
+	return nil
+}
+
+// validTypeName validates a user-defined type name. The API model gives
+// TypeName only a 1-48 length constraint (no pattern), so only emptiness,
+// length, and the '/' used in internal store keys are checked.
+func validTypeName(name string) error {
+	if name == "" {
+		return cerrors.New(cerrors.InvalidArgument, "type name is required")
+	}
+
+	if len(name) > maxNameLen {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"type name %q must be at most %d characters", name, maxNameLen)
+	}
+
 	if strings.Contains(name, "/") {
-		return cerrors.Newf(cerrors.InvalidArgument, "%s name %q must not contain '/'", kind, name)
+		return cerrors.Newf(cerrors.InvalidArgument, "type name %q must not contain '/'", name)
 	}
 
 	return nil
@@ -117,6 +156,10 @@ func cloneKeyspace(in *ksdriver.Keyspace) ksdriver.Keyspace {
 // CreateKeyspace creates a keyspace with single- or multi-region replication.
 func (m *Mock) CreateKeyspace(_ context.Context, cfg ksdriver.CreateKeyspaceConfig) (*ksdriver.Keyspace, error) {
 	if err := validName("keyspace", cfg.Name); err != nil {
+		return nil, err
+	}
+
+	if err := validateTags(cfg.Tags); err != nil {
 		return nil, err
 	}
 
@@ -244,13 +287,15 @@ func (m *Mock) DeleteKeyspace(_ context.Context, name string) error {
 	return nil
 }
 
+// systemKeyspaceNames lists the four read-only system keyspaces every account
+// has ("Amazon Keyspaces uses four system keyspaces", devguide
+// working-with-keyspaces.html).
+func systemKeyspaceNames() []string {
+	return []string{"system", "system_schema", "system_schema_mcs", "system_multiregion_info"}
+}
+
 func isSystemKeyspace(name string) bool {
-	switch name {
-	case "system", "system_schema", "system_multiregion_info":
-		return true
-	default:
-		return false
-	}
+	return containsStr(systemKeyspaceNames(), name)
 }
 
 func (m *Mock) keyspaceHasTables(keyspace string) bool {

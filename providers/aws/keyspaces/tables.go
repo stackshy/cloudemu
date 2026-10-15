@@ -117,6 +117,10 @@ func (m *Mock) CreateTable(_ context.Context, cfg ksdriver.CreateTableConfig) (*
 		return nil, err
 	}
 
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if err := validateSchema(&cfg.SchemaDefinition); err != nil {
 		return nil, err
 	}
@@ -125,7 +129,7 @@ func (m *Mock) CreateTable(_ context.Context, cfg ksdriver.CreateTableConfig) (*
 	defer m.mu.Unlock()
 
 	if !m.keyspaces.Has(cfg.KeyspaceName) {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "keyspace %q not found", cfg.KeyspaceName)
+		return nil, cerrors.Newf(cerrors.NotFound, "keyspace %q not found", cfg.KeyspaceName)
 	}
 
 	key := tableKey(cfg.KeyspaceName, cfg.Name)
@@ -346,6 +350,10 @@ func (m *Mock) RestoreTable(_ context.Context, cfg ksdriver.RestoreTableConfig) 
 		return nil, err
 	}
 
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if cfg.RestoreTimestamp.IsZero() {
 		return nil, cerrors.New(cerrors.InvalidArgument, "restoreTimestamp is required")
 	}
@@ -363,7 +371,7 @@ func (m *Mock) RestoreTable(_ context.Context, cfg ksdriver.RestoreTableConfig) 
 	}
 
 	if !m.keyspaces.Has(cfg.TargetKeyspace) {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "target keyspace %q not found", cfg.TargetKeyspace)
+		return nil, cerrors.Newf(cerrors.NotFound, "target keyspace %q not found", cfg.TargetKeyspace)
 	}
 
 	targetKey := tableKey(cfg.TargetKeyspace, cfg.TargetTable)

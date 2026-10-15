@@ -69,8 +69,8 @@ func TestKeyspaceLifecycle(t *testing.T) {
 		t.Fatalf("ListKeyspaces: %v", err)
 	}
 
-	if len(list) != 4 {
-		t.Fatalf("expected 4 keyspaces, got %d", len(list))
+	if len(list) != 5 { // 4 system + app
+		t.Fatalf("expected 5 keyspaces, got %d", len(list))
 	}
 }
 
@@ -114,11 +114,12 @@ func TestTableLifecycleAndValidation(t *testing.T) {
 	ctx := context.Background()
 	mustKeyspace(t, m, "app")
 
-	// Missing keyspace rejected.
+	// Missing keyspace is ResourceNotFound (the documented "tried to access a
+	// keyspace ... that doesn't exist" error), not a validation failure.
 	if _, err := m.CreateTable(ctx, ksdriver.CreateTableConfig{
 		KeyspaceName: "ghost", Name: "t", SchemaDefinition: sampleSchema(),
-	}); !cerrors.IsInvalidArgument(err) {
-		t.Fatalf("table in missing keyspace: got %v, want InvalidArgument", err)
+	}); !cerrors.IsNotFound(err) {
+		t.Fatalf("table in missing keyspace: got %v, want NotFound", err)
 	}
 
 	// No partition key rejected.

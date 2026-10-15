@@ -60,6 +60,10 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if rejectTagListTooLong(w, len(in.Tags)) {
+		return
+	}
+
 	cfg := ksdriver.CreateTableConfig{
 		KeyspaceName:            aws.ToString(in.KeyspaceName),
 		Name:                    aws.ToString(in.TableName),
@@ -245,6 +249,10 @@ func (h *Handler) restoreTable(w http.ResponseWriter, r *http.Request) {
 	var in keyspaces.RestoreTableInput
 	if err := json.Unmarshal(body, &in); err != nil {
 		wire.WriteJSONError(w, http.StatusBadRequest, "SerializationException", "invalid JSON: "+err.Error())
+		return
+	}
+
+	if rejectTagListTooLong(w, len(in.TagsOverride)) {
 		return
 	}
 

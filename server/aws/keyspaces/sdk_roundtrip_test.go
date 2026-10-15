@@ -77,8 +77,8 @@ func TestSDKKeyspaceLifecycle(t *testing.T) {
 		t.Fatalf("ListKeyspaces: %v", err)
 	}
 
-	if len(list.Keyspaces) != 4 { // 3 system + app
-		t.Fatalf("expected 4 keyspaces, got %d", len(list.Keyspaces))
+	if len(list.Keyspaces) != 5 { // 4 system + app
+		t.Fatalf("expected 5 keyspaces, got %d", len(list.Keyspaces))
 	}
 
 	if _, err := client.DeleteKeyspace(ctx, &awskeyspaces.DeleteKeyspaceInput{KeyspaceName: aws.String("app")}); err != nil {

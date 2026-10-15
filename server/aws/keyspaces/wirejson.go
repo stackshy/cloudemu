@@ -32,23 +32,23 @@ func writeJSON(w http.ResponseWriter, v any) {
 	wire.WriteJSON(w, lowerCamelKeys(decoded))
 }
 
+// omitEmptyEnum reports whether key names an SDK member whose Go type is a
+// non-pointer string enum, which encoding/json renders as "" when unset. Real
+// Keyspaces omits these members when unset (e.g. cdcSpecification.viewType on
+// a table without a CDC stream), so an empty value is dropped rather than sent
+// as "".
+func omitEmptyEnum(key string, val any) bool {
+	return key == "ViewType" && val == ""
+}
+
 // lowerCamelKeys returns v with the first letter of every map key lowercased,
-// recursively. It also drops null values and the SDK's always-empty
-// resultMetadata envelope so the response carries only meaningful fields.
+// recursively. It also drops null values, unset string enums (see
+// omitEmptyEnum), and the SDK's always-empty resultMetadata envelope so the
+// response carries only meaningful fields.
 func lowerCamelKeys(v any) any {
 	switch t := v.(type) {
 	case map[string]any:
-		out := make(map[string]any, len(t))
-
-		for k, val := range t {
-			if val == nil || k == "ResultMetadata" {
-				continue
-			}
-
-			out[lowerFirst(k)] = lowerCamelKeys(val)
-		}
-
-		return out
+		return lowerCamelMap(t)
 	case []any:
 		for i := range t {
 			t[i] = lowerCamelKeys(t[i])
@@ -67,6 +67,20 @@ func lowerCamelKeys(v any) any {
 	default:
 		return v
 	}
+}
+
+func lowerCamelMap(t map[string]any) map[string]any {
+	out := make(map[string]any, len(t))
+
+	for k, val := range t {
+		if val == nil || k == "ResultMetadata" || omitEmptyEnum(k, val) {
+			continue
+		}
+
+		out[lowerFirst(k)] = lowerCamelKeys(val)
+	}
+
+	return out
 }
 
 func lowerFirst(s string) string {
