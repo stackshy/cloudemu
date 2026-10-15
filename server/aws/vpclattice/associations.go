@@ -117,12 +117,7 @@ func (h *Handler) listSNVpcAssocs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]wireSNVpcAssoc, 0, len(as))
-	for i := range as {
-		items = append(items, snVpcToWire(&as[i]))
-	}
-
-	writeJSON(w, map[string]any{"items": items})
+	writeItems(w, r, as, snVpcToWire)
 }
 
 func (h *Handler) serveSNVpcEndpointAssociations(w http.ResponseWriter, r *http.Request, rest []string) {
@@ -139,12 +134,7 @@ func (h *Handler) serveSNVpcEndpointAssociations(w http.ResponseWriter, r *http.
 		return
 	}
 
-	items := make([]wireSNVpcAssoc, 0, len(as))
-	for i := range as {
-		items = append(items, snVpcToWire(&as[i]))
-	}
-
-	writeJSON(w, map[string]any{"items": items})
+	writeItems(w, r, as, snVpcToWire)
 }
 
 // --- SN ↔ Service ---
@@ -239,12 +229,7 @@ func (h *Handler) listSNSvcAssocs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]wireSNSvcAssoc, 0, len(as))
-	for i := range as {
-		items = append(items, snSvcToWire(&as[i]))
-	}
-
-	writeJSON(w, map[string]any{"items": items})
+	writeItems(w, r, as, snSvcToWire)
 }
 
 // --- SN ↔ Resource ---
@@ -338,10 +323,5 @@ func (h *Handler) listSNResAssocs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]wireSNResAssoc, 0, len(as))
-	for i := range as {
-		items = append(items, snResToWire(&as[i]))
-	}
-
-	writeJSON(w, map[string]any{"items": items})
+	writeItems(w, r, as, snResToWire)
 }

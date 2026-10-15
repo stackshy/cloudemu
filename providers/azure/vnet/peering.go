@@ -2,7 +2,6 @@ package vnet
 
 import (
 	"context"
-	"fmt"
 	"net"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -140,17 +139,4 @@ func cidrsOverlap(cidrA, cidrB string) bool {
 	}
 
 	return netA.Contains(netB.IP) || netB.Contains(netA.IP)
-}
-
-// mockPublicIP generates a mock public IP from a counter value.
-func mockPublicIP(id string) string {
-	var sum int
-	for _, c := range id {
-		sum += int(c)
-	}
-
-	octet3 := sum % maxOctetValue
-	octet4 := (sum / maxOctetValue) % maxOctetValue
-
-	return fmt.Sprintf("10.0.%d.%d", octet3, octet4)
 }

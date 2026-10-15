@@ -14,7 +14,7 @@ func (m *Mock) CreateEndpoint(_ context.Context, cfg driver.EndpointConfig) (*dr
 	// Endpoints carry a client-chosen numeric id (endpointId query param); the
 	// server assigns one only when the caller omits it. Terraform reads the
 	// resource back at the id it supplied, so honoring endpointId is required.
-	name := m.resName(cfg.Location, "endpoints", orID(cfg.EndpointID, m.newID()))
+	name := m.projectResName(cfg.Project, cfg.Location, "endpoints", orID(cfg.EndpointID, m.newID()))
 	ep := &driver.Endpoint{
 		Name:         name,
 		DisplayName:  cfg.DisplayName,

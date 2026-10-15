@@ -634,11 +634,14 @@ func (m *Mock) DeleteCluster(_ context.Context, id string) error {
 // PurgeResourceGroup deletes every logical server recorded under the resource
 // group, cascading to its databases, firewall and vnet rules, elastic pools,
 // failover groups, AAD admin, TDE and retention policies and connection
-// policy. It backs the ARM resource-group delete cascade. An unscoped server is
-// never selected. Managed instances record no scope and are not covered.
+// policy, and every managed instance with its databases. It backs the ARM
+// resource-group delete cascade. An unscoped server or instance is never
+// selected.
 func (m *Mock) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	m.purgeManagedInstancesLocked(subscription, resourceGroup)
 
 	for _, id := range m.clusters.Keys() {
 		if cluster, ok := m.clusters.Get(id); ok && cluster.Scope.InResourceGroup(subscription, resourceGroup) {

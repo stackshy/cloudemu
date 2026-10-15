@@ -14,8 +14,10 @@ func (h *Handler) serveAgents(w http.ResponseWriter, r *http.Request, segs []str
 		h.serveAgentCollection(w, r)
 	case len(segs) == 1:
 		h.serveAgentItem(w, r, segs[0])
-	case len(segs) == 2 && segs[1] == segAgentAliases:
-		h.serveAgentAlias(w, r, segs[0])
+	case segs[1] == segAgentAliases:
+		h.serveAgentAliases(w, r, segs)
+	case segs[1] == segAgentVersions:
+		h.serveAgentVersions(w, r, segs)
 	default:
 		notFound(w, r.URL.Path)
 	}
@@ -47,16 +49,6 @@ func (h *Handler) serveAgentItem(w http.ResponseWriter, r *http.Request, id stri
 	}
 }
 
-func (h *Handler) serveAgentAlias(w http.ResponseWriter, r *http.Request, agentID string) {
-	if r.Method != http.MethodPut {
-		methodNotAllowed(w)
-
-		return
-	}
-
-	h.createAgentAlias(w, r, agentID)
-}
-
 // --- operations ---
 
 func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
@@ -65,23 +57,14 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agent, err := h.agent.CreateAgent(r.Context(), badriver.AgentConfig{
-		Name:                    in.AgentName,
-		ResourceRoleArn:         in.AgentResourceRoleArn,
-		FoundationModel:         in.FoundationModel,
-		Instruction:             in.Instruction,
-		Description:             in.Description,
-		IdleSessionTTLInSeconds: in.IdleSessionTTLInSeconds,
-		ClientToken:             in.ClientToken,
-		Tags:                    in.Tags,
-	})
+	agent, err := h.agent.CreateAgent(r.Context(), in.config())
 	if err != nil {
 		writeErr(w, err)
 
 		return
 	}
 
-	writeJSON(w, agentEnvelope{Agent: toAgentJSON(agent)})
+	writeJSONStatus(w, http.StatusAccepted, agentEnvelope{Agent: toAgentJSON(agent)})
 }
 
 func (h *Handler) getAgent(w http.ResponseWriter, r *http.Request, id string) {
@@ -122,32 +105,40 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
-	agent, err := h.agent.UpdateAgent(r.Context(), id, badriver.AgentConfig{
-		Name:                    in.AgentName,
-		ResourceRoleArn:         in.AgentResourceRoleArn,
-		FoundationModel:         in.FoundationModel,
-		Instruction:             in.Instruction,
-		Description:             in.Description,
-		IdleSessionTTLInSeconds: in.IdleSessionTTLInSeconds,
-	})
+	cfg := in.config()
+	cfg.ClientToken, cfg.Tags = "", nil
+
+	agent, err := h.agent.UpdateAgent(r.Context(), id, cfg)
 	if err != nil {
 		writeErr(w, err)
 
 		return
 	}
 
-	writeJSON(w, agentEnvelope{Agent: toAgentJSON(agent)})
+	writeJSONStatus(w, http.StatusAccepted, agentEnvelope{Agent: toAgentJSON(agent)})
 }
 
+// deleteAgent handles DeleteAgent. A backend that can check whether the agent
+// is in use honors skipResourceInUseCheck; any other deletes outright.
 func (h *Handler) deleteAgent(w http.ResponseWriter, r *http.Request, id string) {
-	status, err := h.agent.DeleteAgent(r.Context(), id)
+	var (
+		status string
+		err    error
+	)
+
+	if c, ok := h.agent.(badriver.AgentInUseDeleter); ok {
+		status, err = c.DeleteAgentChecked(r.Context(), id, queryBool(r, "skipResourceInUseCheck"))
+	} else {
+		status, err = h.agent.DeleteAgent(r.Context(), id)
+	}
+
 	if err != nil {
 		writeErr(w, err)
 
 		return
 	}
 
-	writeJSON(w, deleteAgentResponse{AgentID: id, AgentStatus: status})
+	writeJSONStatus(w, http.StatusAccepted, deleteAgentResponse{AgentID: id, AgentStatus: status})
 }
 
 func (h *Handler) prepareAgent(w http.ResponseWriter, r *http.Request, id string) {
@@ -158,7 +149,7 @@ func (h *Handler) prepareAgent(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
-	writeJSON(w, prepareAgentResponse{
+	writeJSONStatus(w, http.StatusAccepted, prepareAgentResponse{
 		AgentID:      agent.ID,
 		AgentStatus:  agent.Status,
 		AgentVersion: agent.Version,
@@ -166,47 +157,39 @@ func (h *Handler) prepareAgent(w http.ResponseWriter, r *http.Request, id string
 	})
 }
 
-func (h *Handler) createAgentAlias(w http.ResponseWriter, r *http.Request, agentID string) {
-	var in createAgentAliasRequest
-	if !decodeJSON(w, r, &in) {
-		return
-	}
-
-	alias, err := h.agent.CreateAgentAlias(r.Context(), badriver.AgentAliasConfig{
-		AgentID:     agentID,
-		Name:        in.AgentAliasName,
-		Description: in.Description,
-		Tags:        in.Tags,
-	})
-	if err != nil {
-		writeErr(w, err)
-
-		return
-	}
-
-	writeJSON(w, agentAliasEnvelope{AgentAlias: toAgentAliasJSON(alias)})
-}
-
 // --- converters ---
 
+// emptyPromptOverride is the promptOverrideConfiguration reported for an agent
+// created without one. Terraform dereferences it on every read.
+const emptyPromptOverride = `{"promptConfigurations":[]}`
+
 func toAgentJSON(a *badriver.Agent) agentJSON {
+	override := a.PromptOverrideConfiguration
+	if len(override) == 0 {
+		override = json.RawMessage(emptyPromptOverride)
+	}
+
 	return agentJSON{
-		AgentID:                 a.ID,
-		AgentARN:                a.ARN,
-		AgentName:               a.Name,
-		AgentResourceRoleArn:    a.ResourceRoleArn,
-		FoundationModel:         a.FoundationModel,
-		Instruction:             a.Instruction,
-		Description:             a.Description,
-		AgentStatus:             a.Status,
-		AgentVersion:            a.Version,
-		IdleSessionTTLInSeconds: a.IdleSessionTTLInSeconds,
-		CreatedAt:               a.CreatedAt,
-		UpdatedAt:               a.UpdatedAt,
-		PreparedAt:              a.PreparedAt,
-		PromptOverrideConfiguration: promptOverrideJSON{
-			PromptConfigurations: []json.RawMessage{},
-		},
+		AgentID:                     a.ID,
+		AgentARN:                    a.ARN,
+		AgentName:                   a.Name,
+		AgentResourceRoleArn:        a.ResourceRoleArn,
+		FoundationModel:             a.FoundationModel,
+		Instruction:                 a.Instruction,
+		Description:                 a.Description,
+		AgentStatus:                 a.Status,
+		AgentVersion:                a.Version,
+		IdleSessionTTLInSeconds:     a.IdleSessionTTLInSeconds,
+		CreatedAt:                   a.CreatedAt,
+		UpdatedAt:                   a.UpdatedAt,
+		PreparedAt:                  a.PreparedAt,
+		AgentCollaboration:          a.AgentCollaboration,
+		OrchestrationType:           a.OrchestrationType,
+		CustomerEncryptionKeyArn:    a.CustomerEncryptionKeyArn,
+		PromptOverrideConfiguration: override,
+		GuardrailConfiguration:      a.GuardrailConfiguration,
+		MemoryConfiguration:         a.MemoryConfiguration,
+		CustomOrchestration:         a.CustomOrchestration,
 	}
 }
 
@@ -217,19 +200,5 @@ func toAgentSummaryJSON(a *badriver.Agent) agentSummaryJSON {
 		AgentStatus: a.Status,
 		Description: a.Description,
 		UpdatedAt:   a.UpdatedAt,
-	}
-}
-
-func toAgentAliasJSON(a *badriver.AgentAlias) agentAliasJSON {
-	return agentAliasJSON{
-		AgentAliasID:         a.ID,
-		AgentAliasARN:        a.ARN,
-		AgentAliasName:       a.Name,
-		AgentID:              a.AgentID,
-		AgentAliasStatus:     a.Status,
-		Description:          a.Description,
-		RoutingConfiguration: []string{},
-		CreatedAt:            a.CreatedAt,
-		UpdatedAt:            a.UpdatedAt,
 	}
 }

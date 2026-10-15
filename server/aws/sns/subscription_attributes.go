@@ -240,10 +240,7 @@ func (h *Handler) removePermission(w http.ResponseWriter, r *http.Request) {
 // publishBatch fans PublishBatchRequestEntries out to individual driver
 // Publish calls, collecting per-entry success/failure results.
 func (h *Handler) publishBatch(w http.ResponseWriter, r *http.Request) {
-	arn := r.Form.Get("TopicArn")
-	if arn == "" {
-		arn = r.Form.Get("TargetArn")
-	}
+	arn := publishTarget(r)
 
 	topicID := topicNameFromARN(arn)
 

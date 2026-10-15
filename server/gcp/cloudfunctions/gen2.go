@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 )
 
 // gen2Function is the GCP Cloud Functions gen2 (v2 API) resource shape. gen2 is
@@ -413,7 +415,6 @@ func (h *Handler) deleteV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 	_, ok := h.gen2[key]
 	if ok {
 		delete(h.gen2, key)
-		delete(h.policies, key)
 	}
 
 	h.mu.Unlock()
@@ -422,6 +423,8 @@ func (h *Handler) deleteV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "function "+p.name+" not found")
 		return
 	}
+
+	h.iam.Delete(key)
 
 	// Drop the driver-backed function too so the invoke path no longer resolves
 	// it. Best-effort: a missing driver entry is not an error.
@@ -441,17 +444,13 @@ func (h *Handler) finishV2LRO(w http.ResponseWriter, p v2Path, fn *gen2Function)
 }
 
 // mintV2Operation builds a done=true operation with a gen2-prefixed name and
-// caches it so a later Operations.Get poll returns the same result.
+// records it so a later Operations.Get poll returns the same result.
 func (h *Handler) mintV2Operation(p v2Path, response map[string]any) operation {
 	opName := "projects/" + p.project + "/locations/" + p.location + "/operations/" + gen2OpPrefix + randomToken()
 
-	op := operation{Name: opName, Done: true, Response: response}
+	h.ops.Register(opName, response)
 
-	h.mu.Lock()
-	h.operations[opName] = op
-	h.mu.Unlock()
-
-	return op
+	return operation{Name: opName, Done: true, Response: response}
 }
 
 func (h *Handler) serveV2Operation(w http.ResponseWriter, r *http.Request, p v2Path) {
@@ -460,19 +459,7 @@ func (h *Handler) serveV2Operation(w http.ResponseWriter, r *http.Request, p v2P
 		return
 	}
 
-	opName := "projects/" + p.project + "/locations/" + p.location + "/operations/" + p.name
-
-	h.mu.RLock()
-	op, ok := h.operations[opName]
-	h.mu.RUnlock()
-
-	if !ok {
-		// An unknown but well-formed gen2 operation is reported complete rather
-		// than 404 so a poll after a process restart still terminates.
-		op = operation{Name: opName, Done: true}
-	}
-
-	writeJSON(w, http.StatusOK, op)
+	lro.ServeGet(w, h.ops, "projects/"+p.project+"/locations/"+p.location+"/operations/"+p.name)
 }
 
 func (h *Handler) generateUploadURLV2(w http.ResponseWriter, r *http.Request, p v2Path) {

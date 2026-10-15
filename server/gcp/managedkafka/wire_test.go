@@ -120,11 +120,12 @@ func TestWireNumericEnumsAndOptionalFields(t *testing.T) {
 		}
 	}
 
-	// null and 0 (the unspecified value) both mean unset: the default applies.
+	// null and 0 (the unspecified value) both mean unset: no rebalanceConfig
+	// is synthesized, so terraform's Optional rebalance_config stays null.
 	for id, mode := range map[string]string{"z0": "0", "zn": "null"} {
 		code, op := call(t, ts, http.MethodPost, loc+"/clusters?clusterId="+id,
 			wireCluster+`,"rebalanceConfig":{"mode":`+mode+`},"state":null}`)
-		if code != http.StatusOK || dig(op, "response", "rebalanceConfig", "mode") != "NO_REBALANCE" {
+		if code != http.StatusOK || dig(op, "response", "rebalanceConfig") != nil {
 			t.Fatalf("mode %s: %d %v", mode, code, op)
 		}
 	}

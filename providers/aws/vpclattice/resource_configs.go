@@ -14,8 +14,9 @@ func resourceConfigNotFound(id string) error {
 	return errors.Newf(errors.NotFound, "resource configuration %q not found", id)
 }
 
-func cloneResourceConfig(c *driver.ResourceConfiguration) driver.ResourceConfiguration {
+func (m *Mock) cloneResourceConfig(c *driver.ResourceConfiguration) driver.ResourceConfiguration {
 	out := *c
+	out.Status = m.observe(c.ID, c.Status)
 	out.PortRanges = append([]string(nil), c.PortRanges...)
 	out.Definition = append([]byte(nil), c.Definition...)
 
@@ -28,7 +29,11 @@ func (m *Mock) CreateResourceConfiguration(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	id := idgen.GenerateLongID("rc-")
+	id, err := idgen.GenerateLongID("rc-")
+	if err != nil {
+		return nil, err
+	}
+
 	c := &driver.ResourceConfiguration{
 		ID:                       id,
 		ARN:                      m.arn("resourceconfiguration/" + id),
@@ -48,8 +53,9 @@ func (m *Mock) CreateResourceConfiguration(
 	}
 	m.resourceConfigs.Set(id, c)
 	m.writeTags(c.ARN, in.Tags)
+	m.beginSettle(id)
 
-	out := cloneResourceConfig(c)
+	out := m.cloneResourceConfig(c)
 
 	return &out, nil
 }
@@ -65,7 +71,7 @@ func (m *Mock) GetResourceConfiguration(_ context.Context, identifier string) (*
 		return nil, resourceConfigNotFound(id)
 	}
 
-	out := cloneResourceConfig(c)
+	out := m.cloneResourceConfig(c)
 
 	return &out, nil
 }
@@ -97,7 +103,7 @@ func (m *Mock) UpdateResourceConfiguration(
 
 	c.LastUpdatedAt = m.now()
 
-	out := cloneResourceConfig(c)
+	out := m.cloneResourceConfig(c)
 
 	return &out, nil
 }
@@ -112,6 +118,7 @@ func (m *Mock) DeleteResourceConfiguration(_ context.Context, identifier string)
 		return resourceConfigNotFound(id)
 	}
 
+	m.statusSettle.Clear(id)
 	m.resourceConfigs.Delete(id)
 
 	return nil
@@ -121,5 +128,5 @@ func (m *Mock) ListResourceConfigurations(_ context.Context) ([]driver.ResourceC
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return sortedValues(m.resourceConfigs.All(), cloneResourceConfig), nil
+	return sortedValues(m.resourceConfigs.All(), m.cloneResourceConfig), nil
 }

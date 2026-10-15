@@ -137,11 +137,6 @@ func (h *Handler) disassociateVPCFromHostedZone(w http.ResponseWriter, r *http.R
 // listHostedZonesByVPC answers ListHostedZonesByVPC, returning the private hosted
 // zones associated with the requested VPC. vpcid and vpcregion are required.
 func (h *Handler) listHostedZonesByVPC(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-
 	q := r.URL.Query()
 	vpcID := q.Get("vpcid")
 	vpcRegion := q.Get("vpcregion")

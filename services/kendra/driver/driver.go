@@ -3,13 +3,15 @@
 // "AWSKendraFrontendService."). It models Kendra indexes and the data source
 // connectors that belong to them, plus resource tags.
 //
-// This is a control-plane-only surface: the emulator never runs a search
-// engine and never indexes documents. An index and a data source are created
-// directly in the ACTIVE state so an IaC waiter that blocks on status
-// (Terraform's aws_kendra_index / aws_kendra_data_source poll DescribeIndex /
-// DescribeDataSource for ACTIVE) does not hang: real Kendra index creation
-// takes ~30 minutes, so returning ACTIVE synchronously is what keeps the
-// emulator usable. The computed fields clients and IaC read back (the index id,
+// Besides the control plane it models a small data plane: documents added with
+// BatchPutDocument are held in the index and searched by Query and Retrieve with
+// a term-matching engine (no semantic ranking; see docs/coverage/nongoals/kendra.md).
+// An index and a data source are created directly in the ACTIVE state so an IaC
+// waiter that blocks on status (Terraform's aws_kendra_index /
+// aws_kendra_data_source poll DescribeIndex / DescribeDataSource for ACTIVE) does
+// not hang: real Kendra index creation takes ~30 minutes, so returning ACTIVE
+// synchronously is what keeps the emulator usable (under async settling they report
+// CREATING first). The computed fields clients and IaC read back (the index id,
 // a 36-character UUID, the data source id, the status and the createdAt/
 // updatedAt timestamps) are minted once at create and stored, so repeated
 // Describe/List reads and a later Update never drift. Kendra's API does not
@@ -81,6 +83,7 @@ type Tag struct {
 // as raw JSON so they round-trip without re-marshal drift.
 type Index struct {
 	ID                                string
+	ClientToken                       string
 	Name                              string
 	Edition                           string
 	RoleArn                           string
@@ -95,6 +98,23 @@ type Index struct {
 	CreatedAt                         time.Time
 	UpdatedAt                         time.Time
 	Tags                              []Tag
+
+	// ErrorMessage explains a FAILED status. The emulator never fails an index, so
+	// DescribeIndex reports it empty; it is carried so the field is present.
+	ErrorMessage string
+
+	// Statistics is computed at DescribeIndex time from the documents and FAQs
+	// the index holds; it is never stored.
+	Statistics *IndexStatistics
+}
+
+// IndexStatistics are the counters DescribeIndex reports.
+type IndexStatistics struct {
+	// IndexedQuestionAnswers is the number of question-answer pairs across the
+	// index's FAQs. The emulator does not read the FAQ files, so it is always 0.
+	IndexedQuestionAnswers int32
+	IndexedTextDocuments   int32
+	IndexedTextBytes       int64
 }
 
 // DataSource is a Kendra data source connector that belongs to an index. ID,
@@ -103,6 +123,7 @@ type Index struct {
 // trip verbatim as raw JSON.
 type DataSource struct {
 	ID                                    string
+	ClientToken                           string
 	IndexID                               string
 	Name                                  string
 	Type                                  string
@@ -127,6 +148,9 @@ type Page struct {
 
 // CreateIndexInput is the input to CreateIndex.
 type CreateIndexInput struct {
+	// ClientToken makes the create idempotent: repeating a call with the same
+	// token returns the index the first call created.
+	ClientToken                       string
 	Name                              string
 	Edition                           string
 	RoleArn                           string
@@ -154,6 +178,9 @@ type UpdateIndexInput struct {
 
 // CreateDataSourceInput is the input to CreateDataSource.
 type CreateDataSourceInput struct {
+	// ClientToken makes the create idempotent within the index: repeating a call
+	// with the same token returns the data source the first call created.
+	ClientToken                           string
 	IndexID                               string
 	Name                                  string
 	Type                                  string

@@ -89,6 +89,7 @@ import (
 	transfersrv "github.com/stackshy/cloudemu/v2/server/aws/transfer"
 	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
 	wafv2srv "github.com/stackshy/cloudemu/v2/server/aws/wafv2"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsauthz"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsidentity"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
 	aossdriver "github.com/stackshy/cloudemu/v2/services/aoss/driver"
@@ -437,12 +438,31 @@ type Drivers struct {
 	// verified: ASIA against the secret STS minted for that session (rejected
 	// if forged or expired).
 	//
-	// It also enforces IAM authorization for JSON-RPC services (the operation is
-	// bound to the X-Amz-Target header the dispatcher routes on); query and REST
-	// services are authenticated only, because their executed operation cannot be
-	// soundly bound to an IAM service before dispatch. Authorization applies only
-	// to principals that have IAM policies defined; a policy-less user/role and
-	// the account-admin/root and ASIA identities are left unrestricted.
+	// Every authenticated request is then authorized against the caller's IAM
+	// policies, bound to the handler that dispatch will run. Query services
+	// (IAM, STS, EC2 and Auto Scaling, RDS, Redshift, ElastiCache, ELBv2, SNS,
+	// CloudFormation, CloudWatch) and SageMaker are checked per operation.
+	// JSON-RPC services are checked per operation through X-Amz-Target. S3 is
+	// checked per operation on the bucket and object ARNs. Lambda is checked per
+	// operation on function, version, alias, layer and event source mapping
+	// ARNs; Invoke and function URL calls also honor the function's
+	// resource-based policy, and a function URL with AuthType NONE is public
+	// only when that policy grants public access. Route 53 is checked per
+	// operation on hosted zone, health check and change ARNs, with the record
+	// set and VPC condition keys; CloudFront per operation on distribution
+	// ARNs. The other REST services are checked at service level for now: only a grant covering
+	// every action of the service (such as s3:* or AdministratorAccess) lets a
+	// request through, so a fine-grained or resource-scoped REST policy fails
+	// closed until that service gets per-operation checks. The account root and
+	// IAM users with no policies are unrestricted (bootstrap); role sessions are
+	// always evaluated on the role's policies. Operations AWS serves without
+	// credentials, and the Kubernetes data plane, are not IAM-authorized.
+	//
+	// AssumeRole is decided by the role's trust policy for the real caller,
+	// together with the caller's identity policies, and STS temporary
+	// credentials are limited to the STS and IAM calls AWS allows each kind.
+	// Signed AssumeRoleWithWebIdentity and AssumeRoleWithSAML are refused,
+	// since their token or assertion is not validated.
 	EnforceAuth bool
 	// Clock drives SigV4 timestamp-expiry evaluation and STS temporary-credential
 	// expiry when EnforceAuth is on. Nil uses the real clock; tests inject a
@@ -583,9 +603,52 @@ func NewFromProvider(p *awsprovider.Provider) *server.Server {
 //
 // keeps the caller API ergonomic (awsserver.New(Drivers{...})).
 //
-//nolint:gocritic,gocyclo,funlen,gocognit // by-value Drivers for ergonomics; one if-per-driver dispatch grows with the bundle.
+//nolint:gocritic // by-value Drivers for ergonomics.
 func New(d Drivers) *server.Server {
+	srv, _ := newServer(d)
+
+	return srv
+}
+
+// authzSets are the handler sets the auth gate needs beyond the handlers'
+// own declarations: which handlers route on X-Amz-Target, and which IAM does
+// not govern.
+type authzSets struct {
+	jsonRPC, authnOnly map[server.Handler]bool
+}
+
+// newServer builds the AWS server and returns it with its authzSets.
+//
+//nolint:gocritic,gocyclo,funlen,gocognit // by-value Drivers for ergonomics; one if-per-driver dispatch grows with the bundle.
+func newServer(d Drivers) (*server.Server, authzSets) {
 	srv := server.New()
+
+	// The auth gate reads X-Amz-Target only for the handlers registered
+	// through rpc, which route on that header.
+	jsonRPC := map[server.Handler]bool{}
+	rpc := func(h server.Handler) server.Handler {
+		jsonRPC[h] = true
+
+		return h
+	}
+
+	// API Gateway invocations (an execute-api Host, a /_user_request_/ path or a
+	// registered custom domain) go first: their request bodies are the caller's own
+	// (often application/x-www-form-urlencoded), which the query-protocol handlers
+	// below would otherwise claim by content type and reject as InvalidAction.
+	if d.APIGateway != nil {
+		srv.Register(apigatewaysrv.NewDataPlane(d.APIGateway))
+	}
+
+	// bedrock-agent-runtime shares the /agents, /knowledgebases, /flows and
+	// /tags roots with the bedrock-agent control plane (and /tags with EKS) but
+	// matches only its own path shapes and methods. It registers here, before
+	// the query-protocol handlers, because the SDK and curl may send its JSON
+	// bodies with a form Content-Type the query handlers would otherwise claim
+	// and reject as InvalidAction; and before the control plane, EKS and S3.
+	if d.BedrockAgentRuntime != nil {
+		srv.Register(bedrockagentruntime.New(d.BedrockAgentRuntime))
+	}
 
 	if d.CloudWatch != nil {
 		// The VPC driver optionally supplies derived AWS/IPAM metrics; surface
@@ -596,6 +659,8 @@ func New(d Drivers) *server.Server {
 		srv.Register(cw)
 	}
 
+	// DynamoDB, DynamoDB Streams and SQS route on X-Amz-Target but name their
+	// own IAM checks with resource ARNs (Resolvers), so they skip rpc.
 	if d.DynamoDB != nil {
 		srv.Register(dynamodb.New(d.DynamoDB))
 		// DynamoDB Streams shares the DynamoDB host but uses the disjoint
@@ -614,7 +679,7 @@ func New(d Drivers) *server.Server {
 	// Resource Groups Tagging API: X-Amz-Target prefix
 	// ResourceGroupsTaggingAPI_20170126.*, disjoint from DynamoDB/SQS.
 	if d.ResourceDiscovery != nil {
-		srv.Register(resourcegroupstaggingapi.New(d.ResourceDiscovery))
+		srv.Register(rpc(resourcegroupstaggingapi.New(d.ResourceDiscovery)))
 	}
 
 	// RDS must be registered before EC2: both speak AWS query-protocol on
@@ -632,138 +697,144 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.ECR != nil {
-		srv.Register(ecr.New(d.ECR))
+		srv.Register(rpc(ecr.New(d.ECR)))
 	}
 
 	// Secrets Manager matches the X-Amz-Target prefix "secretsmanager.",
 	// disjoint from DynamoDB, SQS, ECR, SageMaker, and the tagging API.
 	if d.SecretsManager != nil {
-		srv.Register(secretsmanagersrv.New(d.SecretsManager))
+		srv.Register(rpc(secretsmanagersrv.New(d.SecretsManager)))
 	}
 
 	// KMS matches the X-Amz-Target prefix "TrentService.", disjoint from
 	// DynamoDB, SQS, ECR, SageMaker, Secrets Manager, and the tagging API.
 	if d.KMS != nil {
-		srv.Register(kmssrv.New(d.KMS))
+		srv.Register(rpc(kmssrv.New(d.KMS)))
 	}
 
 	// ACM matches the X-Amz-Target prefix "CertificateManager.", disjoint
 	// from the other JSON 1.1 services.
 	if d.ACM != nil {
-		srv.Register(acmsrv.New(d.ACM))
+		srv.Register(rpc(acmsrv.New(d.ACM)))
 	}
 
 	// Step Functions matches the X-Amz-Target prefix "AWSStepFunctions.",
 	// disjoint from every other JSON-RPC service, so registration order is free.
 	if d.SFN != nil {
-		srv.Register(sfnsrv.New(d.SFN))
+		srv.Register(rpc(sfnsrv.New(d.SFN)))
 	}
 
 	// Kinesis matches the X-Amz-Target prefix "Kinesis_20131202.", disjoint
 	// from the other JSON 1.1 services, so registration order is unconstrained.
 	if d.Kinesis != nil {
-		srv.Register(kinesissrv.New(d.Kinesis))
+		srv.Register(rpc(kinesissrv.New(d.Kinesis)))
 	}
 
 	// CloudTrail matches the X-Amz-Target prefix "CloudTrail_20131101.",
 	// disjoint from the other JSON 1.1 services, so registration order is free.
 	if d.CloudTrail != nil {
-		srv.Register(cloudtrailsrv.New(d.CloudTrail))
+		srv.Register(rpc(cloudtrailsrv.New(d.CloudTrail)))
 	}
 
 	// Glue matches the X-Amz-Target prefix "AWSGlue.", disjoint from the other
 	// JSON 1.1 services, so registration order is unconstrained.
 	if d.Glue != nil {
-		srv.Register(gluesrv.New(d.Glue))
+		srv.Register(rpc(gluesrv.New(d.Glue)))
 	}
 
 	// AOSS (OpenSearch Serverless) matches the X-Amz-Target prefix
 	// "OpenSearchServerless.", disjoint from the other JSON-RPC services, so
 	// registration order is unconstrained.
 	if d.AOSS != nil {
-		srv.Register(aosssrv.New(d.AOSS))
+		srv.Register(rpc(aosssrv.New(d.AOSS)))
 	}
 
 	// Kendra matches the X-Amz-Target prefix "AWSKendraFrontendService.",
 	// disjoint from the other JSON 1.1 services, so registration order is
 	// unconstrained.
 	if d.Kendra != nil {
-		srv.Register(kendrasrv.New(d.Kendra))
+		srv.Register(rpc(kendrasrv.New(d.Kendra)))
 	}
 
 	// Athena matches the X-Amz-Target prefix "AmazonAthena.", disjoint from the
 	// other JSON 1.1 services, so registration order is unconstrained.
 	if d.Athena != nil {
-		srv.Register(athenasrv.New(d.Athena))
+		srv.Register(rpc(athenasrv.New(d.Athena)))
 	}
 
 	// TimestreamWrite matches the X-Amz-Target prefix "Timestream_20181101.",
 	// disjoint from the other JSON-RPC services, so registration order is
 	// unconstrained.
 	if d.TimestreamWrite != nil {
-		srv.Register(timestreamwritesrv.New(d.TimestreamWrite))
+		srv.Register(rpc(timestreamwritesrv.New(d.TimestreamWrite)))
 	}
 
 	// HealthLake matches the X-Amz-Target prefix "HealthLake.", disjoint from
 	// the other JSON-RPC services, so registration order is unconstrained.
 	if d.HealthLake != nil {
-		srv.Register(healthlakesrv.New(d.HealthLake))
+		srv.Register(rpc(healthlakesrv.New(d.HealthLake)))
 	}
 
 	// GlobalAccelerator matches the X-Amz-Target prefix
 	// "GlobalAccelerator_V20180706.", disjoint from the other JSON-RPC targets.
 	if d.GlobalAccelerator != nil {
-		srv.Register(globalacceleratorsrv.New(d.GlobalAccelerator))
+		srv.Register(rpc(globalacceleratorsrv.New(d.GlobalAccelerator)))
 	}
 
 	// AppRunner matches the X-Amz-Target prefix "AppRunner.", disjoint from the
 	// other JSON-RPC services, so registration order is unconstrained.
 	if d.AppRunner != nil {
-		srv.Register(apprunnersrv.New(d.AppRunner))
+		srv.Register(rpc(apprunnersrv.New(d.AppRunner)))
 	}
 
 	// Transfer matches the X-Amz-Target prefix "TransferService.", disjoint from
 	// the other JSON 1.1 services, so registration order is unconstrained.
 	if d.Transfer != nil {
-		srv.Register(transfersrv.New(d.Transfer))
+		srv.Register(rpc(transfersrv.New(d.Transfer)))
 	}
 
 	// Cognito matches the X-Amz-Target prefix
 	// "AWSCognitoIdentityProviderService.", disjoint from the other JSON 1.1
 	// services, so registration order is unconstrained.
 	if d.Cognito != nil {
-		srv.Register(cognitosrv.New(d.Cognito))
+		srv.Register(rpc(cognitosrv.New(d.Cognito)))
+
+		// The pool's GET /{poolId}/.well-known/* documents must register before
+		// S3, the permissive REST fallback that would otherwise claim the path.
+		if keys, ok := d.Cognito.(cognitodriver.KeySetProvider); ok {
+			srv.Register(cognitosrv.NewWellKnown(keys))
+		}
 	}
 
 	// AWS Config matches the X-Amz-Target prefix "StarlingDoveService.",
 	// disjoint from the other JSON 1.1 services, so registration order is free.
 	if d.Config != nil {
-		srv.Register(configservicesrv.New(d.Config, d.AccountID, d.Region))
+		srv.Register(rpc(configservicesrv.New(d.Config, d.AccountID, d.Region)))
 	}
 
 	// WAFv2 matches the X-Amz-Target prefix "AWSWAF_20190729.", disjoint from
 	// the other JSON 1.1 services, so registration order is unconstrained.
 	if d.WAFv2 != nil {
-		srv.Register(wafv2srv.New(d.WAFv2))
+		srv.Register(rpc(wafv2srv.New(d.WAFv2)))
 	}
 
 	// Cost Explorer matches the X-Amz-Target prefix "AWSInsightsIndexService.",
 	// disjoint from the other JSON 1.1 services, so registration order is free.
 	if d.CostExplorer != nil {
-		srv.Register(costexplorersrv.New(d.CostExplorer))
+		srv.Register(rpc(costexplorersrv.New(d.CostExplorer)))
 	}
 
 	// Service Quotas matches the X-Amz-Target prefix "ServiceQuotasV20190624.",
 	// disjoint from the other JSON 1.1 services, so registration order is free.
 	if d.ServiceQuotas != nil {
-		srv.Register(servicequotassrv.New(d.ServiceQuotas, d.AccountID, d.Region))
+		srv.Register(rpc(servicequotassrv.New(d.ServiceQuotas, d.AccountID, d.Region)))
 	}
 
 	// EMR matches the X-Amz-Target prefix "ElasticMapReduce.", disjoint from the
 	// other JSON 1.1 services, so registration order is free. It carries its own
 	// in-memory cluster/step store (no backing driver).
 	if d.EMR {
-		srv.Register(emrsrv.New(d.AccountID, d.Region, d.Clock))
+		srv.Register(rpc(emrsrv.New(d.AccountID, d.Region, d.Clock)))
 	}
 
 	// Kinesis Video Streams is a REST-JSON service dispatched on POST to
@@ -803,7 +874,7 @@ func New(d Drivers) *server.Server {
 	// which is disjoint from DynamoDB, SQS, ECR, SageMaker, Secrets Manager, SSM,
 	// EventBridge, and the tagging API, so registration order is unconstrained.
 	if d.ECS != nil {
-		srv.Register(ecssrv.New(d.ECS))
+		srv.Register(rpc(ecssrv.New(d.ECS)))
 	}
 
 	// VPC Lattice is a REST/JSON service rooted at path prefixes like
@@ -966,27 +1037,27 @@ func New(d Drivers) *server.Server {
 	// Route53Resolver matches the X-Amz-Target prefix "Route53Resolver.",
 	// disjoint from the other JSON 1.1 services, so registration order is free.
 	if d.Route53Resolver != nil {
-		srv.Register(route53resolversrv.New(d.Route53Resolver))
+		srv.Register(rpc(route53resolversrv.New(d.Route53Resolver)))
 	}
 
 	// SSM Parameter Store matches the X-Amz-Target prefix "AmazonSSM.",
 	// disjoint from DynamoDB, SQS, ECR, SageMaker, Secrets Manager, EventBridge,
 	// CloudWatch Logs, and the tagging API.
 	if d.SSM != nil {
-		srv.Register(ssmsrv.New(d.SSM))
+		srv.Register(rpc(ssmsrv.New(d.SSM)))
 	}
 
 	// EventBridge matches the X-Amz-Target prefix "AWSEvents.", disjoint from
 	// DynamoDB, SQS, ECR, SageMaker, Secrets Manager, and the tagging API.
 	if d.EventBridge != nil {
-		srv.Register(eventbridge.New(d.EventBridge, d.AccountID, d.Region))
+		srv.Register(rpc(eventbridge.New(d.EventBridge, d.AccountID, d.Region)))
 	}
 
 	// CloudWatch Logs matches the X-Amz-Target prefix "Logs_20140328.",
 	// disjoint from DynamoDB, SQS, Secrets Manager, ECR, SageMaker, and the
 	// tagging API, so registration order relative to them is unconstrained.
 	if d.CloudWatchLogs != nil {
-		srv.Register(cloudwatchlogssrv.New(d.CloudWatchLogs))
+		srv.Register(rpc(cloudwatchlogssrv.New(d.CloudWatchLogs)))
 	}
 
 	// Redshift sits with the other query-protocol handlers before the EC2
@@ -1017,20 +1088,20 @@ func New(d Drivers) *server.Server {
 	// prefix, so its dispatch is disjoint from every query-protocol handler and
 	// registration order relative to the EC2 catch-all does not matter.
 	if d.MemoryDB != nil {
-		srv.Register(memorydbsrv.New(d.MemoryDB))
+		srv.Register(rpc(memorydbsrv.New(d.MemoryDB)))
 	}
 
 	// Network Firewall speaks AWS JSON 1.0 and matches on the
 	// "NetworkFirewall_20201112." target prefix, so its dispatch is disjoint
 	// from every other handler.
 	if d.NetworkFirewall != nil {
-		srv.Register(networkfirewallsrv.New(d.NetworkFirewall))
+		srv.Register(rpc(networkfirewallsrv.New(d.NetworkFirewall)))
 	}
 
 	// Keyspaces speaks AWS JSON 1.0 and matches on the "KeyspacesService." target
 	// prefix, so its dispatch is disjoint from every other handler.
 	if d.Keyspaces != nil {
-		srv.Register(keyspacessrv.New(d.Keyspaces))
+		srv.Register(rpc(keyspacessrv.New(d.Keyspaces)))
 	}
 
 	// SNS also speaks the AWS query protocol; its action set (CreateTopic,
@@ -1107,6 +1178,8 @@ func New(d Drivers) *server.Server {
 			lambdaOpts = append(lambdaOpts, lambda.WithObjectStore(d.S3))
 		}
 
+		lambdaOpts = append(lambdaOpts, lambda.WithEnforceAuth(d.EnforceAuth), lambda.WithScope(d.AccountID, d.Region))
+
 		srv.Register(lambda.New(d.Lambda, lambdaOpts...))
 	}
 
@@ -1140,15 +1213,6 @@ func New(d Drivers) *server.Server {
 	// /v2/apis as a bucket path.
 	if d.APIGatewayV2 != nil {
 		srv.Register(apigatewayv2srv.New(d.APIGatewayV2))
-	}
-
-	// bedrock-agent-runtime (InvokeAgent / Retrieve / RetrieveAndGenerate) shares
-	// the /agents and /knowledgebases roots with the bedrock-agent control plane,
-	// but matches only the runtime suffixes (/text, /retrieve) and
-	// /retrieveAndGenerate. It MUST register before the control-plane handler so
-	// its more specific Matches wins for those paths, and both before S3.
-	if d.BedrockAgentRuntime != nil {
-		srv.Register(bedrockagentruntime.New(d.BedrockAgentRuntime))
 	}
 
 	// bedrock-agent control plane: agents, knowledge bases, data sources, flows,
@@ -1187,8 +1251,13 @@ func New(d Drivers) *server.Server {
 
 	// Kubernetes data-plane API. Matches /k8s/{uid}/..., disjoint from
 	// every other AWS path. Registered before S3's REST fallback.
+	authnOnly := map[server.Handler]bool{}
+
 	if d.K8sAPI != nil {
+		// The Kubernetes data plane is governed by Kubernetes RBAC, not IAM.
 		srv.Register(d.K8sAPI)
+
+		authnOnly[d.K8sAPI] = true
 	}
 
 	// Resource Explorer 2 uses REST-JSON with fixed top-level paths
@@ -1217,7 +1286,7 @@ func New(d Drivers) *server.Server {
 	// handler. It must register before S3 because S3 is the permissive REST
 	// fallback that would otherwise claim those paths.
 	if d.CloudFront != nil {
-		srv.Register(cloudfrontsrv.New(d.CloudFront))
+		srv.Register(cloudfrontsrv.New(d.CloudFront, cloudfrontsrv.WithAccount(d.AccountID)))
 	}
 
 	if d.S3 != nil {
@@ -1239,13 +1308,36 @@ func New(d Drivers) *server.Server {
 	// on, and adds no request-path change beyond a context value.
 	var authGate func(http.ResponseWriter, *http.Request) (*http.Request, bool)
 	if d.EnforceAuth {
-		authGate = newAuthGate(d.IAM, d.AccountID, stsSessions, authClock, srv.Match)
+		authGate = newAuthGate(&gateConfig{
+			iam:       d.IAM,
+			scope:     serverScope(&d),
+			sessions:  stsSessions,
+			clock:     authClock,
+			match:     srv.Match,
+			jsonRPC:   jsonRPC,
+			authnOnly: authnOnly,
+		})
 	}
 
 	srv.SetPreDispatch(composePreDispatch(newRegionStamp(), authGate))
 
-	return srv
+	return srv, authzSets{jsonRPC: jsonRPC, authnOnly: authnOnly}
 }
+
+// serverScope is the account, region and partition the gate authorizes in.
+// It comes from the server's own configuration, never from the request.
+func serverScope(d *Drivers) awsauthz.Scope {
+	region := d.Region
+	if region == "" {
+		region = defaultScopeRegion
+	}
+
+	return awsauthz.Scope{AccountID: d.AccountID, Region: region, Partition: "aws"}
+}
+
+// defaultScopeRegion is the region assumed when Drivers names none, matching
+// the STS handler's default.
+const defaultScopeRegion = "us-east-1"
 
 // composePreDispatch chains pre-dispatch hooks left to right: each may rewrite
 // the request (the next hook sees the rewrite) and any may stop dispatch. Nil

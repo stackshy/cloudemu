@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -41,10 +42,11 @@ type snapshotResponse struct {
 }
 
 type snapshotListResponse struct {
-	Kind     string             `json:"kind"`
-	ID       string             `json:"id"`
-	Items    []snapshotResponse `json:"items"`
-	SelfLink string             `json:"selfLink"`
+	Kind          string             `json:"kind"`
+	ID            string             `json:"id"`
+	Items         []snapshotResponse `json:"items"`
+	NextPageToken string             `json:"nextPageToken,omitempty"`
+	SelfLink      string             `json:"selfLink"`
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -120,11 +122,17 @@ func (h *Handler) listSnapshots(w http.ResponseWriter, r *http.Request, rp gcpre
 		out = append(out, toSnapshotResponse(&snaps[i], scope, host))
 	}
 
+	items, next, ok := gcplist.FilterPage(w, r, out, func(x snapshotResponse) string { return x.Name })
+	if !ok {
+		return
+	}
+
 	gcprest.WriteJSON(w, http.StatusOK, snapshotListResponse{
-		Kind:     "compute#snapshotList",
-		ID:       "projects/" + rp.Project + "/global/snapshots",
-		Items:    out,
-		SelfLink: gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "snapshots", ""),
+		Kind:          "compute#snapshotList",
+		ID:            "projects/" + rp.Project + "/global/snapshots",
+		Items:         items,
+		NextPageToken: next,
+		SelfLink:      gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "snapshots", ""),
 	})
 }
 
@@ -140,6 +148,8 @@ func (h *Handler) deleteSnapshot(w http.ResponseWriter, r *http.Request, rp gcpr
 		gcprest.WriteCErr(w, err)
 		return
 	}
+
+	h.dropPolicy(rp)
 
 	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, gcprest.ScopeGlobal, "",
 		"snapshots", rp.ResourceName, "delete")

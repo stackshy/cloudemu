@@ -102,22 +102,23 @@ type asgData struct {
 
 // Mock is an in-memory mock implementation of Google Compute Engine.
 type Mock struct {
-	instances    *memstore.Store[*instanceData]
-	asgs         *memstore.Store[*asgData]
-	spotRequests *memstore.Store[*driver.SpotInstanceRequest]
-	templates    *memstore.Store[*driver.LaunchTemplate]
-	volumes      *memstore.Store[*driver.VolumeInfo]
-	snapshots    *memstore.Store[*driver.SnapshotInfo]
-	images       *memstore.Store[*driver.ImageInfo]
-	keyPairs     *memstore.Store[*driver.KeyPairInfo]
-	migs         *memstore.Store[InstanceGroupManager]
-	sm           *statemachine.Machine
-	opts         *config.Options
-	ipCounter    atomic.Int64
-	volCounter   atomic.Int64
-	snapCounter  atomic.Int64
-	imgCounter   atomic.Int64
-	monitoring   mondriver.Monitoring
+	instances     *memstore.Store[*instanceData]
+	asgs          *memstore.Store[*asgData]
+	spotRequests  *memstore.Store[*driver.SpotInstanceRequest]
+	templates     *memstore.Store[*driver.LaunchTemplate]
+	volumes       *memstore.Store[*driver.VolumeInfo]
+	snapshots     *memstore.Store[*driver.SnapshotInfo]
+	images        *memstore.Store[*driver.ImageInfo]
+	keyPairs      *memstore.Store[*driver.KeyPairInfo]
+	migs          *memstore.Store[InstanceGroupManager]
+	instTemplates *memstore.Store[InstanceTemplate]
+	sm            *statemachine.Machine
+	opts          *config.Options
+	ipCounter     atomic.Int64
+	volCounter    atomic.Int64
+	snapCounter   atomic.Int64
+	imgCounter    atomic.Int64
+	monitoring    mondriver.Monitoring
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -161,10 +162,10 @@ const gcpZoneTagKey = "cloudemu:gcp:zone"
 // zone when the launch zone is known. Cloud Monitoring resource filters
 // (resource.labels.zone=…, resource.labels.project_id=…) match on these, so all
 // three must be emitted for a filtered timeSeries.list to return the series.
-func (m *Mock) metricDimensions(instanceID, zone string) map[string]string {
+func metricDimensions(instanceID, zone, project string) map[string]string {
 	dims := map[string]string{
 		"instance_id": instanceID,
-		"project_id":  m.opts.ProjectID,
+		"project_id":  project,
 	}
 
 	if zone != "" {
@@ -174,7 +175,7 @@ func (m *Mock) metricDimensions(instanceID, zone string) map[string]string {
 	return dims
 }
 
-func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime, zone string) {
+func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime string, tags map[string]string) {
 	if m.monitoring == nil {
 		return
 	}
@@ -186,7 +187,7 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime, 
 
 	metrics := gcpMetricNames()
 	values := []float64{0.25, 1024.0, 512.0, 100.0, 50.0}
-	dims := m.metricDimensions(instanceID, zone)
+	dims := metricDimensions(instanceID, tags[gcpZoneTagKey], m.ownerOf(tags))
 
 	var data []mondriver.MetricDatum
 
@@ -210,14 +211,14 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime, 
 	_ = m.monitoring.PutMetricData(ctx, data)
 }
 
-func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID, zone string, values []float64) {
+func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID string, tags map[string]string, values []float64) {
 	if m.monitoring == nil {
 		return
 	}
 
 	metrics := gcpMetricNames()
 	now := m.opts.Clock.Now()
-	dims := m.metricDimensions(instanceID, zone)
+	dims := metricDimensions(instanceID, tags[gcpZoneTagKey], m.ownerOf(tags))
 	data := make([]mondriver.MetricDatum, len(metrics))
 
 	for i, metricName := range metrics {
@@ -237,17 +238,18 @@ func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID, zone string
 // New creates a new GCE mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		instances:    memstore.New[*instanceData](),
-		asgs:         memstore.New[*asgData](),
-		spotRequests: memstore.New[*driver.SpotInstanceRequest](),
-		templates:    memstore.New[*driver.LaunchTemplate](),
-		volumes:      memstore.New[*driver.VolumeInfo](),
-		snapshots:    memstore.New[*driver.SnapshotInfo](),
-		images:       memstore.New[*driver.ImageInfo](),
-		keyPairs:     memstore.New[*driver.KeyPairInfo](),
-		migs:         memstore.New[InstanceGroupManager](),
-		sm:           statemachine.New(compute.VMTransitions()),
-		opts:         opts,
+		instances:     memstore.New[*instanceData](),
+		asgs:          memstore.New[*asgData](),
+		spotRequests:  memstore.New[*driver.SpotInstanceRequest](),
+		templates:     memstore.New[*driver.LaunchTemplate](),
+		volumes:       memstore.New[*driver.VolumeInfo](),
+		snapshots:     memstore.New[*driver.SnapshotInfo](),
+		images:        memstore.New[*driver.ImageInfo](),
+		keyPairs:      memstore.New[*driver.KeyPairInfo](),
+		migs:          memstore.New[InstanceGroupManager](),
+		instTemplates: memstore.New[InstanceTemplate](),
+		sm:            statemachine.New(compute.VMTransitions()),
+		opts:          opts,
 	}
 }
 
@@ -295,14 +297,18 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 	// none of it).
 	created := make([]*instanceData, 0, count)
 
+	project := m.project(ctx)
+
 	for i := 0; i < count; i++ {
-		id := idgen.GCPID(m.opts.ProjectID, "instances", idgen.GenerateID("gce-"))
+		id := idgen.GCPID(project, "instances", idgen.GenerateID("gce-"))
 
 		tags := make(map[string]string, len(cfg.Tags))
 
 		for k, v := range cfg.Tags {
 			tags[k] = v
 		}
+
+		tags[ProjectTag] = project
 
 		sg := make([]string, len(cfg.SecurityGroups))
 		copy(sg, cfg.SecurityGroups)
@@ -350,7 +356,7 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		m.instances.Set(id, inst)
 		results = append(results, toInstance(inst))
 		created = append(created, inst)
-		m.emitInstanceMetrics(ctx, id, inst.LaunchTime, tags[gcpZoneTagKey])
+		m.emitInstanceMetrics(ctx, id, inst.LaunchTime, tags)
 	}
 
 	return results, nil
@@ -396,7 +402,7 @@ func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t 
 		_ = m.sm.Transition(id, t.finalState)
 		inst.State = t.finalState
 
-		m.emitLifecycleMetrics(ctx, id, inst.Tags[gcpZoneTagKey], t.metricValues)
+		m.emitLifecycleMetrics(ctx, id, inst.Tags, t.metricValues)
 	}
 
 	return nil
@@ -561,7 +567,7 @@ func (m *Mock) MutateInstanceGCP(instanceID string, set map[string]string, remov
 }
 
 func (m *Mock) DescribeInstances(
-	_ context.Context, instanceIDs []string, filters []driver.DescribeFilter, _ ...driver.DescribeInstancesOptions,
+	ctx context.Context, instanceIDs []string, filters []driver.DescribeFilter, _ ...driver.DescribeInstancesOptions,
 ) ([]driver.Instance, error) {
 	var candidates []*instanceData
 
@@ -573,7 +579,9 @@ func (m *Mock) DescribeInstances(
 		}
 	} else {
 		for _, inst := range m.instances.All() {
-			candidates = append(candidates, inst)
+			if m.visible(ctx, inst.Tags) {
+				candidates = append(candidates, inst)
+			}
 		}
 	}
 
@@ -671,9 +679,10 @@ func (m *Mock) SetInstanceVPC(instanceID, vpcID string) error {
 }
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
+func (m *Mock) CreateVolume(ctx context.Context, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
+	project := m.project(ctx)
 	id := fmt.Sprintf("projects/%s/zones/%s/disks/disk-%d",
-		m.opts.ProjectID, m.opts.Region, m.volCounter.Add(1))
+		project, m.opts.Region, m.volCounter.Add(1))
 
 	// GCP's disks.insert default type when the caller names none is pd-standard
 	// (not pd-ssd); a raw SDK/gcloud disk or a boot disk with no diskType reads
@@ -687,7 +696,7 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 		ID: id, Size: cfg.Size, VolumeType: volType, State: stateAvailable,
 		AvailabilityZone: cfg.AvailabilityZone,
 		CreatedAt:        m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		Tags:             copyTags(cfg.Tags),
+		Tags:             stampProject(copyTags(cfg.Tags), project),
 		IOPS:             cfg.IOPS,
 		Throughput:       cfg.Throughput,
 		Tier:             cfg.Tier,
@@ -714,8 +723,8 @@ func (m *Mock) DeleteVolume(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *Mock) DescribeVolumes(_ context.Context, ids []string) ([]driver.VolumeInfo, error) {
-	return describeResources(m.volumes, ids), nil
+func (m *Mock) DescribeVolumes(ctx context.Context, ids []string) ([]driver.VolumeInfo, error) {
+	return describeScoped(ctx, m, m.volumes, ids, func(v *driver.VolumeInfo) map[string]string { return v.Tags }), nil
 }
 
 // ResizeVolumeGCP grows the disk to sizeGb (a no-op when already that large).
@@ -803,19 +812,20 @@ func (m *Mock) DetachVolume(_ context.Context, volumeID, _, _ string) error {
 	return opErr
 }
 
-func (m *Mock) CreateSnapshot(_ context.Context, cfg driver.SnapshotConfig) (*driver.SnapshotInfo, error) {
+func (m *Mock) CreateSnapshot(ctx context.Context, cfg driver.SnapshotConfig) (*driver.SnapshotInfo, error) {
 	vol, ok := m.volumes.Get(cfg.VolumeID)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "disk %q not found", cfg.VolumeID)
 	}
 
+	project := m.project(ctx)
 	id := fmt.Sprintf("projects/%s/global/snapshots/snap-%d",
-		m.opts.ProjectID, m.snapCounter.Add(1))
+		project, m.snapCounter.Add(1))
 
 	snap := &driver.SnapshotInfo{
 		ID: id, VolumeID: cfg.VolumeID, State: "completed", Description: cfg.Description,
 		Size: vol.Size, CreatedAt: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		Tags: copyTags(cfg.Tags),
+		Tags: stampProject(copyTags(cfg.Tags), project),
 	}
 	m.snapshots.Set(id, snap)
 
@@ -832,8 +842,8 @@ func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *Mock) DescribeSnapshots(_ context.Context, ids []string) ([]driver.SnapshotInfo, error) {
-	return describeResources(m.snapshots, ids), nil
+func (m *Mock) DescribeSnapshots(ctx context.Context, ids []string) ([]driver.SnapshotInfo, error) {
+	return describeScoped(ctx, m, m.snapshots, ids, func(v *driver.SnapshotInfo) map[string]string { return v.Tags }), nil
 }
 
 // SetVolumeLabelsGCP replaces a disk's user labels: set entries are written and
@@ -917,7 +927,7 @@ func mergeTags(src, set map[string]string, remove []string) map[string]string {
 }
 
 //nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.
-func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
+func (m *Mock) CreateImage(ctx context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
 	// GCP images are created from a disk, snapshot, or import, not from a
 	// source instance. An empty InstanceID is one of those source-based paths,
 	// so only validate when a specific instance was named (the EC2-style path).
@@ -927,13 +937,14 @@ func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.I
 		}
 	}
 
+	project := m.project(ctx)
 	id := fmt.Sprintf("projects/%s/global/images/img-%d",
-		m.opts.ProjectID, m.imgCounter.Add(1))
+		project, m.imgCounter.Add(1))
 
 	img := &driver.ImageInfo{
 		ID: id, Name: cfg.Name, State: stateAvailable, Description: cfg.Description,
 		CreatedAt: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		Tags:      copyTags(cfg.Tags),
+		Tags:      stampProject(copyTags(cfg.Tags), project),
 	}
 	m.images.Set(id, img)
 
@@ -950,8 +961,8 @@ func (m *Mock) DeregisterImage(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *Mock) DescribeImages(_ context.Context, ids []string) ([]driver.ImageInfo, error) {
-	return describeResources(m.images, ids), nil
+func (m *Mock) DescribeImages(ctx context.Context, ids []string) ([]driver.ImageInfo, error) {
+	return describeScoped(ctx, m, m.images, ids, func(v *driver.ImageInfo) map[string]string { return v.Tags }), nil
 }
 
 // CreateKeyPair creates a new key pair.

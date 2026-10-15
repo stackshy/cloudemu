@@ -49,6 +49,7 @@ func (m *Mock) newInstance(cluster, ec2InstanceID string, cpu, memory int) *driv
 		RegisteredMemory: memory,
 		RemainingCPU:     cpu,
 		RemainingMemory:  memory,
+		Version:          1,
 	}
 }
 
@@ -102,7 +103,7 @@ func (m *Mock) SeedContainerInstance(cluster, ec2InstanceID string, opts ...Inst
 //
 //nolint:gocritic // in is passed by value to satisfy the driver.ECS interface; the copy is cheap for a mock.
 func (m *Mock) RegisterContainerInstance(
-	_ context.Context, in driver.RegisterContainerInstanceInput,
+	ctx context.Context, in driver.RegisterContainerInstanceInput,
 ) (*driver.ContainerInstance, error) {
 	cpu, memory := capacityFromResources(in.TotalResources)
 
@@ -124,6 +125,9 @@ func (m *Mock) RegisterContainerInstance(
 	out := *ci
 	out.Tags = copyTags(ci.Tags)
 
+	m.emitContainerInstanceDetail(ctx, &out)
+	m.publishClusterMetrics(resolveClusterName(in.Cluster))
+
 	return &out, nil
 }
 
@@ -141,8 +145,12 @@ func (m *Mock) DeregisterContainerInstance(
 	// The force-stopped tasks are published once placeMu is released, so an
 	// event target calling back into ECS cannot deadlock on it.
 	for _, t := range stopped {
-		m.emitTaskStateChange(ctx, t, taskEventVersionStop)
+		m.emitTaskStop(ctx, t)
 	}
+
+	out.Version++
+	m.emitContainerInstanceDetail(ctx, out)
+	m.publishClusterMetrics(instanceClusterName(out.ARN))
 
 	return out, nil
 }
@@ -203,6 +211,7 @@ func (m *Mock) stopTasksOnInstance(instanceARN string) []*driver.Task {
 		updated.DesiredStatus = statusStopped
 		updated.StoppedReason = "Container instance deregistered."
 		updated.StopCode = "TerminationNotice"
+		updated.EventVersion = t.EventVersion + len(stopSteps(&updated))
 		m.stampStop(&updated)
 
 		for i := range updated.Containers {
@@ -223,19 +232,32 @@ func (m *Mock) stopTasksOnInstance(instanceARN string) []*driver.Task {
 // DRAINING; unresolved ids become failures. Only ACTIVE and DRAINING are valid
 // target states.
 func (m *Mock) UpdateContainerInstancesState(
-	_ context.Context, _ string, ids []string, status string,
+	ctx context.Context, _ string, ids []string, status string,
 ) ([]driver.ContainerInstance, []driver.Failure, error) {
 	if status != statusActive && status != statusDraining {
 		return nil, nil, apiErrf(errors.InvalidArgument, excInvalidParameter,
 			"container instance status must be ACTIVE or DRAINING, got %q", status)
 	}
 
-	// Hold placeMu for the whole read-modify-write: reserve (capacity.go),
-	// release/StopTask, and DeregisterContainerInstance all mutate an instance
-	// under placeMu, so resolving-then-Set without it would let a concurrent
-	// capacity reserve be silently reverted (a logical lost update -race can't
-	// see, since memstore.Set is per-key locked). Resolving under the lock also
-	// guarantees the clone reflects the freshest capacity counts.
+	found, failures := m.setInstanceStatusLocked(ids, status)
+
+	// The state changes are published once placeMu is released.
+	for i := range found {
+		m.emitContainerInstanceDetail(ctx, &found[i])
+		m.publishClusterMetrics(instanceClusterName(found[i].ARN))
+	}
+
+	return found, failures, nil
+}
+
+// setInstanceStatusLocked is UpdateContainerInstancesState's placeMu-guarded
+// core. It holds placeMu for the whole read-modify-write: reserve (capacity.go),
+// release/StopTask, and DeregisterContainerInstance all mutate an instance under
+// placeMu, so resolving-then-Set without it would let a concurrent capacity
+// reserve be silently reverted (a logical lost update -race can't see, since
+// memstore.Set is per-key locked). Resolving under the lock also guarantees the
+// clone reflects the freshest capacity counts.
+func (m *Mock) setInstanceStatusLocked(ids []string, status string) ([]driver.ContainerInstance, []driver.Failure) {
 	m.placeMu.Lock()
 	defer m.placeMu.Unlock()
 
@@ -253,12 +275,13 @@ func (m *Mock) UpdateContainerInstancesState(
 		// never race the status write.
 		updated := *ci
 		updated.Status = status
+		updated.Version++
 		m.instances.Set(updated.ARN, &updated)
 
 		found = append(found, updated)
 	}
 
-	return found, failures, nil
+	return found, failures
 }
 
 // capacityFromResources derives CPU units and memory (MiB) from the CPU and
@@ -268,11 +291,11 @@ func capacityFromResources(resources []driver.Resource) (cpu, memory int) {
 
 	for i := range resources {
 		switch resources[i].Name {
-		case "CPU":
+		case resourceCPU:
 			if v := resourceInt(&resources[i]); v > 0 {
 				cpu = v
 			}
-		case "MEMORY":
+		case resourceMemory:
 			if v := resourceInt(&resources[i]); v > 0 {
 				memory = v
 			}

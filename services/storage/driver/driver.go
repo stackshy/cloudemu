@@ -21,13 +21,119 @@ var ErrDeleteMarker = cerrors.New(cerrors.NotFound, "the specified version is a 
 // header of the 405 response for a version-addressed GET/HEAD of a delete marker,
 // so providers return this (it unwraps to ErrDeleteMarker, so errors.Is still
 // matches) to let the wire layer emit the header.
+//
+// A plain GET/HEAD (no version id) of a key whose current version is a delete
+// marker also returns this error; S3 answers that with 404 and the marker's id
+// in x-amz-version-id, which VersionID carries.
 type DeleteMarkerError struct {
 	LastModified string
+	VersionID    string
 }
 
 func (*DeleteMarkerError) Error() string { return ErrDeleteMarker.Error() }
 
 func (*DeleteMarkerError) Unwrap() error { return ErrDeleteMarker }
+
+// S3 archive and restore errors. They read as FailedPrecondition for library
+// callers; the S3 wire layer matches them with errors.Is to send the S3 code.
+var (
+	// ErrInvalidObjectState: the object is archived (GLACIER, DEEP_ARCHIVE) and
+	// has no restored copy, so it cannot be read or copied; or a restore was
+	// requested for an object that is not archived. S3 answers 403.
+	ErrInvalidObjectState = cerrors.New(cerrors.FailedPrecondition, "The operation is not valid for the object's storage class")
+	// ErrRestoreAlreadyInProgress: a restore of the object is still running. S3
+	// answers 409.
+	ErrRestoreAlreadyInProgress = cerrors.New(cerrors.FailedPrecondition, "Object restore is already in progress")
+	// ErrObjectAlreadyInActiveTier: a restore was requested for an
+	// INTELLIGENT_TIERING object that is in an active (not archive) tier. S3
+	// answers 403.
+	ErrObjectAlreadyInActiveTier = cerrors.New(cerrors.FailedPrecondition, "This action is not allowed against this storage tier.")
+	// ErrRestoreDaysRequired: a restore of a GLACIER/DEEP_ARCHIVE object did not
+	// say for how many days the restored copy is kept.
+	ErrRestoreDaysRequired = cerrors.New(cerrors.InvalidArgument, "Days is required for a restore of this storage class")
+)
+
+// InvalidObjectStateError is ErrInvalidObjectState for an object of
+// StorageClass. S3 names the storage class in the error response.
+type InvalidObjectStateError struct {
+	StorageClass string
+}
+
+func (*InvalidObjectStateError) Error() string { return ErrInvalidObjectState.Error() }
+
+func (*InvalidObjectStateError) Unwrap() error { return ErrInvalidObjectState }
+
+// S3 restore retrieval tiers.
+const (
+	RestoreTierExpedited = "Expedited"
+	RestoreTierStandard  = "Standard"
+	RestoreTierBulk      = "Bulk"
+)
+
+// RestoreRequest is an S3 RestoreObject request: Days is how long the restored
+// copy is kept (0 means not given) and Tier the retrieval tier (empty means
+// Standard).
+type RestoreRequest struct {
+	Days int
+	Tier string
+}
+
+// ObjectRestoreStatus is the restore state of an archived object: InProgress
+// while the restore runs, then the instant the restored copy expires. It
+// backs the S3 x-amz-restore header and the ListObjects RestoreStatus.
+type ObjectRestoreStatus struct {
+	InProgress bool
+	ExpiryDate time.Time
+}
+
+// ObjectRestorer is an OPTIONAL S3-specific capability (discovered by type
+// assertion) for a driver that models archive storage classes: GLACIER and
+// DEEP_ARCHIVE objects cannot be read or copied until RestoreObject makes a
+// temporary copy available. RestoreObject restores the current object
+// (versionID == "") or a specific version. accepted is true when a new
+// restore started (S3 202) and false when an existing restored copy only had
+// its expiry extended (S3 200).
+type ObjectRestorer interface {
+	RestoreObject(ctx context.Context, bucket, key, versionID string, req RestoreRequest) (accepted bool, err error)
+}
+
+// TagError is a rejected S3 tag set. Code is the S3 error code the wire layer
+// returns (InvalidTag, or BadRequest for too many object tags) and Message the
+// S3 message. It unwraps to an InvalidArgument error, so cerrors.IsInvalidArgument
+// holds for library callers.
+type TagError struct {
+	Code    string
+	Message string
+}
+
+func (e *TagError) Error() string { return e.Message }
+
+func (e *TagError) Unwrap() error { return cerrors.New(cerrors.InvalidArgument, e.Message) }
+
+// ObjectTagValidator is an OPTIONAL capability (discovered by type assertion)
+// for a driver that enforces S3 object tag rules (tag count, key and value
+// length, reserved prefixes). The wire handler calls it before an object write
+// that carries tags, so a rejected tag set never leaves a stored object behind.
+// A rejection is a *TagError.
+type ObjectTagValidator interface {
+	ValidateObjectTags(tags map[string]string) error
+}
+
+// CreateBucketOptions are the CreateBucketConfiguration settings applied at
+// bucket creation: the region (LocationConstraint, empty for the default) and
+// the bucket's initial tag set.
+type CreateBucketOptions struct {
+	Region string
+	Tags   map[string]string
+}
+
+// BucketCreator is an OPTIONAL capability (discovered by type assertion) for a
+// driver that creates a bucket with its CreateBucketConfiguration in one step:
+// the tags are validated before the bucket exists, so an invalid tag set never
+// leaves a half-created bucket. A tag rejection is a *TagError.
+type BucketCreator interface {
+	CreateBucketWithOptions(ctx context.Context, name string, opts CreateBucketOptions) error
+}
 
 // BucketInfo describes a storage bucket.
 type BucketInfo struct {
@@ -634,6 +740,10 @@ type ObjectInfo struct {
 	// versioning-enabled bucket. Empty for a live version, or for providers that
 	// don't model versioning/generations.
 	Deleted string
+	// Restore is the S3 restore state of an archived object: nil when no
+	// restore was requested or the restored copy has expired. Providers that
+	// don't model archive storage classes leave it nil.
+	Restore *ObjectRestoreStatus
 }
 
 // Object is an object with its data.
@@ -734,6 +844,38 @@ type ObjectRetention struct {
 	RetainUntilDate time.Time
 }
 
+// ObjectLockSettings are the Object Lock settings a write sets on the new
+// object version (x-amz-object-lock-mode / -retain-until-date / -legal-hold).
+// An empty Mode means no explicit retention, so the bucket's default retention
+// (if any) applies.
+type ObjectLockSettings struct {
+	Mode        string
+	RetainUntil time.Time
+	LegalHold   bool
+}
+
+// ObjectLockConfiguration is a bucket's S3 Object Lock configuration. Object
+// Lock is enabled whenever a configuration exists. DefaultMode (GOVERNANCE or
+// COMPLIANCE) with exactly one of DefaultDays or DefaultYears is the default
+// retention applied to every new object version; an empty DefaultMode means
+// no default retention.
+type ObjectLockConfiguration struct {
+	DefaultMode  string
+	DefaultDays  int
+	DefaultYears int
+}
+
+// Object Lock configuration errors, matched by the S3 wire layer with errors.Is.
+var (
+	// ErrObjectLockNeedsVersioning: Object Lock can only be enabled on a bucket
+	// whose versioning is Enabled. S3 answers 409 InvalidBucketState.
+	ErrObjectLockNeedsVersioning = cerrors.New(cerrors.FailedPrecondition,
+		"Versioning must be 'Enabled' on the bucket to apply a Object Lock configuration")
+	// ErrNoObjectLockConfiguration: the bucket does not have Object Lock
+	// enabled. S3 answers 404 ObjectLockConfigurationNotFoundError.
+	ErrNoObjectLockConfiguration = cerrors.New(cerrors.NotFound, "Object Lock configuration does not exist for this bucket")
+)
+
 // ObjectLockBucket is an OPTIONAL S3-specific capability (discovered by type
 // assertion, like VersionedBucket) that ENFORCES S3 Object Lock (WORM). Retention
 // (GOVERNANCE/COMPLIANCE + RetainUntilDate) and legal hold are recorded per
@@ -754,6 +896,21 @@ type ObjectLockBucket interface {
 	// EnableObjectLock marks a bucket Object-Lock-enabled and turns on versioning
 	// (Object Lock requires it). Idempotent.
 	EnableObjectLock(ctx context.Context, bucket string) error
+
+	// PutObjectLockConfiguration enables Object Lock on the bucket (which must
+	// have versioning Enabled unless lock is already on) and replaces its
+	// default retention. GetObjectLockConfiguration returns it, or
+	// ErrNoObjectLockConfiguration when Object Lock is not enabled.
+	PutObjectLockConfiguration(ctx context.Context, bucket string, cfg ObjectLockConfiguration) error
+	GetObjectLockConfiguration(ctx context.Context, bucket string) (*ObjectLockConfiguration, error)
+
+	// PutObjectWithLock is PutObjectWithSystemProps that also sets the new
+	// version's Object Lock settings in the same write. An explicit retention
+	// replaces the bucket's default retention for that version.
+	PutObjectWithLock(
+		ctx context.Context, bucket, key string, data []byte, contentType string,
+		metadata map[string]string, props *ObjectSystemProps, lock ObjectLockSettings,
+	) error
 
 	// GetObjectRetention returns the retention on a version (the current version
 	// when versionID==""). A zero ObjectRetention means none is set.

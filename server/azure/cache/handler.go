@@ -18,6 +18,10 @@
 //	DELETE .../providers/Microsoft.Cache/redis/{name}   : Redis.BeginDelete (LRO, completes inline)
 //	GET    .../providers/Microsoft.Cache/redis          : Redis.ListByResourceGroup
 //	GET    .../subscriptions/{sub}/providers/Microsoft.Cache/redis : Redis.ListBySubscription
+//	PUT/GET/DELETE .../redis/{name}/patchSchedules/default : PatchSchedules
+//	GET    .../redis/{name}/patchSchedules                 : PatchSchedules.ListByRedisResource
+//	PUT/GET/DELETE .../redis/{name}/firewallRules/{rule}   : FirewallRules
+//	GET    .../redis/{name}/firewallRules                  : FirewallRules.List
 //
 // Only the cluster/instance control plane is mapped: the real Azure Cache SDK
 // manages Redis caches, not the Redis data plane. The driver's data-plane
@@ -85,9 +89,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sub-resource actions on a named cache (listKeys, regenerateKey) are POSTs.
+	// Children (patchSchedules, firewallRules) and POST actions (listKeys,
+	// regenerateKey) on a named cache.
 	if rp.SubResource != "" {
-		h.serveAction(w, r, &rp)
+		h.serveSubResource(w, r, &rp)
 		return
 	}
 

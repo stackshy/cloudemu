@@ -37,6 +37,7 @@ type createIndexResponse struct {
 func (h *Handler) createIndex(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *createIndexRequest) (any, error) {
 		idx, err := h.kendra.CreateIndex(ctx, &driver.CreateIndexInput{
+			ClientToken:                       req.ClientToken,
 			Name:                              req.Name,
 			Edition:                           req.Edition,
 			RoleArn:                           req.RoleArn,

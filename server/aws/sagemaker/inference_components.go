@@ -7,23 +7,6 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
-func (h *Handler) routeInferenceComponents(w http.ResponseWriter, r *http.Request, op string) bool {
-	switch op {
-	case "CreateInferenceComponent":
-		h.createInferenceComponent(w, r)
-	case "DescribeInferenceComponent":
-		h.describeInferenceComponent(w, r)
-	case "ListInferenceComponents":
-		h.listInferenceComponents(w, r)
-	case "DeleteInferenceComponent":
-		h.deleteInferenceComponent(w, r)
-	default:
-		return false
-	}
-
-	return true
-}
-
 func (h *Handler) createInferenceComponent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		InferenceComponentName string `json:"InferenceComponentName"`
@@ -84,7 +67,12 @@ func (h *Handler) describeInferenceComponent(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *Handler) listInferenceComponents(w http.ResponseWriter, r *http.Request) {
-	ics, err := h.svc.ListInferenceComponents(r.Context())
+	req, ok := decodeListReq(w, r)
+	if !ok {
+		return
+	}
+
+	ics, err := h.svc.ListInferenceComponents(r.Context(), req.options())
 	if err != nil {
 		writeDriverError(w, err)
 

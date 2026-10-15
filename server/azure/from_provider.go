@@ -45,6 +45,9 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		Communication:      p.Communication,
 		DigitalTwins:       p.DigitalTwins,
 		ManagedGrafana:     p.ManagedGrafana,
+		AppInsights:        p.AppInsights,
+		ManagementLocks:    p.ManagementLocks,
+		ScopeTags:          p.ScopeTags,
 		DevCenter:          p.DevCenter,
 		Purview:            p.Purview,
 		ChaosStudio:        p.ChaosStudio,
@@ -102,6 +105,8 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		// server has no shared cluster by default.
 		K8sAPI: nil, // injected by the caller when a shared cluster is desired
 
+		ResourceGroups:    p.ResourceGroups,
+		PropertyOverlay:   p.PropertyOverlay,
 		ResourceDiscovery: p.ResourceDiscovery,
 		SubscriptionID:    p.SubscriptionID,
 		EnforceAuth:       p.EnforceAuth,

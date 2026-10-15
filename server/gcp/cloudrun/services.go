@@ -171,11 +171,7 @@ func (h *Handler) createService(w http.ResponseWriter, r *http.Request, p *crPat
 		return
 	}
 
-	writeJSON(w, http.StatusOK, operation{
-		Name:     opName(p, "create-"+name),
-		Done:     true,
-		Response: asResponse(toServiceResource(svc, p), serviceTypeURL),
-	})
+	h.writeDoneOp(w, p, asResponse(toServiceResource(svc, p), serviceTypeURL))
 }
 
 func (h *Handler) updateService(w http.ResponseWriter, r *http.Request, p *crPath) {
@@ -193,11 +189,7 @@ func (h *Handler) updateService(w http.ResponseWriter, r *http.Request, p *crPat
 		return
 	}
 
-	writeJSON(w, http.StatusOK, operation{
-		Name:     opName(p, "update-"+p.name),
-		Done:     true,
-		Response: asResponse(toServiceResource(svc, p), serviceTypeURL),
-	})
+	h.writeDoneOp(w, p, asResponse(toServiceResource(svc, p), serviceTypeURL))
 }
 
 func (h *Handler) getService(w http.ResponseWriter, r *http.Request, p *crPath) {
@@ -240,11 +232,7 @@ func (h *Handler) deleteService(w http.ResponseWriter, r *http.Request, p *crPat
 		return
 	}
 
-	writeJSON(w, http.StatusOK, operation{
-		Name:     opName(p, "delete-"+p.name),
-		Done:     true,
-		Response: asResponse(toServiceResource(svc, p), serviceTypeURL),
-	})
+	h.writeDoneOp(w, p, asResponse(toServiceResource(svc, p), serviceTypeURL))
 }
 
 func (h *Handler) listRevisions(w http.ResponseWriter, r *http.Request, p *crPath) {
@@ -281,11 +269,7 @@ func (h *Handler) deleteRevision(w http.ResponseWriter, r *http.Request, p *crPa
 		return
 	}
 
-	writeJSON(w, http.StatusOK, operation{
-		Name:     opName(p, "delete-rev-"+p.subName),
-		Done:     true,
-		Response: asResponse(toRevisionResource(rev, p), revisionTypeURL),
-	})
+	h.writeDoneOp(w, p, asResponse(toRevisionResource(rev, p), revisionTypeURL))
 }
 
 // serviceConfigFromWire maps a wire Service body onto a driver.ServiceConfig.

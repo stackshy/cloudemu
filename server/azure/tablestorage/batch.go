@@ -33,7 +33,7 @@ func batchErr(msg string) error {
 // batch handles POST /$batch: an OData entity group transaction. It parses the
 // multipart/mixed batch + change set, applies the operations atomically, and
 // returns the multipart/mixed batch response the aztables client expects.
-func (h *Handler) batch(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) batch(w http.ResponseWriter, r *http.Request, account string) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 		return
@@ -60,7 +60,12 @@ func (h *Handler) batch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, applyErr := h.ts.ApplyBatch(r.Context(), table, ops)
+	// A path-style change set addresses its entities as /{account}/{table}(…).
+	if account != "" {
+		table = strings.TrimPrefix(table, account+"/")
+	}
+
+	results, applyErr := h.ts.ApplyBatch(r.Context(), tableKey(account, table), ops)
 	if applyErr != nil {
 		writeBatchFailure(w, applyErr)
 		return

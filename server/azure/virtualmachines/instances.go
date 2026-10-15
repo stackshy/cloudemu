@@ -28,7 +28,9 @@ const armNameTag = "cloudemu:azureName"
 const (
 	diskARMNameTag      = "cloudemu:azureDiskName"
 	diskRGTag           = "cloudemu:azureRG"
+	subTag              = "cloudemu:azureSub" // the subscription a resource was created in
 	diskCreateOptionTag = "cloudemu:createOption"
+	availabilitySetTag  = "cloudemu:availabilitySet" // the availability set a VM was placed in
 )
 
 // osDiskDevice is the driver Device marker a materialized OS disk is attached
@@ -44,6 +46,9 @@ const createOptionAttach = "Attach"
 // deleteOptionDelete is the ARM deleteOption that cascades a disk's deletion
 // with its VM (the alternative, "Detach", is the default and leaves the disk).
 const deleteOptionDelete = "Delete"
+
+// deleteOptionDetach is the ARM default deleteOption: the disk outlives the VM.
+const deleteOptionDetach = "Detach"
 
 // URL schemes for building absolute self-referential URLs (async operation
 // status, boot-diagnostics serial log) against the incoming request.
@@ -103,13 +108,18 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
+	if ae := h.checkAvailabilitySet(r.Context(), rp, req.Properties.AvailabilitySet, req.Location); ae != nil {
+		azurearm.WriteError(w, ae.status, ae.code, ae.message)
+		return
+	}
+
 	cfg := computedriver.InstanceConfig{
 		ImageID:           imageRefToID(req.Properties.StorageProfile),
 		InstanceType:      hardwareSize(req.Properties.HardwareProfile),
 		SubnetID:          firstNicID(req.Properties.NetworkProfile),
 		KeyName:           computerName(req.Properties.OSProfile),
 		UserData:          decodeCustomData(customData(req.Properties.OSProfile)),
-		Tags:              mergeTags(req.Tags, rp.ResourceName),
+		Tags:              mergeTags(req.Tags, rp.ResourceName, rp.Subscription),
 		Priority:          req.Properties.Priority,
 		LicenseType:       req.Properties.LicenseType,
 		OSType:            osTypeFromStorage(req.Properties.StorageProfile),
@@ -121,9 +131,22 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		NetworkInterfaces: nicRefs,
 	}
 
+	if as := req.Properties.AvailabilitySet; as != nil && as.ID != "" {
+		cfg.Tags[availabilitySetTag] = as.ID
+	}
+
 	// ARM CreateOrUpdate is idempotent: a repeated PUT to the same {rg,name}
 	// updates the VM in place rather than provisioning a duplicate.
 	if existing, findErr := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); findErr == nil {
+		// A VM's availability set is fixed at create: moving it needs a
+		// delete and recreate.
+		if !strings.EqualFold(existing.Tags[availabilitySetTag], cfg.Tags[availabilitySetTag]) {
+			azurearm.WriteError(w, http.StatusConflict, "PropertyChangeNotAllowed",
+				"Changing property 'availabilitySet.id' is not allowed.")
+
+			return
+		}
+
 		h.updateExisting(w, r, rp, req, existing, cfg)
 		return
 	}
@@ -430,7 +453,8 @@ func (h *Handler) attachImplicitDataDisk(
 	vol, err := h.compute.CreateVolume(ctx, computedriver.VolumeConfig{
 		Size:       d.DiskSizeGB,
 		VolumeType: managedDiskStorageType(d.ManagedDisk),
-		Tags:       diskMaterializeTags(name, rp.ResourceGroup, d.CreateOption),
+		Location:   h.instanceLocation(ctx, instanceID),
+		Tags:       diskMaterializeTags(name, rp.ResourceGroup, rp.Subscription, d.CreateOption),
 	})
 	if err != nil {
 		return err
@@ -512,11 +536,15 @@ func managedDiskStorageType(m *managedDiskParameters) string {
 // diskMaterializeTags builds the cloudemu-internal tag set that lets the disks
 // wire handler render a materialized OS/data disk as a Microsoft.Compute/disks
 // resource: its ARM name, resource group, and createOption.
-func diskMaterializeTags(name, resourceGroup, createOption string) map[string]string {
+func diskMaterializeTags(name, resourceGroup, subscription, createOption string) map[string]string {
 	tags := map[string]string{diskARMNameTag: name}
 
 	if resourceGroup != "" {
 		tags[diskRGTag] = resourceGroup
+	}
+
+	if subscription != "" {
+		tags[subTag] = subscription
 	}
 
 	if createOption != "" {
@@ -552,7 +580,7 @@ func (h *Handler) materializeOSDisk(
 		return h.applyDiskDeleteOption(ctx, volID, od.DeleteOption)
 	}
 
-	volID, err := h.resolveOrCreateOSDisk(ctx, rp, od, vols)
+	volID, err := h.resolveOrCreateOSDisk(ctx, rp, od, vols, h.instanceLocation(ctx, instanceID))
 	if err != nil || volID == "" {
 		return err
 	}
@@ -571,7 +599,7 @@ func (h *Handler) materializeOSDisk(
 //
 //nolint:gocritic // rp is a request-scoped value.
 func (h *Handler) resolveOrCreateOSDisk(
-	ctx context.Context, rp azurearm.ResourcePath, od *osDisk, vols []computedriver.VolumeInfo,
+	ctx context.Context, rp azurearm.ResourcePath, od *osDisk, vols []computedriver.VolumeInfo, location string,
 ) (string, error) {
 	if strings.EqualFold(od.CreateOption, createOptionAttach) {
 		if od.ManagedDisk == nil || od.ManagedDisk.ID == "" {
@@ -594,13 +622,26 @@ func (h *Handler) resolveOrCreateOSDisk(
 	vol, err := h.compute.CreateVolume(ctx, computedriver.VolumeConfig{
 		Size:       od.DiskSizeGB,
 		VolumeType: managedDiskStorageType(od.ManagedDisk),
-		Tags:       diskMaterializeTags(name, rp.ResourceGroup, createOption),
+		Location:   location,
+		Tags:       diskMaterializeTags(name, rp.ResourceGroup, rp.Subscription, createOption),
 	})
 	if err != nil {
 		return "", err
 	}
 
 	return vol.ID, nil
+}
+
+// instanceLocation is the region of instanceID, which the disks a VM
+// materializes share (Azure creates a VM's managed disks in the VM's region).
+// Empty when the instance cannot be read, leaving the disk default.
+func (h *Handler) instanceLocation(ctx context.Context, instanceID string) string {
+	insts, err := h.compute.DescribeInstances(ctx, []string{instanceID}, nil)
+	if err != nil || len(insts) == 0 {
+		return ""
+	}
+
+	return insts[0].Region
 }
 
 // osDiskOf returns the id of the OS disk currently attached to instanceID (the
@@ -852,17 +893,17 @@ func (*Handler) PurgePhase() int { return resourcegroups.PhaseCompute }
 // PurgeResourceGroup backs the resource-group cascade delete: it forwards to
 // the compute driver's PurgeComputeResourceGroup, which removes every VM, scale
 // set, managed disk, snapshot, image and SSH public key recorded under the
-// group. Real Azure's group delete removes every managed disk in the group
-// regardless of a VM's attachment-scoped deleteOption. The subscription is
-// unused (the emulator is single-estate). A driver without the capability is
-// reported as an error rather than silently skipped.
-func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup string) error {
+// group in the subscription. Real Azure's group delete removes every managed
+// disk in the group regardless of a VM's attachment-scoped deleteOption. A
+// driver without the capability is reported as an error rather than silently
+// skipped.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
 	p, ok := h.compute.(computedriver.AzureResourceGroupPurger)
 	if !ok {
 		return cerrors.Newf(cerrors.Unimplemented, "compute driver %T cannot purge a resource group", h.compute)
 	}
 
-	return p.PurgeComputeResourceGroup(ctx, resourceGroup)
+	return p.PurgeComputeResourceGroup(ctx, subscription, resourceGroup)
 }
 
 // start handles POST virtualMachines/{name}/start.
@@ -1362,7 +1403,7 @@ func osTypeFromStorage(s *storageProfile) string {
 	return s.OSDisk.OSType
 }
 
-func mergeTags(in map[string]string, armName string) map[string]string {
+func mergeTags(in map[string]string, armName, subscription string) map[string]string {
 	out := make(map[string]string, len(in)+1)
 
 	for k, v := range in {
@@ -1370,6 +1411,10 @@ func mergeTags(in map[string]string, armName string) map[string]string {
 	}
 
 	out[armNameTag] = armName
+
+	if subscription != "" {
+		out[subTag] = subscription
+	}
 
 	return out
 }
@@ -1410,7 +1455,52 @@ func (h *Handler) buildVMResponse(
 		resp.Properties.StorageProfile.DataDisks = disks
 	}
 
+	h.fillOSDiskRef(ctx, rp, inst.ID, &resp)
+
 	return resp
+}
+
+// fillOSDiskRef reports the attached OS disk under storageProfile.osDisk (name
+// and managedDisk id/type), as real ARM does. Terraform reads managedDisk.id to
+// delete the OS disk with the VM; without it the disk is left behind.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) fillOSDiskRef(ctx context.Context, rp azurearm.ResourcePath, instanceID string, resp *vmResponse) {
+	vols, err := h.compute.DescribeVolumes(ctx, nil)
+	if err != nil {
+		return
+	}
+
+	for i := range vols {
+		v := &vols[i]
+		if v.AttachedTo != instanceID || v.Device != osDiskDevice {
+			continue
+		}
+
+		if resp.Properties.StorageProfile == nil {
+			resp.Properties.StorageProfile = &storageProfile{}
+		}
+
+		sp := resp.Properties.StorageProfile
+		if sp.OSDisk == nil {
+			sp.OSDisk = &osDisk{}
+		}
+
+		name := tagOr(v.Tags, diskARMNameTag, v.ID)
+		sp.OSDisk.Name = name
+
+		sp.OSDisk.DeleteOption = deleteOptionDetach
+		if v.DeleteOnTermination {
+			sp.OSDisk.DeleteOption = deleteOptionDelete
+		}
+
+		sp.OSDisk.ManagedDisk = &managedDiskParameters{
+			ID:                 azurearm.BuildResourceID(rp.Subscription, tagOr(v.Tags, diskRGTag, rp.ResourceGroup), providerName, "disks", name),
+			StorageAccountType: v.VolumeType,
+		}
+
+		return
+	}
 }
 
 // toVMResponse maps a driver Instance back onto the ARM JSON shape.
@@ -1496,7 +1586,7 @@ func stripInternalTags(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 
 	for k, v := range in {
-		if k == armNameTag {
+		if k == armNameTag || k == subTag || k == availabilitySetTag {
 			continue
 		}
 

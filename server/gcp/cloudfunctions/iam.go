@@ -1,28 +1,10 @@
 package cloudfunctions
 
 import (
-	"encoding/base64"
 	"net/http"
-	"strconv"
+
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 )
-
-// iamPolicy is the GCP IAM Policy resource returned by getIamPolicy /
-// setIamPolicy. Bindings are stored verbatim so a set/get round-trips.
-type iamPolicy struct {
-	Version  int             `json:"version,omitempty"`
-	Bindings []policyBinding `json:"bindings,omitempty"`
-	Etag     string          `json:"etag,omitempty"`
-}
-
-type policyBinding struct {
-	Role    string   `json:"role"`
-	Members []string `json:"members,omitempty"`
-}
-
-// setIamPolicyRequest is the body of functions/{name}:setIamPolicy.
-type setIamPolicyRequest struct {
-	Policy iamPolicy `json:"policy"`
-}
 
 // serveIamPolicy routes the :getIamPolicy (GET) and :setIamPolicy (POST) verbs
 // on a function. CloudEmu does not enforce IAM; it stores the policy so that
@@ -43,67 +25,31 @@ func (h *Handler) serveIamPolicy(w http.ResponseWriter, r *http.Request, p funct
 			return
 		}
 
-		h.getIamPolicy(w, p)
+		h.writeIamPolicy(w, r, p.fullName())
 	case actionSetIamPolicy:
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "setIamPolicy requires POST")
 			return
 		}
 
-		h.setIamPolicy(w, r, p)
+		h.storeIamPolicy(w, r, p.fullName())
 	default:
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "unknown method: "+p.action)
 	}
 }
 
-func (h *Handler) getIamPolicy(w http.ResponseWriter, p functionPath) {
-	h.writeIamPolicy(w, p.fullName())
+// writeIamPolicy returns the policy stored under key in the shared resource
+// IAM store (version 1 with the initial etag when none is set). Shared by the
+// v1 and v2 handlers.
+func (h *Handler) writeIamPolicy(w http.ResponseWriter, r *http.Request, key string) {
+	gcpiam.Serve(w, r, gcpiam.VerbGet, key, h.iam)
 }
 
-func (h *Handler) setIamPolicy(w http.ResponseWriter, r *http.Request, p functionPath) {
-	h.storeIamPolicy(w, r, p.fullName())
-}
-
-// writeIamPolicy returns the policy stored under key, or an empty versioned
-// policy when none is set (real GCP never 404s getIamPolicy on an existing
-// resource). Shared by the v1 and v2 handlers.
-func (h *Handler) writeIamPolicy(w http.ResponseWriter, key string) {
-	h.mu.RLock()
-	pol := h.policies[key]
-	h.mu.RUnlock()
-
-	if pol == nil {
-		pol = &iamPolicy{Version: 1, Etag: policyEtag(key, 0)}
-	}
-
-	writeJSON(w, http.StatusOK, pol)
-}
-
-// storeIamPolicy persists the policy from the request body under key and echoes
-// it back. Shared by the v1 and v2 handlers.
+// storeIamPolicy writes the request policy under key with the real etag
+// contract: an empty etag is a blind write, a stale one is 409 ABORTED, and
+// every write mints a new etag. Shared by the v1 and v2 handlers.
 func (h *Handler) storeIamPolicy(w http.ResponseWriter, r *http.Request, key string) {
-	var body setIamPolicyRequest
-	if !decodeJSON(w, r, &body, nil) {
-		return
-	}
-
-	pol := body.Policy
-	if pol.Version == 0 {
-		pol.Version = 1
-	}
-
-	pol.Etag = policyEtag(key, len(pol.Bindings))
-
-	h.mu.Lock()
-	h.policies[key] = &pol
-	h.mu.Unlock()
-
-	writeJSON(w, http.StatusOK, &pol)
-}
-
-// policyEtag returns a stable etag for a policy state.
-func policyEtag(resource string, n int) string {
-	return base64.StdEncoding.EncodeToString([]byte(resource + ":" + strconv.Itoa(n)))
+	gcpiam.Serve(w, r, gcpiam.VerbSet, key, h.iam)
 }
 
 // serveTestIamPermissions answers functions/{name}:testIamPermissions (v1). Real
@@ -157,7 +103,7 @@ func (h *Handler) serveV2IamPolicy(w http.ResponseWriter, r *http.Request, p v2P
 			return
 		}
 
-		h.writeIamPolicy(w, key)
+		h.writeIamPolicy(w, r, key)
 	case actionSetIamPolicy:
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "setIamPolicy requires POST")

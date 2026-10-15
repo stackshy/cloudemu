@@ -29,21 +29,21 @@ type segmentHandler func(w http.ResponseWriter, r *http.Request, rest []string)
 func New(d driver.VPCLattice) *Handler {
 	h := &Handler{lattice: d}
 	h.routes = map[string]segmentHandler{
-		"servicenetworks":                       h.serveServiceNetworks,
-		"services":                              h.serveServices,
-		"targetgroups":                          h.serveTargetGroups,
-		"servicenetworkvpcassociations":         h.serveSNVpcAssociations,
-		"servicenetworkvpcendpointassociations": h.serveSNVpcEndpointAssociations,
-		"servicenetworkserviceassociations":     h.serveSNServiceAssociations,
-		"servicenetworkresourceassociations":    h.serveSNResourceAssociations,
-		"resourceconfigurations":                h.serveResourceConfigurations,
-		"resourcegateways":                      h.serveResourceGateways,
-		"resourceendpointassociations":          h.serveResourceEndpointAssociations,
-		"accesslogsubscriptions":                h.serveAccessLogSubs,
-		"authpolicy":                            h.serveAuthPolicy,
-		"resourcepolicy":                        h.serveResourcePolicy,
-		"domainverifications":                   h.serveDomainVerifications,
-		"tags":                                  h.serveTags,
+		rootServiceNetworks:              h.serveServiceNetworks,
+		rootServices:                     h.serveServices,
+		rootTargetGroups:                 h.serveTargetGroups,
+		rootSNVpcAssociations:            h.serveSNVpcAssociations,
+		rootSNVpcEndpointAssociations:    h.serveSNVpcEndpointAssociations,
+		rootSNServiceAssociations:        h.serveSNServiceAssociations,
+		rootSNResourceAssociations:       h.serveSNResourceAssociations,
+		rootResourceConfigurations:       h.serveResourceConfigurations,
+		rootResourceGateways:             h.serveResourceGateways,
+		rootResourceEndpointAssociations: h.serveResourceEndpointAssociations,
+		rootAccessLogSubscriptions:       h.serveAccessLogSubs,
+		rootAuthPolicy:                   h.serveAuthPolicy,
+		rootResourcePolicy:               h.serveResourcePolicy,
+		rootDomainVerifications:          h.serveDomainVerifications,
+		rootTags:                         h.serveTags,
 	}
 
 	return h
@@ -82,9 +82,9 @@ func latticeClaims(method string, segs []string) bool {
 	rest := segs[1:]
 
 	switch segs[0] {
-	case "authpolicy", "resourcepolicy":
+	case rootAuthPolicy, rootResourcePolicy:
 		return claimsPolicyRoot(method, rest)
-	case "tags":
+	case rootTags:
 		return claimsTagsRoot(method, rest)
 	default:
 		return claimsResourceRoot(method, rest)
@@ -206,3 +206,7 @@ func splitPath(p string) []string {
 
 	return strings.Split(p, "/")
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "vpc-lattice" }

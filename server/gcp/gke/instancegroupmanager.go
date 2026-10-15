@@ -22,7 +22,7 @@ import (
 // sum was always 0.
 type InstanceGroupManagerRegistrar interface {
 	UpsertInstanceGroupManagerGCP(igm gcecompute.InstanceGroupManager)
-	DeleteInstanceGroupManagerGCP(zone, name string) error
+	DeleteInstanceGroupManagerGCP(project, zone, name string) error
 }
 
 // SetInstanceGroupManagers wires the compute-side MIG registrar. Called from the
@@ -42,14 +42,15 @@ func migName(location, cluster, pool string) string {
 
 // syncNodePoolMIG upserts the node pool's backing MIG with targetSize equal to
 // the pool's node count, in the pool's location (its zone). A no-op when no
-// compute registrar is wired.
-func (h *Handler) syncNodePoolMIG(np *gke.NodePool) {
+// compute registrar is wired. project is the project the request addressed.
+func (h *Handler) syncNodePoolMIG(project string, np *gke.NodePool) {
 	if h.migs == nil || np == nil {
 		return
 	}
 
 	name := migName(np.Location, np.ClusterName, np.Name)
 	h.migs.UpsertInstanceGroupManagerGCP(gcecompute.InstanceGroupManager{
+		Project:          project,
 		Name:             name,
 		Zone:             np.Location,
 		TargetSize:       int(np.NodeCount),
@@ -59,18 +60,18 @@ func (h *Handler) syncNodePoolMIG(np *gke.NodePool) {
 
 // removeNodePoolMIG deletes a node pool's backing MIG. A no-op when no registrar
 // is wired.
-func (h *Handler) removeNodePoolMIG(location, cluster, pool string) {
+func (h *Handler) removeNodePoolMIG(project, location, cluster, pool string) {
 	if h.migs == nil {
 		return
 	}
 
-	_ = h.migs.DeleteInstanceGroupManagerGCP(location, migName(location, cluster, pool))
+	_ = h.migs.DeleteInstanceGroupManagerGCP(project, location, migName(location, cluster, pool))
 }
 
 // reconcileClusterMIGs upserts a backing MIG for every node pool in a cluster.
 // Used after cluster creation, which materializes the default (and any
 // caller-specified) node pools in one call.
-func (h *Handler) reconcileClusterMIGs(ctx context.Context, location, cluster string) {
+func (h *Handler) reconcileClusterMIGs(ctx context.Context, project, location, cluster string) {
 	if h.migs == nil {
 		return
 	}
@@ -81,13 +82,13 @@ func (h *Handler) reconcileClusterMIGs(ctx context.Context, location, cluster st
 	}
 
 	for i := range pools {
-		h.syncNodePoolMIG(&pools[i])
+		h.syncNodePoolMIG(project, &pools[i])
 	}
 }
 
 // removeClusterMIGs deletes the backing MIGs of every node pool in a cluster.
 // Called before the cluster (and its pools) are torn down.
-func (h *Handler) removeClusterMIGs(ctx context.Context, location, cluster string) {
+func (h *Handler) removeClusterMIGs(ctx context.Context, project, location, cluster string) {
 	if h.migs == nil {
 		return
 	}
@@ -98,7 +99,7 @@ func (h *Handler) removeClusterMIGs(ctx context.Context, location, cluster strin
 	}
 
 	for i := range pools {
-		h.removeNodePoolMIG(pools[i].Location, pools[i].ClusterName, pools[i].Name)
+		h.removeNodePoolMIG(project, pools[i].Location, pools[i].ClusterName, pools[i].Name)
 	}
 }
 

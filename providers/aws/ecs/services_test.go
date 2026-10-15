@@ -309,3 +309,21 @@ func TestStopTask_StandaloneTaskNoServiceGroupNoop(t *testing.T) {
 	_, err = m.StopTask(ctx, "prod", tasks[0].ARN, "standalone stop again")
 	require.NoError(t, err)
 }
+
+func TestDeploymentComplete(t *testing.T) {
+	tests := []struct {
+		name            string
+		running, desire int
+		want            bool
+	}{
+		{"below desired", 1, 2, false},
+		{"equal to desired", 2, 2, true},
+		{"above desired", 3, 2, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, deploymentComplete(tc.running, tc.desire))
+		})
+	}
+}

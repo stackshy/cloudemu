@@ -49,6 +49,17 @@ Azure's `compute` service · portable interface `driver.Compute` · [Azure index
 
 Discovered by type assertion; only some providers implement these.
 
+### AzureAvailabilitySets
+
+AzureAvailabilitySets is an optional Azure-only capability for availability
+
+| Operation | Description |
+| --- | --- |
+| `DeleteAvailabilitySet` |  |
+| `GetAvailabilitySet` |  |
+| `ListAvailabilitySets` | ListAvailabilitySets lists the sets of a subscription, narrowed to one |
+| `PutAvailabilitySet` | PutAvailabilitySet creates or replaces the set. Out-of-range domain |
+
 ### AzureDiskAccessor
 
 AzureDiskAccessor is an optional Azure-only capability for the managed-disk
@@ -109,6 +120,17 @@ AzureVMDeleter is an optional Azure-only capability that removes VMs
 | Operation | Description |
 | --- | --- |
 | `DeleteInstances` |  |
+
+### AzureVMExtensions
+
+AzureVMExtensions is an optional Azure-only capability for VM extensions.
+
+| Operation | Description |
+| --- | --- |
+| `DeleteVMExtension` |  |
+| `GetVMExtension` |  |
+| `ListVMExtensions` |  |
+| `PutVMExtension` | PutVMExtension creates or replaces the extension on the VM, reporting |
 
 ### ConsoleReader
 

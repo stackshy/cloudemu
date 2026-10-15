@@ -1,6 +1,10 @@
 package bedrockagent
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	badriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
+)
 
 // JSON wire shapes for the AWS Bedrock Agent restJson1 protocol. Field names
 // use the exact camelCase keys the real aws-sdk-go-v2/service/bedrockagent
@@ -10,37 +14,68 @@ import "encoding/json"
 // --- agents ---
 
 type createAgentRequest struct {
-	AgentName               string            `json:"agentName"`
-	AgentResourceRoleArn    string            `json:"agentResourceRoleArn"`
-	FoundationModel         string            `json:"foundationModel"`
-	Instruction             string            `json:"instruction"`
-	Description             string            `json:"description"`
-	IdleSessionTTLInSeconds int32             `json:"idleSessionTTLInSeconds"`
-	ClientToken             string            `json:"clientToken"`
-	Tags                    map[string]string `json:"tags"`
+	AgentName                   string            `json:"agentName"`
+	AgentResourceRoleArn        string            `json:"agentResourceRoleArn"`
+	FoundationModel             string            `json:"foundationModel"`
+	Instruction                 string            `json:"instruction"`
+	Description                 string            `json:"description"`
+	IdleSessionTTLInSeconds     int32             `json:"idleSessionTTLInSeconds"`
+	ClientToken                 string            `json:"clientToken"`
+	Tags                        map[string]string `json:"tags"`
+	AgentCollaboration          string            `json:"agentCollaboration"`
+	OrchestrationType           string            `json:"orchestrationType"`
+	CustomerEncryptionKeyArn    string            `json:"customerEncryptionKeyArn"`
+	PromptOverrideConfiguration json.RawMessage   `json:"promptOverrideConfiguration"`
+	GuardrailConfiguration      json.RawMessage   `json:"guardrailConfiguration"`
+	MemoryConfiguration         json.RawMessage   `json:"memoryConfiguration"`
+	CustomOrchestration         json.RawMessage   `json:"customOrchestration"`
+}
+
+// config maps a Create/UpdateAgent body onto the driver's AgentConfig.
+func (in *createAgentRequest) config() badriver.AgentConfig {
+	return badriver.AgentConfig{
+		Name:                        in.AgentName,
+		ResourceRoleArn:             in.AgentResourceRoleArn,
+		FoundationModel:             in.FoundationModel,
+		Instruction:                 in.Instruction,
+		Description:                 in.Description,
+		IdleSessionTTLInSeconds:     in.IdleSessionTTLInSeconds,
+		ClientToken:                 in.ClientToken,
+		Tags:                        in.Tags,
+		AgentCollaboration:          in.AgentCollaboration,
+		OrchestrationType:           in.OrchestrationType,
+		CustomerEncryptionKeyArn:    in.CustomerEncryptionKeyArn,
+		PromptOverrideConfiguration: in.PromptOverrideConfiguration,
+		GuardrailConfiguration:      in.GuardrailConfiguration,
+		MemoryConfiguration:         in.MemoryConfiguration,
+		CustomOrchestration:         in.CustomOrchestration,
+	}
 }
 
 type agentJSON struct {
-	AgentID                 string `json:"agentId"`
-	AgentARN                string `json:"agentArn"`
-	AgentName               string `json:"agentName"`
-	AgentResourceRoleArn    string `json:"agentResourceRoleArn,omitempty"`
-	FoundationModel         string `json:"foundationModel,omitempty"`
-	Instruction             string `json:"instruction,omitempty"`
-	Description             string `json:"description,omitempty"`
-	AgentStatus             string `json:"agentStatus"`
-	AgentVersion            string `json:"agentVersion"`
-	IdleSessionTTLInSeconds int32  `json:"idleSessionTTLInSeconds"`
-	CreatedAt               string `json:"createdAt"`
-	UpdatedAt               string `json:"updatedAt"`
-	PreparedAt              string `json:"preparedAt,omitempty"`
-	// PromptOverrideConfiguration is always present on a real agent. Only the
-	// empty override list is modeled; the default prompt templates are not.
-	PromptOverrideConfiguration promptOverrideJSON `json:"promptOverrideConfiguration"`
-}
-
-type promptOverrideJSON struct {
-	PromptConfigurations []json.RawMessage `json:"promptConfigurations"`
+	AgentID                  string `json:"agentId"`
+	AgentARN                 string `json:"agentArn"`
+	AgentName                string `json:"agentName"`
+	AgentResourceRoleArn     string `json:"agentResourceRoleArn,omitempty"`
+	FoundationModel          string `json:"foundationModel,omitempty"`
+	Instruction              string `json:"instruction,omitempty"`
+	Description              string `json:"description,omitempty"`
+	AgentStatus              string `json:"agentStatus"`
+	AgentVersion             string `json:"agentVersion"`
+	IdleSessionTTLInSeconds  int32  `json:"idleSessionTTLInSeconds"`
+	CreatedAt                string `json:"createdAt"`
+	UpdatedAt                string `json:"updatedAt"`
+	PreparedAt               string `json:"preparedAt,omitempty"`
+	AgentCollaboration       string `json:"agentCollaboration,omitempty"`
+	OrchestrationType        string `json:"orchestrationType,omitempty"`
+	CustomerEncryptionKeyArn string `json:"customerEncryptionKeyArn,omitempty"`
+	// PromptOverrideConfiguration is always present on a real agent: the
+	// caller's override, or an empty list (AWS's default prompt templates are
+	// not reproduced).
+	PromptOverrideConfiguration json.RawMessage `json:"promptOverrideConfiguration"`
+	GuardrailConfiguration      json.RawMessage `json:"guardrailConfiguration,omitempty"`
+	MemoryConfiguration         json.RawMessage `json:"memoryConfiguration,omitempty"`
+	CustomOrchestration         json.RawMessage `json:"customOrchestration,omitempty"`
 }
 
 type agentSummaryJSON struct {
@@ -70,28 +105,6 @@ type prepareAgentResponse struct {
 	AgentStatus  string `json:"agentStatus"`
 	AgentVersion string `json:"agentVersion"`
 	PreparedAt   string `json:"preparedAt"`
-}
-
-type createAgentAliasRequest struct {
-	AgentAliasName string            `json:"agentAliasName"`
-	Description    string            `json:"description"`
-	Tags           map[string]string `json:"tags"`
-}
-
-type agentAliasJSON struct {
-	AgentAliasID         string   `json:"agentAliasId"`
-	AgentAliasARN        string   `json:"agentAliasArn"`
-	AgentAliasName       string   `json:"agentAliasName"`
-	AgentID              string   `json:"agentId"`
-	AgentAliasStatus     string   `json:"agentAliasStatus"`
-	Description          string   `json:"description,omitempty"`
-	RoutingConfiguration []string `json:"routingConfiguration"`
-	CreatedAt            string   `json:"createdAt"`
-	UpdatedAt            string   `json:"updatedAt"`
-}
-
-type agentAliasEnvelope struct {
-	AgentAlias agentAliasJSON `json:"agentAlias"`
 }
 
 // --- knowledge bases ---
@@ -191,13 +204,15 @@ type startIngestionJobRequest struct {
 }
 
 type ingestionJobJSON struct {
-	IngestionJobID  string `json:"ingestionJobId"`
-	KnowledgeBaseID string `json:"knowledgeBaseId"`
-	DataSourceID    string `json:"dataSourceId"`
-	Description     string `json:"description,omitempty"`
-	Status          string `json:"status"`
-	StartedAt       string `json:"startedAt"`
-	UpdatedAt       string `json:"updatedAt"`
+	IngestionJobID  string                   `json:"ingestionJobId"`
+	KnowledgeBaseID string                   `json:"knowledgeBaseId"`
+	DataSourceID    string                   `json:"dataSourceId"`
+	Description     string                   `json:"description,omitempty"`
+	Status          string                   `json:"status"`
+	Statistics      *ingestionStatisticsJSON `json:"statistics,omitempty"`
+	FailureReasons  []string                 `json:"failureReasons,omitempty"`
+	StartedAt       string                   `json:"startedAt"`
+	UpdatedAt       string                   `json:"updatedAt"`
 }
 
 type ingestionJobEnvelope struct {

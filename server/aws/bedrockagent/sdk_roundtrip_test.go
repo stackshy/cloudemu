@@ -12,6 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awsba "github.com/aws/aws-sdk-go-v2/service/bedrockagent"
 	batypes "github.com/aws/aws-sdk-go-v2/service/bedrockagent/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	providerba "github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
@@ -28,7 +30,15 @@ const (
 func newClient(t *testing.T) *awsba.Client {
 	t.Helper()
 
-	drv := providerba.New(config.NewOptions())
+	return newClientWith(t, config.NewOptions())
+}
+
+// newClientWith points a real SDK client at a server over a mock built with
+// opts.
+func newClientWith(t *testing.T, opts *config.Options) *awsba.Client {
+	t.Helper()
+
+	drv := providerba.New(opts)
 	ts := httptest.NewServer(serverba.New(drv))
 	t.Cleanup(ts.Close)
 
@@ -396,4 +406,240 @@ func assertNotFound(t *testing.T, err error) {
 	if !errors.As(err, &nfe) {
 		t.Fatalf("expected ResourceNotFoundException, got %T: %v", err, err)
 	}
+}
+
+// TestSDKAgentConfigurationRoundTrip covers the agent members #1452 found
+// dropped: promptOverrideConfiguration, plus agentCollaboration, guardrail and
+// memory configuration, which Terraform reads back after every apply.
+func TestSDKAgentConfigurationRoundTrip(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	override := &batypes.PromptOverrideConfiguration{PromptConfigurations: []batypes.PromptConfiguration{{
+		PromptType:         batypes.PromptTypeOrchestration,
+		PromptCreationMode: batypes.CreationModeOverridden,
+		PromptState:        batypes.PromptStateEnabled,
+		BasePromptTemplate: aws.String("You are $agent_instruction$"),
+		ParserMode:         batypes.CreationModeDefault,
+		InferenceConfiguration: &batypes.InferenceConfiguration{
+			Temperature: aws.Float32(0.2), MaximumLength: aws.Int32(512),
+		},
+	}}}
+
+	created, err := client.CreateAgent(ctx, &awsba.CreateAgentInput{
+		AgentName:                   aws.String("configured"),
+		FoundationModel:             aws.String(claudeModel),
+		AgentCollaboration:          batypes.AgentCollaborationSupervisorRouter,
+		PromptOverrideConfiguration: override,
+		GuardrailConfiguration: &batypes.GuardrailConfiguration{
+			GuardrailIdentifier: aws.String("gr-1"), GuardrailVersion: aws.String("1"),
+		},
+		MemoryConfiguration: &batypes.MemoryConfiguration{
+			EnabledMemoryTypes: []batypes.MemoryType{batypes.MemoryTypeSessionSummary}, StorageDays: aws.Int32(30),
+		},
+	})
+	require.NoError(t, err, "agentResourceRoleArn is optional in the service model")
+	requireStatus(t, created.ResultMetadata, http.StatusAccepted)
+
+	agentID := created.Agent.AgentId
+
+	got, err := client.GetAgent(ctx, &awsba.GetAgentInput{AgentId: agentID})
+	require.NoError(t, err)
+
+	agent := got.Agent
+	assert.Equal(t, batypes.AgentCollaborationSupervisorRouter, agent.AgentCollaboration)
+	require.Len(t, agent.PromptOverrideConfiguration.PromptConfigurations, 1)
+	assert.Equal(t, "You are $agent_instruction$",
+		aws.ToString(agent.PromptOverrideConfiguration.PromptConfigurations[0].BasePromptTemplate))
+	assert.Equal(t, "gr-1", aws.ToString(agent.GuardrailConfiguration.GuardrailIdentifier))
+	assert.Equal(t, int32(30), aws.ToInt32(agent.MemoryConfiguration.StorageDays))
+
+	// An update that omits the blocks keeps them.
+	_, err = client.UpdateAgent(ctx, &awsba.UpdateAgentInput{
+		AgentId: agentID, AgentName: aws.String("configured"), FoundationModel: aws.String(claudeModel),
+		AgentResourceRoleArn: aws.String(roleArn),
+	})
+	require.NoError(t, err)
+
+	got, err = client.GetAgent(ctx, &awsba.GetAgentInput{AgentId: agentID})
+	require.NoError(t, err)
+	require.Len(t, got.Agent.PromptOverrideConfiguration.PromptConfigurations, 1)
+	assert.Equal(t, batypes.AgentCollaborationSupervisorRouter, got.Agent.AgentCollaboration)
+
+	plain := createAgent(t, client, "plain", "")
+	defaults, err := client.GetAgent(ctx, &awsba.GetAgentInput{AgentId: aws.String(plain)})
+	require.NoError(t, err)
+	assert.Equal(t, batypes.AgentCollaborationDisabled, defaults.Agent.AgentCollaboration)
+	assert.Equal(t, batypes.OrchestrationTypeDefault, defaults.Agent.OrchestrationType)
+
+	_, err = client.CreateAgent(ctx, &awsba.CreateAgentInput{
+		AgentName: aws.String("bad"), AgentCollaboration: batypes.AgentCollaboration("BOSS"),
+	})
+	requireAPIError(t, err, "ValidationException", http.StatusBadRequest)
+}
+
+// TestSDKUnknownResourcesOnEveryFamily sends each operation family an id that
+// does not exist: every one answers ResourceNotFoundException (404).
+func TestSDKUnknownResourcesOnEveryFamily(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+	missing := aws.String("MISSING000")
+	draft := aws.String("DRAFT")
+
+	calls := map[string]func() error{
+		"GetAgent":    func() error { _, err := client.GetAgent(ctx, &awsba.GetAgentInput{AgentId: missing}); return err },
+		"DeleteAgent": func() error { _, err := client.DeleteAgent(ctx, &awsba.DeleteAgentInput{AgentId: missing}); return err },
+		"PrepareAgent": func() error {
+			_, err := client.PrepareAgent(ctx, &awsba.PrepareAgentInput{AgentId: missing})
+			return err
+		},
+		"UpdateAgent": func() error {
+			_, err := client.UpdateAgent(ctx, &awsba.UpdateAgentInput{AgentId: missing, AgentName: aws.String("a"),
+				FoundationModel: aws.String(claudeModel), AgentResourceRoleArn: aws.String(roleArn)})
+			return err
+		},
+		"GetKnowledgeBase": func() error {
+			_, err := client.GetKnowledgeBase(ctx, &awsba.GetKnowledgeBaseInput{KnowledgeBaseId: missing})
+			return err
+		},
+		"DeleteKnowledgeBase": func() error {
+			_, err := client.DeleteKnowledgeBase(ctx, &awsba.DeleteKnowledgeBaseInput{KnowledgeBaseId: missing})
+			return err
+		},
+		"ListDataSources": func() error {
+			_, err := client.ListDataSources(ctx, &awsba.ListDataSourcesInput{KnowledgeBaseId: missing})
+			return err
+		},
+		"GetDataSource": func() error {
+			_, err := client.GetDataSource(ctx, &awsba.GetDataSourceInput{KnowledgeBaseId: missing, DataSourceId: missing})
+			return err
+		},
+		"DeleteDataSource": func() error {
+			_, err := client.DeleteDataSource(ctx, &awsba.DeleteDataSourceInput{KnowledgeBaseId: missing, DataSourceId: missing})
+			return err
+		},
+		"StartIngestionJob": func() error {
+			_, err := client.StartIngestionJob(ctx, &awsba.StartIngestionJobInput{KnowledgeBaseId: missing, DataSourceId: missing})
+			return err
+		},
+		"ListKnowledgeBaseDocuments": func() error {
+			_, err := client.ListKnowledgeBaseDocuments(ctx, &awsba.ListKnowledgeBaseDocumentsInput{KnowledgeBaseId: missing, DataSourceId: missing})
+			return err
+		},
+		"GetFlow": func() error { _, err := client.GetFlow(ctx, &awsba.GetFlowInput{FlowIdentifier: missing}); return err },
+		"DeleteFlow": func() error {
+			_, err := client.DeleteFlow(ctx, &awsba.DeleteFlowInput{FlowIdentifier: missing})
+			return err
+		},
+		"PrepareFlow": func() error {
+			_, err := client.PrepareFlow(ctx, &awsba.PrepareFlowInput{FlowIdentifier: missing})
+			return err
+		},
+		"UpdateFlow": func() error {
+			_, err := client.UpdateFlow(ctx, &awsba.UpdateFlowInput{FlowIdentifier: missing, Name: aws.String("f"), ExecutionRoleArn: aws.String(roleArn)})
+			return err
+		},
+		"ListFlowVersions": func() error {
+			_, err := client.ListFlowVersions(ctx, &awsba.ListFlowVersionsInput{FlowIdentifier: missing})
+			return err
+		},
+		"ListFlowAliases": func() error {
+			_, err := client.ListFlowAliases(ctx, &awsba.ListFlowAliasesInput{FlowIdentifier: missing})
+			return err
+		},
+		"GetPrompt": func() error {
+			_, err := client.GetPrompt(ctx, &awsba.GetPromptInput{PromptIdentifier: missing})
+			return err
+		},
+		"DeletePrompt": func() error {
+			_, err := client.DeletePrompt(ctx, &awsba.DeletePromptInput{PromptIdentifier: missing})
+			return err
+		},
+		"CreatePromptVersion": func() error {
+			_, err := client.CreatePromptVersion(ctx, &awsba.CreatePromptVersionInput{PromptIdentifier: missing})
+			return err
+		},
+		"ListAgentActionGroups": func() error {
+			_, err := client.ListAgentActionGroups(ctx, &awsba.ListAgentActionGroupsInput{AgentId: missing, AgentVersion: draft})
+			return err
+		},
+		"ListAgentKnowledgeBases": func() error {
+			_, err := client.ListAgentKnowledgeBases(ctx, &awsba.ListAgentKnowledgeBasesInput{AgentId: missing, AgentVersion: draft})
+			return err
+		},
+		"ListAgentVersions": func() error {
+			_, err := client.ListAgentVersions(ctx, &awsba.ListAgentVersionsInput{AgentId: missing})
+			return err
+		},
+		"ListAgentAliases": func() error {
+			_, err := client.ListAgentAliases(ctx, &awsba.ListAgentAliasesInput{AgentId: missing})
+			return err
+		},
+	}
+
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			requireAPIError(t, call(), "ResourceNotFoundException", http.StatusNotFound)
+		})
+	}
+}
+
+// TestSDKUpdateFlowKnowledgeBaseAndDataSource round-trips the update
+// operations of flows, knowledge bases and data sources.
+func TestSDKUpdateFlowKnowledgeBaseAndDataSource(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	flowID, _ := createFlow(t, client, "pipeline")
+
+	flow, err := client.UpdateFlow(ctx, &awsba.UpdateFlowInput{
+		FlowIdentifier: aws.String(flowID), Name: aws.String("pipeline2"), ExecutionRoleArn: aws.String(roleArn),
+		Description: aws.String("renamed"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "pipeline2", aws.ToString(flow.Name))
+	assert.Equal(t, batypes.FlowStatusNotPrepared, flow.Status)
+
+	kbID := createKnowledgeBase(t, client, "faq")
+
+	kb, err := client.UpdateKnowledgeBase(ctx, &awsba.UpdateKnowledgeBaseInput{
+		KnowledgeBaseId: aws.String(kbID), Name: aws.String("faq2"), RoleArn: aws.String(roleArn),
+		Description: aws.String("renamed"),
+		KnowledgeBaseConfiguration: &batypes.KnowledgeBaseConfiguration{
+			Type:                             batypes.KnowledgeBaseTypeVector,
+			VectorKnowledgeBaseConfiguration: &batypes.VectorKnowledgeBaseConfiguration{EmbeddingModelArn: aws.String(embedArn)},
+		},
+		StorageConfiguration: &batypes.StorageConfiguration{
+			Type: batypes.KnowledgeBaseStorageTypeOpensearchServerless,
+			OpensearchServerlessConfiguration: &batypes.OpenSearchServerlessConfiguration{
+				CollectionArn: aws.String("arn:aws:aoss:us-east-1:123456789012:collection/abc"), VectorIndexName: aws.String("idx"),
+				FieldMapping: &batypes.OpenSearchServerlessFieldMapping{
+					MetadataField: aws.String("m"), TextField: aws.String("t"), VectorField: aws.String("v"),
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "faq2", aws.ToString(kb.KnowledgeBase.Name))
+
+	ds, err := client.CreateDataSource(ctx, &awsba.CreateDataSourceInput{
+		KnowledgeBaseId: aws.String(kbID), Name: aws.String("docs"),
+		DataSourceConfiguration: &batypes.DataSourceConfiguration{
+			Type: batypes.DataSourceTypeS3, S3Configuration: &batypes.S3DataSourceConfiguration{BucketArn: aws.String(bucketArn)},
+		},
+	})
+	require.NoError(t, err)
+
+	updated, err := client.UpdateDataSource(ctx, &awsba.UpdateDataSourceInput{
+		KnowledgeBaseId: aws.String(kbID), DataSourceId: ds.DataSource.DataSourceId, Name: aws.String("docs2"),
+		DataSourceConfiguration: &batypes.DataSourceConfiguration{
+			Type: batypes.DataSourceTypeS3, S3Configuration: &batypes.S3DataSourceConfiguration{BucketArn: aws.String(bucketArn)},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "docs2", aws.ToString(updated.DataSource.Name))
+
+	got, err := client.GetDataSource(ctx, &awsba.GetDataSourceInput{KnowledgeBaseId: aws.String(kbID), DataSourceId: ds.DataSource.DataSourceId})
+	require.NoError(t, err)
+	assert.Equal(t, "docs2", aws.ToString(got.DataSource.Name))
 }

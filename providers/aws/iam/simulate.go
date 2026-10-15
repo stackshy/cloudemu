@@ -229,12 +229,33 @@ func containsStar(resources []string) bool {
 }
 
 // anyCoversService reports whether one pattern matches every action of svc.
-// Matching the pattern against the literal "svc:*" does that: "*", "s3:*" and
-// "s*" cover s3, "s3:Get*" does not.
 func anyCoversService(patterns []string, svc string) bool {
 	for _, p := range patterns {
-		if wildcardMatch(p, svc+":*") {
+		if coversService(p, svc) {
 			return true
+		}
+	}
+
+	return false
+}
+
+// coversService reports whether pattern matches every "svc:Action". It holds
+// when the pattern is some head followed only by '*'s and the head matches a
+// prefix of "svc:": the trailing stars then take the rest of any action. So "*",
+// "s3:*" and "s*" cover s3 while "s3:Get*" and "s3:?" do not. It may say no for
+// an odd pattern that does cover the service ("s3:?*"), never the reverse,
+// which is the safe direction for both callers.
+func coversService(pattern, svc string) bool {
+	pattern = strings.ToLower(pattern)
+	prefix := strings.ToLower(svc) + ":"
+
+	for i := len(pattern) - 1; i >= 0 && pattern[i] == '*'; i-- {
+		head := pattern[:i]
+
+		for k := 0; k <= len(prefix); k++ {
+			if globMatch(head, prefix[:k]) {
+				return true
+			}
 		}
 	}
 
@@ -255,20 +276,22 @@ func anyCouldMatchService(patterns []string, svc string) bool {
 // may say yes for a pattern that cannot really match, never the reverse, which
 // is the safe direction for both of its callers.
 func couldMatchService(pattern, svc string) bool {
+	pattern, svc = strings.ToLower(pattern), strings.ToLower(svc)
+
 	if head, _, ok := strings.Cut(pattern, ":"); ok {
 		// Actions carry exactly one colon, so the pattern's first colon lines up
 		// with it and the head must match the service name.
-		return wildcardMatch(head, svc)
+		return globMatch(head, svc)
 	}
 
-	// With no colon, only a '*' can span the separator, so the text before the
-	// first '*' must be a prefix of the service name.
-	star := strings.IndexByte(pattern, '*')
-	if star < 0 {
+	// With no colon, only a wildcard can stand in for the separator, so the
+	// text before the first '*' or '?' must be a prefix of the service name.
+	wild := strings.IndexAny(pattern, "*?")
+	if wild < 0 {
 		return false
 	}
 
-	return strings.HasPrefix(svc, pattern[:star])
+	return strings.HasPrefix(svc, pattern[:wild])
 }
 
 // EvaluatePermission reports the tri-state decision for one action. With
@@ -286,14 +309,61 @@ func (m *Mock) EvaluatePermission(_ context.Context, req driver.EvalRequest) dri
 	return driver.Decision(m.evaluatePrincipal(req.Principal, q, mode))
 }
 
+// EvaluateRoleBoundary reports the decision of the permissions boundary of
+// the role named req.Principal alone, allowed when it has none. The name is
+// looked up as a role only, never as a user or group of the same name. A
+// role that no longer exists is an implicit deny. It implements
+// driver.RoleBoundaryEvaluator.
+func (m *Mock) EvaluateRoleBoundary(_ context.Context, req driver.EvalRequest) driver.Decision {
+	if !m.roles.Has(req.Principal) {
+		return driver.DecisionImplicitDeny
+	}
+
+	doc, ok := m.permissionsBoundaryDoc(entityRole, req.Principal)
+	if !ok {
+		return driver.DecisionAllowed
+	}
+
+	mode := evalUnknownResource
+	if req.ResourceKnown {
+		mode = evalKnownResource
+	}
+
+	q := evalRequest{action: req.Action, resource: req.Resource, cctx: ConditionContext(req.Context)}
+
+	return driver.Decision(decideWith([]string{doc}, q, mode))
+}
+
 // EvaluateServiceWide reports whether principal may perform every action of
 // service on every resource. It implements driver.PermissionEvaluator.
 func (m *Mock) EvaluateServiceWide(
 	_ context.Context, principal, service string, condCtx map[string]string,
 ) driver.Decision {
+	// A name that is not a service prefix ("", "a:b", "s*") would let a
+	// wildcard Allow match it, so it is never allowed.
+	if !isServicePrefix(service) {
+		return driver.DecisionImplicitDeny
+	}
+
 	q := evalRequest{service: service, cctx: ConditionContext(condCtx)}
 
 	return driver.Decision(m.evaluatePrincipal(principal, q, evalServiceWide))
+}
+
+// isServicePrefix reports whether s has the shape of an IAM service prefix:
+// lower-case letters, digits and hyphens, starting with a letter or digit.
+func isServicePrefix(s string) bool {
+	if s == "" || s[0] == '-' {
+		return false
+	}
+
+	for _, c := range s {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+			return false
+		}
+	}
+
+	return true
 }
 
 // evaluatePrincipal combines a principal's identity policies with its

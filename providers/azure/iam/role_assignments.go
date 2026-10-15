@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // RoleAssignmentConfig is the input to CreateRoleAssignment: an Azure RBAC
@@ -118,6 +119,23 @@ func (m *Mock) DeleteRoleAssignment(_ context.Context, id string) (*RoleAssignme
 	out := *a
 
 	return &out, nil
+}
+
+// PurgeResourceGroup deletes every role assignment scoped to the resource
+// group or to a resource inside it, so a resource-group delete takes its role
+// assignments with it. Assignments at the subscription or a management group
+// stay, as do role definitions, which are not resource-group resources.
+func (m *Mock) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for id, a := range m.roleAssignments {
+		if scope.IDInResourceGroup(a.Scope, subscription, resourceGroup) {
+			delete(m.roleAssignments, id)
+		}
+	}
+
+	return nil
 }
 
 // ListRoleAssignments returns every stored role assignment, ordered by id for

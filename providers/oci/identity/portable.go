@@ -339,10 +339,15 @@ func (m *Mock) CreateAccessKey(_ context.Context, cfg driver.AccessKeyConfig) (*
 		return nil, namedNotFound(kindUser, cfg.UserName)
 	}
 
+	token, err := idgen.OCIAuthToken()
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.Internal, "generate auth token: %v", err)
+	}
+
 	tok := &authToken{
 		ID:          idgen.GlobalOCID(kindCredential, m.opts.Realm),
 		UserName:    cfg.UserName,
-		Token:       idgen.GenerateID("authtoken-"),
+		Token:       token,
 		TimeCreated: m.now(),
 	}
 	m.authTokens.Set(tok.ID, tok)

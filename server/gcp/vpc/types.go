@@ -38,6 +38,8 @@ type networkResponse struct {
 	Mtu                                   int32                 `json:"mtu,omitempty"`
 	NetworkFirewallPolicyEnforcementOrder string                `json:"networkFirewallPolicyEnforcementOrder,omitempty"`
 	CreationTimestamp                     string                `json:"creationTimestamp,omitempty"`
+	Subnetworks                           []string              `json:"subnetworks,omitempty"`
+	Peerings                              []networkPeering      `json:"peerings,omitempty"`
 }
 
 type networkListResponse struct {
@@ -122,6 +124,16 @@ type addressesScopedList struct {
 	Warning   *scopedWarning    `json:"warning,omitempty"`
 }
 
+// rawListResponse is the list envelope for collections whose bodies are
+// stored verbatim (addresses, routes, routers).
+type rawListResponse struct {
+	Kind          string            `json:"kind"`
+	ID            string            `json:"id,omitempty"`
+	Items         []json.RawMessage `json:"items"`
+	NextPageToken string            `json:"nextPageToken,omitempty"`
+	SelfLink      string            `json:"selfLink,omitempty"`
+}
+
 type addressAggregatedListResponse struct {
 	Kind          string                         `json:"kind"`
 	ID            string                         `json:"id"`
@@ -141,7 +153,7 @@ type subnetworkListResponse struct {
 type firewallRequest struct {
 	Name                  string             `json:"name"`
 	Network               string             `json:"network,omitempty"`
-	Description           string             `json:"description,omitempty"`
+	Description           *string            `json:"description,omitempty"`
 	Priority              *int               `json:"priority,omitempty"`
 	Direction             string             `json:"direction,omitempty"`
 	Allowed               []firewallRule     `json:"allowed,omitempty"`

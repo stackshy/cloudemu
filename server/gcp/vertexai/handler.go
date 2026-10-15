@@ -115,11 +115,15 @@ func (*Handler) Matches(r *http.Request) bool {
 		return true
 	}
 
-	if !strings.HasPrefix(r.URL.Path, pathPrefix) {
-		return false
+	tail, beta := strings.CutPrefix(r.URL.Path, v1beta1Prefix)
+	if !beta {
+		var ok bool
+		if tail, ok = strings.CutPrefix(r.URL.Path, pathPrefix); !ok {
+			return false
+		}
 	}
 
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, pathPrefix), "/")
+	parts := strings.Split(tail, "/")
 
 	const idxScope, idxResource = 1, 3
 
@@ -127,8 +131,22 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	return vertexCollections[stripAction(parts[idxResource])]
+	collection := stripAction(parts[idxResource])
+
+	// v1beta1 serves only the collections routed for it, so the other
+	// v1beta1 APIs on the shared prefix are left alone.
+	if beta {
+		return v1beta1Collections[collection]
+	}
+
+	return vertexCollections[collection]
 }
+
+// v1beta1Collections are the Vertex collections also served under /v1beta1/,
+// on the same handlers as v1 (the google-beta Terraform provider calls them).
+//
+//nolint:gochecknoglobals // immutable routing set
+var v1beta1Collections = map[string]bool{"endpoints": true}
 
 // vPath is a parsed Vertex REST path.
 type vPath struct {
@@ -143,7 +161,12 @@ type vPath struct {
 
 // parsePath splits a Vertex projects/locations URL.
 func parsePath(urlPath string) (vPath, bool) {
-	parts := strings.Split(strings.TrimPrefix(urlPath, pathPrefix), "/")
+	tail, ok := strings.CutPrefix(urlPath, v1beta1Prefix)
+	if !ok {
+		tail = strings.TrimPrefix(urlPath, pathPrefix)
+	}
+
+	parts := strings.Split(tail, "/")
 
 	const (
 		minParts    = 4

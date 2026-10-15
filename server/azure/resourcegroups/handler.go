@@ -16,11 +16,14 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 
+	azrg "github.com/stackshy/cloudemu/v2/providers/azure/rgstore"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegraph"
+	"github.com/stackshy/cloudemu/v2/server/azure/subscriptions"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
@@ -104,13 +107,24 @@ func purgePhase(p ResourceGroupPurger) int {
 	return PhaseDefault
 }
 
+// Store holds resource-group bodies. Lookups are case-insensitive on the
+// subscription and name, because ARM resolves a resource group that way
+// (create "myRG", get "MYRG"); the body keeps the original-cased name.
+// providers/azure/rgstore.Mock implements it.
+type Store interface {
+	Put(sub, name string, body map[string]any) (existed bool)
+	Get(sub, name string) (map[string]any, bool)
+	Exists(sub, name string) bool
+	Delete(sub, name string) bool
+	List(sub string) []map[string]any
+}
+
 // Handler serves the resource-group collection and its members.
 type Handler struct {
-	mu sync.RWMutex
-	// groups is keyed subscription -> lowercased-name -> group body. Names are
-	// stored lowercased because ARM resolves a resource group case-insensitively
-	// (create "myRG", get "MYRG"); the body keeps the original-cased name.
-	groups map[string]map[string]map[string]any
+	// mu serializes a PATCH read-modify-write against other writes and guards
+	// purgers.
+	mu    sync.RWMutex
+	store Store
 	// engine backs exportTemplate: the emulator tracks group membership by the
 	// resource group segment already embedded in each resource's own id, so
 	// enumerating "what's in this group" means walking the same cross-service
@@ -128,7 +142,18 @@ type Handler struct {
 // delete into the resources created under it; pass the per-service handlers
 // that own resource-group-scoped resources.
 func New(engine *resourcediscovery.Engine, purgers ...ResourceGroupPurger) *Handler {
-	return &Handler{groups: map[string]map[string]map[string]any{}, engine: engine, purgers: purgers}
+	return NewWithStore(nil, engine, purgers...)
+}
+
+// NewWithStore is New backed by store, so groups live wherever store keeps
+// them (the provider's snapshottable mock in a served emulator). A nil store
+// gets a private in-memory one.
+func NewWithStore(store Store, engine *resourcediscovery.Engine, purgers ...ResourceGroupPurger) *Handler {
+	if store == nil {
+		store = azrg.New(nil)
+	}
+
+	return &Handler{store: store, engine: engine, purgers: purgers}
 }
 
 // SetPurgers replaces the purgers a group delete cascades into. The server
@@ -217,7 +242,7 @@ func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, sub st
 		return
 	}
 
-	h.list(w, sub)
+	h.list(w, r, sub)
 }
 
 func (h *Handler) serveGroup(w http.ResponseWriter, r *http.Request, sub, name string) {
@@ -243,6 +268,14 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, sub, name string) 
 		return
 	}
 
+	if !validGroupName(name) {
+		azurearm.WriteError(w, http.StatusBadRequest, "InvalidResourceGroupName",
+			"Resource group name '"+name+"' is invalid. The name must be 1 to 90 characters of "+
+				"alphanumerics, underscores, hyphens, periods and parentheses, and cannot end with a period.")
+
+		return
+	}
+
 	// A resource group requires a location that cannot be changed later; real
 	// ARM rejects a create/update with no location.
 	loc, _ := body["location"].(string)
@@ -253,11 +286,19 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, sub, name string) 
 		return
 	}
 
+	if !subscriptions.IsRegion(loc) {
+		azurearm.WriteError(w, http.StatusBadRequest, "LocationNotAvailableForResourceGroup",
+			"The provided location '"+loc+"' is not available for resource group. "+
+				"List of available regions can be found at the locations API.")
+
+		return
+	}
+
 	group := map[string]any{
 		"id":         azureGroupID(sub, name),
 		"name":       name,
 		"type":       resourceGroupType,
-		"location":   loc,
+		"location":   subscriptions.CanonicalLocation(loc),
 		"properties": map[string]any{"provisioningState": "Succeeded"},
 	}
 
@@ -269,8 +310,16 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, sub, name string) 
 		group["managedBy"] = mb
 	}
 
+	existed, oldLoc := h.putGroup(sub, name, group)
+	if oldLoc != "" {
+		azurearm.WriteError(w, http.StatusConflict, "InvalidResourceGroupLocation",
+			"Invalid resource group location '"+loc+"'. The Resource group already exists in location '"+oldLoc+"'.")
+
+		return
+	}
+
 	status := http.StatusCreated
-	if h.store(sub, name, group) {
+	if existed {
 		status = http.StatusOK
 	}
 
@@ -286,7 +335,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request, sub, name string
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	group, ok := h.groups[sub][strings.ToLower(name)]
+	group, ok := h.store.Get(sub, name)
 	if !ok {
 		azurearm.WriteError(w, http.StatusNotFound, "ResourceGroupNotFound",
 			"Resource group '"+name+"' could not be found.")
@@ -304,13 +353,13 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request, sub, name string
 		group["managedBy"] = mb
 	}
 
+	h.store.Put(sub, name, group)
+
 	azurearm.WriteJSON(w, http.StatusOK, group)
 }
 
 func (h *Handler) get(w http.ResponseWriter, sub, name string) {
-	h.mu.RLock()
-	group, ok := h.groups[sub][strings.ToLower(name)]
-	h.mu.RUnlock()
+	group, ok := h.store.Get(sub, name)
 
 	if !ok {
 		azurearm.WriteError(w, http.StatusNotFound, "ResourceGroupNotFound",
@@ -328,11 +377,7 @@ func (h *Handler) get(w http.ResponseWriter, sub, name string) {
 // handler only accepts those two codes and errors on any other status,
 // including a 200 carrying a JSON body.
 func (h *Handler) checkExistence(w http.ResponseWriter, sub, name string) {
-	h.mu.RLock()
-	_, ok := h.groups[sub][strings.ToLower(name)]
-	h.mu.RUnlock()
-
-	if !ok {
+	if !h.store.Exists(sub, name) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -340,22 +385,21 @@ func (h *Handler) checkExistence(w http.ResponseWriter, sub, name string) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *Handler) list(w http.ResponseWriter, sub string) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+func (h *Handler) list(w http.ResponseWriter, r *http.Request, sub string) {
+	groups := filterByTag(h.store.List(sub), r.URL.Query().Get("$filter"))
+	page, next := azurearm.Paginate(r, groups, azurearm.DefaultPageSize)
 
-	value := make([]map[string]any, 0, len(h.groups[sub]))
-	for _, group := range h.groups[sub] {
-		value = append(value, group)
+	resp := map[string]any{"value": page}
+	if next != "" {
+		resp["nextLink"] = next
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, map[string]any{"value": value})
+	azurearm.WriteJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) remove(w http.ResponseWriter, r *http.Request, sub, name string) {
 	h.mu.Lock()
-	_, existed := h.groups[sub][strings.ToLower(name)]
-	delete(h.groups[sub], strings.ToLower(name))
+	existed := h.store.Delete(sub, name)
 	h.mu.Unlock()
 
 	// Deleting a group that is already gone is the caller's desired end state,
@@ -412,11 +456,7 @@ func (h *Handler) serveExport(w http.ResponseWriter, r *http.Request, sub, name 
 		return
 	}
 
-	h.mu.RLock()
-	_, ok := h.groups[sub][strings.ToLower(name)]
-	h.mu.RUnlock()
-
-	if !ok {
+	if !h.store.Exists(sub, name) {
 		azurearm.WriteError(w, http.StatusNotFound, "ResourceGroupNotFound",
 			"Resource group '"+name+"' could not be found.")
 
@@ -555,37 +595,80 @@ func exportResourceEntry(r *resourcediscovery.Resource) map[string]any {
 	return entry
 }
 
-// store writes the group under a case-insensitive key and reports whether a
-// group of that name already existed (an update rather than a create).
-func (h *Handler) store(sub, name string, group map[string]any) (existed bool) {
+// putGroup writes the group and reports whether a group of that name already
+// existed (an update rather than a create). When the existing group lives in a
+// different location nothing is written and conflictLoc is that location.
+func (h *Handler) putGroup(sub, name string, group map[string]any) (existed bool, conflictLoc string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if h.groups[sub] == nil {
-		h.groups[sub] = map[string]map[string]any{}
+	if cur, ok := h.store.Get(sub, name); ok {
+		curLoc, _ := cur["location"].(string)
+		newLoc, _ := group["location"].(string)
+
+		if subscriptions.NormalizeLocation(curLoc) != subscriptions.NormalizeLocation(newLoc) {
+			return true, curLoc
+		}
+
+		// The location is fixed at creation; keep the stored spelling.
+		group["location"] = curLoc
 	}
 
-	_, existed = h.groups[sub][strings.ToLower(name)]
-	h.groups[sub][strings.ToLower(name)] = group
+	return h.store.Put(sub, name, group), ""
+}
 
-	return existed
+var (
+	groupNameRe = regexp.MustCompile(`^[\p{L}\p{N}_.()-]{1,90}$`)
+	tagFilterRe = regexp.MustCompile(`^\s*tagName\s+eq\s+'([^']*)'(?:\s+and\s+tagValue\s+eq\s+'([^']*)')?\s*$`)
+)
+
+// validGroupName reports whether name is a legal resource group name: 1 to 90
+// letters, digits, underscores, hyphens, periods or parentheses, not ending in
+// a period.
+func validGroupName(name string) bool {
+	return groupNameRe.MatchString(name) && !strings.HasSuffix(name, ".")
+}
+
+// filterByTag applies the list $filter "tagName eq 'k' [and tagValue eq 'v']".
+// An empty or unrecognized filter returns groups unchanged.
+func filterByTag(groups []map[string]any, filter string) []map[string]any {
+	m := tagFilterRe.FindStringSubmatch(filter)
+	if m == nil {
+		return groups
+	}
+
+	hasValue := strings.Contains(filter, "tagValue")
+	out := make([]map[string]any, 0, len(groups))
+
+	for _, g := range groups {
+		if v, ok := tagValue(g["tags"], m[1]); ok && (!hasValue || v == m[2]) {
+			out = append(out, g)
+		}
+	}
+
+	return out
+}
+
+func tagValue(tags any, key string) (string, bool) {
+	switch t := tags.(type) {
+	case map[string]any:
+		v, ok := t[key]
+		s, _ := v.(string)
+
+		return s, ok
+	case map[string]string:
+		v, ok := t[key]
+
+		return v, ok
+	}
+
+	return "", false
 }
 
 // Exists reports whether a resource group of the given name exists in the
-// subscription. ARM resolves resource-group names case-insensitively, so the
-// lookup lowercases the name to match how store keys them.
+// subscription, case-insensitively as ARM resolves it.
 func (h *Handler) Exists(sub, name string) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	groups, ok := h.groups[sub]
-	if !ok {
-		return false
-	}
-
-	_, ok = groups[strings.ToLower(name)]
-
-	return ok
+	return h.store.Exists(sub, name)
 }
 
 func azureGroupID(sub, name string) string {

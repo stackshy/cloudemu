@@ -9,6 +9,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/server/gcp/opmeta"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -76,7 +77,7 @@ func (h *Handler) createTrigger(w http.ResponseWriter, r *http.Request, rt *rout
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, triggerID,
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, triggerID, "create",
 		typedResponse(triggerTypeURL, toTriggerJSON(rt.project, rt.location, stored))))
 }
 
@@ -194,13 +195,24 @@ func triggerPageSize(r *http.Request) int {
 	return n
 }
 
+// deleteTrigger removes a trigger. Real Eventarc's delete operation resolves to
+// the deleted Trigger, so it is read before removal.
 func (h *Handler) deleteTrigger(w http.ResponseWriter, r *http.Request, rt *route) {
-	if err := h.bus.DeleteRule(r.Context(), channelName(rt.location), rt.trigger); err != nil {
+	bus := channelName(rt.location)
+
+	existing, err := h.bus.GetRule(r.Context(), bus, rt.trigger)
+	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, rt.trigger, nil))
+	if err := h.bus.DeleteRule(r.Context(), bus, rt.trigger); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, rt.trigger, "delete",
+		typedResponse(triggerTypeURL, toTriggerJSON(rt.project, rt.location, existing))))
 }
 
 // patchTrigger applies an updateTrigger call. Only the fields named in
@@ -242,7 +254,7 @@ func (h *Handler) patchTrigger(w http.ResponseWriter, r *http.Request, rt *route
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, rt.trigger,
+	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, rt.trigger, "update",
 		typedResponse(triggerTypeURL, toTriggerJSON(rt.project, rt.location, stored))))
 }
 
@@ -354,16 +366,26 @@ func (h *Handler) ensureChannel(r *http.Request, rt *route, bus string) error {
 	return nil
 }
 
-// doneOperation builds a completed long-running operation envelope and records
-// it with the shared LRO poller so a client polling the returned name resolves
-// the same done operation (with its typed response) in the full server.
-func (h *Handler) doneOperation(rt *route, id string, response any) operationJSON {
-	name := "projects/" + rt.project + "/locations/" + rt.location + "/operations/op-" + id
-	h.ops.Register(name, response)
+// opMetaTypeURL is the Any type URL of Eventarc's OperationMetadata.
+const opMetaTypeURL = "type.googleapis.com/google.cloud.eventarc.v1.OperationMetadata"
+
+// doneOperation builds a completed long-running operation envelope for a verb
+// on the named trigger, with an OperationMetadata Any, and records it with the
+// shared LRO poller so a client polling the returned name resolves the same
+// done operation (with its typed response) in the full server. Each call mints
+// a fresh operation id.
+func (h *Handler) doneOperation(rt *route, triggerID, verb string, response any) operationJSON {
+	now := h.clock.Now()
+	base := "projects/" + rt.project + "/locations/" + rt.location
+	name := base + "/operations/" + opmeta.NewID(now)
+	meta := opmeta.Metadata(opMetaTypeURL, now, base+"/triggers/"+triggerID, verb)
+
+	h.ops.RegisterWithMetadata(name, response, meta)
 
 	return operationJSON{
 		Name:     name,
 		Done:     true,
+		Metadata: meta,
 		Response: response,
 	}
 }

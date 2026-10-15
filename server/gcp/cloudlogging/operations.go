@@ -8,6 +8,7 @@ import (
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -57,20 +58,26 @@ func (h *Handler) writeEntries(w http.ResponseWriter, r *http.Request) {
 
 		e.Labels = mergeLabels(req.Labels, e.Labels)
 
-		byLog[logID] = append(byLog[logID], logdriver.LogEvent{
+		// Each entry's log lives in the project its logName names.
+		key := projectctx.Key(projectctx.FromPath(name), logID)
+
+		byLog[key] = append(byLog[key], logdriver.LogEvent{
 			Timestamp:     parseTimestamp(e.Timestamp, now),
 			IngestionTime: now,
 			Message:       encodeEntryPayload(e),
 		})
 	}
 
-	for logID, events := range byLog {
-		if err := h.ensureLog(r.Context(), logID); err != nil {
+	for key, events := range byLog {
+		project, logID, _ := projectctx.Split(key)
+		ctx := projectctx.WithProject(r.Context(), project)
+
+		if err := h.ensureLog(ctx, logID); err != nil {
 			gcprest.WriteCErr(w, err)
 			return
 		}
 
-		if err := h.logs.PutLogEvents(r.Context(), logID, defaultStream, events); err != nil {
+		if err := h.logs.PutLogEvents(ctx, logID, defaultStream, events); err != nil {
 			gcprest.WriteCErr(w, err)
 			return
 		}
@@ -140,6 +147,7 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	project := projectFromResourceNames(req.ResourceNames)
+	r = r.WithContext(projectctx.WithProject(r.Context(), project))
 
 	entries, err := h.gatherEntries(r, project, logIDFromFilter(req.Filter))
 	if err != nil {

@@ -11,12 +11,12 @@ import (
 
 //nolint:gocritic // cfg matches the driver signature; copied on entry.
 func (m *Mock) CreateModel(_ context.Context, cfg driver.ModelConfig) (*driver.Model, error) {
-	if cfg.ModelName == "" {
-		return nil, errors.New(errors.InvalidArgument, "modelName is required")
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
 	}
 
-	if m.models.Has(cfg.ModelName) {
-		return nil, errors.Newf(errors.AlreadyExists, "model %q already exists", cfg.ModelName)
+	if cfg.ModelName == "" {
+		return nil, errors.New(errors.InvalidArgument, "modelName is required")
 	}
 
 	arn := m.arn("model/" + cfg.ModelName)
@@ -29,9 +29,11 @@ func (m *Mock) CreateModel(_ context.Context, cfg driver.ModelConfig) (*driver.M
 		CreationTime: m.now(),
 		Tags:         copyTags(cfg.Tags),
 	}
-	m.models.Set(cfg.ModelName, model)
+
+	if !m.models.SetIfAbsent(cfg.ModelName, model) {
+		return nil, errors.Newf(errors.AlreadyExists, "model %q already exists", cfg.ModelName)
+	}
 	m.setTags(arn, cfg.Tags)
-	m.emitResourceCreated("Model")
 
 	return cloneModel(model), nil
 }
@@ -54,15 +56,15 @@ func (m *Mock) DescribeModel(_ context.Context, name string) (*driver.Model, err
 	return cloneModel(model), nil
 }
 
-func (m *Mock) ListModels(_ context.Context) ([]driver.Model, error) {
-	all := m.models.All()
-	out := make([]driver.Model, 0, len(all))
-
-	for _, v := range all {
-		out = append(out, *cloneModel(v))
-	}
-
-	return out, nil
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
+func (m *Mock) ListModels(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.Model], error) {
+	return listFrom(m.models, listSpec[driver.Model]{
+		name:    func(t *driver.Model) string { return t.ModelName },
+		created: func(t *driver.Model) string { return t.CreationTime },
+		clone:   func(t *driver.Model) driver.Model { return *cloneModel(t) },
+		// AWS documents SortOrder default Descending for ListModels.
+		defaultOrder: driver.SortDescending,
+	}, opts)
 }
 
 func (m *Mock) DeleteModel(_ context.Context, name string) error {
@@ -71,6 +73,7 @@ func (m *Mock) DeleteModel(_ context.Context, name string) error {
 	}
 
 	m.models.Delete(name)
+	m.dropTags(m.arn("model/" + name))
 
 	return nil
 }
@@ -79,28 +82,53 @@ func (m *Mock) DeleteModel(_ context.Context, name string) error {
 
 //nolint:gocritic // cfg matches the driver signature; copied on entry.
 func (m *Mock) CreateEndpointConfig(_ context.Context, cfg driver.EndpointConfigSpec) (*driver.EndpointConfig, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if cfg.ConfigName == "" {
 		return nil, errors.New(errors.InvalidArgument, "endpointConfigName is required")
 	}
 
-	if m.endpointConfigs.Has(cfg.ConfigName) {
-		return nil, errors.Newf(errors.AlreadyExists, "endpoint config %q already exists", cfg.ConfigName)
+	if err := m.validateVariants(cfg.ProductionVariants); err != nil {
+		return nil, err
 	}
 
 	arn := m.arn("endpoint-config/" + cfg.ConfigName)
 	ec := &driver.EndpointConfig{
 		ConfigName:         cfg.ConfigName,
 		ConfigARN:          arn,
-		ProductionVariants: copyVariants(cfg.ProductionVariants),
+		ProductionVariants: withDefaultWeights(cfg.ProductionVariants),
 		Serverless:         cfg.Serverless,
 		AsyncOutputS3URI:   cfg.AsyncOutputS3URI,
 		CreationTime:       m.now(),
 		Tags:               copyTags(cfg.Tags),
 	}
-	m.endpointConfigs.Set(cfg.ConfigName, ec)
+
+	if !m.endpointConfigs.SetIfAbsent(cfg.ConfigName, ec) {
+		return nil, errors.Newf(errors.AlreadyExists, "endpoint config %q already exists", cfg.ConfigName)
+	}
 	m.setTags(arn, cfg.Tags)
 
 	return cloneEndpointConfig(ec), nil
+}
+
+// defaultVariantWeight is SageMaker's InitialVariantWeight default.
+const defaultVariantWeight = 1.0
+
+// withDefaultWeights copies the variants and stores SageMaker's default weight
+// of 1.0 on every variant whose weight was omitted.
+func withDefaultWeights(in []driver.ProductionVariant) []driver.ProductionVariant {
+	out := copyVariants(in)
+
+	for i := range out {
+		if out[i].InitialVariantWeight == nil {
+			w := defaultVariantWeight
+			out[i].InitialVariantWeight = &w
+		}
+	}
+
+	return out
 }
 
 // cloneEndpointConfig deep-copies the variant slice so callers never alias the
@@ -122,15 +150,15 @@ func (m *Mock) DescribeEndpointConfig(_ context.Context, name string) (*driver.E
 	return cloneEndpointConfig(ec), nil
 }
 
-func (m *Mock) ListEndpointConfigs(_ context.Context) ([]driver.EndpointConfig, error) {
-	all := m.endpointConfigs.All()
-	out := make([]driver.EndpointConfig, 0, len(all))
-
-	for _, v := range all {
-		out = append(out, *cloneEndpointConfig(v))
-	}
-
-	return out, nil
+//nolint:dupl,gocritic // per-resource shim mirrors the SDK shape; large value params mirror the driver interface
+func (m *Mock) ListEndpointConfigs(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.EndpointConfig], error) {
+	return listFrom(m.endpointConfigs, listSpec[driver.EndpointConfig]{
+		name:    func(t *driver.EndpointConfig) string { return t.ConfigName },
+		created: func(t *driver.EndpointConfig) string { return t.CreationTime },
+		clone:   func(t *driver.EndpointConfig) driver.EndpointConfig { return *cloneEndpointConfig(t) },
+		// AWS documents SortOrder default Descending for ListEndpointConfigs.
+		defaultOrder: driver.SortDescending,
+	}, opts)
 }
 
 func (m *Mock) DeleteEndpointConfig(_ context.Context, name string) error {
@@ -139,142 +167,7 @@ func (m *Mock) DeleteEndpointConfig(_ context.Context, name string) error {
 	}
 
 	m.endpointConfigs.Delete(name)
-
-	return nil
-}
-
-// --- Endpoint ---
-
-func (m *Mock) CreateEndpoint(_ context.Context, cfg driver.EndpointSpec) (*driver.Endpoint, error) {
-	if cfg.EndpointName == "" {
-		return nil, errors.New(errors.InvalidArgument, "endpointName is required")
-	}
-
-	if cfg.ConfigName == "" {
-		return nil, errors.New(errors.InvalidArgument, "endpointConfigName is required")
-	}
-
-	if m.endpoints.Has(cfg.EndpointName) {
-		return nil, errors.Newf(errors.AlreadyExists, "endpoint %q already exists", cfg.EndpointName)
-	}
-
-	ec, ok := m.endpointConfigs.Get(cfg.ConfigName)
-	if !ok {
-		return nil, errors.Newf(errors.InvalidArgument, "endpoint config %q not found", cfg.ConfigName)
-	}
-
-	now := m.now()
-	arn := m.arn("endpoint/" + cfg.EndpointName)
-	ep := &driver.Endpoint{
-		EndpointName:     cfg.EndpointName,
-		EndpointARN:      arn,
-		ConfigName:       cfg.ConfigName,
-		Status:           driver.EndpointInService, // synchronous Creating -> InService
-		Variants:         copyVariants(ec.ProductionVariants),
-		CreationTime:     now,
-		LastModifiedTime: now,
-		Tags:             copyTags(cfg.Tags),
-	}
-	m.endpoints.Set(cfg.EndpointName, ep)
-	m.setTags(arn, cfg.Tags)
-	m.emitResourceCreated("Endpoint")
-
-	return cloneEndpoint(ep), nil
-}
-
-// cloneEndpoint deep-copies the variant slice so callers never alias stored
-// state.
-func cloneEndpoint(in *driver.Endpoint) *driver.Endpoint {
-	out := *in
-	out.Variants = copyVariants(in.Variants)
-	out.Tags = copyTags(in.Tags)
-
-	return &out
-}
-
-func (m *Mock) DescribeEndpoint(_ context.Context, name string) (*driver.Endpoint, error) {
-	ep, ok := m.endpoints.Get(name)
-	if !ok {
-		return nil, errors.Newf(errors.NotFound, "endpoint %q not found", name)
-	}
-
-	return cloneEndpoint(ep), nil
-}
-
-func (m *Mock) ListEndpoints(_ context.Context) ([]driver.Endpoint, error) {
-	all := m.endpoints.All()
-	out := make([]driver.Endpoint, 0, len(all))
-
-	for _, v := range all {
-		out = append(out, *cloneEndpoint(v))
-	}
-
-	return out, nil
-}
-
-func (m *Mock) UpdateEndpoint(_ context.Context, name, configName string) (*driver.Endpoint, error) {
-	ep, ok := m.endpoints.Get(name)
-	if !ok {
-		return nil, errors.Newf(errors.NotFound, "endpoint %q not found", name)
-	}
-
-	ec, ok := m.endpointConfigs.Get(configName)
-	if !ok {
-		return nil, errors.Newf(errors.InvalidArgument, "endpoint config %q not found", configName)
-	}
-
-	// Copy-then-Set: never mutate the stored pointer in place, so concurrent
-	// readers see either the old or the new endpoint atomically.
-	updated := *ep
-	updated.ConfigName = configName
-	updated.Variants = copyVariants(ec.ProductionVariants)
-	updated.Status = driver.EndpointInService
-	updated.LastModifiedTime = m.now()
-	m.endpoints.Set(name, &updated)
-
-	return cloneEndpoint(&updated), nil
-}
-
-func (m *Mock) UpdateEndpointWeightsAndCapacities(
-	_ context.Context, name string, weights []driver.VariantWeight,
-) (*driver.Endpoint, error) {
-	ep, ok := m.endpoints.Get(name)
-	if !ok {
-		return nil, errors.Newf(errors.NotFound, "endpoint %q not found", name)
-	}
-
-	byName := make(map[string]driver.VariantWeight, len(weights))
-	for _, w := range weights {
-		byName[w.VariantName] = w
-	}
-
-	// Copy-then-Set: build a fresh variant slice so neither the stored endpoint
-	// nor the source EndpointConfig is mutated in place.
-	updated := *ep
-	updated.Variants = copyVariants(ep.Variants)
-
-	for i := range updated.Variants {
-		if w, ok := byName[updated.Variants[i].VariantName]; ok {
-			updated.Variants[i].InitialVariantWeight = w.DesiredWeight
-			if w.DesiredInstanceCount > 0 {
-				updated.Variants[i].InitialInstanceCount = w.DesiredInstanceCount
-			}
-		}
-	}
-
-	updated.Status = driver.EndpointInService
-	updated.LastModifiedTime = m.now()
-	m.endpoints.Set(name, &updated)
-
-	return cloneEndpoint(&updated), nil
-}
-
-func (m *Mock) DeleteEndpoint(_ context.Context, name string) error {
-	if !m.endpoints.Has(name) {
-		return errors.Newf(errors.NotFound, "endpoint %q not found", name)
-	}
-
-	m.endpoints.Delete(name)
+	m.dropTags(m.arn("endpoint-config/" + name))
 
 	return nil
 }
@@ -283,16 +176,25 @@ func (m *Mock) DeleteEndpoint(_ context.Context, name string) error {
 
 //nolint:gocritic // cfg matches the driver signature; copied on entry.
 func (m *Mock) CreateInferenceComponent(_ context.Context, cfg driver.InferenceComponentSpec) (*driver.InferenceComponent, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "inferenceComponentName is required")
 	}
 
-	if m.inferenceComponents.Has(cfg.Name) {
-		return nil, errors.Newf(errors.AlreadyExists, "inference component %q already exists", cfg.Name)
+	ep, err := m.DescribeEndpoint(context.Background(), cfg.EndpointName)
+	if err != nil {
+		return nil, errors.Newf(errors.InvalidArgument, "endpoint %q not found", cfg.EndpointName)
 	}
 
-	if !m.endpoints.Has(cfg.EndpointName) {
-		return nil, errors.Newf(errors.InvalidArgument, "endpoint %q not found", cfg.EndpointName)
+	if cfg.ModelName != "" && !m.models.Has(cfg.ModelName) {
+		return nil, errors.Newf(errors.InvalidArgument, "model %q not found", cfg.ModelName)
+	}
+
+	if cfg.VariantName != "" && !hasVariant(ep, cfg.VariantName) {
+		return nil, errors.Newf(errors.InvalidArgument, "variant %q is not a production variant of endpoint %q", cfg.VariantName, cfg.EndpointName) //nolint:lll // SDK-shaped literal
 	}
 
 	now := m.now()
@@ -309,7 +211,10 @@ func (m *Mock) CreateInferenceComponent(_ context.Context, cfg driver.InferenceC
 		LastModifiedTime: now,
 		Tags:             copyTags(cfg.Tags),
 	}
-	m.inferenceComponents.Set(cfg.Name, ic)
+
+	if !m.inferenceComponents.SetIfAbsent(cfg.Name, ic) {
+		return nil, errors.Newf(errors.AlreadyExists, "inference component %q already exists", cfg.Name)
+	}
 	m.setTags(arn, cfg.Tags)
 
 	out := *ic
@@ -328,15 +233,17 @@ func (m *Mock) DescribeInferenceComponent(_ context.Context, name string) (*driv
 	return &out, nil
 }
 
-func (m *Mock) ListInferenceComponents(_ context.Context) ([]driver.InferenceComponent, error) {
-	all := m.inferenceComponents.All()
-	out := make([]driver.InferenceComponent, 0, len(all))
-
-	for _, v := range all {
-		out = append(out, *v)
-	}
-
-	return out, nil
+//nolint:gocritic // large value params mirror the driver interface
+func (m *Mock) ListInferenceComponents(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.InferenceComponent], error) {
+	return listFrom(m.inferenceComponents, listSpec[driver.InferenceComponent]{
+		name:     func(t *driver.InferenceComponent) string { return t.Name },
+		status:   func(t *driver.InferenceComponent) string { return t.Status },
+		created:  func(t *driver.InferenceComponent) string { return t.CreationTime },
+		modified: func(t *driver.InferenceComponent) string { return t.LastModifiedTime },
+		extra: func(t *driver.InferenceComponent, f map[string]string) bool {
+			return equalsOrUnset(f["EndpointNameEquals"], t.EndpointName) && equalsOrUnset(f["VariantNameEquals"], t.VariantName)
+		},
+	}, opts)
 }
 
 func (m *Mock) DeleteInferenceComponent(_ context.Context, name string) error {
@@ -345,6 +252,54 @@ func (m *Mock) DeleteInferenceComponent(_ context.Context, name string) error {
 	}
 
 	m.inferenceComponents.Delete(name)
+	m.dropTags(m.arn("inference-component/" + name))
 
 	return nil
+}
+
+// Production variant limits of an endpoint configuration.
+const (
+	maxEndpointVariants = 10
+	maxVariantInstances = 1000
+)
+
+// validateVariants checks an endpoint configuration's variants: 1-10, named
+// uniquely, each with an existing model and a non-negative count and weight.
+//
+//nolint:gocyclo // validation branches mirror the service's rules
+func (m *Mock) validateVariants(variants []driver.ProductionVariant) error {
+	if len(variants) < 1 || len(variants) > maxEndpointVariants {
+		return errors.Newf(errors.InvalidArgument, "productionVariants must contain between 1 and %d items", maxEndpointVariants)
+	}
+
+	seen := map[string]bool{}
+
+	for i := range variants {
+		v := &variants[i]
+
+		switch {
+		case v.VariantName == "" || seen[v.VariantName]:
+			return errors.Newf(errors.InvalidArgument, "variantName %q must be set and unique", v.VariantName)
+		case v.ModelName != "" && !m.models.Has(v.ModelName): // inference-component variants name no model
+			return errors.Newf(errors.InvalidArgument, "Could not find model %q.", v.ModelName)
+		case v.InitialInstanceCount < 0 || v.InitialInstanceCount > maxVariantInstances:
+			return errors.Newf(errors.InvalidArgument, "initialInstanceCount must be between 0 and %d", maxVariantInstances)
+		case v.InitialVariantWeight != nil && *v.InitialVariantWeight < 0:
+			return errors.New(errors.InvalidArgument, "initialVariantWeight must not be negative")
+		}
+
+		seen[v.VariantName] = true
+	}
+
+	return nil
+}
+
+func hasVariant(ep *driver.Endpoint, name string) bool {
+	for i := range ep.Variants {
+		if ep.Variants[i].VariantName == name {
+			return true
+		}
+	}
+
+	return false
 }

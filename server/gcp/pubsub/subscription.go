@@ -7,6 +7,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 )
 
 // ---------- Subscriptions ----------
@@ -24,7 +25,7 @@ func (h *Handler) serveSubscription(w http.ResponseWriter, r *http.Request, proj
 	case http.MethodPatch:
 		h.patchSubscription(w, r, name)
 	case http.MethodDelete:
-		h.deleteSubscription(w, name)
+		h.deleteSubscription(w, project, name)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, reasonMethodNotAllowed, "method not allowed")
 	}
@@ -66,9 +67,16 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, pro
 		return
 	}
 
+	// The topic may live in another project: a full topic name resolves there.
 	topicShort := shortName(body.Topic)
 
-	if _, err := h.findQueueByName(r, topicShort); err != nil {
+	topicProject := projectctx.FromPath(body.Topic)
+	if topicProject == "" {
+		topicProject = project
+	}
+
+	topicReq := r.WithContext(projectctx.WithProject(r.Context(), topicProject))
+	if _, err := h.findQueueByName(topicReq, topicShort); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -90,17 +98,19 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, pro
 
 	cfg := body
 	cfg.Name = subscriptionName(project, name)
-	cfg.Topic = topicName(project, topicShort)
+	cfg.Topic = topicName(topicProject, topicShort)
+
+	key := h.key(r, name)
 
 	h.mu.Lock()
-	if _, exists := h.subs[name]; exists {
+	if _, exists := h.subs[key]; exists {
 		h.mu.Unlock()
 		writeError(w, http.StatusConflict, reasonAlreadyExists, "subscription "+name+" already exists")
 
 		return
 	}
 
-	h.newSub(name, topicShort, &cfg, filter)
+	h.newSub(key, h.keyFor(topicProject, topicShort), &cfg, filter)
 	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, cfg)
@@ -143,7 +153,7 @@ func (h *Handler) patchSubscription(w http.ResponseWriter, r *http.Request, name
 
 	h.mu.Lock()
 
-	sub, ok := h.subs[name]
+	sub, ok := h.subs[h.key(r, name)]
 	if !ok {
 		h.mu.Unlock()
 		writeError(w, http.StatusNotFound, reasonNotFound, "subscription "+name+" not found")
@@ -223,11 +233,11 @@ func subMaskSetters() map[string]func(dst, src *subscription) {
 	}
 }
 
-func (h *Handler) getSubscription(w http.ResponseWriter, _, name string) {
+func (h *Handler) getSubscription(w http.ResponseWriter, project, name string) {
 	h.mu.RLock()
 	var cfg subscription
 
-	meta, ok := h.subs[name]
+	meta, ok := h.subs[h.keyFor(project, name)]
 	if ok {
 		cfg = meta.cfg
 	}
@@ -241,10 +251,12 @@ func (h *Handler) getSubscription(w http.ResponseWriter, _, name string) {
 	writeJSON(w, http.StatusOK, cfg)
 }
 
-func (h *Handler) deleteSubscription(w http.ResponseWriter, name string) {
+func (h *Handler) deleteSubscription(w http.ResponseWriter, project, name string) {
+	key := h.keyFor(project, name)
+
 	h.mu.Lock()
-	_, ok := h.subs[name]
-	delete(h.subs, name)
+	_, ok := h.subs[key]
+	delete(h.subs, key)
 	h.mu.Unlock()
 
 	if !ok {
@@ -265,7 +277,7 @@ func (h *Handler) detachSubscription(w http.ResponseWriter, r *http.Request, nam
 	}
 
 	h.mu.Lock()
-	sub, ok := h.subs[name]
+	sub, ok := h.subs[h.key(r, name)]
 
 	if ok {
 		sub.cfg.Detached = true
@@ -280,11 +292,15 @@ func (h *Handler) detachSubscription(w http.ResponseWriter, r *http.Request, nam
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
-func (h *Handler) listSubscriptions(w http.ResponseWriter, r *http.Request, _ string) {
+func (h *Handler) listSubscriptions(w http.ResponseWriter, r *http.Request, project string) {
 	h.mu.RLock()
 	items := make([]subscription, 0, len(h.subs))
 
-	for _, meta := range h.subs {
+	for key, meta := range h.subs {
+		if !inProject(key, project) {
+			continue
+		}
+
 		items = append(items, meta.cfg)
 	}
 	h.mu.RUnlock()
@@ -303,9 +319,12 @@ func (h *Handler) listTopicSubscriptions(w http.ResponseWriter, r *http.Request,
 	h.mu.RLock()
 	names := make([]string, 0)
 
-	for subName, meta := range h.subs {
-		if meta.topic == topicShort {
-			names = append(names, subscriptionName(project, subName))
+	topicKey := h.keyFor(project, topicShort)
+
+	for subKey, meta := range h.subs {
+		if meta.topic == topicKey {
+			subProject, subName, _ := projectctx.Split(subKey)
+			names = append(names, subscriptionName(subProject, subName))
 		}
 	}
 	h.mu.RUnlock()
@@ -366,7 +385,8 @@ func (h *Handler) pull(w http.ResponseWriter, r *http.Request, name string) {
 // tolerance). The implicit subscription reads the topic log from the start. The
 // caller holds h.mu.
 func (h *Handler) resolveSubForPull(r *http.Request, name string) (*subState, error) {
-	if sub, ok := h.subs[name]; ok {
+	key := h.key(r, name)
+	if sub, ok := h.subs[key]; ok {
 		return sub, nil
 	}
 
@@ -376,13 +396,13 @@ func (h *Handler) resolveSubForPull(r *http.Request, name string) (*subState, er
 
 	sub := &subState{
 		cfg:              subscription{AckDeadlineSeconds: defaultAckDeadlineSeconds},
-		topic:            name,
+		topic:            key,
 		createTime:       time.Now().UTC(),
 		acked:            make(map[int]bool),
 		outstanding:      make(map[string]*lease),
 		deliveryAttempts: make(map[int]int),
 	}
-	h.subs[name] = sub
+	h.subs[key] = sub
 
 	return sub, nil
 }
@@ -399,7 +419,7 @@ func (h *Handler) acknowledge(w http.ResponseWriter, r *http.Request, name strin
 	}
 
 	h.mu.Lock()
-	sub, ok := h.subs[name]
+	sub, ok := h.subs[h.key(r, name)]
 
 	if ok {
 		for _, ack := range req.AckIDs {
@@ -431,7 +451,7 @@ func (h *Handler) modifyAckDeadline(w http.ResponseWriter, r *http.Request, name
 	}
 
 	h.mu.Lock()
-	sub, ok := h.subs[name]
+	sub, ok := h.subs[h.key(r, name)]
 
 	if ok {
 		deadline := time.Now().UTC().Add(time.Duration(req.AckDeadlineSeconds) * time.Second)
@@ -474,7 +494,7 @@ func (h *Handler) modifyPushConfig(w http.ResponseWriter, r *http.Request, name 
 	}
 
 	h.mu.Lock()
-	sub, ok := h.subs[name]
+	sub, ok := h.subs[h.key(r, name)]
 
 	if ok {
 		sub.cfg.PushConfig = req.PushConfig

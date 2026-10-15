@@ -137,3 +137,7 @@ func (h *Handler) routes() map[string]func(http.ResponseWriter, *http.Request) {
 		"ListTagsForResource": h.listTagsForResource,
 	}
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "route53resolver" }

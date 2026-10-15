@@ -34,21 +34,29 @@ const (
 // To avoid dropping those on read, the full policy is held here keyed by its
 // opaque numeric id; the driver alarm is kept as an existence marker. Custom
 // metric descriptors created via metricDescriptors.create are held here too.
+//
+// Each project is its own metrics scope: policies and descriptors are keyed by
+// projectctx.Key(project, id), and time series carry their project in the
+// project_id label.
 type Handler struct {
 	mon mondriver.Monitoring
+	// defaultProject owns series emitted without a project_id label.
+	defaultProject string
 
 	mu          sync.RWMutex
-	policies    map[string]alertPolicy      // keyed by opaque policy id
-	descriptors map[string]metricDescriptor // custom descriptors keyed by metric type
+	policies    map[string]alertPolicy      // keyed by project and opaque policy id
+	descriptors map[string]metricDescriptor // custom descriptors keyed by project and metric type
 	seq         atomic.Uint64
 }
 
-// New returns a Cloud Monitoring handler.
-func New(m mondriver.Monitoring) *Handler {
+// New returns a Cloud Monitoring handler. defaultProject owns series emitted
+// without a project_id label.
+func New(m mondriver.Monitoring, defaultProject string) *Handler {
 	return &Handler{
-		mon:         m,
-		policies:    make(map[string]alertPolicy),
-		descriptors: make(map[string]metricDescriptor),
+		mon:            m,
+		defaultProject: defaultProject,
+		policies:       make(map[string]alertPolicy),
+		descriptors:    make(map[string]metricDescriptor),
 	}
 }
 

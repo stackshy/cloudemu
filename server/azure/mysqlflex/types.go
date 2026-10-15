@@ -66,16 +66,37 @@ type armStorage struct {
 	StorageSizeGB int    `json:"storageSizeGB,omitempty"`
 	StorageSKU    string `json:"storageSku,omitempty"`
 	AutoGrow      string `json:"autoGrow,omitempty"`
+	AutoIoScaling string `json:"autoIoScaling,omitempty"`
+	LogOnDisk     string `json:"logOnDisk,omitempty"`
 	Iops          int    `json:"iops,omitempty"`
 }
 
 // armBackup mirrors properties.backup on a MySQL Flexible Server. Real Azure
-// always returns this block; backupRetentionDays defaults to 7 (range 1-35) and
-// geoRedundantBackup is Disabled/Enabled. geoRedundantBackup is preserved by the
-// generic unmodeled-property overlay, so only the retention days (which real
-// Azure defaults and which terraform-provider-azurerm reads back) is modeled.
+// always returns this block: backupRetentionDays defaults to 7 (range 1-35)
+// and geoRedundantBackup to Disabled. terraform-provider-azurerm dereferences
+// geoRedundantBackup on read, so it must always be present.
 type armBackup struct {
-	BackupRetentionDays int `json:"backupRetentionDays,omitempty"`
+	BackupRetentionDays int    `json:"backupRetentionDays,omitempty"`
+	GeoRedundantBackup  string `json:"geoRedundantBackup,omitempty"`
+}
+
+// flexOptionsFromBody reads the storage and backup toggles a PUT or PATCH
+// submitted; an absent one stays empty (default on create, unchanged on
+// update).
+func flexOptionsFromBody(p *armServerProps) rdsdriver.AzureFlexOptions {
+	var out rdsdriver.AzureFlexOptions
+
+	if st := p.Storage; st != nil {
+		out.StorageAutoGrow = st.AutoGrow
+		out.StorageAutoIOScaling = st.AutoIoScaling
+		out.StorageLogOnDisk = st.LogOnDisk
+	}
+
+	if p.Backup != nil {
+		out.GeoRedundantBackup = p.Backup.GeoRedundantBackup
+	}
+
+	return out
 }
 
 // armList is the ARM list-response envelope.
@@ -96,11 +117,17 @@ func toARMServer(inst *rdsdriver.Instance, subscription, resourceGroup string) a
 		Storage: &armStorage{
 			StorageSizeGB: inst.AllocatedStorage,
 			StorageSKU:    inst.StorageType,
+			AutoGrow:      inst.AzureFlex.StorageAutoGrow,
+			AutoIoScaling: inst.AzureFlex.StorageAutoIOScaling,
+			LogOnDisk:     inst.AzureFlex.StorageLogOnDisk,
 		},
 	}
 
-	if inst.BackupRetentionPeriod > 0 {
-		props.Backup = &armBackup{BackupRetentionDays: inst.BackupRetentionPeriod}
+	if inst.BackupRetentionPeriod > 0 || inst.AzureFlex.GeoRedundantBackup != "" {
+		props.Backup = &armBackup{
+			BackupRetentionDays: inst.BackupRetentionPeriod,
+			GeoRedundantBackup:  inst.AzureFlex.GeoRedundantBackup,
+		}
 	}
 
 	return armServer{

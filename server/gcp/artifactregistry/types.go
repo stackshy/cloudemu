@@ -176,9 +176,10 @@ type listFilesResponse struct {
 // operationJSON is a google.longrunning.Operation. Artifact Registry's create
 // and delete are async; the mock returns a completed operation immediately.
 type operationJSON struct {
-	Name     string `json:"name"`
-	Done     bool   `json:"done"`
-	Response any    `json:"response,omitempty"`
+	Name     string          `json:"name"`
+	Done     bool            `json:"done"`
+	Metadata json.RawMessage `json:"metadata,omitempty"`
+	Response any             `json:"response,omitempty"`
 }
 
 const (

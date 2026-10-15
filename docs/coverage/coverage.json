@@ -307,7 +307,13 @@
         "name": "DeleteIntegration"
       },
       {
+        "name": "DeleteIntegrationResponse"
+      },
+      {
         "name": "DeleteMethod"
+      },
+      {
+        "name": "DeleteMethodResponse"
       },
       {
         "name": "DeleteResource",
@@ -354,7 +360,13 @@
         "name": "GetIntegration"
       },
       {
+        "name": "GetIntegrationResponse"
+      },
+      {
         "name": "GetMethod"
+      },
+      {
+        "name": "GetMethodResponse"
       },
       {
         "name": "GetResource"
@@ -388,7 +400,15 @@
         "name": "PutIntegration"
       },
       {
+        "name": "PutIntegrationResponse",
+        "doc": "PutIntegrationResponse creates or replaces an integration response. The"
+      },
+      {
         "name": "PutMethod"
+      },
+      {
+        "name": "PutMethodResponse",
+        "doc": "PutMethodResponse declares a status code on a method. It fails when the"
       },
       {
         "name": "TagResource",
@@ -422,8 +442,16 @@
         "doc": "UpdateIntegration applies a patchOperations document to an integration."
       },
       {
+        "name": "UpdateIntegrationResponse",
+        "doc": "UpdateIntegrationResponse applies a patchOperations document"
+      },
+      {
         "name": "UpdateMethod",
         "doc": "UpdateMethod applies a patchOperations document to a method."
+      },
+      {
+        "name": "UpdateMethodResponse",
+        "doc": "UpdateMethodResponse applies a patchOperations document"
       },
       {
         "name": "UpdateResource",
@@ -436,6 +464,243 @@
       {
         "name": "UpdateStage",
         "doc": "UpdateStage applies a patchOperations document to a stage (/description,"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "APIKeys",
+        "doc": "APIKeys is the optional API key capability.",
+        "operations": [
+          {
+            "name": "CreateAPIKey"
+          },
+          {
+            "name": "DeleteAPIKey"
+          },
+          {
+            "name": "GetAPIKey"
+          },
+          {
+            "name": "GetAPIKeys"
+          },
+          {
+            "name": "UpdateAPIKey"
+          }
+        ]
+      },
+      {
+        "name": "Authorizers",
+        "doc": "Authorizers is the optional authorizer capability.",
+        "operations": [
+          {
+            "name": "CreateAuthorizer"
+          },
+          {
+            "name": "DeleteAuthorizer"
+          },
+          {
+            "name": "GetAuthorizer"
+          },
+          {
+            "name": "GetAuthorizers"
+          },
+          {
+            "name": "UpdateAuthorizer"
+          }
+        ]
+      },
+      {
+        "name": "DomainNames",
+        "doc": "DomainNames is the optional custom domain capability (domain names and their",
+        "operations": [
+          {
+            "name": "CreateBasePathMapping"
+          },
+          {
+            "name": "CreateDomainName"
+          },
+          {
+            "name": "DeleteBasePathMapping"
+          },
+          {
+            "name": "DeleteDomainName"
+          },
+          {
+            "name": "GetBasePathMapping"
+          },
+          {
+            "name": "GetBasePathMappings"
+          },
+          {
+            "name": "GetDomainName"
+          },
+          {
+            "name": "GetDomainNames"
+          },
+          {
+            "name": "UpdateBasePathMapping"
+          },
+          {
+            "name": "UpdateDomainName"
+          }
+        ]
+      },
+      {
+        "name": "DomainResolver",
+        "doc": "DomainResolver is the optional data-plane hook that maps a request addressed",
+        "operations": [
+          {
+            "name": "ResolveDomain"
+          }
+        ]
+      },
+      {
+        "name": "GatewayResponses",
+        "doc": "GatewayResponses is the optional gateway response capability.",
+        "operations": [
+          {
+            "name": "DeleteGatewayResponse",
+            "doc": "DeleteGatewayResponse restores the default for the response type."
+          },
+          {
+            "name": "GetGatewayResponse"
+          },
+          {
+            "name": "GetGatewayResponses"
+          },
+          {
+            "name": "PutGatewayResponse"
+          },
+          {
+            "name": "UpdateGatewayResponse"
+          }
+        ]
+      },
+      {
+        "name": "Models",
+        "doc": "Models is the optional model capability.",
+        "operations": [
+          {
+            "name": "CreateModel"
+          },
+          {
+            "name": "DeleteModel"
+          },
+          {
+            "name": "GetModel"
+          },
+          {
+            "name": "GetModels"
+          },
+          {
+            "name": "UpdateModel"
+          }
+        ]
+      },
+      {
+        "name": "OpenAPI",
+        "doc": "OpenAPI is the optional OpenAPI import/export capability.",
+        "operations": [
+          {
+            "name": "GetExport"
+          },
+          {
+            "name": "ImportRestAPI"
+          },
+          {
+            "name": "PutRestAPI"
+          }
+        ]
+      },
+      {
+        "name": "RequestValidators",
+        "doc": "RequestValidators is the optional request validator capability.",
+        "operations": [
+          {
+            "name": "CreateRequestValidator"
+          },
+          {
+            "name": "DeleteRequestValidator"
+          },
+          {
+            "name": "GetRequestValidator"
+          },
+          {
+            "name": "GetRequestValidators"
+          },
+          {
+            "name": "UpdateRequestValidator"
+          }
+        ]
+      },
+      {
+        "name": "TestInvoker",
+        "doc": "TestInvoker is the optional capability that runs a method or authorizer",
+        "operations": [
+          {
+            "name": "TestInvokeAuthorizer"
+          },
+          {
+            "name": "TestInvokeMethod"
+          }
+        ]
+      },
+      {
+        "name": "UsagePlans",
+        "doc": "UsagePlans is the optional usage plan capability (plans, their keys and usage).",
+        "operations": [
+          {
+            "name": "CreateUsagePlan"
+          },
+          {
+            "name": "CreateUsagePlanKey"
+          },
+          {
+            "name": "DeleteUsagePlan"
+          },
+          {
+            "name": "DeleteUsagePlanKey"
+          },
+          {
+            "name": "GetUsage"
+          },
+          {
+            "name": "GetUsagePlan"
+          },
+          {
+            "name": "GetUsagePlanKey"
+          },
+          {
+            "name": "GetUsagePlanKeys"
+          },
+          {
+            "name": "GetUsagePlans"
+          },
+          {
+            "name": "UpdateUsagePlan"
+          }
+        ]
+      },
+      {
+        "name": "VpcLinks",
+        "doc": "VpcLinks is the optional VPC link capability.",
+        "operations": [
+          {
+            "name": "CreateVpcLink"
+          },
+          {
+            "name": "DeleteVpcLink"
+          },
+          {
+            "name": "GetVpcLink"
+          },
+          {
+            "name": "GetVpcLinks"
+          },
+          {
+            "name": "UpdateVpcLink"
+          }
+        ]
       }
     ],
     "providers": {
@@ -878,16 +1143,10 @@
         "name": "DescribeVpcConnector"
       },
       {
-        "name": "ListAutoScalingConfigurationRevisions"
-      },
-      {
         "name": "ListAutoScalingConfigurations"
       },
       {
         "name": "ListConnections"
-      },
-      {
-        "name": "ListObservabilityConfigurationRevisions"
       },
       {
         "name": "ListObservabilityConfigurations"
@@ -921,6 +1180,56 @@
       },
       {
         "name": "UpdateService"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "CustomDomains",
+        "doc": "CustomDomains is the optional custom domain capability.",
+        "operations": [
+          {
+            "name": "AssociateCustomDomain"
+          },
+          {
+            "name": "DescribeCustomDomains"
+          },
+          {
+            "name": "DisassociateCustomDomain"
+          }
+        ]
+      },
+      {
+        "name": "DefaultAutoScaling",
+        "doc": "DefaultAutoScaling is the optional capability to move the account's default auto",
+        "operations": [
+          {
+            "name": "ListServicesForAutoScalingConfiguration"
+          },
+          {
+            "name": "UpdateDefaultAutoScalingConfiguration"
+          }
+        ]
+      },
+      {
+        "name": "VpcIngressConnections",
+        "doc": "VpcIngressConnections is the optional VPC ingress connection capability.",
+        "operations": [
+          {
+            "name": "CreateVpcIngressConnection"
+          },
+          {
+            "name": "DeleteVpcIngressConnection"
+          },
+          {
+            "name": "DescribeVpcIngressConnection"
+          },
+          {
+            "name": "ListVpcIngressConnections"
+          },
+          {
+            "name": "UpdateVpcIngressConnection"
+          }
+        ]
       }
     ],
     "providers": {
@@ -1795,12 +2104,19 @@
         "doc": "CreateOrUpdateFirewallPolicy stores pol as a full replace and reports"
       },
       {
+        "name": "CreateOrUpdateRuleCollectionGroup",
+        "doc": "Rule collection groups are children of a policy and are deleted with"
+      },
+      {
         "name": "DeleteAzureFirewall",
         "doc": "DeleteAzureFirewall removes the firewall, returning NotFound if it does not"
       },
       {
         "name": "DeleteFirewallPolicy",
         "doc": "DeleteFirewallPolicy removes the policy, returning NotFound if it does not"
+      },
+      {
+        "name": "DeleteRuleCollectionGroup"
       },
       {
         "name": "GetAzureFirewall",
@@ -1811,12 +2127,18 @@
         "doc": "GetFirewallPolicy returns the policy identified by (resourceGroup, name),"
       },
       {
+        "name": "GetRuleCollectionGroup"
+      },
+      {
         "name": "ListAzureFirewalls",
         "doc": "ListAzureFirewalls returns the firewalls in rg, or all when rg is empty"
       },
       {
         "name": "ListFirewallPolicies",
         "doc": "ListFirewallPolicies returns the policies in rg, or all when rg is empty"
+      },
+      {
+        "name": "ListRuleCollectionGroups"
       }
     ],
     "providers": {
@@ -2749,6 +3071,215 @@
         "name": "UpdatePrompt"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "ActionGroups",
+        "doc": "ActionGroups manages the action groups (tools) of an agent version.",
+        "operations": [
+          {
+            "name": "CreateAgentActionGroup"
+          },
+          {
+            "name": "DeleteAgentActionGroup"
+          },
+          {
+            "name": "GetAgentActionGroup"
+          },
+          {
+            "name": "ListAgentActionGroups"
+          },
+          {
+            "name": "UpdateAgentActionGroup"
+          }
+        ]
+      },
+      {
+        "name": "AgentCollaborators",
+        "doc": "AgentCollaborators manages the collaborator agents of a supervisor agent.",
+        "operations": [
+          {
+            "name": "AssociateAgentCollaborator"
+          },
+          {
+            "name": "DisassociateAgentCollaborator"
+          },
+          {
+            "name": "GetAgentCollaborator"
+          },
+          {
+            "name": "ListAgentCollaborators"
+          },
+          {
+            "name": "UpdateAgentCollaborator"
+          }
+        ]
+      },
+      {
+        "name": "AgentInUseDeleter",
+        "doc": "AgentInUseDeleter deletes an agent the way DeleteAgent's",
+        "operations": [
+          {
+            "name": "DeleteAgentChecked"
+          }
+        ]
+      },
+      {
+        "name": "AgentKnowledgeBases",
+        "doc": "AgentKnowledgeBases associates knowledge bases with an agent version.",
+        "operations": [
+          {
+            "name": "AssociateAgentKnowledgeBase"
+          },
+          {
+            "name": "DisassociateAgentKnowledgeBase"
+          },
+          {
+            "name": "GetAgentKnowledgeBase"
+          },
+          {
+            "name": "ListAgentKnowledgeBases"
+          },
+          {
+            "name": "UpdateAgentKnowledgeBase"
+          }
+        ]
+      },
+      {
+        "name": "AgentVersions",
+        "doc": "AgentVersions manages agent versions and the rest of the alias lifecycle.",
+        "operations": [
+          {
+            "name": "DeleteAgentAlias"
+          },
+          {
+            "name": "DeleteAgentVersion"
+          },
+          {
+            "name": "GetAgentAlias"
+          },
+          {
+            "name": "GetAgentVersion"
+          },
+          {
+            "name": "ListAgentAliases"
+          },
+          {
+            "name": "ListAgentVersions"
+          },
+          {
+            "name": "UpdateAgentAlias"
+          }
+        ]
+      },
+      {
+        "name": "FlowValidator",
+        "doc": "FlowValidator checks a flow definition without storing it.",
+        "operations": [
+          {
+            "name": "ValidateFlowDefinition"
+          }
+        ]
+      },
+      {
+        "name": "FlowVersions",
+        "doc": "FlowVersions publishes flow versions and manages the aliases routing to them.",
+        "operations": [
+          {
+            "name": "CreateFlowAlias"
+          },
+          {
+            "name": "CreateFlowVersion"
+          },
+          {
+            "name": "DeleteFlowAlias"
+          },
+          {
+            "name": "DeleteFlowVersion"
+          },
+          {
+            "name": "GetFlowAlias"
+          },
+          {
+            "name": "GetFlowVersion"
+          },
+          {
+            "name": "ListFlowAliases"
+          },
+          {
+            "name": "ListFlowVersions"
+          },
+          {
+            "name": "UpdateFlowAlias"
+          }
+        ]
+      },
+      {
+        "name": "IngestionJobs",
+        "doc": "IngestionJobs reads, lists and stops data-source ingestion jobs.",
+        "operations": [
+          {
+            "name": "GetIngestionJob"
+          },
+          {
+            "name": "ListIngestionJobs"
+          },
+          {
+            "name": "StopIngestionJob"
+          }
+        ]
+      },
+      {
+        "name": "KnowledgeBaseDocuments",
+        "doc": "KnowledgeBaseDocuments manages the documents of a data source directly.",
+        "operations": [
+          {
+            "name": "DeleteKnowledgeBaseDocuments"
+          },
+          {
+            "name": "GetKnowledgeBaseDocuments"
+          },
+          {
+            "name": "IngestKnowledgeBaseDocuments"
+          },
+          {
+            "name": "ListKnowledgeBaseDocuments"
+          }
+        ]
+      },
+      {
+        "name": "PromptVersions",
+        "doc": "PromptVersions publishes immutable numbered versions of a prompt's DRAFT.",
+        "operations": [
+          {
+            "name": "CreatePromptVersion"
+          },
+          {
+            "name": "DeletePromptVersion"
+          },
+          {
+            "name": "GetPromptVersion"
+          },
+          {
+            "name": "ListPromptVersions"
+          }
+        ]
+      },
+      {
+        "name": "ResourcePolicies",
+        "doc": "ResourcePolicies attaches resource-based policies to knowledge bases.",
+        "operations": [
+          {
+            "name": "DeleteResourcePolicy"
+          },
+          {
+            "name": "GetResourcePolicy"
+          },
+          {
+            "name": "PutResourcePolicy"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "BedrockAgent"
     }
@@ -2765,6 +3296,170 @@
       },
       {
         "name": "RetrieveAndGenerate"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "AgentMemory",
+        "doc": "AgentMemory reads and deletes an agent's session-summary memory.",
+        "operations": [
+          {
+            "name": "DeleteAgentMemory"
+          },
+          {
+            "name": "GetAgentMemory"
+          }
+        ]
+      },
+      {
+        "name": "AgenticRetriever",
+        "doc": "AgenticRetriever plans and runs retrievals over knowledge bases.",
+        "operations": [
+          {
+            "name": "AgenticRetrieveStream"
+          }
+        ]
+      },
+      {
+        "name": "DocumentReader",
+        "doc": "DocumentReader locates the content of ingested knowledge-base documents.",
+        "operations": [
+          {
+            "name": "GetDocumentContent"
+          }
+        ]
+      },
+      {
+        "name": "FlowExecutions",
+        "doc": "FlowExecutions invokes flows and manages their asynchronous executions.",
+        "operations": [
+          {
+            "name": "GetExecutionFlowSnapshot"
+          },
+          {
+            "name": "GetFlowExecution"
+          },
+          {
+            "name": "InvokeFlow"
+          },
+          {
+            "name": "ListFlowExecutionEvents"
+          },
+          {
+            "name": "ListFlowExecutions"
+          },
+          {
+            "name": "StartFlowExecution"
+          },
+          {
+            "name": "StopFlowExecution"
+          }
+        ]
+      },
+      {
+        "name": "InlineAgents",
+        "doc": "InlineAgents runs agents defined inline in the request.",
+        "operations": [
+          {
+            "name": "InvokeInlineAgent"
+          }
+        ]
+      },
+      {
+        "name": "Invocations",
+        "doc": "Invocations records invocations and their steps in a session.",
+        "operations": [
+          {
+            "name": "CreateInvocation"
+          },
+          {
+            "name": "GetInvocationStep"
+          },
+          {
+            "name": "ListInvocationSteps"
+          },
+          {
+            "name": "ListInvocations"
+          },
+          {
+            "name": "PutInvocationStep"
+          }
+        ]
+      },
+      {
+        "name": "PromptOptimizer",
+        "doc": "PromptOptimizer rewrites a prompt for a target model.",
+        "operations": [
+          {
+            "name": "OptimizePrompt"
+          }
+        ]
+      },
+      {
+        "name": "QueryGenerator",
+        "doc": "QueryGenerator turns natural language into SQL (TEXT_TO_SQL).",
+        "operations": [
+          {
+            "name": "GenerateQuery"
+          }
+        ]
+      },
+      {
+        "name": "Reranker",
+        "doc": "Reranker orders documents by relevance to a query.",
+        "operations": [
+          {
+            "name": "Rerank"
+          }
+        ]
+      },
+      {
+        "name": "Sessions",
+        "doc": "Sessions manages session-management sessions.",
+        "operations": [
+          {
+            "name": "CreateSession"
+          },
+          {
+            "name": "DeleteSession"
+          },
+          {
+            "name": "EndSession"
+          },
+          {
+            "name": "GetSession"
+          },
+          {
+            "name": "ListSessions"
+          },
+          {
+            "name": "UpdateSession"
+          }
+        ]
+      },
+      {
+        "name": "StreamingRetrieveAndGenerate",
+        "doc": "StreamingRetrieveAndGenerate answers RetrieveAndGenerateStream.",
+        "operations": [
+          {
+            "name": "RetrieveAndGenerateStream"
+          }
+        ]
+      },
+      {
+        "name": "Tagger",
+        "doc": "Tagger tags runtime resources (sessions) by ARN.",
+        "operations": [
+          {
+            "name": "ListTagsForResource"
+          },
+          {
+            "name": "TagResource"
+          },
+          {
+            "name": "UntagResource"
+          }
+        ]
       }
     ],
     "providers": {
@@ -3075,6 +3770,40 @@
         ]
       },
       {
+        "name": "RedisChildren",
+        "doc": "RedisChildren is an OPTIONAL capability, discovered by type assertion. Azure",
+        "operations": [
+          {
+            "name": "DeleteFirewallRule",
+            "doc": "DeleteFirewallRule removes a rule and reports whether it existed."
+          },
+          {
+            "name": "DeletePatchSchedule",
+            "doc": "DeletePatchSchedule removes the patch schedule and reports whether one"
+          },
+          {
+            "name": "GetFirewallRule",
+            "doc": "GetFirewallRule returns a rule, NotFound when it does not exist."
+          },
+          {
+            "name": "GetPatchSchedule",
+            "doc": "GetPatchSchedule returns the patch schedule, NotFound when none is set."
+          },
+          {
+            "name": "ListFirewallRules",
+            "doc": "ListFirewallRules returns the cache's rules sorted by name."
+          },
+          {
+            "name": "PutFirewallRule",
+            "doc": "PutFirewallRule creates or replaces a rule. created is true for a new"
+          },
+          {
+            "name": "SetPatchSchedule",
+            "doc": "SetPatchSchedule replaces the cache's patch schedule. created is true"
+          }
+        ]
+      },
+      {
         "name": "ReplicationGroups",
         "doc": "ReplicationGroups is an OPTIONAL capability, discovered by type assertion.",
         "operations": [
@@ -3366,6 +4095,9 @@
     "interface": "provider-native",
     "operations": [
       {
+        "name": "CancelUpdateStack"
+      },
+      {
         "name": "ContinueUpdateRollback"
       },
       {
@@ -3402,6 +4134,9 @@
         "name": "ExecuteChangeSet"
       },
       {
+        "name": "GetStackPolicy"
+      },
+      {
         "name": "GetTemplate"
       },
       {
@@ -3421,6 +4156,12 @@
       },
       {
         "name": "ListStacks"
+      },
+      {
+        "name": "RollbackStack"
+      },
+      {
+        "name": "SetStackPolicy"
       },
       {
         "name": "UpdateStack"
@@ -3995,6 +4736,12 @@
         "doc": "AddCustomAttributes appends custom attributes to a pool's schema. Names get"
       },
       {
+        "name": "AdminAddUserToGroup"
+      },
+      {
+        "name": "AdminConfirmSignUp"
+      },
+      {
         "name": "AdminCreateUser",
         "doc": "AdminCreateUser creates a user in FORCE_CHANGE_PASSWORD with a generated"
       },
@@ -4014,8 +4761,21 @@
         "name": "AdminGetUser"
       },
       {
+        "name": "AdminInitiateAuth",
+        "doc": "AdminInitiateAuth runs ADMIN_USER_PASSWORD_AUTH, ADMIN_NO_SRP_AUTH or"
+      },
+      {
+        "name": "AdminListGroupsForUser"
+      },
+      {
+        "name": "AdminRemoveUserFromGroup"
+      },
+      {
         "name": "AdminResetUserPassword",
         "doc": "AdminResetUserPassword moves the user to RESET_REQUIRED."
+      },
+      {
+        "name": "AdminRespondToAuthChallenge"
       },
       {
         "name": "AdminSetUserPassword",
@@ -4023,6 +4783,17 @@
       },
       {
         "name": "AdminUpdateUserAttributes"
+      },
+      {
+        "name": "AdminUserGlobalSignOut"
+      },
+      {
+        "name": "ConfirmSignUp",
+        "doc": "ConfirmSignUp confirms a user with the code SignUp or"
+      },
+      {
+        "name": "CreateGroup",
+        "doc": "CreateGroup creates a group. A name already in the pool fails with"
       },
       {
         "name": "CreateUserPool",
@@ -4034,6 +4805,10 @@
       },
       {
         "name": "CreateUserPoolDomain"
+      },
+      {
+        "name": "DeleteGroup",
+        "doc": "DeleteGroup removes a group and every membership in it."
       },
       {
         "name": "DeleteUserPool",
@@ -4057,8 +4832,26 @@
         "doc": "DescribeUserPoolDomain returns a domain's description. An unknown domain"
       },
       {
+        "name": "GetGroup"
+      },
+      {
+        "name": "GetUser",
+        "doc": "GetUser returns the user an access token was issued to."
+      },
+      {
         "name": "GetUserPoolMfaConfig",
         "doc": "GetUserPoolMfaConfig returns a pool's MFA configuration. The Terraform AWS"
+      },
+      {
+        "name": "GlobalSignOut",
+        "doc": "GlobalSignOut revokes every token issued to the access token's user."
+      },
+      {
+        "name": "InitiateAuth",
+        "doc": "InitiateAuth runs USER_PASSWORD_AUTH or REFRESH_TOKEN_AUTH for a client."
+      },
+      {
+        "name": "ListGroups"
       },
       {
         "name": "ListTagsForResource"
@@ -4076,8 +4869,26 @@
         "doc": "ListUsers returns users sorted by username, filtered by an optional"
       },
       {
+        "name": "ListUsersInGroup"
+      },
+      {
+        "name": "ResendConfirmationCode"
+      },
+      {
+        "name": "RespondToAuthChallenge",
+        "doc": "RespondToAuthChallenge answers the NEW_PASSWORD_REQUIRED challenge."
+      },
+      {
+        "name": "RevokeToken",
+        "doc": "RevokeToken revokes a refresh token and the access and ID tokens minted"
+      },
+      {
         "name": "SetUserPoolMfaConfig",
         "doc": "SetUserPoolMfaConfig replaces a pool's MFA configuration and returns the"
+      },
+      {
+        "name": "SignUp",
+        "doc": "SignUp registers an UNCONFIRMED user, checks the password against the"
       },
       {
         "name": "TagResource"
@@ -4086,12 +4897,37 @@
         "name": "UntagResource"
       },
       {
+        "name": "UpdateGroup",
+        "doc": "UpdateGroup changes the fields the input sets and returns the group."
+      },
+      {
         "name": "UpdateUserPool",
         "doc": "UpdateUserPool applies the mutable pool settings. A nil field is left"
       },
       {
         "name": "UpdateUserPoolClient",
         "doc": "UpdateUserPoolClient replaces the client's settings and returns the result."
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "CodeInspector",
+        "doc": "CodeInspector exposes the confirmation codes the emulator would have sent by",
+        "operations": [
+          {
+            "name": "ConfirmationCode"
+          }
+        ]
+      },
+      {
+        "name": "KeySetProvider",
+        "doc": "KeySetProvider publishes a user pool's token-signing keys and issuer for the",
+        "operations": [
+          {
+            "name": "SigningKeys",
+            "doc": "SigningKeys returns the pool's issuer URL and its public JSON Web Key Set."
+          }
+        ]
       }
     ],
     "providers": {
@@ -4297,6 +5133,26 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AzureAvailabilitySets",
+        "doc": "AzureAvailabilitySets is an optional Azure-only capability for availability",
+        "operations": [
+          {
+            "name": "DeleteAvailabilitySet"
+          },
+          {
+            "name": "GetAvailabilitySet"
+          },
+          {
+            "name": "ListAvailabilitySets",
+            "doc": "ListAvailabilitySets lists the sets of a subscription, narrowed to one"
+          },
+          {
+            "name": "PutAvailabilitySet",
+            "doc": "PutAvailabilitySet creates or replaces the set. Out-of-range domain"
+          }
+        ]
+      },
+      {
         "name": "AzureDiskAccessor",
         "doc": "AzureDiskAccessor is an optional Azure-only capability for the managed-disk",
         "operations": [
@@ -4381,6 +5237,25 @@
         "operations": [
           {
             "name": "DeleteInstances"
+          }
+        ]
+      },
+      {
+        "name": "AzureVMExtensions",
+        "doc": "AzureVMExtensions is an optional Azure-only capability for VM extensions.",
+        "operations": [
+          {
+            "name": "DeleteVMExtension"
+          },
+          {
+            "name": "GetVMExtension"
+          },
+          {
+            "name": "ListVMExtensions"
+          },
+          {
+            "name": "PutVMExtension",
+            "doc": "PutVMExtension creates or replaces the extension on the VM, reporting"
           }
         ]
       },
@@ -4553,7 +5428,8 @@
     "providers": {
       "aws": "EC2",
       "azure": "VirtualMachines",
-      "gcp": "GCE"
+      "gcp": "GCE",
+      "oci": "Compute"
     }
   },
   {
@@ -4938,6 +5814,9 @@
       },
       {
         "name": "GetRevision"
+      },
+      {
+        "name": "ListAppSecrets"
       },
       {
         "name": "ListAppsByResourceGroup"
@@ -5555,7 +6434,8 @@
     "providers": {
       "aws": "DynamoDB",
       "azure": "CosmosDB",
-      "gcp": "Firestore"
+      "gcp": "Firestore",
+      "oci": "NoSQL"
     }
   },
   {
@@ -6445,6 +7325,68 @@
         "name": "UpdateService"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "ServiceDeployments",
+        "doc": "ServiceDeployments exposes the deployment history of ECS-controller services.",
+        "operations": [
+          {
+            "name": "DescribeServiceDeployments"
+          },
+          {
+            "name": "DescribeServiceRevisions"
+          },
+          {
+            "name": "ListServiceDeployments"
+          },
+          {
+            "name": "StopServiceDeployment"
+          }
+        ]
+      },
+      {
+        "name": "ServiceNamespaces",
+        "doc": "ServiceNamespaces lists the services that joined a Service Connect namespace.",
+        "operations": [
+          {
+            "name": "ListServicesByNamespace"
+          }
+        ]
+      },
+      {
+        "name": "TaskProtection",
+        "doc": "TaskProtection reads and changes the scale-in protection of service tasks.",
+        "operations": [
+          {
+            "name": "GetTaskProtection"
+          },
+          {
+            "name": "UpdateTaskProtection"
+          }
+        ]
+      },
+      {
+        "name": "TaskSets",
+        "doc": "TaskSets manages task sets, the task groups of EXTERNAL-controller services.",
+        "operations": [
+          {
+            "name": "CreateTaskSet"
+          },
+          {
+            "name": "DeleteTaskSet"
+          },
+          {
+            "name": "DescribeTaskSets"
+          },
+          {
+            "name": "UpdateServicePrimaryTaskSet"
+          },
+          {
+            "name": "UpdateTaskSet"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "ECS"
     }
@@ -7185,6 +8127,36 @@
       },
       {
         "name": "RollbackNodePool"
+      },
+      {
+        "name": "SetClusterLogging"
+      },
+      {
+        "name": "SetClusterMonitoring"
+      },
+      {
+        "name": "SetLegacyAbac"
+      },
+      {
+        "name": "SetMaintenancePolicy"
+      },
+      {
+        "name": "SetMasterAuth"
+      },
+      {
+        "name": "SetNetworkPolicy"
+      },
+      {
+        "name": "SetNodePoolAutoscaling"
+      },
+      {
+        "name": "SetNodePoolManagement"
+      },
+      {
+        "name": "SetNodePoolSize"
+      },
+      {
+        "name": "SetResourceLabels"
       },
       {
         "name": "StartIPRotation"
@@ -8828,6 +9800,15 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AccessKeyImporter",
+        "doc": "AccessKeyImporter is an optional capability: an IAM implementation that can",
+        "operations": [
+          {
+            "name": "ImportAccessKey"
+          }
+        ]
+      },
+      {
         "name": "AccessKeyResolver",
         "doc": "AccessKeyResolver is an optional capability: an IAM implementation that can",
         "operations": [
@@ -8863,6 +9844,24 @@
         "operations": [
           {
             "name": "PrincipalHasPolicies"
+          }
+        ]
+      },
+      {
+        "name": "RoleBoundaryEvaluator",
+        "doc": "RoleBoundaryEvaluator is an optional capability: an IAM implementation",
+        "operations": [
+          {
+            "name": "EvaluateRoleBoundary"
+          }
+        ]
+      },
+      {
+        "name": "TrustEvaluator",
+        "doc": "TrustEvaluator is an optional capability: an IAM implementation that",
+        "operations": [
+          {
+            "name": "EvaluateTrust"
           }
         ]
       }
@@ -9192,6 +10191,203 @@
       },
       {
         "name": "UpdateIndex"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "AccessControls",
+        "doc": "AccessControls is the optional access control configuration capability.",
+        "operations": [
+          {
+            "name": "CreateAccessControlConfiguration"
+          },
+          {
+            "name": "DeleteAccessControlConfiguration"
+          },
+          {
+            "name": "DescribeAccessControlConfiguration"
+          },
+          {
+            "name": "ListAccessControlConfigurations"
+          },
+          {
+            "name": "UpdateAccessControlConfiguration"
+          }
+        ]
+      },
+      {
+        "name": "BlockLists",
+        "doc": "BlockLists is the optional query suggestions block list capability.",
+        "operations": [
+          {
+            "name": "CreateQuerySuggestionsBlockList"
+          },
+          {
+            "name": "DeleteQuerySuggestionsBlockList"
+          },
+          {
+            "name": "DescribeQuerySuggestionsBlockList"
+          },
+          {
+            "name": "ListQuerySuggestionsBlockLists"
+          },
+          {
+            "name": "UpdateQuerySuggestionsBlockList"
+          }
+        ]
+      },
+      {
+        "name": "Documents",
+        "doc": "Documents is the optional document-ingestion and search capability: documents",
+        "operations": [
+          {
+            "name": "BatchDeleteDocument"
+          },
+          {
+            "name": "BatchGetDocumentStatus"
+          },
+          {
+            "name": "BatchPutDocument"
+          },
+          {
+            "name": "Query"
+          },
+          {
+            "name": "Retrieve"
+          }
+        ]
+      },
+      {
+        "name": "Experiences",
+        "doc": "Experiences is the optional search experience capability.",
+        "operations": [
+          {
+            "name": "CreateExperience"
+          },
+          {
+            "name": "DeleteExperience"
+          },
+          {
+            "name": "DescribeExperience"
+          },
+          {
+            "name": "ListExperiences"
+          },
+          {
+            "name": "UpdateExperience"
+          }
+        ]
+      },
+      {
+        "name": "Faqs",
+        "doc": "Faqs is the optional FAQ capability (Kendra has no UpdateFaq operation).",
+        "operations": [
+          {
+            "name": "CreateFaq"
+          },
+          {
+            "name": "DeleteFaq"
+          },
+          {
+            "name": "DescribeFaq"
+          },
+          {
+            "name": "ListFaqs"
+          }
+        ]
+      },
+      {
+        "name": "FeaturedResults",
+        "doc": "FeaturedResults is the optional featured results capability.",
+        "operations": [
+          {
+            "name": "BatchDeleteFeaturedResultsSet"
+          },
+          {
+            "name": "CreateFeaturedResultsSet"
+          },
+          {
+            "name": "DescribeFeaturedResultsSet"
+          },
+          {
+            "name": "ListFeaturedResultsSets"
+          },
+          {
+            "name": "UpdateFeaturedResultsSet"
+          }
+        ]
+      },
+      {
+        "name": "PrincipalMappings",
+        "doc": "PrincipalMappings is the optional user-to-group principal mapping capability.",
+        "operations": [
+          {
+            "name": "DeletePrincipalMapping"
+          },
+          {
+            "name": "DescribePrincipalMapping"
+          },
+          {
+            "name": "ListGroupsOlderThanOrderingID"
+          },
+          {
+            "name": "PutPrincipalMapping"
+          }
+        ]
+      },
+      {
+        "name": "QuerySuggestions",
+        "doc": "QuerySuggestions is the optional query suggestions capability.",
+        "operations": [
+          {
+            "name": "ClearQuerySuggestions"
+          },
+          {
+            "name": "DescribeQuerySuggestionsConfig"
+          },
+          {
+            "name": "GetQuerySuggestions"
+          },
+          {
+            "name": "UpdateQuerySuggestionsConfig"
+          }
+        ]
+      },
+      {
+        "name": "SyncJobs",
+        "doc": "SyncJobs is the optional data source synchronization capability.",
+        "operations": [
+          {
+            "name": "ListDataSourceSyncJobs"
+          },
+          {
+            "name": "StartDataSourceSyncJob"
+          },
+          {
+            "name": "StopDataSourceSyncJob"
+          }
+        ]
+      },
+      {
+        "name": "Thesauri",
+        "doc": "Thesauri is the optional thesaurus capability.",
+        "operations": [
+          {
+            "name": "CreateThesaurus"
+          },
+          {
+            "name": "DeleteThesaurus"
+          },
+          {
+            "name": "DescribeThesaurus"
+          },
+          {
+            "name": "ListThesauri"
+          },
+          {
+            "name": "UpdateThesaurus"
+          }
+        ]
       }
     ],
     "providers": {
@@ -9739,6 +10935,12 @@
     "interface": "provider-native",
     "operations": [
       {
+        "name": "AsymmetricDecrypt"
+      },
+      {
+        "name": "AsymmetricSign"
+      },
+      {
         "name": "CreateCryptoKey"
       },
       {
@@ -9748,7 +10950,16 @@
         "name": "CreateKeyRing"
       },
       {
+        "name": "Decrypt"
+      },
+      {
         "name": "DestroyCryptoKeyVersion"
+      },
+      {
+        "name": "Encrypt"
+      },
+      {
+        "name": "GenerateRandomBytes"
       },
       {
         "name": "GetCryptoKey"
@@ -9757,10 +10968,10 @@
         "name": "GetCryptoKeyVersion"
       },
       {
-        "name": "GetIamPolicy"
+        "name": "GetKeyRing"
       },
       {
-        "name": "GetKeyRing"
+        "name": "GetPublicKey"
       },
       {
         "name": "ListCryptoKeyVersions"
@@ -9772,13 +10983,13 @@
         "name": "ListKeyRings"
       },
       {
+        "name": "MacSign"
+      },
+      {
+        "name": "MacVerify"
+      },
+      {
         "name": "RestoreCryptoKeyVersion"
-      },
-      {
-        "name": "SetIamPolicy"
-      },
-      {
-        "name": "TestIamPermissions"
       },
       {
         "name": "UpdateCryptoKey"
@@ -10402,7 +11613,8 @@
     "providers": {
       "aws": "CloudWatchLogs",
       "azure": "LogAnalytics",
-      "gcp": "CloudLogging"
+      "gcp": "CloudLogging",
+      "oci": "Logging"
     }
   },
   {
@@ -12606,7 +13818,8 @@
     "providers": {
       "aws": "SNS",
       "azure": "NotificationHubs",
-      "gcp": "FCM"
+      "gcp": "FCM",
+      "oci": "Notifications"
     }
   },
   {
@@ -14884,10 +16097,28 @@
     "interface": "Service",
     "operations": [
       {
+        "name": "AddAssociation"
+      },
+      {
         "name": "AddTags"
       },
       {
+        "name": "AssociateTrialComponent"
+      },
+      {
+        "name": "BatchDescribeModelPackage"
+      },
+      {
+        "name": "CreateAction"
+      },
+      {
         "name": "CreateApp"
+      },
+      {
+        "name": "CreateAppImageConfig"
+      },
+      {
+        "name": "CreateArtifact"
       },
       {
         "name": "CreateAutoMLJobV2"
@@ -14900,6 +16131,9 @@
       },
       {
         "name": "CreateCompilationJob"
+      },
+      {
+        "name": "CreateContext"
       },
       {
         "name": "CreateDomain"
@@ -14920,6 +16154,12 @@
         "name": "CreateHyperParameterTuningJob"
       },
       {
+        "name": "CreateImage"
+      },
+      {
+        "name": "CreateImageVersion"
+      },
+      {
         "name": "CreateInferenceComponent"
       },
       {
@@ -14935,6 +16175,12 @@
         "name": "CreateModelPackageGroup"
       },
       {
+        "name": "CreateMonitoringJobDefinition"
+      },
+      {
+        "name": "CreateMonitoringSchedule"
+      },
+      {
         "name": "CreateNotebookInstance"
       },
       {
@@ -14945,6 +16191,9 @@
       },
       {
         "name": "CreateProcessingJob"
+      },
+      {
+        "name": "CreateProject"
       },
       {
         "name": "CreateSpace"
@@ -14959,16 +16208,40 @@
         "name": "CreateTrial"
       },
       {
+        "name": "CreateTrialComponent"
+      },
+      {
         "name": "CreateUserProfile"
       },
       {
+        "name": "CreateWorkforce"
+      },
+      {
+        "name": "CreateWorkteam"
+      },
+      {
+        "name": "DeleteAction"
+      },
+      {
         "name": "DeleteApp"
+      },
+      {
+        "name": "DeleteAppImageConfig"
+      },
+      {
+        "name": "DeleteArtifact"
+      },
+      {
+        "name": "DeleteAssociation"
       },
       {
         "name": "DeleteCluster"
       },
       {
         "name": "DeleteCodeRepository"
+      },
+      {
+        "name": "DeleteContext"
       },
       {
         "name": "DeleteDomain"
@@ -14986,6 +16259,12 @@
         "name": "DeleteFeatureGroup"
       },
       {
+        "name": "DeleteImage"
+      },
+      {
+        "name": "DeleteImageVersion"
+      },
+      {
         "name": "DeleteInferenceComponent"
       },
       {
@@ -14998,6 +16277,15 @@
         "name": "DeleteModelPackageGroup"
       },
       {
+        "name": "DeleteModelPackageGroupPolicy"
+      },
+      {
+        "name": "DeleteMonitoringJobDefinition"
+      },
+      {
+        "name": "DeleteMonitoringSchedule"
+      },
+      {
         "name": "DeleteNotebookInstance"
       },
       {
@@ -15005,6 +16293,9 @@
       },
       {
         "name": "DeletePipeline"
+      },
+      {
+        "name": "DeleteProject"
       },
       {
         "name": "DeleteRecord"
@@ -15019,10 +16310,28 @@
         "name": "DeleteTrial"
       },
       {
+        "name": "DeleteTrialComponent"
+      },
+      {
         "name": "DeleteUserProfile"
       },
       {
+        "name": "DeleteWorkforce"
+      },
+      {
+        "name": "DeleteWorkteam"
+      },
+      {
+        "name": "DescribeAction"
+      },
+      {
         "name": "DescribeApp"
+      },
+      {
+        "name": "DescribeAppImageConfig"
+      },
+      {
+        "name": "DescribeArtifact"
       },
       {
         "name": "DescribeAutoMLJobV2"
@@ -15038,6 +16347,9 @@
       },
       {
         "name": "DescribeCompilationJob"
+      },
+      {
+        "name": "DescribeContext"
       },
       {
         "name": "DescribeDomain"
@@ -15058,10 +16370,19 @@
         "name": "DescribeHyperParameterTuningJob"
       },
       {
+        "name": "DescribeImage"
+      },
+      {
+        "name": "DescribeImageVersion"
+      },
+      {
         "name": "DescribeInferenceComponent"
       },
       {
         "name": "DescribeLabelingJob"
+      },
+      {
+        "name": "DescribeLineageGroup"
       },
       {
         "name": "DescribeModel"
@@ -15071,6 +16392,12 @@
       },
       {
         "name": "DescribeModelPackageGroup"
+      },
+      {
+        "name": "DescribeMonitoringJobDefinition"
+      },
+      {
+        "name": "DescribeMonitoringSchedule"
       },
       {
         "name": "DescribeNotebookInstance"
@@ -15088,7 +16415,13 @@
         "name": "DescribeProcessingJob"
       },
       {
+        "name": "DescribeProject"
+      },
+      {
         "name": "DescribeSpace"
+      },
+      {
+        "name": "DescribeSubscribedWorkteam"
       },
       {
         "name": "DescribeTrainingJob"
@@ -15100,10 +16433,31 @@
         "name": "DescribeTrial"
       },
       {
+        "name": "DescribeTrialComponent"
+      },
+      {
         "name": "DescribeUserProfile"
       },
       {
+        "name": "DescribeWorkforce"
+      },
+      {
+        "name": "DescribeWorkteam"
+      },
+      {
+        "name": "DisassociateTrialComponent"
+      },
+      {
+        "name": "GetLineageGroupPolicy"
+      },
+      {
+        "name": "GetModelPackageGroupPolicy"
+      },
+      {
         "name": "GetRecord"
+      },
+      {
+        "name": "GetSearchSuggestions"
       },
       {
         "name": "InvokeEndpoint"
@@ -15112,7 +16466,23 @@
         "name": "InvokeEndpointAsync"
       },
       {
+        "name": "ListActions"
+      },
+      {
+        "name": "ListAliases"
+      },
+      {
+        "name": "ListAppImageConfigs"
+      },
+      {
         "name": "ListApps"
+      },
+      {
+        "name": "ListArtifacts"
+      },
+      {
+        "name": "ListAssociations",
+        "doc": "ListAssociations filters by opts.Filters keys AssociationType, SourceArn,"
       },
       {
         "name": "ListAutoMLJobs"
@@ -15128,6 +16498,9 @@
       },
       {
         "name": "ListCompilationJobs"
+      },
+      {
+        "name": "ListContexts"
       },
       {
         "name": "ListDomains"
@@ -15148,10 +16521,22 @@
         "name": "ListHyperParameterTuningJobs"
       },
       {
+        "name": "ListImageVersions"
+      },
+      {
+        "name": "ListImages"
+      },
+      {
         "name": "ListInferenceComponents"
       },
       {
         "name": "ListLabelingJobs"
+      },
+      {
+        "name": "ListLabelingJobsForWorkteam"
+      },
+      {
+        "name": "ListLineageGroups"
       },
       {
         "name": "ListModelPackageGroups"
@@ -15161,6 +16546,21 @@
       },
       {
         "name": "ListModels"
+      },
+      {
+        "name": "ListMonitoringAlertHistory"
+      },
+      {
+        "name": "ListMonitoringAlerts"
+      },
+      {
+        "name": "ListMonitoringExecutions"
+      },
+      {
+        "name": "ListMonitoringJobDefinitions"
+      },
+      {
+        "name": "ListMonitoringSchedules"
       },
       {
         "name": "ListNotebookInstanceLifecycleConfigs"
@@ -15178,7 +16578,13 @@
         "name": "ListProcessingJobs"
       },
       {
+        "name": "ListProjects"
+      },
+      {
         "name": "ListSpaces"
+      },
+      {
+        "name": "ListSubscribedWorkteams"
       },
       {
         "name": "ListTags"
@@ -15190,13 +16596,35 @@
         "name": "ListTransformJobs"
       },
       {
+        "name": "ListTrialComponents",
+        "doc": "ListTrialComponents filters by opts.Filters keys ExperimentName, TrialName"
+      },
+      {
         "name": "ListTrials"
       },
       {
         "name": "ListUserProfiles"
       },
       {
+        "name": "ListWorkforces"
+      },
+      {
+        "name": "ListWorkteams"
+      },
+      {
+        "name": "PutModelPackageGroupPolicy"
+      },
+      {
         "name": "PutRecord"
+      },
+      {
+        "name": "QueryLineage"
+      },
+      {
+        "name": "Search"
+      },
+      {
+        "name": "StartMonitoringSchedule"
       },
       {
         "name": "StartNotebookInstance"
@@ -15217,6 +16645,9 @@
         "name": "StopLabelingJob"
       },
       {
+        "name": "StopMonitoringSchedule"
+      },
+      {
         "name": "StopNotebookInstance"
       },
       {
@@ -15232,7 +16663,19 @@
         "name": "StopTransformJob"
       },
       {
+        "name": "UpdateAction"
+      },
+      {
+        "name": "UpdateAppImageConfig"
+      },
+      {
+        "name": "UpdateArtifact"
+      },
+      {
         "name": "UpdateCluster"
+      },
+      {
+        "name": "UpdateContext"
       },
       {
         "name": "UpdateEndpoint"
@@ -15241,10 +16684,40 @@
         "name": "UpdateEndpointWeightsAndCapacities"
       },
       {
+        "name": "UpdateImage"
+      },
+      {
+        "name": "UpdateImageVersion"
+      },
+      {
         "name": "UpdateModelPackage"
       },
       {
+        "name": "UpdateMonitoringAlert"
+      },
+      {
+        "name": "UpdateMonitoringSchedule"
+      },
+      {
+        "name": "UpdateNotebookInstance"
+      },
+      {
+        "name": "UpdateNotebookInstanceLifecycleConfig"
+      },
+      {
         "name": "UpdatePipeline"
+      },
+      {
+        "name": "UpdateProject"
+      },
+      {
+        "name": "UpdateTrialComponent"
+      },
+      {
+        "name": "UpdateWorkforce"
+      },
+      {
+        "name": "UpdateWorkteam"
       }
     ],
     "optionalCapabilities": [
@@ -15265,10 +16738,28 @@
         "doc": "SageMaker is the interface that SageMaker AI control-plane implementations",
         "operations": [
           {
+            "name": "AddAssociation"
+          },
+          {
             "name": "AddTags"
           },
           {
+            "name": "AssociateTrialComponent"
+          },
+          {
+            "name": "BatchDescribeModelPackage"
+          },
+          {
+            "name": "CreateAction"
+          },
+          {
             "name": "CreateApp"
+          },
+          {
+            "name": "CreateAppImageConfig"
+          },
+          {
+            "name": "CreateArtifact"
           },
           {
             "name": "CreateAutoMLJobV2"
@@ -15281,6 +16772,9 @@
           },
           {
             "name": "CreateCompilationJob"
+          },
+          {
+            "name": "CreateContext"
           },
           {
             "name": "CreateDomain"
@@ -15301,6 +16795,12 @@
             "name": "CreateHyperParameterTuningJob"
           },
           {
+            "name": "CreateImage"
+          },
+          {
+            "name": "CreateImageVersion"
+          },
+          {
             "name": "CreateInferenceComponent"
           },
           {
@@ -15316,6 +16816,12 @@
             "name": "CreateModelPackageGroup"
           },
           {
+            "name": "CreateMonitoringJobDefinition"
+          },
+          {
+            "name": "CreateMonitoringSchedule"
+          },
+          {
             "name": "CreateNotebookInstance"
           },
           {
@@ -15326,6 +16832,9 @@
           },
           {
             "name": "CreateProcessingJob"
+          },
+          {
+            "name": "CreateProject"
           },
           {
             "name": "CreateSpace"
@@ -15340,16 +16849,40 @@
             "name": "CreateTrial"
           },
           {
+            "name": "CreateTrialComponent"
+          },
+          {
             "name": "CreateUserProfile"
           },
           {
+            "name": "CreateWorkforce"
+          },
+          {
+            "name": "CreateWorkteam"
+          },
+          {
+            "name": "DeleteAction"
+          },
+          {
             "name": "DeleteApp"
+          },
+          {
+            "name": "DeleteAppImageConfig"
+          },
+          {
+            "name": "DeleteArtifact"
+          },
+          {
+            "name": "DeleteAssociation"
           },
           {
             "name": "DeleteCluster"
           },
           {
             "name": "DeleteCodeRepository"
+          },
+          {
+            "name": "DeleteContext"
           },
           {
             "name": "DeleteDomain"
@@ -15367,6 +16900,12 @@
             "name": "DeleteFeatureGroup"
           },
           {
+            "name": "DeleteImage"
+          },
+          {
+            "name": "DeleteImageVersion"
+          },
+          {
             "name": "DeleteInferenceComponent"
           },
           {
@@ -15379,6 +16918,15 @@
             "name": "DeleteModelPackageGroup"
           },
           {
+            "name": "DeleteModelPackageGroupPolicy"
+          },
+          {
+            "name": "DeleteMonitoringJobDefinition"
+          },
+          {
+            "name": "DeleteMonitoringSchedule"
+          },
+          {
             "name": "DeleteNotebookInstance"
           },
           {
@@ -15386,6 +16934,9 @@
           },
           {
             "name": "DeletePipeline"
+          },
+          {
+            "name": "DeleteProject"
           },
           {
             "name": "DeleteRecord"
@@ -15400,10 +16951,28 @@
             "name": "DeleteTrial"
           },
           {
+            "name": "DeleteTrialComponent"
+          },
+          {
             "name": "DeleteUserProfile"
           },
           {
+            "name": "DeleteWorkforce"
+          },
+          {
+            "name": "DeleteWorkteam"
+          },
+          {
+            "name": "DescribeAction"
+          },
+          {
             "name": "DescribeApp"
+          },
+          {
+            "name": "DescribeAppImageConfig"
+          },
+          {
+            "name": "DescribeArtifact"
           },
           {
             "name": "DescribeAutoMLJobV2"
@@ -15419,6 +16988,9 @@
           },
           {
             "name": "DescribeCompilationJob"
+          },
+          {
+            "name": "DescribeContext"
           },
           {
             "name": "DescribeDomain"
@@ -15439,10 +17011,19 @@
             "name": "DescribeHyperParameterTuningJob"
           },
           {
+            "name": "DescribeImage"
+          },
+          {
+            "name": "DescribeImageVersion"
+          },
+          {
             "name": "DescribeInferenceComponent"
           },
           {
             "name": "DescribeLabelingJob"
+          },
+          {
+            "name": "DescribeLineageGroup"
           },
           {
             "name": "DescribeModel"
@@ -15452,6 +17033,12 @@
           },
           {
             "name": "DescribeModelPackageGroup"
+          },
+          {
+            "name": "DescribeMonitoringJobDefinition"
+          },
+          {
+            "name": "DescribeMonitoringSchedule"
           },
           {
             "name": "DescribeNotebookInstance"
@@ -15469,7 +17056,13 @@
             "name": "DescribeProcessingJob"
           },
           {
+            "name": "DescribeProject"
+          },
+          {
             "name": "DescribeSpace"
+          },
+          {
+            "name": "DescribeSubscribedWorkteam"
           },
           {
             "name": "DescribeTrainingJob"
@@ -15481,13 +17074,50 @@
             "name": "DescribeTrial"
           },
           {
+            "name": "DescribeTrialComponent"
+          },
+          {
             "name": "DescribeUserProfile"
+          },
+          {
+            "name": "DescribeWorkforce"
+          },
+          {
+            "name": "DescribeWorkteam"
+          },
+          {
+            "name": "DisassociateTrialComponent"
+          },
+          {
+            "name": "GetLineageGroupPolicy"
+          },
+          {
+            "name": "GetModelPackageGroupPolicy"
           },
           {
             "name": "GetRecord"
           },
           {
+            "name": "GetSearchSuggestions"
+          },
+          {
+            "name": "ListActions"
+          },
+          {
+            "name": "ListAliases"
+          },
+          {
+            "name": "ListAppImageConfigs"
+          },
+          {
             "name": "ListApps"
+          },
+          {
+            "name": "ListArtifacts"
+          },
+          {
+            "name": "ListAssociations",
+            "doc": "ListAssociations filters by opts.Filters keys AssociationType, SourceArn,"
           },
           {
             "name": "ListAutoMLJobs"
@@ -15503,6 +17133,9 @@
           },
           {
             "name": "ListCompilationJobs"
+          },
+          {
+            "name": "ListContexts"
           },
           {
             "name": "ListDomains"
@@ -15523,10 +17156,22 @@
             "name": "ListHyperParameterTuningJobs"
           },
           {
+            "name": "ListImageVersions"
+          },
+          {
+            "name": "ListImages"
+          },
+          {
             "name": "ListInferenceComponents"
           },
           {
             "name": "ListLabelingJobs"
+          },
+          {
+            "name": "ListLabelingJobsForWorkteam"
+          },
+          {
+            "name": "ListLineageGroups"
           },
           {
             "name": "ListModelPackageGroups"
@@ -15536,6 +17181,21 @@
           },
           {
             "name": "ListModels"
+          },
+          {
+            "name": "ListMonitoringAlertHistory"
+          },
+          {
+            "name": "ListMonitoringAlerts"
+          },
+          {
+            "name": "ListMonitoringExecutions"
+          },
+          {
+            "name": "ListMonitoringJobDefinitions"
+          },
+          {
+            "name": "ListMonitoringSchedules"
           },
           {
             "name": "ListNotebookInstanceLifecycleConfigs"
@@ -15553,7 +17213,13 @@
             "name": "ListProcessingJobs"
           },
           {
+            "name": "ListProjects"
+          },
+          {
             "name": "ListSpaces"
+          },
+          {
+            "name": "ListSubscribedWorkteams"
           },
           {
             "name": "ListTags"
@@ -15565,13 +17231,35 @@
             "name": "ListTransformJobs"
           },
           {
+            "name": "ListTrialComponents",
+            "doc": "ListTrialComponents filters by opts.Filters keys ExperimentName, TrialName"
+          },
+          {
             "name": "ListTrials"
           },
           {
             "name": "ListUserProfiles"
           },
           {
+            "name": "ListWorkforces"
+          },
+          {
+            "name": "ListWorkteams"
+          },
+          {
+            "name": "PutModelPackageGroupPolicy"
+          },
+          {
             "name": "PutRecord"
+          },
+          {
+            "name": "QueryLineage"
+          },
+          {
+            "name": "Search"
+          },
+          {
+            "name": "StartMonitoringSchedule"
           },
           {
             "name": "StartNotebookInstance"
@@ -15592,6 +17280,9 @@
             "name": "StopLabelingJob"
           },
           {
+            "name": "StopMonitoringSchedule"
+          },
+          {
             "name": "StopNotebookInstance"
           },
           {
@@ -15607,7 +17298,19 @@
             "name": "StopTransformJob"
           },
           {
+            "name": "UpdateAction"
+          },
+          {
+            "name": "UpdateAppImageConfig"
+          },
+          {
+            "name": "UpdateArtifact"
+          },
+          {
             "name": "UpdateCluster"
+          },
+          {
+            "name": "UpdateContext"
           },
           {
             "name": "UpdateEndpoint"
@@ -15616,10 +17319,40 @@
             "name": "UpdateEndpointWeightsAndCapacities"
           },
           {
+            "name": "UpdateImage"
+          },
+          {
+            "name": "UpdateImageVersion"
+          },
+          {
             "name": "UpdateModelPackage"
           },
           {
+            "name": "UpdateMonitoringAlert"
+          },
+          {
+            "name": "UpdateMonitoringSchedule"
+          },
+          {
+            "name": "UpdateNotebookInstance"
+          },
+          {
+            "name": "UpdateNotebookInstanceLifecycleConfig"
+          },
+          {
             "name": "UpdatePipeline"
+          },
+          {
+            "name": "UpdateProject"
+          },
+          {
+            "name": "UpdateTrialComponent"
+          },
+          {
+            "name": "UpdateWorkforce"
+          },
+          {
+            "name": "UpdateWorkteam"
           }
         ]
       }
@@ -15941,7 +17674,8 @@
     "providers": {
       "aws": "SecretsManager",
       "azure": "KeyVault",
-      "gcp": "SecretManager"
+      "gcp": "SecretManager",
+      "oci": "Vault"
     }
   },
   {
@@ -17351,6 +19085,15 @@
         ]
       },
       {
+        "name": "BucketCreator",
+        "doc": "BucketCreator is an OPTIONAL capability (discovered by type assertion) for a",
+        "operations": [
+          {
+            "name": "CreateBucketWithOptions"
+          }
+        ]
+      },
+      {
         "name": "ConditionalBucket",
         "doc": "ConditionalBucket is an OPTIONAL capability (discovered by type assertion like",
         "operations": [
@@ -17521,6 +19264,9 @@
             "doc": "GetObjectLegalHold reports whether legal hold is ON for a version (current"
           },
           {
+            "name": "GetObjectLockConfiguration"
+          },
+          {
             "name": "GetObjectRetention",
             "doc": "GetObjectRetention returns the retention on a version (the current version"
           },
@@ -17586,12 +19332,20 @@
             "doc": "PutObjectLegalHold sets legal hold ON/OFF for a version (current when"
           },
           {
+            "name": "PutObjectLockConfiguration",
+            "doc": "PutObjectLockConfiguration enables Object Lock on the bucket (which must"
+          },
+          {
             "name": "PutObjectRetention",
             "doc": "PutObjectRetention sets the retention on a version (current when"
           },
           {
             "name": "PutObjectTagging",
             "doc": "Object Tagging"
+          },
+          {
+            "name": "PutObjectWithLock",
+            "doc": "PutObjectWithLock is PutObjectWithSystemProps that also sets the new"
           },
           {
             "name": "SetBucketVersioning",
@@ -17606,6 +19360,24 @@
           },
           {
             "name": "VersioningStatus"
+          }
+        ]
+      },
+      {
+        "name": "ObjectRestorer",
+        "doc": "ObjectRestorer is an OPTIONAL S3-specific capability (discovered by type",
+        "operations": [
+          {
+            "name": "RestoreObject"
+          }
+        ]
+      },
+      {
+        "name": "ObjectTagValidator",
+        "doc": "ObjectTagValidator is an OPTIONAL capability (discovered by type assertion)",
+        "operations": [
+          {
+            "name": "ValidateObjectTags"
           }
         ]
       },
@@ -17806,7 +19578,8 @@
     "providers": {
       "aws": "S3",
       "azure": "BlobStorage",
-      "gcp": "GCS"
+      "gcp": "GCS",
+      "oci": "ObjectStorage"
     }
   },
   {

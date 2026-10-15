@@ -81,11 +81,14 @@ type containerJSON struct {
 
 // containerPropsJSON mirrors ContainerProperties.
 type containerPropsJSON struct {
-	Image                string                 `json:"image,omitempty"`
-	Command              []string               `json:"command,omitempty"`
-	EnvironmentVariables []envVarJSON           `json:"environmentVariables,omitempty"`
-	Resources            *resourceRequirements  `json:"resources,omitempty"`
-	InstanceView         *containerInstanceView `json:"instanceView,omitempty"`
+	Image                string       `json:"image,omitempty"`
+	Command              []string     `json:"command,omitempty"`
+	EnvironmentVariables []envVarJSON `json:"environmentVariables,omitempty"`
+	// Ports has no omitempty: real ARM always reports the array (empty when the
+	// container exposes none), and azurerm dereferences it unconditionally.
+	Ports        []portJSON             `json:"ports"`
+	Resources    *resourceRequirements  `json:"resources,omitempty"`
+	InstanceView *containerInstanceView `json:"instanceView,omitempty"`
 }
 
 // envVarJSON mirrors an EnvironmentVariable.
@@ -184,6 +187,10 @@ func toContainerConfigs(in []containerJSON) []driver.ContainerConfig {
 			cc.Image = c.Properties.Image
 			cc.Command = append([]string(nil), c.Properties.Command...)
 			cc.Env = toEnvVars(c.Properties.EnvironmentVariables)
+
+			for _, p := range c.Properties.Ports {
+				cc.Ports = append(cc.Ports, driver.Port{Port: p.Port, Protocol: p.Protocol})
+			}
 
 			if res := c.Properties.Resources; res != nil && res.Requests != nil {
 				cc.CPU = res.Requests.CPU

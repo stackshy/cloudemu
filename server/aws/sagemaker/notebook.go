@@ -7,61 +7,26 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
-func (h *Handler) routeNotebook(w http.ResponseWriter, r *http.Request, op string) bool {
-	switch op {
-	case "CreateNotebookInstance":
-		h.createNotebookInstance(w, r)
-	case "DescribeNotebookInstance":
-		h.describeNotebookInstance(w, r)
-	case "ListNotebookInstances":
-		h.listNotebookInstances(w, r)
-	case "StartNotebookInstance":
-		stopByName(w, r, "NotebookInstanceName", h.svc.StartNotebookInstance)
-	case "StopNotebookInstance":
-		stopByName(w, r, "NotebookInstanceName", h.svc.StopNotebookInstance)
-	case "DeleteNotebookInstance":
-		stopByName(w, r, "NotebookInstanceName", h.svc.DeleteNotebookInstance)
-	default:
-		return h.routeNotebookSupport(w, r, op)
-	}
-
-	return true
-}
-
-func (h *Handler) routeNotebookSupport(w http.ResponseWriter, r *http.Request, op string) bool {
-	switch op {
-	case "CreateNotebookInstanceLifecycleConfig":
-		h.createNotebookLC(w, r)
-	case "DescribeNotebookInstanceLifecycleConfig":
-		h.describeNotebookLC(w, r)
-	case "ListNotebookInstanceLifecycleConfigs":
-		h.listNotebookLCs(w, r)
-	case "DeleteNotebookInstanceLifecycleConfig":
-		stopByName(w, r, "NotebookInstanceLifecycleConfigName", h.svc.DeleteNotebookInstanceLifecycleConfig)
-	case "CreateCodeRepository":
-		h.createCodeRepository(w, r)
-	case "DescribeCodeRepository":
-		h.describeCodeRepository(w, r)
-	case "ListCodeRepositories":
-		h.listCodeRepositories(w, r)
-	case "DeleteCodeRepository":
-		stopByName(w, r, "CodeRepositoryName", h.svc.DeleteCodeRepository)
-	default:
-		return false
-	}
-
-	return true
-}
-
 func (h *Handler) createNotebookInstance(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		NotebookInstanceName  string    `json:"NotebookInstanceName"`
-		InstanceType          string    `json:"InstanceType"`
-		RoleArn               string    `json:"RoleArn"`
-		VolumeSizeInGB        int       `json:"VolumeSizeInGB"`
-		LifecycleConfigName   string    `json:"LifecycleConfigName"`
-		DefaultCodeRepository string    `json:"DefaultCodeRepository"`
-		Tags                  []wireTag `json:"Tags"`
+		NotebookInstanceName  string   `json:"NotebookInstanceName"`
+		InstanceType          string   `json:"InstanceType"`
+		RoleArn               string   `json:"RoleArn"`
+		VolumeSizeInGB        int      `json:"VolumeSizeInGB"`
+		LifecycleConfigName   string   `json:"LifecycleConfigName"`
+		DefaultCodeRepository string   `json:"DefaultCodeRepository"`
+		AdditionalCodeRepos   []string `json:"AdditionalCodeRepositories"`
+		RootAccess            string   `json:"RootAccess"`
+		SubnetID              string   `json:"SubnetId"`
+		SecurityGroupIDs      []string `json:"SecurityGroupIds"`
+		KmsKeyID              string   `json:"KmsKeyId"`
+		DirectInternetAccess  string   `json:"DirectInternetAccess"`
+		IPAddressType         string   `json:"IpAddressType"`
+		IMDS                  *struct {
+			Version string `json:"MinimumInstanceMetadataServiceVersion"`
+		} `json:"InstanceMetadataServiceConfiguration"`
+		PlatformIdentifier string    `json:"PlatformIdentifier"`
+		Tags               []wireTag `json:"Tags"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -69,13 +34,22 @@ func (h *Handler) createNotebookInstance(w http.ResponseWriter, r *http.Request)
 	}
 
 	nb, err := h.svc.CreateNotebookInstance(r.Context(), driver.NotebookInstanceSpec{
-		Name:            req.NotebookInstanceName,
-		InstanceType:    req.InstanceType,
-		RoleARN:         req.RoleArn,
-		VolumeSizeInGB:  req.VolumeSizeInGB,
-		LifecycleConfig: req.LifecycleConfigName,
-		DefaultCodeRepo: req.DefaultCodeRepository,
-		Tags:            toTags(req.Tags),
+		Name:                 req.NotebookInstanceName,
+		InstanceType:         req.InstanceType,
+		RoleARN:              req.RoleArn,
+		VolumeSizeInGB:       req.VolumeSizeInGB,
+		LifecycleConfig:      req.LifecycleConfigName,
+		DefaultCodeRepo:      req.DefaultCodeRepository,
+		AdditionalCodeRepos:  req.AdditionalCodeRepos,
+		RootAccess:           req.RootAccess,
+		SubnetID:             req.SubnetID,
+		SecurityGroups:       req.SecurityGroupIDs,
+		KmsKeyID:             req.KmsKeyID,
+		DirectInternetAccess: req.DirectInternetAccess,
+		IMDSVersion:          imdsVersion(req.IMDS),
+		IPAddressType:        req.IPAddressType,
+		PlatformIdentifier:   req.PlatformIdentifier,
+		Tags:                 toTags(req.Tags),
 	})
 	if err != nil {
 		writeDriverError(w, err)
@@ -100,19 +74,136 @@ func (h *Handler) describeNotebookInstance(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{
+	resp := map[string]any{
 		"NotebookInstanceName":   nb.Name,
 		"NotebookInstanceArn":    nb.ARN,
 		"NotebookInstanceStatus": nb.Status,
 		"InstanceType":           nb.InstanceType,
 		"RoleArn":                nb.RoleARN,
 		"Url":                    nb.URL,
-		"CreationTime":           epoch(nb.CreationTime),
+		"VolumeSizeInGB":         nb.VolumeSizeInGB,
+		"RootAccess":             nb.RootAccess,
+		"DirectInternetAccess":   nb.DirectInternetAccess,
+		"IpAddressType":          nb.IPAddressType,
+		"InstanceMetadataServiceConfiguration": map[string]any{
+			"MinimumInstanceMetadataServiceVersion": nb.IMDSVersion,
+		},
+		"PlatformIdentifier": nb.PlatformIdentifier,
+		"CreationTime":       epoch(nb.CreationTime),
+		"LastModifiedTime":   epoch(nb.LastModifiedTime),
+	}
+
+	// Optional members are omitted when empty, not sent as "" or null.
+	setIf(resp, "NotebookInstanceLifecycleConfigName", nb.LifecycleConfig)
+	setIf(resp, "DefaultCodeRepository", nb.DefaultCodeRepo)
+	setIf(resp, "FailureReason", nb.FailureReason)
+	setIf(resp, "SubnetId", nb.SubnetID)
+	setIf(resp, "KmsKeyId", nb.KmsKeyID)
+
+	if len(nb.SecurityGroups) > 0 {
+		resp["SecurityGroups"] = nb.SecurityGroups
+	}
+
+	if len(nb.AdditionalCodeRepos) > 0 {
+		resp["AdditionalCodeRepositories"] = nb.AdditionalCodeRepos
+	}
+
+	wire.WriteJSON(w, resp)
+}
+
+// setIf sets m[key] = v when v is non-empty.
+func setIf(m map[string]any, key, v string) {
+	if v != "" {
+		m[key] = v
+	}
+}
+
+func (h *Handler) updateNotebookInstance(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NotebookInstanceName                   string   `json:"NotebookInstanceName"`
+		InstanceType                           *string  `json:"InstanceType"`
+		RoleArn                                *string  `json:"RoleArn"`
+		LifecycleConfigName                    *string  `json:"LifecycleConfigName"`
+		DisassociateLifecycleConfig            bool     `json:"DisassociateLifecycleConfig"`
+		VolumeSizeInGB                         *int     `json:"VolumeSizeInGB"`
+		DefaultCodeRepository                  *string  `json:"DefaultCodeRepository"`
+		DisassociateDefaultCodeRepository      bool     `json:"DisassociateDefaultCodeRepository"`
+		AdditionalCodeRepositories             []string `json:"AdditionalCodeRepositories"`
+		DisassociateAdditionalCodeRepositories bool     `json:"DisassociateAdditionalCodeRepositories"`
+		RootAccess                             *string  `json:"RootAccess"`
+		IPAddressType                          *string  `json:"IpAddressType"`
+		IMDS                                   *struct {
+			Version string `json:"MinimumInstanceMetadataServiceVersion"`
+		} `json:"InstanceMetadataServiceConfiguration"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	err := h.svc.UpdateNotebookInstance(r.Context(), driver.NotebookInstanceUpdate{
+		Name:                            req.NotebookInstanceName,
+		InstanceType:                    req.InstanceType,
+		RoleARN:                         req.RoleArn,
+		VolumeSizeInGB:                  req.VolumeSizeInGB,
+		LifecycleConfig:                 req.LifecycleConfigName,
+		DisassociateLifecycleConfig:     req.DisassociateLifecycleConfig,
+		DefaultCodeRepo:                 req.DefaultCodeRepository,
+		DisassociateDefaultCodeRepo:     req.DisassociateDefaultCodeRepository,
+		AdditionalCodeRepos:             req.AdditionalCodeRepositories,
+		DisassociateAdditionalCodeRepos: req.DisassociateAdditionalCodeRepositories,
+		RootAccess:                      req.RootAccess,
+		IPAddressType:                   req.IPAddressType,
+		IMDSVersion:                     imdsVersionPtr(req.IMDS),
 	})
+	if err != nil {
+		writeDriverError(w, err)
+
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{})
+}
+
+func (h *Handler) updateNotebookLC(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NotebookInstanceLifecycleConfigName string        `json:"NotebookInstanceLifecycleConfigName"`
+		OnCreate                            *[]wireLCStep `json:"OnCreate"`
+		OnStart                             *[]wireLCStep `json:"OnStart"`
+	}
+
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	up := driver.NotebookLifecycleConfigUpdate{Name: req.NotebookInstanceLifecycleConfigName}
+
+	if req.OnCreate != nil {
+		c := firstStepContent(*req.OnCreate)
+		up.OnCreate = &c
+	}
+
+	if req.OnStart != nil {
+		c := firstStepContent(*req.OnStart)
+		up.OnStart = &c
+	}
+
+	if err := h.svc.UpdateNotebookInstanceLifecycleConfig(r.Context(), up); err != nil {
+		writeDriverError(w, err)
+
+		return
+	}
+
+	wire.WriteJSON(w, map[string]any{})
 }
 
 func (h *Handler) listNotebookInstances(w http.ResponseWriter, r *http.Request) {
-	nbs, err := h.svc.ListNotebookInstances(r.Context())
+	req, ok := decodeListReq(w, r)
+	if !ok {
+		return
+	}
+
+	nbs, err := h.svc.ListNotebookInstances(r.Context(), req.options())
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -126,6 +217,7 @@ func (h *Handler) listNotebookInstances(w http.ResponseWriter, r *http.Request) 
 			"NotebookInstanceStatus": nb.Status,
 			"InstanceType":           nb.InstanceType,
 			"CreationTime":           epoch(nb.CreationTime),
+			"LastModifiedTime":       epoch(nb.LastModifiedTime),
 		}
 	})
 }
@@ -188,11 +280,17 @@ func (h *Handler) describeNotebookLC(w http.ResponseWriter, r *http.Request) {
 		"OnCreate":                            []wireLCStep{{Content: lc.OnCreate}},
 		"OnStart":                             []wireLCStep{{Content: lc.OnStart}},
 		"CreationTime":                        epoch(lc.CreationTime),
+		"LastModifiedTime":                    epoch(lc.LastModifiedTime),
 	})
 }
 
 func (h *Handler) listNotebookLCs(w http.ResponseWriter, r *http.Request) {
-	lcs, err := h.svc.ListNotebookInstanceLifecycleConfigs(r.Context())
+	req, ok := decodeListReq(w, r)
+	if !ok {
+		return
+	}
+
+	lcs, err := h.svc.ListNotebookInstanceLifecycleConfigs(r.Context(), req.options())
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -204,6 +302,7 @@ func (h *Handler) listNotebookLCs(w http.ResponseWriter, r *http.Request) {
 			"NotebookInstanceLifecycleConfigName": lc.Name,
 			"NotebookInstanceLifecycleConfigArn":  lc.ARN,
 			"CreationTime":                        epoch(lc.CreationTime),
+			"LastModifiedTime":                    epoch(lc.LastModifiedTime),
 		}
 	})
 }
@@ -258,12 +357,28 @@ func (h *Handler) describeCodeRepository(w http.ResponseWriter, r *http.Request)
 			"Branch":        repo.Branch,
 			"SecretArn":     repo.SecretARN,
 		},
-		"CreationTime": epoch(repo.CreationTime),
+		"CreationTime":     epoch(repo.CreationTime),
+		"LastModifiedTime": epoch(modifiedOrCreated(repo.LastModifiedTime, repo.CreationTime)),
 	})
 }
 
+// modifiedOrCreated is a resource's LastModifiedTime, falling back to its
+// creation time for state restored from a snapshot that predates the field.
+func modifiedOrCreated(modified, created string) string {
+	if modified == "" {
+		return created
+	}
+
+	return modified
+}
+
 func (h *Handler) listCodeRepositories(w http.ResponseWriter, r *http.Request) {
-	repos, err := h.svc.ListCodeRepositories(r.Context())
+	req, ok := decodeListReq(w, r)
+	if !ok {
+		return
+	}
+
+	repos, err := h.svc.ListCodeRepositories(r.Context(), req.options())
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -275,6 +390,27 @@ func (h *Handler) listCodeRepositories(w http.ResponseWriter, r *http.Request) {
 			"CodeRepositoryName": repo.Name,
 			"CodeRepositoryArn":  repo.ARN,
 			"CreationTime":       epoch(repo.CreationTime),
+			"LastModifiedTime":   epoch(modifiedOrCreated(repo.LastModifiedTime, repo.CreationTime)),
 		}
 	})
+}
+
+func imdsVersion(c *struct {
+	Version string `json:"MinimumInstanceMetadataServiceVersion"`
+}) string {
+	if c == nil {
+		return ""
+	}
+
+	return c.Version
+}
+
+func imdsVersionPtr(c *struct {
+	Version string `json:"MinimumInstanceMetadataServiceVersion"`
+}) *string {
+	if c == nil {
+		return nil
+	}
+
+	return &c.Version
 }

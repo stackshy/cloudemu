@@ -152,3 +152,7 @@ func writeErr(w http.ResponseWriter, err error) {
 		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalFailure", msg)
 	}
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "kinesis" }

@@ -234,6 +234,7 @@ func createDurableResources(t *testing.T, p durabilityPorts) {
 	}
 
 	createAzureContainer(t, p.azure)
+	createAzureRG(t, p.azure)
 	createOCIVCN(t, p.oci)
 }
 
@@ -274,6 +275,7 @@ func assertDurableResourcesSurvive(t *testing.T, p durabilityPorts) {
 	}
 
 	assertAzureContainerExists(t, p.azure)
+	assertAzureRGExists(t, p.azure)
 	assertOCIVCNExists(t, p.oci)
 }
 
@@ -429,6 +431,58 @@ func assertAzureContainerExists(t *testing.T, port string) {
 	}
 }
 
+// Azure ARM paths for the durable resource group and a user-assigned identity
+// inside it. The subscription is serve's default.
+const (
+	durableRGPath = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/durable-rg"
+	durableUAI    = durableRGPath + "/providers/Microsoft.ManagedIdentity/userAssignedIdentities/durable-uai"
+)
+
+// armRequest sends one ARM request to the emulator's self-signed HTTPS
+// endpoint and fails the test unless it answers want.
+func armRequest(t *testing.T, port, method, path, body string, want int) {
+	t.Helper()
+
+	client := &http.Client{Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // self-signed emulator cert
+	}}
+
+	req, err := http.NewRequestWithContext(context.Background(), method,
+		"https://127.0.0.1:"+port+path+"?api-version=2023-01-31", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != want {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("%s %s = %d, want %d: %s", method, path, resp.StatusCode, want, b)
+	}
+}
+
+// createAzureRG creates an ARM resource group and a resource inside it, so a
+// restart that loses the group shows up as ResourceGroupNotFound on the child.
+func createAzureRG(t *testing.T, port string) {
+	t.Helper()
+
+	armRequest(t, port, http.MethodPut, durableRGPath, `{"location":"westeurope"}`, http.StatusCreated)
+	armRequest(t, port, http.MethodPut, durableUAI, `{"location":"westeurope"}`, http.StatusCreated)
+}
+
+func assertAzureRGExists(t *testing.T, port string) {
+	t.Helper()
+
+	armRequest(t, port, http.MethodGet, durableRGPath, "", http.StatusOK)
+	armRequest(t, port, http.MethodGet, durableUAI, "", http.StatusOK)
+}
+
 // TestPersistCrashDurability is the #447 acceptance test: with an always-on
 // strategy, resources created via real SDKs survive a SIGKILL (no graceful
 // shutdown) and a restart, which today's shutdown-only --persist loses entirely.
@@ -463,6 +517,7 @@ func TestPersistCrashDurability(t *testing.T) {
 			waitFileContains(t, p.state, "inline-durable", 5*time.Second)    // AWS (S3 + IAM)
 			waitFileContains(t, p.state, "gcp-durable", 5*time.Second)       // GCP
 			waitFileContains(t, p.state, "durable-container", 5*time.Second) // Azure
+			waitFileContains(t, p.state, "durable-uai", 5*time.Second)       // Azure (ARM RG + child)
 			waitFileContains(t, p.state, "oci-durable-vcn", 5*time.Second)   // OCI
 
 			killHard(t, cmd)

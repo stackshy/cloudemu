@@ -3,14 +3,10 @@ package compute
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
-
-// defaultMaxResults is GCP's default page size for list calls.
-const defaultMaxResults = 500
 
 // setLabels handles POST .../instances/{name}/setLabels: it replaces the
 // instance's user labels (internal state tags are preserved).
@@ -360,87 +356,4 @@ func fingerprintMatches(incoming, current string) bool {
 func writeConditionNotMet(w http.ResponseWriter, what string) {
 	gcprest.WriteError(w, http.StatusPreconditionFailed, "conditionNotMet",
 		what+" does not match; the resource was modified concurrently")
-}
-
-// parseMaxResults parses the maxResults query param, defaulting to GCP's page
-// size when absent or invalid.
-func parseMaxResults(raw string) int {
-	if raw == "" {
-		return defaultMaxResults
-	}
-
-	n, err := strconv.Atoi(raw)
-	if err != nil || n <= 0 {
-		return defaultMaxResults
-	}
-
-	return n
-}
-
-// parseFilter compiles a GCP list filter into a predicate. It supports the
-// common single-clause forms "<field> <op> <value>" where op is one of
-// "=", "!=", "eq", "ne" and field is name/status/machineType/zone or a
-// "labels.<key>" selector. An empty filter, an unparseable clause, or a
-// clause naming a field the emulator does not model all match everything,
-// mirroring real GCP's leniency (and gcprest.NameMatches) so an unknown
-// field never silently excludes every instance.
-func parseFilter(raw string) func(*instanceResponse) bool {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return func(*instanceResponse) bool { return true }
-	}
-
-	field, op, value, ok := splitFilter(raw)
-	if !ok {
-		return func(*instanceResponse) bool { return true }
-	}
-
-	negate := op == "!=" || op == "ne"
-
-	return func(resp *instanceResponse) bool {
-		got, known := filterField(resp, field)
-		if !known {
-			return true
-		}
-
-		eq := got == value
-
-		return eq != negate
-	}
-}
-
-func splitFilter(raw string) (field, op, value string, ok bool) {
-	for _, candidate := range []string{"!=", "=", " ne ", " eq "} {
-		if idx := strings.Index(raw, candidate); idx >= 0 {
-			field = strings.TrimSpace(raw[:idx])
-			value = strings.Trim(strings.TrimSpace(raw[idx+len(candidate):]), `"'`)
-			op = strings.TrimSpace(candidate)
-
-			return field, op, value, field != ""
-		}
-	}
-
-	return "", "", "", false
-}
-
-// filterField resolves a filter field to its value on resp. The second return
-// reports whether the field is one the emulator models: an unknown field
-// returns known=false so the caller can match-all rather than exclude all.
-func filterField(resp *instanceResponse, field string) (value string, known bool) {
-	switch field {
-	case "name":
-		return resp.Name, true
-	case "status":
-		return resp.Status, true
-	case "machineType":
-		return lastSegment(resp.MachineType), true
-	case "zone":
-		return lastSegment(resp.Zone), true
-	}
-
-	if key := strings.TrimPrefix(field, "labels."); key != field {
-		return resp.Labels[key], true
-	}
-
-	return "", false
 }

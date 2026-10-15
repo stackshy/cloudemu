@@ -24,7 +24,7 @@ func ownsTagsPath(p string) bool {
 	}
 
 	parts := strings.SplitN(arn, ":", arnFields)
-	if len(parts) != arnFields || parts[2] != "bedrock" {
+	if len(parts) != arnFields || parts[2] != arnServiceBedrock {
 		return false
 	}
 
@@ -39,6 +39,9 @@ func ownsTagsPath(p string) bool {
 
 // arnFields is the number of colon-separated fields in an ARN.
 const arnFields = 6
+
+// arnServiceBedrock is the service field of every bedrock-agent ARN.
+const arnServiceBedrock = "bedrock"
 
 type tagResourceRequest struct {
 	Tags map[string]string `json:"tags"`

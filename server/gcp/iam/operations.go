@@ -13,6 +13,7 @@ import (
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
@@ -268,9 +269,6 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request, project stri
 
 	for i := range roles {
 		dr := &roles[i]
-		if dr.Path != project {
-			continue
-		}
 
 		// If the stored doc is malformed (e.g. a portable test stashed a
 		// non-JSON value via the shared driver), emit the role with just
@@ -312,7 +310,7 @@ func (h *Handler) deleteRole(w http.ResponseWriter, r *http.Request, project, ro
 	// Tombstone the role so it can be undeleted (real GCP soft-deletes custom
 	// roles for 7 days).
 	h.mu.Lock()
-	h.deletedRole[roleID] = &deletedRole{project: project, props: props}
+	h.deletedRole[projectctx.Key(project, roleID)] = &deletedRole{project: project, props: props}
 	h.mu.Unlock()
 
 	// GCP marks the role as deleted in the echoed body.
@@ -324,8 +322,8 @@ func (h *Handler) deleteRole(w http.ResponseWriter, r *http.Request, project, ro
 // undeleteRole restores a soft-deleted custom role from its tombstone.
 func (h *Handler) undeleteRole(w http.ResponseWriter, r *http.Request, project, roleID string) {
 	h.mu.Lock()
-	tomb := h.deletedRole[roleID]
-	delete(h.deletedRole, roleID) // no-op when absent
+	tomb := h.deletedRole[projectctx.Key(project, roleID)]
+	delete(h.deletedRole, projectctx.Key(project, roleID)) // no-op when absent
 	h.mu.Unlock()
 
 	if tomb == nil {
@@ -552,7 +550,7 @@ func roleEtag(project, roleID string) string {
 // is the canonical resource path.
 func toRoleJSON(project, roleID string, props *roleProps) role {
 	return role{
-		Name:                "projects/" + project + "/roles/" + roleID,
+		Name:                roleParent(project) + "/roles/" + roleID,
 		Title:               props.Title,
 		Description:         props.Description,
 		IncludedPermissions: props.IncludedPermissions,

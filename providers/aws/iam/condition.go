@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
 // ConditionContext carries the request condition keys available for policy
@@ -81,7 +83,8 @@ func evaluateConditionsWith(conds map[string]map[string]any, cctx ConditionConte
 // key presence, not the key's value. A non-IAM absent rule overrides all of
 // that for a missing key.
 func evaluateConditionKey(rawOp, key string, values []string, cctx ConditionContext, absent absentKey) bool {
-	base, ifExists := splitIfExists(rawOp)
+	set, op := splitSetOperator(rawOp)
+	base, ifExists := splitIfExists(op)
 
 	ctxVal, present := cctx.get(key)
 
@@ -94,12 +97,76 @@ func evaluateConditionKey(rawOp, key string, values []string, cctx ConditionCont
 	}
 
 	if !present {
-		// A missing key never matches a plain condition; the ...IfExists variant
-		// passes so the statement is gated only when the key is actually supplied.
-		return ifExists
+		// ForAllValues is vacuously true for a missing key, ForAnyValue is false.
+		if set != "" {
+			return set == setForAll
+		}
+
+		// A missing key fails a positive condition; the ...IfExists variant
+		// passes so the statement is gated only when the key is actually
+		// supplied. A negated operator (StringNotEquals, ArnNotLike, ...) is true
+		// when the key is missing: nothing in the request equals the value (IAM
+		// User Guide, "IAM JSON policy elements: Condition operators").
+		return ifExists || negatedOperator(base)
+	}
+
+	if set != "" {
+		return evalSetOperator(set, base, ctxVal, values)
 	}
 
 	return evalPresentOperator(base, ctxVal, values)
+}
+
+// negatedOperator reports whether op is a negated condition operator, which
+// matches when the request carries no value equal to (or like) the policy's.
+func negatedOperator(op string) bool {
+	if _, negate, ok := comparatorFor(op); ok {
+		return negate
+	}
+
+	if _, negate, ok := numericRelation(op); ok {
+		return negate
+	}
+
+	_, negate, ok := dateRelation(op)
+
+	return ok && negate
+}
+
+// The set-operator qualifiers for multivalued condition keys.
+const (
+	setForAll = "ForAllValues"
+	setForAny = "ForAnyValue"
+)
+
+// splitSetOperator strips a "ForAllValues:" or "ForAnyValue:" qualifier from
+// an operator, returning the qualifier ("" when there is none) and the rest.
+func splitSetOperator(op string) (set, rest string) {
+	for _, q := range []string{setForAll, setForAny} {
+		if after, ok := strings.CutPrefix(op, q+":"); ok {
+			return q, after
+		}
+	}
+
+	return "", op
+}
+
+// evalSetOperator applies op to each value of a multivalued key, whose values
+// are joined by driver.ConditionValueSeparator. ForAllValues needs every
+// request value to satisfy op, ForAnyValue at least one.
+func evalSetOperator(set, op, ctxVal string, values []string) bool {
+	for _, v := range strings.Split(ctxVal, driver.ConditionValueSeparator) {
+		ok := evalPresentOperator(op, v, values)
+		if set == setForAny && ok {
+			return true
+		}
+
+		if set == setForAll && !ok {
+			return false
+		}
+	}
+
+	return set == setForAll
 }
 
 // evalPresentOperator evaluates an operator whose key is present. String-shaped
@@ -188,14 +255,14 @@ func stringOp(op string) (cmp func(ctxVal, policyVal string) bool, negate, ok bo
 	}
 }
 
-// arnOp handles ARN operators. ArnEquals and ArnLike both allow the * wildcard
-// (AWS treats them equivalently apart from documented case handling).
+// arnOp handles ARN operators. ArnEquals and ArnLike behave the same in IAM:
+// both match component by component and allow '*' and '?' in each component.
 func arnOp(op string) (cmp func(ctxVal, policyVal string) bool, negate, ok bool) {
 	switch op {
 	case "ArnEquals", "ArnLike":
-		return strLike, false, true
+		return arnMatch, false, true
 	case "ArnNotEquals", "ArnNotLike":
-		return strLike, true, true
+		return arnMatch, true, true
 	default:
 		return nil, false, false
 	}
@@ -214,8 +281,9 @@ func ipOp(op string) (cmp func(ctxVal, policyVal string) bool, negate, ok bool) 
 
 func strEqual(ctxVal, policyVal string) bool { return ctxVal == policyVal }
 
-// strLike matches ctxVal against a policy pattern that may contain * wildcards.
-func strLike(ctxVal, policyVal string) bool { return wildcardMatch(policyVal, ctxVal) }
+// strLike matches ctxVal against a policy pattern that may contain '*' and '?'
+// wildcards, case-sensitively and against the whole value.
+func strLike(ctxVal, policyVal string) bool { return globMatch(policyVal, ctxVal) }
 
 // boolMatch compares the request and policy values as booleans.
 func boolMatch(ctxVal, policyVal string) bool {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
@@ -27,6 +28,7 @@ type gcsSnapshot struct {
 type bucketSnapshot struct {
 	Name                   string                                  `json:"name"`
 	Region                 string                                  `json:"region,omitempty"`
+	Project                string                                  `json:"project,omitempty"`
 	CreatedAt              string                                  `json:"createdAt,omitempty"`
 	Versioning             bool                                    `json:"versioning,omitempty"`
 	VersioningSet          bool                                    `json:"versioningSet,omitempty"`
@@ -106,7 +108,7 @@ func (m *Mock) Snapshot(_ context.Context, includeAssets bool) (json.RawMessage,
 
 func snapshotBucket(bkt *bucketMeta, includeAssets bool) *bucketSnapshot {
 	bs := &bucketSnapshot{
-		Name: bkt.Name, Region: bkt.Region, CreatedAt: bkt.CreatedAt,
+		Name: bkt.Name, Region: bkt.Region, Project: bkt.Project, CreatedAt: bkt.CreatedAt,
 		Versioning: bkt.versioning, VersioningSet: bkt.versioningSet,
 		Lifecycle: bkt.lifecycle, LifecycleRaw: bkt.gcsLifecycleRaw, Policy: bkt.policy,
 		CORS: bkt.corsConfig, Encryption: bkt.encryption, Tags: bkt.tags,
@@ -185,7 +187,8 @@ func assetBytes(data []byte, includeAssets bool) []byte {
 }
 
 // Restore rebuilds every bucket under its original name with its objects and
-// configuration intact.
+// configuration intact. A bucket from a snapshot taken before project scoping
+// has no owner and is adopted into the default project.
 func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	var snap gcsSnapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
@@ -195,9 +198,19 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	m.gen.Store(snap.Gen)
 	m.notifGen.Store(snap.NotifGen)
 
+	adopted := 0
+
 	for name, bs := range snap.Buckets {
-		m.buckets.Set(name, restoreBucket(bs))
+		bkt := restoreBucket(bs)
+		if bkt.Project == "" {
+			bkt.Project = m.opts.ProjectID
+			adopted++
+		}
+
+		m.buckets.Set(name, bkt)
 	}
+
+	projectctx.WarnAdopted("gcs", adopted, m.opts.ProjectID)
 
 	for id, rec := range snap.HMACKeys {
 		cp := *rec
@@ -214,7 +227,7 @@ func restoreBucket(bs *bucketSnapshot) *bucketMeta {
 	}
 
 	bkt := &bucketMeta{
-		Name: bs.Name, Region: bs.Region, CreatedAt: bs.CreatedAt,
+		Name: bs.Name, Region: bs.Region, Project: bs.Project, CreatedAt: bs.CreatedAt,
 		objects:    memstore.New[*gcsObject](),
 		multiparts: memstore.New[*gcsMultipartUpload](),
 		versioning: bs.Versioning, versioningSet: bs.VersioningSet,

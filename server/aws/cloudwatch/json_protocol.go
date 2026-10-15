@@ -78,7 +78,7 @@ func jsonOperation(r *http.Request) string {
 }
 
 // serveJSON handles a CloudWatch awsJson1_0 request.
-func (h *Handler) serveJSON(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) serveJSON(w http.ResponseWriter, r *http.Request, op string) {
 	jw := &jsonWriter{w: w}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
@@ -95,7 +95,7 @@ func (h *Handler) serveJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.dispatch(jw, r, jsonOperation(r), body)
+	h.dispatch(jw, r, op, body)
 }
 
 // jsonWriter is the http.ResponseWriter the per-op handlers get for a JSON

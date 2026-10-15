@@ -11,6 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
@@ -122,18 +123,31 @@ func New(opts *config.Options) *Mock {
 	}
 }
 
+// project is the request project, or the configured default when none is
+// stamped.
+func (m *Mock) project(ctx context.Context) string {
+	return projectctx.ProjectOr(ctx, m.opts.ProjectID)
+}
+
+// key is the store key of secret name in the request project.
+func (m *Mock) key(ctx context.Context, name string) string {
+	return projectctx.Key(m.project(ctx), name)
+}
+
 // CreateSecret creates a new secret with an initial value.
-func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []byte) (*driver.SecretInfo, error) {
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) CreateSecret(ctx context.Context, cfg driver.SecretConfig, value []byte) (*driver.SecretInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "secret name is required")
 	}
 
-	if m.secrets.Has(cfg.Name) {
+	if m.secrets.Has(m.key(ctx, cfg.Name)) {
 		return nil, errors.Newf(errors.AlreadyExists, "secret %q already exists", cfg.Name)
 	}
 
 	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
-	selfLink := idgen.GCPID(m.opts.ProjectID, "secrets", cfg.Name)
+	selfLink := idgen.GCPID(m.project(ctx), "secrets", cfg.Name)
 
 	tags := make(map[string]string, len(cfg.Tags))
 	for k, v := range cfg.Tags {
@@ -183,7 +197,7 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 		}}
 	}
 
-	m.secrets.Set(cfg.Name, sd)
+	m.secrets.Set(m.key(ctx, cfg.Name), sd)
 
 	result := info
 
@@ -193,19 +207,19 @@ func (m *Mock) CreateSecret(_ context.Context, cfg driver.SecretConfig, value []
 // DeleteSecret permanently removes a secret and all its versions. GCP Secret
 // Manager's secrets.delete is a hard delete with no recovery window, so the same
 // secretId is creatable again immediately.
-func (m *Mock) DeleteSecret(_ context.Context, name string) error {
-	if !m.secrets.Has(name) {
+func (m *Mock) DeleteSecret(ctx context.Context, name string) error {
+	if !m.secrets.Has(m.key(ctx, name)) {
 		return errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
 
-	m.secrets.Delete(name)
+	m.secrets.Delete(m.key(ctx, name))
 
 	return nil
 }
 
 // GetSecret retrieves secret metadata by name.
-func (m *Mock) GetSecret(_ context.Context, name string) (*driver.SecretInfo, error) {
-	sd, ok := m.secrets.Get(name)
+func (m *Mock) GetSecret(ctx context.Context, name string) (*driver.SecretInfo, error) {
+	sd, ok := m.secrets.Get(m.key(ctx, name))
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
@@ -218,13 +232,20 @@ func (m *Mock) GetSecret(_ context.Context, name string) (*driver.SecretInfo, er
 	return &result, nil
 }
 
-// ListSecrets lists all secrets.
-func (m *Mock) ListSecrets(_ context.Context) ([]driver.SecretInfo, error) {
+// ListSecrets lists the secrets of the request project, or of every project
+// under projectctx.AllProjects.
+func (m *Mock) ListSecrets(ctx context.Context) ([]driver.SecretInfo, error) {
 	all := m.secrets.All()
+	project := m.project(ctx)
+	every := projectctx.IsAllProjects(ctx)
 
 	secrets := make([]driver.SecretInfo, 0, len(all))
 
-	for _, sd := range all {
+	for key, sd := range all {
+		if p, _, _ := projectctx.Split(key); !every && p != project {
+			continue
+		}
+
 		sd.mu.RLock()
 		secrets = append(secrets, sd.info)
 		sd.mu.RUnlock()
@@ -234,8 +255,8 @@ func (m *Mock) ListSecrets(_ context.Context) ([]driver.SecretInfo, error) {
 }
 
 // PutSecretValue stores a new version of a secret value.
-func (m *Mock) PutSecretValue(_ context.Context, name string, value []byte) (*driver.SecretVersion, error) {
-	sd, ok := m.secrets.Get(name)
+func (m *Mock) PutSecretValue(ctx context.Context, name string, value []byte) (*driver.SecretVersion, error) {
+	sd, ok := m.secrets.Get(m.key(ctx, name))
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
@@ -271,8 +292,8 @@ func (m *Mock) PutSecretValue(_ context.Context, name string, value []byte) (*dr
 }
 
 // GetSecretValue retrieves a secret value. Empty versionID returns the current version.
-func (m *Mock) GetSecretValue(_ context.Context, name, versionID string) (*driver.SecretVersion, error) {
-	sd, ok := m.secrets.Get(name)
+func (m *Mock) GetSecretValue(ctx context.Context, name, versionID string) (*driver.SecretVersion, error) {
+	sd, ok := m.secrets.Get(m.key(ctx, name))
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
@@ -308,8 +329,8 @@ func (m *Mock) GetSecretValue(_ context.Context, name, versionID string) (*drive
 }
 
 // ListSecretVersions lists all versions of a secret.
-func (m *Mock) ListSecretVersions(_ context.Context, name string) ([]driver.SecretVersion, error) {
-	sd, ok := m.secrets.Get(name)
+func (m *Mock) ListSecretVersions(ctx context.Context, name string) ([]driver.SecretVersion, error) {
+	sd, ok := m.secrets.Get(m.key(ctx, name))
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}

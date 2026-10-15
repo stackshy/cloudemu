@@ -224,31 +224,44 @@ type captureWriter struct {
 	wroteHeader bool
 }
 
-// WriteHeader records the status and, like writeRecorded, makes sure the live
-// response carries a concrete content type (a non-active default when the
-// handler set none) and nosniff, so a browser cannot read it as HTML.
+// WriteHeader records the status and sends the headers. Only the first call
+// counts, as with net/http.
 func (c *captureWriter) WriteHeader(code int) {
+	_, _ = c.send(code, nil, false)
+}
+
+// Write records the body chunk and forwards it, sending a 200 first if the
+// handler did not set a status.
+func (c *captureWriter) Write(b []byte) (int, error) {
+	c.body.Write(b)
+
+	return c.send(http.StatusOK, b, true)
+}
+
+// send is the only path to the live writer. Before the headers go out it pins
+// a concrete content type (the handler's, else a non-active default) and
+// nosniff on that writer, like writeRecorded does on replay, so a browser
+// cannot read the forwarded body as HTML.
+func (c *captureWriter) send(code int, b []byte, hasBody bool) (int, error) {
+	w := c.ResponseWriter
+
 	if !c.wroteHeader {
 		c.status = code
 		c.wroteHeader = true
 
-		hdr := c.ResponseWriter.Header()
-		if hdr.Get("Content-Type") == "" {
-			hdr.Set("Content-Type", "application/octet-stream")
+		ct := w.Header().Get("Content-Type")
+		if ct == "" {
+			ct = "application/octet-stream"
 		}
 
-		hdr.Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Type", ct)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.WriteHeader(code)
 	}
 
-	c.ResponseWriter.WriteHeader(code)
-}
-
-func (c *captureWriter) Write(b []byte) (int, error) {
-	if !c.wroteHeader {
-		c.WriteHeader(http.StatusOK)
+	if !hasBody {
+		return 0, nil
 	}
 
-	c.body.Write(b)
-
-	return c.ResponseWriter.Write(b)
+	return w.Write(b)
 }

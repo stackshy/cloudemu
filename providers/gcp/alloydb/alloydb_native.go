@@ -107,13 +107,15 @@ func (m *Mock) CreateAlloyDBCluster(
 		version = defaultDatabaseVersion
 	}
 
+	location := m.locationOr(cfg.Location)
+
 	cluster := rdsdriver.Cluster{
 		ID:              cfg.ID,
-		ARN:             m.clusterName(cfg.ID),
+		ARN:             m.clusterNameIn(location, cfg.ID),
 		Engine:          "alloydb-postgresql",
 		EngineVersion:   version,
 		MasterUsername:  cfg.InitialUser,
-		Endpoint:        m.clusterName(cfg.ID) + ".alloydb",
+		Endpoint:        m.clusterNameIn(location, cfg.ID) + ".alloydb",
 		Port:            defaultPort,
 		State:           rdsdriver.StateAvailable,
 		SubnetGroupName: cfg.Network,
@@ -130,6 +132,8 @@ func (m *Mock) CreateAlloyDBCluster(
 		ContinuousBackup:       cfg.ContinuousBackup,
 		MaintenanceDay:         cfg.MaintenanceDay,
 		DisplayName:            cfg.DisplayName,
+		Location:               cfg.Location,
+		AllocatedIPRange:       cfg.AllocatedIPRange,
 	}
 
 	if cfg.InitialUser != "" {
@@ -169,12 +173,14 @@ func (m *Mock) CreateSecondaryCluster(
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "AlloyDB cluster %q already exists", cfg.ID)
 	}
 
+	location := m.locationOr(cfg.Location)
+
 	cluster := rdsdriver.Cluster{
 		ID:            cfg.ID,
-		ARN:           m.clusterName(cfg.ID),
+		ARN:           m.clusterNameIn(location, cfg.ID),
 		Engine:        primary.Engine,
 		EngineVersion: primary.EngineVersion,
-		Endpoint:      m.clusterName(cfg.ID) + ".alloydb",
+		Endpoint:      m.clusterNameIn(location, cfg.ID) + ".alloydb",
 		Port:          defaultPort,
 		State:         rdsdriver.StateAvailable,
 		CreatedAt:     m.opts.Clock.Now().UTC(),
@@ -186,6 +192,7 @@ func (m *Mock) CreateSecondaryCluster(
 		ClusterType:     clusterTypeSecondary,
 		DatabaseVersion: primary.EngineVersion,
 		PrimaryCluster:  cfg.PrimaryCluster,
+		Location:        cfg.Location,
 	}
 
 	out := cloneCluster(cluster)
@@ -251,6 +258,8 @@ func (m *Mock) CreateAlloyDBInstance(
 		availability = "REGIONAL"
 	}
 
+	zone := m.instanceZone(cfg.ClusterID, availability, cfg.GceZone)
+
 	inst := rdsdriver.Instance{
 		ID:               cfg.ID,
 		ARN:              m.instanceName(cfg.ClusterID, cfg.ID),
@@ -260,7 +269,7 @@ func (m *Mock) CreateAlloyDBInstance(
 		Port:             defaultPort,
 		State:            rdsdriver.StateAvailable,
 		ClusterID:        cfg.ClusterID,
-		AvailabilityZone: m.opts.Region,
+		AvailabilityZone: zone,
 		CreatedAt:        m.opts.Clock.Now().UTC(),
 		Tags:             copyTags(cfg.Tags),
 	}
@@ -287,7 +296,7 @@ func (m *Mock) CreateAlloyDBInstance(
 		NodeCount:        cfg.NodeCount,
 		AvailabilityType: availability,
 		IPAddress:        ip,
-		GceZone:          m.opts.Region,
+		GceZone:          zone,
 	}
 
 	cluster.Members = append(cluster.Members, cfg.ID)
@@ -298,6 +307,22 @@ func (m *Mock) CreateAlloyDBInstance(
 	out := cloneInstance(inst)
 
 	return &out, nil
+}
+
+// instanceZone is the zone an instance serves from: the requested gceZone,
+// else for a ZONAL instance the first zone of its cluster's region (real
+// AlloyDB picks a zone with capacity), else the region itself. Caller holds m.mu.
+func (m *Mock) instanceZone(clusterID, availability, requested string) string {
+	if requested != "" {
+		return requested
+	}
+
+	region := m.clusterLocation(clusterID)
+	if availability == availabilityZonal {
+		return region + "-a"
+	}
+
+	return region
 }
 
 // FailoverInstance triggers a failover of the cluster's PRIMARY instance. Real
@@ -361,6 +386,7 @@ func (m *Mock) AlloyDBClusterInfo(_ context.Context, id string) (*rdsdriver.Allo
 		ContinuousBackup:       e.ContinuousBackup,
 		MaintenanceDay:         e.MaintenanceDay,
 		PrimaryCluster:         e.PrimaryCluster,
+		AllocatedIPRange:       e.AllocatedIPRange,
 		UID:                    idgen.SyntheticGUID(c.ARN),
 		DisplayName:            e.DisplayName,
 		CreateTime:             c.CreatedAt,

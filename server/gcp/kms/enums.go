@@ -110,7 +110,7 @@ type rawEnum struct {
 // UnmarshalJSON accepts a quoted enum name or a bare integer.
 func (e *rawEnum) UnmarshalJSON(b []byte) error {
 	s := strings.TrimSpace(string(b))
-	if s == "" || s == "null" {
+	if s == "" || s == jsonNull {
 		return nil
 	}
 

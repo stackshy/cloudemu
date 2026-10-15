@@ -1,5 +1,7 @@
 package locks
 
+import lockprov "github.com/stackshy/cloudemu/v2/providers/azure/managementlocks"
+
 // lockRequest is the ARM PUT body for a management lock. Only the properties
 // block is writable; the id/name/type are server-minted.
 type lockRequest struct {
@@ -29,14 +31,14 @@ type listResponse struct {
 
 // toResponse projects a stored lock onto its ARM wire representation, minting
 // the id from the lock's own scope so it round-trips as addressed.
-func toResponse(l storedLock) lockResponse {
+func toResponse(l lockprov.Lock) lockResponse {
 	return lockResponse{
-		ID:   l.scope + providerSegmentCanonical + l.name,
-		Name: l.name,
+		ID:   l.Scope + providerSegmentCanonical + l.Name,
+		Name: l.Name,
 		Type: armType,
 		Properties: lockProperties{
-			Level: l.level,
-			Notes: l.notes,
+			Level: l.Level,
+			Notes: l.Notes,
 		},
 	}
 }

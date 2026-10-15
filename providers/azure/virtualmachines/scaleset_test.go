@@ -94,7 +94,7 @@ func TestScaleSetMaterializesInstances(t *testing.T) {
 	_, err := m.CreateScaleSet(ctx, ScaleSet{Name: "vmss-mat", Capacity: 3})
 	require.NoError(t, err)
 
-	vms, err := m.ListScaleSetVMs(ctx, "vmss-mat")
+	vms, err := m.ListScaleSetVMs(ctx, "", "", "vmss-mat")
 	require.NoError(t, err)
 	require.Len(t, vms, 3)
 
@@ -113,29 +113,29 @@ func TestScaleSetPowerAndDeleteInstance(t *testing.T) {
 	_, err := m.CreateScaleSet(ctx, ScaleSet{Name: "vmss-ops", Capacity: 3})
 	require.NoError(t, err)
 
-	require.NoError(t, m.PowerScaleSetVM(ctx, "vmss-ops", "0", "poweroff"))
-	require.NoError(t, m.PowerScaleSetVM(ctx, "vmss-ops", "1", "deallocate"))
+	require.NoError(t, m.PowerScaleSetVM(ctx, "", "", "vmss-ops", "0", "poweroff"))
+	require.NoError(t, m.PowerScaleSetVM(ctx, "", "", "vmss-ops", "1", "deallocate"))
 
-	vm0, err := m.GetScaleSetVM(ctx, "vmss-ops", "0")
+	vm0, err := m.GetScaleSetVM(ctx, "", "", "vmss-ops", "0")
 	require.NoError(t, err)
 	assert.Equal(t, scaleSetVMStopped, vm0.PowerState)
 
-	vm1, err := m.GetScaleSetVM(ctx, "vmss-ops", "1")
+	vm1, err := m.GetScaleSetVM(ctx, "", "", "vmss-ops", "1")
 	require.NoError(t, err)
 	assert.Equal(t, scaleSetVMDeallocated, vm1.PowerState)
 
 	// Deleting an instance drops it and decrements the effective count.
-	require.NoError(t, m.DeleteScaleSetVM(ctx, "vmss-ops", "1"))
+	require.NoError(t, m.DeleteScaleSetVM(ctx, "", "", "vmss-ops", "1"))
 
-	vms, err := m.ListScaleSetVMs(ctx, "vmss-ops")
+	vms, err := m.ListScaleSetVMs(ctx, "", "", "vmss-ops")
 	require.NoError(t, err)
 	require.Len(t, vms, 2)
 
-	_, err = m.GetScaleSetVM(ctx, "vmss-ops", "1")
+	_, err = m.GetScaleSetVM(ctx, "", "", "vmss-ops", "1")
 	require.Error(t, err)
 
 	// An unsupported power verb is rejected.
-	require.Error(t, m.PowerScaleSetVM(ctx, "vmss-ops", "0", "bogus"))
+	require.Error(t, m.PowerScaleSetVM(ctx, "", "", "vmss-ops", "0", "bogus"))
 }
 
 func TestPowerScaleSetWholeSet(t *testing.T) {
@@ -146,9 +146,9 @@ func TestPowerScaleSetWholeSet(t *testing.T) {
 	require.NoError(t, err)
 
 	// Whole-set poweroff transitions every instance to stopped.
-	require.NoError(t, m.PowerScaleSet(ctx, "vmss-ws", "poweroff", nil))
+	require.NoError(t, m.PowerScaleSet(ctx, "", "", "vmss-ws", "poweroff", nil))
 
-	vms, err := m.ListScaleSetVMs(ctx, "vmss-ws")
+	vms, err := m.ListScaleSetVMs(ctx, "", "", "vmss-ws")
 	require.NoError(t, err)
 	require.Len(t, vms, 3)
 
@@ -157,9 +157,9 @@ func TestPowerScaleSetWholeSet(t *testing.T) {
 	}
 
 	// Whole-set start brings them all back to running.
-	require.NoError(t, m.PowerScaleSet(ctx, "vmss-ws", "start", nil))
+	require.NoError(t, m.PowerScaleSet(ctx, "", "", "vmss-ws", "start", nil))
 
-	vms, err = m.ListScaleSetVMs(ctx, "vmss-ws")
+	vms, err = m.ListScaleSetVMs(ctx, "", "", "vmss-ws")
 	require.NoError(t, err)
 
 	for _, vm := range vms {
@@ -167,13 +167,13 @@ func TestPowerScaleSetWholeSet(t *testing.T) {
 	}
 
 	// A subset request touches only the named instance.
-	require.NoError(t, m.PowerScaleSet(ctx, "vmss-ws", "deallocate", []string{"1"}))
+	require.NoError(t, m.PowerScaleSet(ctx, "", "", "vmss-ws", "deallocate", []string{"1"}))
 
-	vm1, err := m.GetScaleSetVM(ctx, "vmss-ws", "1")
+	vm1, err := m.GetScaleSetVM(ctx, "", "", "vmss-ws", "1")
 	require.NoError(t, err)
 	assert.Equal(t, scaleSetVMDeallocated, vm1.PowerState)
 
-	vm0, err := m.GetScaleSetVM(ctx, "vmss-ws", "0")
+	vm0, err := m.GetScaleSetVM(ctx, "", "", "vmss-ws", "0")
 	require.NoError(t, err)
 	assert.Equal(t, scaleSetVMRunning, vm0.PowerState)
 }
@@ -186,13 +186,13 @@ func TestPowerScaleSetErrors(t *testing.T) {
 	require.NoError(t, err)
 
 	// Missing scale set → NotFound.
-	require.Error(t, m.PowerScaleSet(ctx, "no-such", "start", nil))
+	require.Error(t, m.PowerScaleSet(ctx, "", "", "no-such", "start", nil))
 
 	// Unknown action → InvalidArgument.
-	require.Error(t, m.PowerScaleSet(ctx, "vmss-err", "bogus", nil))
+	require.Error(t, m.PowerScaleSet(ctx, "", "", "vmss-err", "bogus", nil))
 
 	// Subset naming a non-existent instance → NotFound.
-	require.Error(t, m.PowerScaleSet(ctx, "vmss-err", "start", []string{"9"}))
+	require.Error(t, m.PowerScaleSet(ctx, "", "", "vmss-err", "start", []string{"9"}))
 }
 
 func TestUpdateScaleSetReplacesTagsAndRescales(t *testing.T) {
@@ -208,7 +208,7 @@ func TestUpdateScaleSetReplacesTagsAndRescales(t *testing.T) {
 
 	cap4 := int64(4)
 
-	updated, err := m.UpdateScaleSet(ctx, "vmss-patch", ScaleSetPatch{
+	updated, err := m.UpdateScaleSet(ctx, "", "", "vmss-patch", ScaleSetPatch{
 		Tags:     map[string]string{"team": "platform"},
 		Capacity: &cap4,
 	})
@@ -220,22 +220,22 @@ func TestUpdateScaleSetReplacesTagsAndRescales(t *testing.T) {
 	assert.NotContains(t, updated.Tags, "env")
 	assert.Equal(t, 4, updated.Capacity)
 
-	vms, err := m.ListScaleSetVMs(ctx, "vmss-patch")
+	vms, err := m.ListScaleSetVMs(ctx, "", "", "vmss-patch")
 	require.NoError(t, err)
 	require.Len(t, vms, 4)
 
 	// A PATCH that omits tags (nil map) leaves the current tag set untouched.
-	unchanged, err := m.UpdateScaleSet(ctx, "vmss-patch", ScaleSetPatch{})
+	unchanged, err := m.UpdateScaleSet(ctx, "", "", "vmss-patch", ScaleSetPatch{})
 	require.NoError(t, err)
 	assert.Equal(t, "platform", unchanged.Tags["team"])
 
 	// An empty (non-nil) tags map wipes the tag set.
-	wiped, err := m.UpdateScaleSet(ctx, "vmss-patch", ScaleSetPatch{Tags: map[string]string{}})
+	wiped, err := m.UpdateScaleSet(ctx, "", "", "vmss-patch", ScaleSetPatch{Tags: map[string]string{}})
 	require.NoError(t, err)
 	assert.Empty(t, wiped.Tags)
 
 	// Missing scale set → NotFound.
-	_, err = m.UpdateScaleSet(ctx, "no-such", ScaleSetPatch{})
+	_, err = m.UpdateScaleSet(ctx, "", "", "no-such", ScaleSetPatch{})
 	require.Error(t, err)
 }
 
@@ -248,11 +248,11 @@ func TestUpdateScaleSetExplicitZeroCapacity(t *testing.T) {
 
 	cap0 := int64(0)
 
-	updated, err := m.UpdateScaleSet(ctx, "vmss-scalein", ScaleSetPatch{Capacity: &cap0})
+	updated, err := m.UpdateScaleSet(ctx, "", "", "vmss-scalein", ScaleSetPatch{Capacity: &cap0})
 	require.NoError(t, err)
 	assert.Equal(t, 0, updated.Capacity)
 
-	vms, err := m.ListScaleSetVMs(ctx, "vmss-scalein")
+	vms, err := m.ListScaleSetVMs(ctx, "", "", "vmss-scalein")
 	require.NoError(t, err)
 	assert.Empty(t, vms)
 }
@@ -263,18 +263,18 @@ func TestScaleSetReconcilePreservesStateAcrossCapacityChange(t *testing.T) {
 
 	_, err := m.CreateScaleSet(ctx, ScaleSet{Name: "vmss-rc", Capacity: 2})
 	require.NoError(t, err)
-	require.NoError(t, m.PowerScaleSetVM(ctx, "vmss-rc", "0", "poweroff"))
+	require.NoError(t, m.PowerScaleSetVM(ctx, "", "", "vmss-rc", "0", "poweroff"))
 
 	// Scale out to 4: existing instances keep their power state; new instances
 	// get the next monotonic ordinals.
 	_, err = m.CreateScaleSet(ctx, ScaleSet{Name: "vmss-rc", Capacity: 4})
 	require.NoError(t, err)
 
-	vm0, err := m.GetScaleSetVM(ctx, "vmss-rc", "0")
+	vm0, err := m.GetScaleSetVM(ctx, "", "", "vmss-rc", "0")
 	require.NoError(t, err)
 	assert.Equal(t, scaleSetVMStopped, vm0.PowerState, "existing instance power state must survive scale-out")
 
-	vms, err := m.ListScaleSetVMs(ctx, "vmss-rc")
+	vms, err := m.ListScaleSetVMs(ctx, "", "", "vmss-rc")
 	require.NoError(t, err)
 	require.Len(t, vms, 4)
 	assert.Equal(t, "3", vms[3].InstanceID)
@@ -283,7 +283,7 @@ func TestScaleSetReconcilePreservesStateAcrossCapacityChange(t *testing.T) {
 	_, err = m.CreateScaleSet(ctx, ScaleSet{Name: "vmss-rc", Capacity: 1})
 	require.NoError(t, err)
 
-	vms, err = m.ListScaleSetVMs(ctx, "vmss-rc")
+	vms, err = m.ListScaleSetVMs(ctx, "", "", "vmss-rc")
 	require.NoError(t, err)
 	require.Len(t, vms, 1)
 	assert.Equal(t, "0", vms[0].InstanceID)

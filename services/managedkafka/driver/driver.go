@@ -43,8 +43,8 @@ type Cluster struct {
 	// KmsKey is gcpConfig.kmsKey (immutable after create).
 	KmsKey string
 
-	// RebalanceMode is rebalanceConfig.mode. The provider defaults an unset
-	// mode to NO_REBALANCE, as the real API does.
+	// RebalanceMode is rebalanceConfig.mode. Empty means the caller never set
+	// it; the API then behaves as NO_REBALANCE but returns no rebalanceConfig.
 	RebalanceMode string
 
 	// KafkaVersion is the Apache Kafka version (e.g. "3.7.x"). Optional on

@@ -1,0 +1,43 @@
+name: Sponsors
+
+# Renders the sponsor avatars to sponsors.svg and publishes it on the
+# `sponsors` branch. The README embeds that image, so it stays current
+# without touching README.md or opening PRs.
+#
+# Needs a repo secret SPONSORS_TOKEN: a classic PAT owned by NitinKumar004
+# (the sponsored account) with the read:user and read:org scopes.
+# Without it the job is skipped.
+on:
+  schedule:
+    - cron: "0 3 * * *" # daily, 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write # push the sponsors branch
+
+jobs:
+  render:
+    name: Render sponsors image
+    runs-on: ubuntu-latest
+    env:
+      SPONSORS_TOKEN: ${{ secrets.SPONSORS_TOKEN }}
+    steps:
+      - uses: actions/setup-node@v4
+        if: env.SPONSORS_TOKEN != ''
+        with:
+          node-version: "20"
+      - name: Render
+        if: env.SPONSORS_TOKEN != ''
+        env:
+          SPONSORKIT_GITHUB_TOKEN: ${{ secrets.SPONSORS_TOKEN }}
+          SPONSORKIT_GITHUB_LOGIN: NitinKumar004
+        run: npx --yes sponsorkit@18 --output-dir out --name sponsors --width 800
+      - name: Publish to the sponsors branch
+        if: env.SPONSORS_TOKEN != ''
+        working-directory: out
+        run: |
+          git init -q -b sponsors
+          git add sponsors.svg
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Update sponsors image"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" sponsors

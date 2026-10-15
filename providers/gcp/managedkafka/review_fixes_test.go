@@ -12,8 +12,9 @@ import (
 	mkdriver "github.com/stackshy/cloudemu/v2/services/managedkafka/driver"
 )
 
-// TestCreateDefaultsAndOptionalFields: an unset rebalanceConfig.mode defaults to
-// NO_REBALANCE and an unset kafkaVersion to 3.7.x (as the real API does), while
+// TestCreateDefaultsAndOptionalFields: an unset rebalanceConfig.mode stays unset
+// (no synthesized rebalanceConfig, which drifts terraform's Optional
+// rebalance_config) and an unset kafkaVersion defaults to 3.7.x, while
 // tlsConfig, updateOptions and brokerCapacityConfig are stored and returned.
 func TestCreateDefaultsAndOptionalFields(t *testing.T) {
 	m, _ := newMock(t)
@@ -24,16 +25,27 @@ func TestCreateDefaultsAndOptionalFields(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	if got.RebalanceMode != rebalanceNone || got.KafkaVersion != defaultKafkaVersion {
+	if got.RebalanceMode != "" || got.KafkaVersion != defaultKafkaVersion {
 		t.Fatalf("defaults: mode=%q version=%q, want %q/%q", got.RebalanceMode, got.KafkaVersion,
-			rebalanceNone, defaultKafkaVersion)
+			"", defaultKafkaVersion)
+	}
+
+	if got, err = m.GetCluster(ctx, proj, region, "d1"); err != nil || got.RebalanceMode != "" {
+		t.Fatalf("get after create = %+v, %v; want no rebalance mode", got, err)
 	}
 
 	unspecified := cluster("d2")
 	unspecified.RebalanceMode = rebalanceUnspecified
 
-	if got, _, err = m.CreateCluster(ctx, unspecified); err != nil || got.RebalanceMode != rebalanceNone {
-		t.Fatalf("MODE_UNSPECIFIED create = %+v, %v; want NO_REBALANCE", got, err)
+	if got, _, err = m.CreateCluster(ctx, unspecified); err != nil || got.RebalanceMode != rebalanceUnspecified {
+		t.Fatalf("MODE_UNSPECIFIED create = %+v, %v; want it echoed", got, err)
+	}
+
+	explicit := cluster("d3")
+	explicit.RebalanceMode = rebalanceNone
+
+	if got, _, err = m.CreateCluster(ctx, explicit); err != nil || got.RebalanceMode != rebalanceNone {
+		t.Fatalf("NO_REBALANCE create = %+v, %v; want it echoed", got, err)
 	}
 
 	full := cluster("f1")

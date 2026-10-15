@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -97,6 +98,21 @@ func TestMatchesStandaloneClaimsEverything(t *testing.T) {
 	for _, path := range []string{loc + "/clusters", loc + "/clusters/any", loc + "/operations/op-1"} {
 		if !h.Matches(request(http.MethodGet, path, "")) {
 			t.Fatalf("standalone handler should claim %s", path)
+		}
+	}
+}
+
+// TestSharedCreateEmptyBodyIsInvalid: in an assembled server a create with an
+// empty body names no other service's cluster, so it is 400, not 409.
+func TestSharedCreateEmptyBodyIsInvalid(t *testing.T) {
+	h := sharedHandler(t)
+
+	for _, body := range []string{"", "{}"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, request(http.MethodPost, loc+"/clusters?clusterId=fresh", body))
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("body %q: %d %s, want 400", body, rec.Code, rec.Body.String())
 		}
 	}
 }

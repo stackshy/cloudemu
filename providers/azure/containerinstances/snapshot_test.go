@@ -21,7 +21,7 @@ func TestSnapshotRoundTripContainerInstances(t *testing.T) {
 		Location: "eastus",
 		OSType:   "Linux",
 		Containers: []driver.ContainerConfig{
-			{Name: "c1", Image: "nginx:latest"},
+			{Name: "c1", Image: "nginx:latest", Ports: []driver.Port{{Port: 80, Protocol: "TCP"}}},
 		},
 		Tags:  map[string]string{"env": "prod"},
 		Scope: sc,
@@ -46,5 +46,9 @@ func TestSnapshotRoundTripContainerInstances(t *testing.T) {
 
 	if got.Name != "cg1" || got.Tags["env"] != "prod" || len(got.Containers) != 1 {
 		t.Fatalf("restored group = %+v", got)
+	}
+
+	if ports := got.Containers[0].Ports; len(ports) != 1 || ports[0].Port != 80 {
+		t.Fatalf("restored container ports = %+v, want [80/TCP]", ports)
 	}
 }

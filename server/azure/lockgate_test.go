@@ -85,7 +85,7 @@ func TestLockGate(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			h := locks.New()
+			h := locks.New(nil)
 			if tc.lockLevel != "" {
 				seedGateLock(t, h, gateRG, "lk", tc.lockLevel)
 			}
@@ -116,7 +116,7 @@ func TestLockGate(t *testing.T) {
 // scope, so a caller can delete a lock to unlock, even a DELETE of a lock
 // living under a ReadOnly-locked scope.
 func TestLockGateSelfExemption(t *testing.T) {
-	h := locks.New()
+	h := locks.New(nil)
 	seedGateLock(t, h, gateRG, "ro", "ReadOnly")
 
 	gate := newLockGate(h)

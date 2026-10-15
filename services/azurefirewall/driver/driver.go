@@ -104,4 +104,23 @@ type AzureFirewalls interface {
 	// ListFirewallPolicies returns the policies in rg, or all when rg is empty
 	// (subscription-wide list), ordered by key.
 	ListFirewallPolicies(ctx context.Context, rg string) ([]FirewallPolicy, error)
+
+	// Rule collection groups are children of a policy and are deleted with
+	// it. A missing policy is NotFound; an out-of-range group or rule
+	// collection priority is InvalidArgument.
+	CreateOrUpdateRuleCollectionGroup(
+		ctx context.Context, rg, policy, name string, g RuleCollectionGroup,
+	) (stored *RuleCollectionGroup, created bool, err error)
+	GetRuleCollectionGroup(ctx context.Context, rg, policy, name string) (*RuleCollectionGroup, error)
+	DeleteRuleCollectionGroup(ctx context.Context, rg, policy, name string) error
+	ListRuleCollectionGroups(ctx context.Context, rg, policy string) ([]RuleCollectionGroup, error)
+}
+
+// RuleCollectionGroup is a Microsoft.Network/firewallPolicies/
+// ruleCollectionGroups child. RuleCollections holds the ARM ruleCollections
+// array as sent; each entry carries its own priority.
+type RuleCollectionGroup struct {
+	Name            string
+	Priority        int
+	RuleCollections []any
 }

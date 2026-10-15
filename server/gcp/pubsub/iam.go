@@ -1,6 +1,10 @@
 package pubsub
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
+)
 
 // ---------- IAM ----------
 //
@@ -36,11 +40,11 @@ func (h *Handler) getIamPolicy(w http.ResponseWriter, r *http.Request, resType, 
 	}
 
 	h.mu.RLock()
-	pol := h.loadPolicy(resType, name)
+	pol := h.loadPolicy(resType, h.key(r, name))
 	h.mu.RUnlock()
 
 	if pol == nil {
-		pol = &iamPolicy{Version: 1, Etag: policyEtag(nil)}
+		pol = &iamPolicy{Version: 1, Etag: resourceiam.InitialEtag()}
 	}
 
 	writeJSON(w, http.StatusOK, pol)
@@ -70,7 +74,8 @@ func (h *Handler) setIamPolicy(w http.ResponseWriter, r *http.Request, resType, 
 	// CompareAndSetBucketIAMPolicy for bucket IAM (#1014).
 	h.mu.Lock()
 
-	currentEtag := policyEtag(h.loadPolicy(resType, name))
+	key := h.key(r, name)
+	currentEtag := policyEtag(h.loadPolicy(resType, key))
 	if req.Policy.Etag != "" && req.Policy.Etag != currentEtag {
 		h.mu.Unlock()
 		writeError(w, http.StatusConflict, reasonAborted,
@@ -80,8 +85,8 @@ func (h *Handler) setIamPolicy(w http.ResponseWriter, r *http.Request, resType, 
 		return
 	}
 
-	pol.Etag = nextIAMEtag(currentEtag)
-	h.storePolicy(resType, name, &pol)
+	pol.Etag = resourceiam.NextEtag(currentEtag)
+	h.storePolicy(resType, key, &pol)
 
 	h.mu.Unlock()
 
@@ -106,13 +111,13 @@ func (h *Handler) resourceExists(r *http.Request, resType, name string) bool {
 		return err == nil
 	case resSubscriptions:
 		h.mu.RLock()
-		_, ok := h.subs[name]
+		_, ok := h.subs[h.key(r, name)]
 		h.mu.RUnlock()
 
 		return ok
 	case resSnapshots:
 		h.mu.RLock()
-		_, ok := h.snapshots[name]
+		_, ok := h.snapshots[h.key(r, name)]
 		h.mu.RUnlock()
 
 		return ok
@@ -121,7 +126,7 @@ func (h *Handler) resourceExists(r *http.Request, resType, name string) bool {
 	}
 }
 
-// loadPolicy returns the stored policy for a resource, or nil. The caller holds h.mu.
+// loadPolicy returns the stored policy for the resource with store key name, or nil. The caller holds h.mu.
 func (h *Handler) loadPolicy(resType, name string) *iamPolicy {
 	switch resType {
 	case resTopics:
@@ -132,12 +137,16 @@ func (h *Handler) loadPolicy(resType, name string) *iamPolicy {
 		if s, ok := h.subs[name]; ok {
 			return s.iam
 		}
+	case resSnapshots:
+		if s, ok := h.snapshots[name]; ok {
+			return s.iam
+		}
 	}
 
 	return nil
 }
 
-// storePolicy persists a resource's policy. The caller holds h.mu.
+// storePolicy persists the policy of the resource with store key name. The caller holds h.mu.
 func (h *Handler) storePolicy(resType, name string, pol *iamPolicy) {
 	switch resType {
 	case resTopics:
@@ -146,5 +155,18 @@ func (h *Handler) storePolicy(resType, name string, pol *iamPolicy) {
 		if s, ok := h.subs[name]; ok {
 			s.iam = pol
 		}
+	case resSnapshots:
+		if s, ok := h.snapshots[name]; ok {
+			s.iam = pol
+		}
 	}
+}
+
+// policyEtag returns pol's etag, or the initial etag when no policy was set.
+func policyEtag(pol *iamPolicy) string {
+	if pol != nil && pol.Etag != "" {
+		return pol.Etag
+	}
+
+	return resourceiam.InitialEtag()
 }

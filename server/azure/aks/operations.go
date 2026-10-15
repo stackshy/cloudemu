@@ -65,6 +65,10 @@ func buildClusterInput(body *armManagedCluster, rp *azurearm.ResourcePath) aks.C
 		in.EnableRBAC = body.Properties.EnableRBAC
 		in.NetworkProfile = networkProfileInput(body.Properties.NetworkProfile)
 		in.AgentPools = inlineAgentPoolInputs(body.Properties.AgentPoolProfiles)
+
+		if body.Properties.OIDCIssuerProfile != nil {
+			in.OIDCIssuerEnabled = body.Properties.OIDCIssuerProfile.Enabled
+		}
 	}
 
 	return in

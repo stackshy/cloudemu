@@ -16,11 +16,18 @@ func (m *Mock) CreateDataSource(_ context.Context, cfg driver.DataSourceConfig) 
 		return nil, err
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.knowledge.Has(cfg.KnowledgeBaseID) {
 		return nil, errors.Newf(errors.NotFound, "knowledge base %q not found", cfg.KnowledgeBaseID)
 	}
 
-	id := newID(m.dataSource)
+	id, err := newID(m.dataSource)
+	if err != nil {
+		return nil, err
+	}
+
 	now := m.now()
 	ds := &driver.DataSource{
 		ID:                      id,
@@ -78,6 +85,9 @@ func (m *Mock) UpdateDataSource(_ context.Context, cfg driver.DataSourceConfig, 
 		return nil, err
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	ds := m.findDataSource(cfg.KnowledgeBaseID, dsID)
 	if ds == nil {
 		return nil, errors.Newf(errors.NotFound, "data source %q not found", dsID)
@@ -98,40 +108,20 @@ func (m *Mock) UpdateDataSource(_ context.Context, cfg driver.DataSourceConfig, 
 }
 
 // DeleteDataSource deletes a data source and, cascading like real AWS, every
-// ingestion job that belongs to it.
+// ingestion job and document that belongs to it.
 func (m *Mock) DeleteDataSource(_ context.Context, kbID, dsID string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.findDataSource(kbID, dsID) == nil {
 		return "", errors.Newf(errors.NotFound, "data source %q not found", dsID)
 	}
 
 	m.dataSource.Delete(dsID)
 	m.deleteJobsForDataSource(dsID)
+	deleteByPrefix(m.documents, versionKey(kbID, dsID)+"/")
 
 	return statusDeleting, nil
-}
-
-// StartIngestionJob starts an ingestion job that completes synchronously.
-func (m *Mock) StartIngestionJob(_ context.Context, kbID, dsID, description string) (*driver.IngestionJob, error) {
-	if m.findDataSource(kbID, dsID) == nil {
-		return nil, errors.Newf(errors.NotFound, "data source %q not found", dsID)
-	}
-
-	id := newID(m.jobs)
-	now := m.now()
-	job := &driver.IngestionJob{
-		ID:              id,
-		KnowledgeBaseID: kbID,
-		DataSourceID:    dsID,
-		Description:     description,
-		Status:          driver.IngestionJobComplete,
-		StartedAt:       now,
-		UpdatedAt:       now,
-	}
-	m.jobs.Set(id, job)
-
-	result := *job
-
-	return &result, nil
 }
 
 // validateDataSource checks the members CreateDataSource and UpdateDataSource
@@ -172,6 +162,7 @@ func (m *Mock) deleteJobsForKnowledgeBase(kbID string) {
 	for id, job := range m.jobs.All() {
 		if job.KnowledgeBaseID == kbID {
 			m.jobs.Delete(id)
+			m.jobSettle.Clear(id)
 		}
 	}
 }
@@ -181,6 +172,7 @@ func (m *Mock) deleteJobsForDataSource(dsID string) {
 	for id, job := range m.jobs.All() {
 		if job.DataSourceID == dsID {
 			m.jobs.Delete(id)
+			m.jobSettle.Clear(id)
 		}
 	}
 }

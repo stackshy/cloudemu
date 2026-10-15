@@ -66,13 +66,11 @@ var (
 )
 
 // applyClusterDefaults fills the fields the real API defaults when a create (or
-// a masked update) leaves them unset: rebalanceConfig.mode NO_REBALANCE and
-// kafkaVersion 3.7.x.
+// a masked update) leaves them unset: kafkaVersion 3.7.x. rebalanceConfig is
+// not synthesized: the API treats an unset mode as NO_REBALANCE without
+// echoing a rebalanceConfig back, and the google provider's rebalance_config is
+// Optional (not Computed), so a returned default would be a permanent diff.
 func applyClusterDefaults(c *mkdriver.Cluster) {
-	if c.RebalanceMode == "" || c.RebalanceMode == rebalanceUnspecified {
-		c.RebalanceMode = rebalanceNone
-	}
-
 	if c.KafkaVersion == "" {
 		c.KafkaVersion = defaultKafkaVersion
 	}
@@ -127,7 +125,7 @@ func validateCluster(c *mkdriver.Cluster) error {
 	}
 
 	switch c.RebalanceMode {
-	case rebalanceNone, rebalanceOnScaleUp:
+	case "", rebalanceUnspecified, rebalanceNone, rebalanceOnScaleUp:
 		return nil
 	default:
 		return cerrors.Newf(cerrors.InvalidArgument, "rebalance_config.mode %q is not a valid mode", c.RebalanceMode)

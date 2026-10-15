@@ -11,11 +11,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	cfn "github.com/stackshy/cloudemu/v2/services/cloudformation"
 )
 
@@ -34,6 +36,9 @@ type Mock struct {
 	// stacks cannot claim one export name and an export cannot lose its
 	// last guard while a stack starts importing it.
 	exportMu sync.Mutex
+	// settleWindow is how long a stack operation stays *_IN_PROGRESS under
+	// AsyncSettle. Zero runs every operation to its end at once.
+	settleWindow time.Duration
 }
 
 // stackData is the stored state of one stack, guarded by its own mutex.
@@ -68,6 +73,26 @@ type stackData struct {
 	// policies maps a logical ID to the DeletionPolicy and
 	// UpdateReplacePolicy it was last applied with.
 	policies map[string]resourcePolicy
+	// stackPolicy is the stack policy body, "" when none was set.
+	stackPolicy string
+	// pending is the last phase of an operation that runs under
+	// AsyncSettle. It completes once the settle window has passed.
+	pending *pendingOp
+	// busy is set while a pending phase runs, and opMu serializes that
+	// phase with the start of a DeleteStack or CancelUpdateStack.
+	busy bool
+	opMu sync.Mutex
+	// cursor is when the next event of an asynchronous operation is
+	// stamped, so its events arrive one after another. Zero stamps events
+	// with the current time.
+	cursor time.Time
+	// tokens maps each ClientRequestToken used on the stack to the action
+	// that used it, and opToken is the token of the running operation.
+	tokens  map[string]string
+	opToken string
+	// stable is the stack's state before an update that failed without a
+	// rollback, which RollbackStack goes back to.
+	stable *storedPrior
 }
 
 // resourcePolicy is the effective DeletionPolicy and UpdateReplacePolicy of
@@ -117,10 +142,13 @@ type retainedResource struct {
 	DeleteID  string               `json:"deleteId"`
 	// ReplacePolicy is the UpdateReplacePolicy the cleanup applies.
 	ReplacePolicy string `json:"replacePolicy,omitempty"`
+	// Reclaimed marks a replacement whose new resource was taken back from
+	// the retained old resources.
+	Reclaimed bool `json:"reclaimed,omitempty"`
 }
 
 func (r *retainedResource) replacement() replacement {
-	return replacement{id: r.LogicalID, policy: r.ReplacePolicy, old: liveResource{
+	return replacement{id: r.LogicalID, policy: r.ReplacePolicy, reclaimed: r.Reclaimed, old: liveResource{
 		typ: r.Type, resolved: r.Resolved, props: r.Props, deleteID: r.DeleteID,
 	}}
 }
@@ -139,10 +167,11 @@ func (sd *stackData) retain(replaced []replacement) {
 	}
 }
 
-// drainRetained forgets the retained old resources and returns the ones to
-// delete. A retained resource whose physical id a live resource of the
-// stack now holds again is dropped, not deleted.
-func (sd *stackData) drainRetained() []replacement {
+// pendingRetained returns the retained old resources a cleanup deletes. A
+// retained resource whose physical id a live resource of the stack now holds
+// again is forgotten, not deleted. The others stay recorded until their
+// delete succeeds, so a cleanup that stops halfway loses none of them.
+func (sd *stackData) pendingRetained() []replacement {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
@@ -151,17 +180,56 @@ func (sd *stackData) drainRetained() []replacement {
 		live[rr.RefValue] = true
 	}
 
-	var out []replacement
+	var (
+		out  []replacement
+		kept []retainedResource
+	)
 
 	for i := range sd.retained {
 		if !live[sd.retained[i].Resolved.RefValue] {
+			kept = append(kept, sd.retained[i])
 			out = append(out, sd.retained[i].replacement())
 		}
 	}
 
-	sd.retained = nil
+	sd.retained = kept
 
 	return out
+}
+
+// trackRetained records the old resources of replacements as retained
+// before a cleanup deletes them. One already recorded is not added again.
+func (sd *stackData) trackRetained(replaced []replacement) {
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	for i := range replaced {
+		if sd.retainedIndex(&replaced[i]) < 0 {
+			sd.retained = append(sd.retained, toRetained(replaced[i:i+1])...)
+		}
+	}
+}
+
+// untrackRetained forgets the old resource of r once it is gone.
+func (sd *stackData) untrackRetained(r *replacement) {
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	if i := sd.retainedIndex(r); i >= 0 {
+		sd.retained = append(sd.retained[:i:i], sd.retained[i+1:]...)
+	}
+}
+
+// retainedIndex finds r among the retained resources. The caller holds
+// sd.mu.
+func (sd *stackData) retainedIndex(r *replacement) int {
+	for i := range sd.retained {
+		if sd.retained[i].LogicalID == r.id && sd.retained[i].Resolved.RefValue == r.old.resolved.RefValue {
+			return i
+		}
+	}
+
+	return -1
 }
 
 // takeRetained removes and returns the retained old resource of id whose
@@ -197,6 +265,8 @@ func New(opts *config.Options) *Mock {
 		clock:     opts.Clock,
 		accountID: opts.AccountID,
 		region:    opts.Region,
+
+		settleWindow: opts.SettleDuration(settle.DefaultStackSettle),
 	}
 }
 
@@ -258,7 +328,9 @@ func (sd *stackData) status() string {
 
 // DescribeStacks returns the named stack, or every active stack when name is "".
 // A stack ID also finds a deleted stack, as in real CloudFormation.
-func (m *Mock) DescribeStacks(_ context.Context, name string) ([]cfn.Stack, error) {
+func (m *Mock) DescribeStacks(ctx context.Context, name string) ([]cfn.Stack, error) {
+	m.settle(ctx)
+
 	if name != "" {
 		sd, byID, ok := m.findStack(name)
 		if !ok || (!byID && sd.status() == cfn.StatusDeleteComplete) {
@@ -282,27 +354,35 @@ func (m *Mock) DescribeStacks(_ context.Context, name string) ([]cfn.Stack, erro
 }
 
 // DescribeStackEvents returns the named stack's events, newest first.
-func (m *Mock) DescribeStackEvents(_ context.Context, name string) ([]cfn.StackEvent, error) {
+// Under AsyncSettle an event is listed once its time has come.
+func (m *Mock) DescribeStackEvents(ctx context.Context, name string) ([]cfn.StackEvent, error) {
+	m.settle(ctx)
+
 	sd, err := m.stackAnyState(name)
 	if err != nil {
 		return nil, err
 	}
 
+	now := m.clock.Now()
+
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
 
-	n := len(sd.stack.Events)
-	out := make([]cfn.StackEvent, n)
+	out := make([]cfn.StackEvent, 0, len(sd.stack.Events))
 
-	for i := range sd.stack.Events {
-		out[n-1-i] = sd.stack.Events[i]
+	for i := len(sd.stack.Events) - 1; i >= 0; i-- {
+		if e := sd.stack.Events[i]; !e.Timestamp.After(now) {
+			out = append(out, e)
+		}
 	}
 
 	return out, nil
 }
 
 // ListStacks returns a summary of every stack, optionally filtered by status.
-func (m *Mock) ListStacks(_ context.Context, statusFilter []string) ([]cfn.StackSummary, error) {
+func (m *Mock) ListStacks(ctx context.Context, statusFilter []string) ([]cfn.StackSummary, error) {
+	m.settle(ctx)
+
 	want := map[string]bool{}
 	for _, s := range statusFilter {
 		want[s] = true
@@ -329,20 +409,18 @@ func (m *Mock) ListStacks(_ context.Context, statusFilter []string) ([]cfn.Stack
 	return out, nil
 }
 
-// DescribeStackResources returns the resources of an active stack.
-func (m *Mock) DescribeStackResources(_ context.Context, name string) ([]cfn.StackResource, error) {
+// DescribeStackResources returns the resources of an active stack. While
+// an asynchronous operation runs, each resource shows what its events so
+// far report.
+func (m *Mock) DescribeStackResources(ctx context.Context, name string) ([]cfn.StackResource, error) {
+	m.settle(ctx)
+
 	sd, err := m.activeStack(name)
 	if err != nil {
 		return nil, err
 	}
 
-	sd.mu.RLock()
-	defer sd.mu.RUnlock()
-
-	out := make([]cfn.StackResource, len(sd.stack.Resources))
-	copy(out, sd.stack.Resources)
-
-	return out, nil
+	return sd.visibleResources(m.clock.Now()), nil
 }
 
 // ListStackResources is DescribeStackResources' summary form; it returns the
@@ -352,7 +430,9 @@ func (m *Mock) ListStackResources(ctx context.Context, name string) ([]cfn.Stack
 }
 
 // GetTemplate returns the template body an active stack was deployed with.
-func (m *Mock) GetTemplate(_ context.Context, name string) (string, error) {
+func (m *Mock) GetTemplate(ctx context.Context, name string) (string, error) {
+	m.settle(ctx)
+
 	sd, err := m.stackAnyState(name)
 	if err != nil {
 		return "", err

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	srchdriver "github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
 )
 
@@ -31,8 +32,13 @@ func NewDataPlane(drv srchdriver.SearchDataPlane) *DataPlaneHandler {
 	return &DataPlaneHandler{dp: drv}
 }
 
-// Matches claims the search data-plane roots.
+// Matches claims the search data-plane roots. A storage account host is never
+// a Search request, so a blob container named "indexes" stays with storage.
 func (*DataPlaneHandler) Matches(r *http.Request) bool {
+	if azurearm.IsStorageHost(r.Host) {
+		return false
+	}
+
 	parts := splitPath(r.URL.Path)
 
 	return len(parts) > 0 && dataPlaneRoots[parts[0]]

@@ -17,7 +17,10 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/gcp/opmeta"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -27,26 +30,57 @@ const basePrefix = "/v1/services/"
 // connectionsSegment is the sub-collection this handler serves.
 const connectionsSegment = "/connections"
 
+// opPrefix starts every operation path this handler mints. Cloud Functions
+// gen1 also serves /v1/operations/{op}, so the "sn-" id prefix is what lets
+// this handler claim only its own polls.
+const opPrefix = "/v1/operations/sn-"
+
+// connectionTypeURL is the Any type of a create or patch operation's response.
+const connectionTypeURL = "type.googleapis.com/google.cloud.servicenetworking.v1.Connection"
+
+// deleteVerb is an accepted alias suffix on a deleteConnection call.
+const deleteVerb = ":deleteConnection"
+
+// peeringName is the VPC peering every Service Networking connection reports.
+const peeringName = "servicenetworking-googleapis-com"
+
 // Handler serves the Service Networking REST surface.
 type Handler struct {
 	mu sync.RWMutex
 	// connections is keyed by the network the caller named, so a delete
 	// removes what a create added rather than clearing everything.
 	connections map[string]json.RawMessage
+	// ops records every operation this handler mints so a poll replays it and
+	// an unknown name is 404 NOT_FOUND.
+	ops *lro.Registry
 }
 
 // New returns a Service Networking handler.
 func New() *Handler {
-	return &Handler{connections: map[string]json.RawMessage{}}
+	return &Handler{connections: map[string]json.RawMessage{}, ops: lro.NewRegistry()}
 }
 
-// Matches claims /v1/services/{service}/connections... requests.
+// SetOperationRegistry records this handler's operations in the server-wide
+// registry instead of its own.
+func (h *Handler) SetOperationRegistry(reg *lro.Registry) { h.ops = reg }
+
+// Matches claims /v1/services/{service}/connections... requests and GET polls
+// of the operations this handler mints.
 func (*Handler) Matches(r *http.Request) bool {
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, opPrefix) {
+		return true
+	}
+
 	return strings.HasPrefix(r.URL.Path, basePrefix) &&
 		strings.Contains(r.URL.Path, connectionsSegment)
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, opPrefix) {
+		lro.ServeGet(w, h.ops, strings.TrimPrefix(r.URL.Path, "/v1/"))
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.list(w, r)
@@ -101,11 +135,98 @@ func (h *Handler) upsert(w http.ResponseWriter, r *http.Request) {
 		body = json.RawMessage(`{}`)
 	}
 
+	key := bodyNetwork(r, body)
+
+	if isDeleteConnection(r) {
+		h.mu.Lock()
+		delete(h.connections, key)
+		h.mu.Unlock()
+
+		h.writeDoneOperation(w, opmeta.Empty())
+
+		return
+	}
+
+	body = withServiceAndPeering(r, body)
+
 	h.mu.Lock()
-	h.connections[network(r)] = body
+	h.connections[key] = body
 	h.mu.Unlock()
 
-	writeDoneOperation(w)
+	h.writeDoneOperation(w, opmeta.Response(body, connectionTypeURL))
+}
+
+// isDeleteConnection reports a connections.deleteConnection call: a POST to a
+// single connection, POST /v1/services/{s}/connections/{id}. Real clients send
+// it without a verb, since the API maps it to POST /v1/{name=services/*/connections/*};
+// a trailing :deleteConnection is accepted as an alias. A POST to the
+// collection is a create and a PATCH is an update, whatever their body holds.
+func isDeleteConnection(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+
+	i := strings.Index(r.URL.Path, connectionsSegment+"/")
+	if i < 0 {
+		return false
+	}
+
+	id := strings.TrimSuffix(r.URL.Path[i+len(connectionsSegment)+1:], deleteVerb)
+
+	return id != "" && !strings.Contains(id, "/")
+}
+
+// bodyNetwork picks the network a create, patch or deleteConnection names: the
+// body's network (a Connection) or consumerNetwork (a DeleteConnectionRequest),
+// otherwise the network query parameter, so a later list filtered by that
+// network finds the connection.
+func bodyNetwork(r *http.Request, body json.RawMessage) string {
+	var named struct {
+		Network         string `json:"network"`
+		ConsumerNetwork string `json:"consumerNetwork"`
+	}
+
+	_ = json.Unmarshal(body, &named)
+
+	switch {
+	case named.Network != "":
+		return named.Network
+	case named.ConsumerNetwork != "":
+		return named.ConsumerNetwork
+	default:
+		return network(r)
+	}
+}
+
+// withServiceAndPeering fills the output-only service and peering fields a
+// real Connection carries, leaving the body unchanged when it is not a JSON
+// object.
+func withServiceAndPeering(r *http.Request, body json.RawMessage) json.RawMessage {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(body, &fields) != nil || fields == nil {
+		return body
+	}
+
+	service := strings.TrimPrefix(r.URL.Path, basePrefix)
+	if i := strings.Index(service, "/"); i >= 0 {
+		service = service[:i]
+	}
+
+	set := func(k, v string) {
+		if _, ok := fields[k]; !ok {
+			fields[k], _ = json.Marshal(v)
+		}
+	}
+
+	set("service", "services/"+service)
+	set("peering", peeringName)
+
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return body
+	}
+
+	return out
 }
 
 func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
@@ -125,16 +246,21 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
 	delete(h.connections, n)
 	h.mu.Unlock()
 
-	writeDoneOperation(w)
+	h.writeDoneOperation(w, opmeta.Empty())
 }
 
-// writeDoneOperation answers with an already-finished long-running operation.
-// Callers poll until done; there is nothing asynchronous here to wait for.
-func writeDoneOperation(w http.ResponseWriter) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"name": "operations/servicenetworking-done",
-		"done": true,
-	})
+// writeDoneOperation answers with an already-finished long-running operation
+// carrying response, recorded under a unique name so a poll replays it.
+func (h *Handler) writeDoneOperation(w http.ResponseWriter, response json.RawMessage) {
+	name := "operations/sn-" + opmeta.NewID(time.Now())
+	h.ops.Register(name, response)
+
+	op := map[string]any{"name": name, "done": true}
+	if response != nil {
+		op["response"] = response
+	}
+
+	writeJSON(w, http.StatusOK, op)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -20,6 +20,9 @@ type apprunnerSnapshot struct {
 	Connections   map[string]driver.Connection                 `json:"connections,omitempty"`
 	VpcConnectors map[string]driver.VpcConnector               `json:"vpcConnectors,omitempty"`
 	Observability map[string]driver.ObservabilityConfiguration `json:"observability,omitempty"`
+	Ingress       map[string]driver.VpcIngressConnection       `json:"ingress,omitempty"`
+	Domains       map[string]domainRecord                      `json:"domains,omitempty"`
+	RevisionMarks map[string]int32                             `json:"revisionMarks,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused. App Runner is
@@ -39,6 +42,14 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 		snap.Connections = m.connections.All()
 	}
 
+	if m.ingress.Len() > 0 {
+		snap.Ingress = m.ingress.All()
+	}
+
+	if m.domains.Len() > 0 {
+		snap.Domains = m.domains.All()
+	}
+
 	if m.vpcConnectors.Len() > 0 {
 		snap.VpcConnectors = m.vpcConnectors.All()
 	}
@@ -46,6 +57,8 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	if m.observability.Len() > 0 {
 		snap.Observability = m.observability.All()
 	}
+
+	snap.RevisionMarks = m.copyRevisionMarks()
 
 	b, err := json.Marshal(snap)
 	if err != nil {
@@ -84,5 +97,37 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		m.observability.Set(arn, snap.Observability[arn])
 	}
 
+	for arn := range snap.Ingress {
+		m.ingress.Set(arn, snap.Ingress[arn])
+	}
+
+	for key := range snap.Domains {
+		m.domains.Set(key, snap.Domains[key])
+	}
+
+	m.revMu.Lock()
+	defer m.revMu.Unlock()
+
+	for k, v := range snap.RevisionMarks {
+		m.revMarks[k] = max(m.revMarks[k], v)
+	}
+
 	return nil
+}
+
+// copyRevisionMarks returns the revision high-water marks, or nil when there are none.
+func (m *Mock) copyRevisionMarks() map[string]int32 {
+	m.revMu.Lock()
+	defer m.revMu.Unlock()
+
+	if len(m.revMarks) == 0 {
+		return nil
+	}
+
+	out := make(map[string]int32, len(m.revMarks))
+	for k, v := range m.revMarks {
+		out[k] = v
+	}
+
+	return out
 }

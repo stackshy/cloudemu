@@ -38,9 +38,8 @@ func codeSigningFunctionName(path string) (string, bool) {
 // missing function 404s. Terraform's function read calls this on every refresh;
 // before this route existed the request fell through to the S3 catch-all and
 // returned XML the REST-JSON client could not parse.
-func (h *Handler) serveFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Request) {
-	name, ok := codeSigningFunctionName(r.URL.Path)
-	if !ok {
+func (h *Handler) serveFunctionCodeSigningConfig(w http.ResponseWriter, r *http.Request, op opID, name string) {
+	if name == "" {
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
 		return
 	}
@@ -50,13 +49,13 @@ func (h *Handler) serveFunctionCodeSigningConfig(w http.ResponseWriter, r *http.
 		return
 	}
 
-	switch r.Method {
-	case http.MethodGet:
+	switch op {
+	case opGetFunctionCodeSigningConfig:
 		writeJSON(w, http.StatusOK, map[string]any{
 			"FunctionName":         name,
 			"CodeSigningConfigArn": "",
 		})
-	case http.MethodDelete:
+	case opDeleteFunctionCodeSigningConfig:
 		// No config is stored, so removal is a no-op that AWS answers 204.
 		w.WriteHeader(http.StatusNoContent)
 	default:

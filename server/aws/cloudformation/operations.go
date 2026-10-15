@@ -37,8 +37,9 @@ func (h *Handler) updateStack(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) continueUpdateRollback(w http.ResponseWriter, r *http.Request) {
 	err := h.api.ContinueUpdateRollback(r.Context(), &cfn.ContinueUpdateRollbackInput{
-		StackName:       r.Form.Get("StackName"),
-		ResourcesToSkip: awsquery.ListStrings(r.Form, "ResourcesToSkip.member"),
+		StackName:          r.Form.Get("StackName"),
+		ResourcesToSkip:    awsquery.ListStrings(r.Form, "ResourcesToSkip.member"),
+		ClientRequestToken: r.Form.Get("ClientRequestToken"),
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -50,9 +51,10 @@ func (h *Handler) continueUpdateRollback(w http.ResponseWriter, r *http.Request)
 
 func (h *Handler) deleteStack(w http.ResponseWriter, r *http.Request) {
 	in := &cfn.DeleteStackInput{
-		StackName:       r.Form.Get("StackName"),
-		RetainResources: awsquery.ListStrings(r.Form, "RetainResources.member"),
-		DeletionMode:    r.Form.Get("DeletionMode"),
+		StackName:          r.Form.Get("StackName"),
+		RetainResources:    awsquery.ListStrings(r.Form, "RetainResources.member"),
+		DeletionMode:       r.Form.Get("DeletionMode"),
+		ClientRequestToken: r.Form.Get("ClientRequestToken"),
 	}
 
 	if err := h.api.DeleteStack(r.Context(), in); err != nil {
@@ -99,6 +101,7 @@ func (h *Handler) describeStackEvents(w http.ResponseWriter, r *http.Request) {
 			LogicalResourceID: e.LogicalID, PhysicalResourceID: e.PhysicalID,
 			ResourceType: e.ResourceType, Timestamp: isoTime(e.Timestamp),
 			ResourceStatus: e.Status, ResourceStatusReason: e.StatusReason,
+			ClientRequestToken: e.ClientRequestToken,
 		})
 	}
 

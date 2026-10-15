@@ -16,7 +16,9 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/vtl"
 	"github.com/stackshy/cloudemu/v2/services/apigateway/driver"
+	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
@@ -61,6 +63,7 @@ type apiData struct {
 	stages      map[string]*driver.Stage
 	docParts    map[string]*driver.DocumentationPart
 	docVersions map[string]*docVersion
+	apiExt
 }
 
 // Mock is an in-memory implementation of Amazon API Gateway.
@@ -83,13 +86,28 @@ type Mock struct {
 	regionMu sync.RWMutex
 	certs    map[string]*driver.ClientCertificate
 	account  driver.Account
+	regionExt
+
+	// logs, when wired via SetLogSink, receives stage execution and access logs.
+	logs logdriver.Logging
+
+	// httpClient is the outbound seam of HTTP and HTTP_PROXY integrations.
+	httpClient HTTPDoer
+
+	// templates caches parsed mapping templates by source, so a deployed
+	// template is parsed once rather than on every invoke.
+	templates *vtl.Cache
 }
+
+// templateCacheBytes bounds the memory of the parsed mapping templates kept.
+const templateCacheBytes = 64 << 20
 
 // New creates a new API Gateway mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
 		apis: memstore.New[*apiData](), opts: opts,
-		certs: map[string]*driver.ClientCertificate{}, account: defaultAccount(),
+		certs: map[string]*driver.ClientCertificate{}, account: defaultAccount(), regionExt: newRegionExt(),
+		templates: vtl.NewCache(templateCacheBytes), httpClient: defaultHTTPClient(),
 	}
 }
 
@@ -158,6 +176,7 @@ func (m *Mock) CreateRestAPI(_ context.Context, in *driver.CreateRestAPIInput) (
 		stages:      map[string]*driver.Stage{},
 		docParts:    map[string]*driver.DocumentationPart{},
 		docVersions: map[string]*docVersion{},
+		apiExt:      newAPIExt(),
 	})
 
 	out := copyAPI(&api)

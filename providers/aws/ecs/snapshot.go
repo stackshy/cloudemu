@@ -31,6 +31,9 @@ type ecsSnapshot struct {
 	Attributes        json.RawMessage `json:"attributes,omitempty"`
 	EngineHandles     json.RawMessage `json:"engineHandles,omitempty"`
 	CapacityProviders json.RawMessage `json:"capacityProviders,omitempty"`
+	TaskSets          json.RawMessage `json:"taskSets,omitempty"`
+	Deployments       json.RawMessage `json:"serviceDeployments,omitempty"`
+	Revisions         json.RawMessage `json:"serviceRevisions,omitempty"`
 	PortCounter       uint32          `json:"portCounter,omitempty"`
 }
 
@@ -62,6 +65,9 @@ func (m *Mock) snapshotStores(snap *ecsSnapshot) error {
 		{&snap.Attributes, m.attributes.Snapshot},
 		{&snap.EngineHandles, m.engineHandles.Snapshot},
 		{&snap.CapacityProviders, m.capacityProviders.Snapshot},
+		{&snap.TaskSets, m.taskSets.Snapshot},
+		{&snap.Deployments, m.serviceDeployments.Snapshot},
+		{&snap.Revisions, m.serviceRevisions.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -108,6 +114,9 @@ func (m *Mock) restoreStores(snap *ecsSnapshot) error {
 		{snap.Attributes, m.attributes.LoadSnapshot},
 		{snap.EngineHandles, m.engineHandles.LoadSnapshot},
 		{snap.CapacityProviders, m.capacityProviders.LoadSnapshot},
+		{snap.TaskSets, m.taskSets.LoadSnapshot},
+		{snap.Deployments, m.serviceDeployments.LoadSnapshot},
+		{snap.Revisions, m.serviceRevisions.LoadSnapshot},
 	}
 
 	for _, l := range loads {

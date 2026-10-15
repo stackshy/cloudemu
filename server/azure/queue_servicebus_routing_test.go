@@ -387,3 +387,75 @@ func TestBlobTableRoutingUnaffected(t *testing.T) {
 		t.Fatalf("table entity Email = %v, want alice@example.com", out["Email"])
 	}
 }
+
+// TestStorageHostRoutesListToItsService: "GET /?comp=list" is List Containers
+// on a blob host and List Queues on a queue host, as on real Azure where the
+// hostname picks the service. On a bare host it is List Containers unless a
+// Queue client sends it (see storage_dataplane_isolation_test.go). A blob
+// named "messages" on a blob host is a blob, not a queue message call.
+func TestStorageHostRoutesListToItsService(t *testing.T) {
+	ts := newFullAzureServer(t)
+
+	createStorageQueue(t, ts, "q-host")
+	hostDo(t, ts, "", http.MethodPut, "/ctr-host?restype=container", "", http.StatusCreated)
+
+	const (
+		blobHost  = "anyacct.blob.core.windows.net:4568"
+		queueHost = "anyacct.queue.core.windows.net:4568"
+	)
+
+	tests := []struct {
+		name, host, want, notWant string
+	}{
+		{"blob host lists containers", blobHost, "<Name>ctr-host</Name>", "<Name>q-host</Name>"},
+		{"queue host lists queues", queueHost, "<Name>q-host</Name>", "<Name>ctr-host</Name>"},
+		{"bare host lists containers", "", "<Name>ctr-host</Name>", "<Name>q-host</Name>"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := hostDo(t, ts, tt.host, http.MethodGet, "/?comp=list", "", http.StatusOK)
+			if !strings.Contains(body, tt.want) || strings.Contains(body, tt.notWant) {
+				t.Fatalf("GET /?comp=list on %q = %s, want %s and not %s", tt.host, body, tt.want, tt.notWant)
+			}
+		})
+	}
+
+	hostDo(t, ts, blobHost, http.MethodPut, "/ctr-host/messages", "blob-body", http.StatusCreated)
+
+	if got := hostDo(t, ts, blobHost, http.MethodGet, "/ctr-host/messages", "", http.StatusOK); got != "blob-body" {
+		t.Fatalf("blob named messages = %q, want blob-body", got)
+	}
+}
+
+// hostDo sends one request with the given Host header (empty keeps the test
+// server's own host), asserts the status and returns the body.
+func hostDo(t *testing.T, ts *httptest.Server, host, method, path, body string, want int) string {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(context.Background(), method, ts.URL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	if host != "" {
+		req.Host = host
+	}
+
+	if method == http.MethodPut && body != "" {
+		req.Header.Set("x-ms-blob-type", "BlockBlob")
+	}
+
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != want {
+		t.Fatalf("%s %s on %q = %d, want %d: %s", method, path, host, resp.StatusCode, want, data)
+	}
+
+	return string(data)
+}

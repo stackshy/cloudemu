@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 )
 
 // serveMetricDescriptors routes /v3/projects/{p}/metricDescriptors[/{type...}].
@@ -39,12 +41,12 @@ func (h *Handler) serveMetricDescriptors(w http.ResponseWriter, r *http.Request,
 // metricDescriptors.create. Only custom descriptors are deletable. A descriptor
 // synthesized from live series (or one that never existed) is 404, matching real
 // GCP, which rejects deleting a built-in/absent descriptor.
-func (h *Handler) deleteDescriptor(w http.ResponseWriter, _, mtype string) {
+func (h *Handler) deleteDescriptor(w http.ResponseWriter, project, mtype string) {
 	h.mu.Lock()
 
-	_, ok := h.descriptors[mtype]
+	_, ok := h.descriptors[projectctx.Key(project, mtype)]
 	if ok {
-		delete(h.descriptors, mtype)
+		delete(h.descriptors, projectctx.Key(project, mtype))
 	}
 
 	h.mu.Unlock()
@@ -60,20 +62,24 @@ func (h *Handler) deleteDescriptor(w http.ResponseWriter, _, mtype string) {
 func (h *Handler) listDescriptors(w http.ResponseWriter, project string) {
 	byType := map[string]metricDescriptor{}
 
-	// Descriptors synthesized from series that currently hold data.
+	// Descriptors synthesized from series that currently hold data in project.
 	if reader, ok := h.mon.(seriesReader); ok {
 		for _, key := range reader.GCPSeriesKeys() {
-			t := metricType(key.Namespace, key.MetricName)
-			byType[t] = synthDescriptor(project, t)
+			if len(h.projectSeries(reader, key, project)) > 0 {
+				t := metricType(key.Namespace, key.MetricName)
+				byType[t] = synthDescriptor(project, t)
+			}
 		}
 	}
 
 	// Custom descriptors created via metricDescriptors.create take precedence.
 	h.mu.RLock()
-	for t := range h.descriptors {
-		d := h.descriptors[t]
-		d.Name = descriptorResourceName(project, t)
-		byType[t] = d
+	for key := range h.descriptors {
+		if p, t, _ := projectctx.Split(key); p == project {
+			d := h.descriptors[key]
+			d.Name = descriptorResourceName(project, t)
+			byType[t] = d
+		}
 	}
 	h.mu.RUnlock()
 
@@ -94,7 +100,7 @@ func (h *Handler) listDescriptors(w http.ResponseWriter, project string) {
 
 func (h *Handler) getDescriptor(w http.ResponseWriter, project, mtype string) {
 	h.mu.RLock()
-	d, ok := h.descriptors[mtype]
+	d, ok := h.descriptors[projectctx.Key(project, mtype)]
 	h.mu.RUnlock()
 
 	if ok {
@@ -106,7 +112,7 @@ func (h *Handler) getDescriptor(w http.ResponseWriter, project, mtype string) {
 
 	if reader, rok := h.mon.(seriesReader); rok {
 		for _, key := range reader.GCPSeriesKeys() {
-			if metricType(key.Namespace, key.MetricName) == mtype {
+			if metricType(key.Namespace, key.MetricName) == mtype && len(h.projectSeries(reader, key, project)) > 0 {
 				writeJSON(w, http.StatusOK, synthDescriptor(project, mtype))
 				return
 			}
@@ -141,7 +147,7 @@ func (h *Handler) createDescriptor(w http.ResponseWriter, r *http.Request, proje
 	body.Name = descriptorResourceName(project, body.Type)
 
 	h.mu.Lock()
-	h.descriptors[body.Type] = body
+	h.descriptors[projectctx.Key(project, body.Type)] = body
 	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, body)

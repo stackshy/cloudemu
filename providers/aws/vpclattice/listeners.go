@@ -41,8 +41,18 @@ func (m *Mock) CreateListener(_ context.Context, in *driver.CreateListenerInput)
 		return nil, err
 	}
 
+	port, err := validateListener(in.Protocol, in.Port)
+	if err != nil {
+		return nil, err
+	}
+
 	sid := idFromIdentifier(in.ServiceID)
-	id := idgen.GenerateLongID("listener-")
+
+	id, err := idgen.GenerateLongID("listener-")
+	if err != nil {
+		return nil, err
+	}
+
 	l := &driver.Listener{
 		ID:            id,
 		ARN:           m.arn("service/" + sid + "/listener/" + id),
@@ -50,7 +60,7 @@ func (m *Mock) CreateListener(_ context.Context, in *driver.CreateListenerInput)
 		ServiceID:     sid,
 		ServiceARN:    serviceARN,
 		Protocol:      in.Protocol,
-		Port:          in.Port,
+		Port:          port,
 		DefaultAction: append([]byte(nil), in.DefaultAction...),
 		CreatedAt:     m.now(),
 		LastUpdatedAt: m.now(),
@@ -136,6 +146,10 @@ func (m *Mock) DeleteListener(_ context.Context, serviceID, listenerID string) e
 func (m *Mock) ListListeners(_ context.Context, serviceID string) ([]driver.Listener, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if _, err := m.serviceARNFor(serviceID); err != nil {
+		return nil, err
+	}
 
 	sid := idFromIdentifier(serviceID)
 

@@ -193,13 +193,13 @@ type outboundRuleJSON struct {
 // --- load balancer ---
 
 type loadBalancerProps struct {
-	BackendAddressPools      []backendPoolJSON       `json:"backendAddressPools,omitempty"`
-	FrontendIPConfigurations []frontendIPJSON        `json:"frontendIPConfigurations,omitempty"`
-	LoadBalancingRules       []loadBalancingRuleJSON `json:"loadBalancingRules,omitempty"`
-	Probes                   []probeJSON             `json:"probes,omitempty"`
-	InboundNatRules          []inboundNatRuleJSON    `json:"inboundNatRules,omitempty"`
-	InboundNatPools          []inboundNatPoolJSON    `json:"inboundNatPools,omitempty"`
-	OutboundRules            []outboundRuleJSON      `json:"outboundRules,omitempty"`
+	BackendAddressPools      []backendPoolJSON       `json:"backendAddressPools"`
+	FrontendIPConfigurations []frontendIPJSON        `json:"frontendIPConfigurations"`
+	LoadBalancingRules       []loadBalancingRuleJSON `json:"loadBalancingRules"`
+	Probes                   []probeJSON             `json:"probes"`
+	InboundNatRules          []inboundNatRuleJSON    `json:"inboundNatRules"`
+	InboundNatPools          []inboundNatPoolJSON    `json:"inboundNatPools"`
+	OutboundRules            []outboundRuleJSON      `json:"outboundRules"`
 	ProvisioningState        string                  `json:"provisioningState,omitempty"`
 }
 

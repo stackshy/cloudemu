@@ -159,10 +159,15 @@ type listAliasesResponse struct {
 
 // addPermissionRequest is the body of AddPermission (POST .../{name}/policy).
 type addPermissionRequest struct {
-	StatementID string `json:"StatementId"`
-	Action      string `json:"Action"`
-	Principal   string `json:"Principal"`
-	SourceArn   string `json:"SourceArn"`
+	StatementID           string `json:"StatementId"`
+	Action                string `json:"Action"`
+	Principal             string `json:"Principal"`
+	SourceArn             string `json:"SourceArn"`
+	SourceAccount         string `json:"SourceAccount"`
+	PrincipalOrgID        string `json:"PrincipalOrgID"`
+	EventSourceToken      string `json:"EventSourceToken"`
+	FunctionURLAuthType   string `json:"FunctionUrlAuthType"`
+	InvokedViaFunctionURL bool   `json:"InvokedViaFunctionUrl"`
 }
 
 // functionResource is the shape returned by GetFunction:

@@ -38,7 +38,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	pcadriver "github.com/stackshy/cloudemu/v2/services/privateca/driver"
 )
@@ -104,10 +106,16 @@ type Handler struct {
 	// Nil in a standalone package server, where this handler serves its own
 	// /operations/ poll.
 	ops *lro.Registry
+
+	// iam holds caPool and certificateTemplate policies keyed by full name.
+	iam gcpiam.Store
 }
 
 // New returns a Certificate Authority Service handler backed by db.
-func New(db pcadriver.PrivateCA) *Handler { return &Handler{db: db} }
+func New(db pcadriver.PrivateCA) *Handler { return &Handler{db: db, iam: resourceiam.New()} }
+
+// SetIAMStore wires the shared resource IAM store.
+func (h *Handler) SetIAMStore(s gcpiam.Store) { h.iam = s }
 
 // SetOperationRegistry wires the shared LRO poller so created operations are
 // resolvable (with their response) through the full server's operations host.
@@ -183,13 +191,7 @@ func parseFlat(rt *route, rest []string, coll string) bool {
 	case 1:
 		return true
 	case flatItemParts:
-		if strings.ContainsRune(rest[1], ':') {
-			return false
-		}
-
-		rt.name = rest[1]
-
-		return true
+		return parseIAMItem(rt, rest[1])
 	default:
 		return false
 	}
@@ -205,13 +207,9 @@ func parsePoolSubtree(rt *route, rest []string) bool {
 
 		return true
 	case poolItemParts:
-		if strings.ContainsRune(rest[1], ':') {
-			return false
-		}
+		rt.coll = caPoolsColl
 
-		rt.coll, rt.name = caPoolsColl, rest[1]
-
-		return true
+		return parseIAMItem(rt, rest[1])
 	case nestedCollParts:
 		if !isNestedColl(rest[2]) {
 			return false
@@ -232,6 +230,15 @@ func parsePoolSubtree(rt *route, rest []string) bool {
 	default:
 		return false
 	}
+}
+
+// parseIAMItem sets the item id of a caPool or certificateTemplate. The only
+// verbs these items take are the IAM ones (caPools/{p}:getIamPolicy); any
+// other colon suffix is not this service's path.
+func parseIAMItem(rt *route, seg string) bool {
+	rt.name, rt.verb = gcpiam.SplitVerb(seg)
+
+	return rt.verb != "" || !strings.ContainsRune(seg, ':')
 }
 
 // isNestedColl reports whether seg names a collection nested under a caPool.
@@ -276,6 +283,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if rt.coll == operationsSeg {
 		h.serveOperation(w, r)
+		return
+	}
+
+	if gcpiam.IsVerb(rt.verb) && (rt.coll == caPoolsColl || rt.coll == templatesColl) {
+		h.serveIAM(w, r, &rt)
 		return
 	}
 

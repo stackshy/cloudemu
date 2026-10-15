@@ -6,18 +6,21 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/smithy-go"
 
 	cloudemu "github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/internal/compat"
@@ -266,25 +269,54 @@ func TestCompatAWSAuthorizationCrossServiceBypassClosed(t *testing.T) {
 	}
 }
 
-// TestCompatAWSAuthorizationQueryAuthenticatedOnly pins the documented limitation
-// that the query protocol is authenticated but NOT authorization-enforced in this
-// revision: a user whose policy grants only dynamodb:GetItem (no EC2 permission)
-// can still make an authenticated EC2 query call, because query authorization
-// cannot be soundly bound to the executed operation before dispatch and is a
-// follow-up.
-func TestCompatAWSAuthorizationQueryAuthenticatedOnly(t *testing.T) {
+// TestCompatAWSAuthorizationQueryEnforced checks that query-protocol calls are
+// authorized against the caller's policies under EnforceAuth, bound to the
+// operation dispatch runs. A user whose policy does not cover the call gets EC2's
+// 403 UnauthorizedOperation, and a user granted ec2:DescribeInstances succeeds. A
+// user with no policies at all stays unrestricted: that is the bootstrap rule
+// that lets a freshly created key-only user set up the others.
+func TestCompatAWSAuthorizationQueryEnforced(t *testing.T) {
 	cloud := cloudemu.NewAWS()
-	akid, secret := registerUserWithKey(t, cloud.IAM, "queryuser")
-	attachInlinePolicy(t, cloud.IAM, "queryuser", "ddb-get-only",
+
+	nonMatching, nonMatchingSecret := registerUserWithKey(t, cloud.IAM, "ddbuser")
+	attachInlinePolicy(t, cloud.IAM, "ddbuser", "ddb-get-only",
 		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"dynamodb:GetItem","Resource":"*"}]}`)
 
-	sess := compat.BootAWS(t, awsserver.Drivers{IAM: cloud.IAM, EC2: cloud.EC2, EnforceAuth: true})
-	client := ec2.NewFromConfig(staticConfig(t, akid, secret), func(o *ec2.Options) {
-		o.BaseEndpoint = aws.String(sess.Endpoint())
-	})
+	describer, describerSecret := registerUserWithKey(t, cloud.IAM, "ec2describer")
+	attachInlinePolicy(t, cloud.IAM, "ec2describer", "ec2-describe",
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"ec2:DescribeInstances","Resource":"*"}]}`)
 
-	if _, err := client.DescribeInstances(context.Background(), &ec2.DescribeInstancesInput{}); err != nil {
-		t.Fatalf("query call is authenticated-only and should succeed, got: %v", err)
+	bootstrap, bootstrapSecret := registerUserWithKey(t, cloud.IAM, "bootstrap")
+
+	sess := compat.BootAWS(t, awsserver.Drivers{IAM: cloud.IAM, EC2: cloud.EC2, EnforceAuth: true})
+	describe := func(akid, secret string) error {
+		client := ec2.NewFromConfig(staticConfig(t, akid, secret), func(o *ec2.Options) {
+			o.BaseEndpoint = aws.String(sess.Endpoint())
+		})
+
+		_, err := client.DescribeInstances(context.Background(), &ec2.DescribeInstancesInput{})
+
+		return err
+	}
+
+	err := describe(nonMatching, nonMatchingSecret)
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "UnauthorizedOperation" {
+		t.Fatalf("user without ec2:DescribeInstances: want UnauthorizedOperation, got %v", err)
+	}
+
+	var respErr *awshttp.ResponseError
+	if !errors.As(err, &respErr) || respErr.HTTPStatusCode() != http.StatusForbidden {
+		t.Fatalf("user without ec2:DescribeInstances: want HTTP 403, got %v", err)
+	}
+
+	if err := describe(describer, describerSecret); err != nil {
+		t.Fatalf("user granted ec2:DescribeInstances: %v", err)
+	}
+
+	if err := describe(bootstrap, bootstrapSecret); err != nil {
+		t.Fatalf("user with no policies (bootstrap): %v", err)
 	}
 }
 

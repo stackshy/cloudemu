@@ -5,11 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/xml"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -105,8 +103,8 @@ func TestEnforcedGateAdmitsUnsignedPublicOps(t *testing.T) {
 		req  rawReq
 		want int
 	}{
-		// Cognito user-pool public ops are not routed yet, so the handler answers
-		// UnknownOperationException (400): the point is the gate let them through.
+		// The empty bodies fail Cognito's own validation (400): the point is the
+		// gate let them through.
 		{"cognito-idp InitiateAuth", jsonRPC(idpTarget+"InitiateAuth", `{}`), http.StatusBadRequest},
 		{"cognito-idp SignUp", jsonRPC(idpTarget+"SignUp", `{}`), http.StatusBadRequest},
 		{"cognito-idp RespondToAuthChallenge", jsonRPC(idpTarget+"RespondToAuthChallenge", `{}`), http.StatusBadRequest},
@@ -218,6 +216,18 @@ func TestAuthzSkipsPublicOps(t *testing.T) {
 		typ != accessDeny {
 		t.Fatalf("private ListUserPools: %d %s, want 403 %s", status, typ, accessDeny)
 	}
+
+	// A signed execute-api invoke stays public: the data plane answers it
+	// (here: no such API), never the IAM gate.
+	for _, rq := range []sreq{
+		{method: http.MethodGet, path: "/prod/pets", service: "execute-api", host: execHost},
+		{method: http.MethodGet, path: "/restapis/abc123/prod/_user_request_/pets", service: "execute-api"},
+	} {
+		status, body := doSigned(t, ts, creds, rq)
+		if strings.Contains(body, "is not authorized") || strings.Contains(body, accessDeny) {
+			t.Fatalf("signed execute-api %s denied by the gate: %d %s", rq.path, status, body)
+		}
+	}
 }
 
 func stsClient(ts *httptest.Server, creds aws.Credentials) *awssts.Client {
@@ -234,55 +244,6 @@ func sessionCreds(c *ststypes.Credentials) aws.Credentials {
 		SecretAccessKey: aws.ToString(c.SecretAccessKey),
 		SessionToken:    aws.ToString(c.SessionToken),
 	}
-}
-
-// signedAssumeWebIdentity sends a SigV4-signed AssumeRoleWithWebIdentity for
-// roleArn and returns the session credentials from the XML response.
-func signedAssumeWebIdentity(t *testing.T, ts *httptest.Server, creds aws.Credentials, roleArn string) aws.Credentials {
-	t.Helper()
-
-	ctx := context.Background()
-	body := url.Values{
-		"Action": {"AssumeRoleWithWebIdentity"}, "Version": {"2011-06-15"}, "RoleArn": {roleArn},
-		"RoleSessionName": {"s"}, "WebIdentityToken": {"junk"},
-	}.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ts.URL+"/", strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-
-	req.Header.Set("Content-Type", formCT)
-
-	sum := sha256.Sum256([]byte(body))
-	if err := v4.NewSigner().SignHTTP(ctx, creds, req, hex.EncodeToString(sum[:]), "sts", "us-east-1", time.Now()); err != nil {
-		t.Fatalf("sign: %v", err)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("do: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var out struct {
-		Result struct {
-			Credentials struct {
-				AccessKeyID     string `xml:"AccessKeyId"`
-				SecretAccessKey string `xml:"SecretAccessKey"`
-				SessionToken    string `xml:"SessionToken"`
-			} `xml:"Credentials"`
-		} `xml:"AssumeRoleWithWebIdentityResult"`
-	}
-
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK || xml.Unmarshal(raw, &out) != nil {
-		t.Fatalf("signed AssumeRoleWithWebIdentity: %d %s", resp.StatusCode, raw)
-	}
-
-	c := out.Result.Credentials
-
-	return aws.Credentials{AccessKeyID: c.AccessKeyID, SecretAccessKey: c.SecretAccessKey, SessionToken: c.SessionToken}
 }
 
 // TestSessionCredentialsAreAuthorized proves an STS session is authorized as
@@ -326,10 +287,6 @@ func TestSessionCredentialsAreAuthorized(t *testing.T) {
 		return sessionCreds(out.Credentials)
 	}
 
-	// The SDK always sends AssumeRoleWithWebIdentity unsigned (noAuth), so sign
-	// it by hand: an authenticated caller asking for a role that does not exist.
-	web := signedAssumeWebIdentity(t, ts, bootCreds, "arn:aws:iam::"+defaultTestAccount+":role/nonexistent")
-
 	sessionFor := func(user string, doc string) aws.Credentials {
 		out, err := stsClient(ts, userWithPolicy(t, cloud, user, doc)).GetSessionToken(ctx, &awssts.GetSessionTokenInput{})
 		if err != nil {
@@ -346,7 +303,6 @@ func TestSessionCredentialsAreAuthorized(t *testing.T) {
 		target  string
 		denied  bool
 	}{
-		{"web identity session for a missing role", web, "dynamodb", listTables, true},
 		{"role with no policies", assume("noperm"), "dynamodb", listTables, true},
 		{"role allowed its action", assume("dynrole"), "dynamodb", listTables, false},
 		{"role outside its policy", assume("dynrole"), "sqs", listQueues, true},

@@ -7,13 +7,14 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
@@ -230,7 +231,7 @@ func (h *Handler) instanceGroupMembers(ctx context.Context, group string) []stri
 	}
 
 	collection, scope, name := parseGroupRef(group)
-	if collection == "" {
+	if collection == "" || !refInProject(group, projectctx.ProjectOr(ctx, "")) {
 		return nil
 	}
 
@@ -280,8 +281,6 @@ func (h *Handler) listBackendServices(w http.ResponseWriter, r *http.Request, rp
 
 	host := hostOf(r)
 	scopeKey := scopeKeyOf(rp)
-	filter := r.URL.Query().Get("filter")
-
 	items := make([]backendServiceResponse, 0, len(tgs))
 
 	for i := range tgs {
@@ -291,25 +290,19 @@ func (h *Handler) listBackendServices(w http.ResponseWriter, r *http.Request, rp
 			continue
 		}
 
-		if resp := toBackendServiceResponse(&tgs[i], rp, host); gcprest.NameMatches(filter, resp.Name) {
-			items = append(items, resp)
-		}
+		items = append(items, toBackendServiceResponse(&tgs[i], rp, host))
 	}
 
-	sort.SliceStable(items, func(i, j int) bool { return items[i].Name < items[j].Name })
-
-	page, err := pagination.Paginate(items, r.URL.Query().Get("pageToken"),
-		gcprest.MaxResults(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	page, next, ok := gcplist.FilterPage(w, r, items, func(b backendServiceResponse) string { return b.Name })
+	if !ok {
 		return
 	}
 
 	out := backendServiceListResponse{
 		Kind:          "compute#backendServiceList",
 		ID:            "projects/" + rp.Project + "/" + listScopeSegment(rp) + "/backendServices",
-		Items:         page.Items,
-		NextPageToken: page.NextPageToken,
+		Items:         page,
+		NextPageToken: next,
 		SelfLink:      gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, resourceBackendServices, ""),
 	}
 
@@ -339,6 +332,8 @@ func (h *Handler) deleteBackendService(w http.ResponseWriter, r *http.Request, r
 		gcprest.WriteCErr(w, err)
 		return
 	}
+
+	h.iam.Delete(gcpiam.ComputeName(rp))
 
 	op := h.ops.RecordDone(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
 		resourceBackendServices, rp.ResourceName, "delete")
@@ -409,8 +404,8 @@ func (h *Handler) insertForwardingRule(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	op := h.ops.RecordDone(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
-		resourceForwardingRules, req.Name, "insert")
+	op := h.ops.RecordDoneTarget(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
+		resourceForwardingRules, req.Name, numericID(lb.ID), "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
@@ -427,6 +422,11 @@ func (h *Handler) linkForwardingRuleBackend(ctx context.Context, rp gcprest.Reso
 	bsName := backendServiceName(req.BackendService)
 	if bsName == "" {
 		return nil
+	}
+
+	// An internal passthrough rule uses a backend service of its own project.
+	if !refInProject(req.BackendService, rp.Project) {
+		return invalidRefErr("backendService", req.BackendService, "backend service")
 	}
 
 	tg, err := h.findTGByName(ctx, rp, bsName)
@@ -465,8 +465,6 @@ func (h *Handler) listForwardingRules(w http.ResponseWriter, r *http.Request, rp
 
 	host := hostOf(r)
 	scopeKey := scopeKeyOf(rp)
-	filter := r.URL.Query().Get("filter")
-
 	items := make([]forwardingRuleResponse, 0, len(lbs))
 
 	for i := range lbs {
@@ -474,25 +472,19 @@ func (h *Handler) listForwardingRules(w http.ResponseWriter, r *http.Request, rp
 			continue
 		}
 
-		if resp := h.toForwardingRuleResponse(r.Context(), &lbs[i], rp, host); gcprest.NameMatches(filter, resp.Name) {
-			items = append(items, resp)
-		}
+		items = append(items, h.toForwardingRuleResponse(r.Context(), &lbs[i], rp, host))
 	}
 
-	sort.SliceStable(items, func(i, j int) bool { return items[i].Name < items[j].Name })
-
-	page, err := pagination.Paginate(items, r.URL.Query().Get("pageToken"),
-		gcprest.MaxResults(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	page, next, ok := gcplist.FilterPage(w, r, items, func(f forwardingRuleResponse) string { return f.Name })
+	if !ok {
 		return
 	}
 
 	out := forwardingRuleListResponse{
 		Kind:          "compute#forwardingRuleList",
 		ID:            "projects/" + rp.Project + "/" + listScopeSegment(rp) + "/forwardingRules",
-		Items:         page.Items,
-		NextPageToken: page.NextPageToken,
+		Items:         page,
+		NextPageToken: next,
 		SelfLink:      gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, resourceForwardingRules, ""),
 	}
 
@@ -868,7 +860,7 @@ func (h *Handler) urlMapRefBackendService(ctx context.Context, rp gcprest.Resour
 	}
 
 	for i := range maps {
-		if bodyRefsBackendService(maps[i].Body, bsName) {
+		if bodyRefsBackendService(maps[i].Body, bsName, rp.Project) {
 			return maps[i].Name
 		}
 	}
@@ -877,14 +869,14 @@ func (h *Handler) urlMapRefBackendService(ctx context.Context, rp gcprest.Resour
 }
 
 // bodyRefsBackendService walks an opaque url-map body for any "service" /
-// "defaultService" member whose reference resolves to bsName.
-func bodyRefsBackendService(v any, bsName string) bool {
+// "defaultService" member whose reference resolves to bsName in project.
+func bodyRefsBackendService(v any, bsName, project string) bool {
 	switch t := v.(type) {
 	case map[string]any:
-		return mapRefsBackendService(t, bsName)
+		return mapRefsBackendService(t, bsName, project)
 	case []any:
 		for i := range t {
-			if bodyRefsBackendService(t[i], bsName) {
+			if bodyRefsBackendService(t[i], bsName, project) {
 				return true
 			}
 		}
@@ -895,15 +887,15 @@ func bodyRefsBackendService(v any, bsName string) bool {
 
 // mapRefsBackendService checks one map node for a backend-service reference and
 // recurses into its members.
-func mapRefsBackendService(m map[string]any, bsName string) bool {
+func mapRefsBackendService(m map[string]any, bsName, project string) bool {
 	for k, val := range m {
 		if k == "service" || k == "defaultService" {
-			if s, ok := val.(string); ok && backendServiceName(s) == bsName {
+			if s, ok := val.(string); ok && backendServiceName(s) == bsName && refInProject(s, project) {
 				return true
 			}
 		}
 
-		if bodyRefsBackendService(val, bsName) {
+		if bodyRefsBackendService(val, bsName, project) {
 			return true
 		}
 	}
@@ -937,7 +929,11 @@ func (h *Handler) validateHealthCheckRefs(ctx context.Context, rp gcprest.Resour
 			return err
 		}
 
-		_, err := store.GetGCPResource(ctx, resourceHealthChecks, scope, lastPathSegment(ref))
+		err := errOtherProject
+		if refInProject(ref, rp.Project) {
+			_, err = store.GetGCPResource(ctx, resourceHealthChecks, scope, lastPathSegment(ref))
+		}
+
 		if err == nil {
 			continue
 		}

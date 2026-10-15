@@ -100,3 +100,36 @@ func TestApplyGuardrailBadSource(t *testing.T) {
 	})
 	assertError(t, err, true)
 }
+
+func TestApplyGuardrailDeniedWords(t *testing.T) {
+	m := newTestMock()
+
+	g, err := m.CreateGuardrail(context.Background(), bedrockdriver.GuardrailConfig{
+		Name: "gr-words", BlockedInputMessaging: "blocked in", BlockedOutputsMessaging: "blocked out",
+		GuardrailPolicies: bedrockdriver.GuardrailPolicies{WordPolicy: &bedrockdriver.GuardrailWordPolicy{
+			Words: []bedrockdriver.GuardrailWord{{Text: "lottery"}, {Text: "secret plan"}},
+		}},
+	})
+	requireNoError(t, err)
+
+	apply := func(source string, content ...string) *bedrockdriver.ApplyGuardrailOutput {
+		out, err := m.ApplyGuardrail(context.Background(), bedrockdriver.ApplyGuardrailInput{
+			GuardrailIdentifier: g.ID, Source: source, Content: content,
+		})
+		requireNoError(t, err)
+
+		return out
+	}
+
+	in := apply(bedrockdriver.GuardrailSourceInput, "Pick my LOTTERY numbers!")
+	assertEqual(t, bedrockdriver.GuardrailActionIntervened, in.Action)
+	assertEqual(t, "blocked in", in.Outputs[0])
+
+	out := apply(bedrockdriver.GuardrailSourceOutput, "here is the secret   plan")
+	assertEqual(t, bedrockdriver.GuardrailActionIntervened, out.Action)
+	assertEqual(t, "blocked out", out.Outputs[0])
+
+	// Whole words only: "lotteryticket" is not "lottery".
+	none := apply(bedrockdriver.GuardrailSourceInput, "a lotteryticket shop")
+	assertEqual(t, bedrockdriver.GuardrailActionNone, none.Action)
+}

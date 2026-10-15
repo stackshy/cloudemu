@@ -2,12 +2,15 @@ package artifactregistry_test
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	gapic "cloud.google.com/go/artifactregistry/apiv1"
 	"cloud.google.com/go/artifactregistry/apiv1/artifactregistrypb"
 	ar "google.golang.org/api/artifactregistry/v1"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 
 	"github.com/stackshy/cloudemu/v2"
@@ -95,6 +98,24 @@ func TestSDKArtifactRegistryRepoIAM(t *testing.T) {
 
 	if len(perms.Permissions) != 1 || perms.Permissions[0] != "artifactregistry.repositories.get" {
 		t.Fatalf("TestIamPermissions returned %+v", perms.Permissions)
+	}
+
+	// Every set mints a new etag, even with the same number of bindings, and
+	// the etag it replaced is then stale (409 ABORTED).
+	req := &ar.SetIamPolicyRequest{Policy: &ar.Policy{Etag: got.Etag, Bindings: []*ar.Binding{{
+		Role: "roles/artifactregistry.reader", Members: []string{"user:c@d.com"},
+	}}}}
+
+	next, err := svc.Projects.Locations.Repositories.SetIamPolicy(name, req).Context(ctx).Do()
+	if err != nil || next.Etag == got.Etag {
+		t.Fatalf("SetIamPolicy with etag = %+v, %v; want a new etag", next, err)
+	}
+
+	_, err = svc.Projects.Locations.Repositories.SetIamPolicy(name, req).Context(ctx).Do()
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) || gerr.Code != http.StatusConflict {
+		t.Fatalf("stale etag: want 409, got %v", err)
 	}
 }
 

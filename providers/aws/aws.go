@@ -393,6 +393,22 @@ func newProviderMocks(o *config.Options, g *GlobalServices) *Provider {
 	}
 }
 
+// wireBedrockAgentRuntime links Bedrock Agents to the services they use: the
+// control plane's ingestion jobs read S3; the runtime reads agents, aliases,
+// knowledge bases and flows from the control plane, answers with the Bedrock
+// model runtime, applies Bedrock guardrails, runs Lambda-backed action groups,
+// reads S3 external sources and publishes AWS/Bedrock/Agents metrics.
+func wireBedrockAgentRuntime(p *Provider) {
+	p.BedrockAgent.SetObjectStore(p.S3)
+	p.BedrockAgent.SetRoleAuthorizer(p.IAM)
+	p.BedrockAgentRuntime.SetControlPlane(p.BedrockAgent)
+	p.BedrockAgentRuntime.SetModels(p.Bedrock)
+	p.BedrockAgentRuntime.SetGuardrails(p.Bedrock)
+	p.BedrockAgentRuntime.SetLambda(p.Lambda)
+	p.BedrockAgentRuntime.SetMonitoring(p.CloudWatch)
+	p.BedrockAgentRuntime.SetObjectStore(p.S3)
+}
+
 // newProvider builds a provider, using the supplied shared global services when
 // non-nil (multi-region) or a fresh bundle when nil (standalone). The global
 // struct fields are assigned BEFORE the cross-service Set* wiring runs, so every
@@ -417,13 +433,20 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	p.CloudWatchLogs.SetMonitoring(p.CloudWatch)
 	p.SNS.SetMonitoring(p.CloudWatch)
 	p.ECR.SetMonitoring(p.CloudWatch)
+	p.ECS.SetMonitoring(p.CloudWatch)
 	p.EventBridge.SetMonitoring(p.CloudWatch)
 	p.RDS.SetMonitoring(p.CloudWatch)
 	p.Kinesis.SetMonitoring(p.CloudWatch)
 	p.SFN.SetMonitoring(p.CloudWatch)
+	p.AppRunner.SetMonitoring(p.CloudWatch)
+	p.AppRunner.SetLogSink(p.CloudWatchLogs)
+	p.AppRunner.SetNetworkResolver(p.VPC)
+	p.Kendra.SetMonitoring(p.CloudWatch)
 	p.APIGateway.SetMonitoring(p.CloudWatch)
+	p.APIGateway.SetLogSink(p.CloudWatchLogs)
 	p.Athena.SetMonitoring(p.CloudWatch)
 	p.Athena.SetCatalog(p.Glue)
+	wireBedrockAgentRuntime(p)
 	p.RDS.SetSubnetResolver(p.VPC)
 	p.ElastiCache.SetSubnetResolver(p.VPC)
 	p.EC2.SetSubnetResolver(p.VPC)
@@ -431,6 +454,8 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	// TerminateInstances releases it. That's why a running instance's interface
 	// blocks DeleteSubnet / DeleteSecurityGroup the way real EC2 does.
 	p.EC2.SetNetworking(p.VPC)
+	// VPC Lattice refuses a service-network VPC association for a VPC that does not exist.
+	p.VPCLattice.SetNetworking(p.VPC)
 	// A load balancer's VpcId is derived from its subnets, matching ELBv2.
 	p.ELB.SetSubnetResolver(p.VPC)
 	// EFS mount targets derive their VpcId and AZ from the subnet, so all mount
@@ -563,6 +588,7 @@ func wireLifecycleEvents(p *Provider) {
 	p.SSM.SetEventPublisher(p.EventBridge)
 	p.Glue.SetEventPublisher(p.EventBridge)
 	p.CloudWatch.SetEventPublisher(p.EventBridge)
+	p.SageMaker.SetEventPublisher(p.EventBridge)
 }
 
 // awsDrivers assembles the resource-discovery driver set from the provider's
@@ -602,7 +628,7 @@ func awsDrivers(p *Provider) *resourcediscovery.Drivers {
 // background ticker calls each one on its interval. New time-driven services
 // register here.
 func (p *Provider) Tickables() []config.Tickable {
-	return []config.Tickable{p.CloudWatch, p.SSM}
+	return []config.Tickable{p.CloudWatch, p.SSM, p.CloudFormation}
 }
 
 // Close tears down any real engines wired into the provider via

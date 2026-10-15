@@ -4,6 +4,7 @@ import (
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"strconv"
 	"strings"
@@ -19,15 +20,16 @@ const (
 	maxPasswordLen       = 256
 )
 
-// Stored hashes look like "pbkdf2-sha256$<iterations>$<hex key>". The prefix
-// tells them apart from hashes written before it existed (older snapshots),
-// which are a bare hex SHA-256 of salt+password, so a sign-in flow can verify
-// both. The iteration count is modest because this is an emulator holding test
-// credentials, and it keeps tests fast.
+// Stored hashes look like "pbkdf2-sha256$<iterations>$<hex key>". The count is
+// stored with each hash, so changing pbkdf2Iterations keeps old hashes valid.
 const (
-	pbkdf2Prefix     = "pbkdf2-sha256$"
+	pbkdf2Prefix = "pbkdf2-sha256$"
+	// pbkdf2Iterations is deliberately low for an emulator: fast tests, no real secrets.
 	pbkdf2Iterations = 10000
 	pbkdf2KeyLen     = 32
+	// maxPBKDF2Iterations caps the iteration count a stored hash may claim, so
+	// a corrupt snapshot cannot make one sign-in burn CPU.
+	maxPBKDF2Iterations = 1_000_000
 )
 
 // policySymbols is the set of special characters Cognito counts toward the
@@ -109,4 +111,25 @@ func pbkdf2Hash(salt, pw string, iter int) string {
 	}
 
 	return pbkdf2Prefix + strconv.Itoa(iter) + "$" + hex.EncodeToString(key)
+}
+
+// verifyPassword reports whether pw matches a stored salt and PBKDF2 hash. A
+// hash in any other format never matches.
+func verifyPassword(salt, stored, pw string) bool {
+	rest, ok := strings.CutPrefix(stored, pbkdf2Prefix)
+	if !ok {
+		return false
+	}
+
+	iterText, _, ok := strings.Cut(rest, "$")
+	if !ok {
+		return false
+	}
+
+	iter, err := strconv.Atoi(iterText)
+	if err != nil || iter <= 0 || iter > maxPBKDF2Iterations {
+		return false
+	}
+
+	return subtle.ConstantTimeCompare([]byte(pbkdf2Hash(salt, pw, iter)), []byte(stored)) == 1
 }

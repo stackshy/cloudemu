@@ -91,13 +91,14 @@ func New(opts *config.Options) *Mock {
 }
 
 // CreateVPC creates a new VPC network.
-func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCInfo, error) {
+func (m *Mock) CreateVPC(ctx context.Context, cfg driver.VPCConfig) (*driver.VPCInfo, error) {
 	if cfg.CIDRBlock == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "CIDR block is required")
 	}
 
-	id := idgen.GCPID(m.opts.ProjectID, "networks", idgen.GenerateID("vpc-"))
-	tags := copyTags(cfg.Tags)
+	project := m.project(ctx)
+	id := idgen.GCPID(project, "networks", idgen.GenerateID("vpc-"))
+	tags := stampProject(cfg.Tags, project)
 
 	v := &vpcData{
 		ID:        id,
@@ -160,12 +161,12 @@ func (m *Mock) networkDependency(id string) (string, bool) {
 }
 
 // DescribeVPCs returns VPCs matching the given IDs, or all VPCs if ids is empty.
-func (m *Mock) DescribeVPCs(_ context.Context, ids []string) ([]driver.VPCInfo, error) {
-	return describeResources(m.vpcs, ids, toVPCInfo), nil
+func (m *Mock) DescribeVPCs(ctx context.Context, ids []string) ([]driver.VPCInfo, error) {
+	return describeScoped(ctx, m, m.vpcs, ids, func(v *vpcData) map[string]string { return v.Tags }, toVPCInfo), nil
 }
 
 // CreateSubnet creates a new subnetwork.
-func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver.SubnetInfo, error) {
+func (m *Mock) CreateSubnet(ctx context.Context, cfg driver.SubnetConfig) (*driver.SubnetInfo, error) {
 	if cfg.VPCID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "VPC ID is required")
 	}
@@ -178,8 +179,9 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 		return nil, cerrors.Newf(cerrors.NotFound, "VPC %q not found", cfg.VPCID)
 	}
 
-	id := idgen.GCPID(m.opts.ProjectID, "subnetworks", idgen.GenerateID("subnet-"))
-	tags := copyTags(cfg.Tags)
+	project := m.project(ctx)
+	id := idgen.GCPID(project, "subnetworks", idgen.GenerateID("subnet-"))
+	tags := stampProject(cfg.Tags, project)
 
 	s := &subnetData{
 		ID:               id,
@@ -213,8 +215,8 @@ func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
 }
 
 // DescribeSubnets returns subnets matching the given IDs, or all subnets if ids is empty.
-func (m *Mock) DescribeSubnets(_ context.Context, ids []string) ([]driver.SubnetInfo, error) {
-	return describeResources(m.subnets, ids, toSubnetInfo), nil
+func (m *Mock) DescribeSubnets(ctx context.Context, ids []string) ([]driver.SubnetInfo, error) {
+	return describeScoped(ctx, m, m.subnets, ids, func(s *subnetData) map[string]string { return s.Tags }, toSubnetInfo), nil
 }
 
 // ExpandSubnetCIDR widens a subnetwork's primary IP range, backing GCP's
@@ -233,7 +235,7 @@ func (m *Mock) ExpandSubnetCIDR(_ context.Context, id, cidr string) error {
 }
 
 // CreateSecurityGroup creates a new firewall rule group.
-func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupConfig) (*driver.SecurityGroupInfo, error) {
+func (m *Mock) CreateSecurityGroup(ctx context.Context, cfg driver.SecurityGroupConfig) (*driver.SecurityGroupInfo, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "firewall rule name is required")
 	}
@@ -246,8 +248,9 @@ func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupCo
 		return nil, cerrors.Newf(cerrors.NotFound, "VPC %q not found", cfg.VPCID)
 	}
 
-	id := idgen.GCPID(m.opts.ProjectID, "firewalls", idgen.GenerateID("fw-"))
-	tags := copyTags(cfg.Tags)
+	project := m.project(ctx)
+	id := idgen.GCPID(project, "firewalls", idgen.GenerateID("fw-"))
+	tags := stampProject(cfg.Tags, project)
 
 	sg := &sgData{
 		ID:           id,
@@ -275,8 +278,8 @@ func (m *Mock) DeleteSecurityGroup(_ context.Context, id string) error {
 }
 
 // DescribeSecurityGroups returns firewall rule groups matching the given IDs, or all if ids is empty.
-func (m *Mock) DescribeSecurityGroups(_ context.Context, ids []string) ([]driver.SecurityGroupInfo, error) {
-	return describeResources(m.securityGroups, ids, toSGInfo), nil
+func (m *Mock) DescribeSecurityGroups(ctx context.Context, ids []string) ([]driver.SecurityGroupInfo, error) {
+	return describeScoped(ctx, m, m.securityGroups, ids, func(s *sgData) map[string]string { return s.Tags }, toSGInfo), nil
 }
 
 // describeResources is a generic helper for Describe* methods that list or filter by IDs.

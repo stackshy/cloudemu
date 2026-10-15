@@ -29,16 +29,28 @@
 // ENCRYPT_DECRYPT keys), matching real Cloud KMS. Version destruction is a
 // state transition to DESTROY_SCHEDULED. The version, key and ring persist.
 //
-// The data plane (Encrypt/Decrypt/Sign/Verify/MAC/GenerateRandomBytes), import
-// jobs, EKM/external keys and Autokey are out of scope for this control-plane
-// build; new versions go straight to ENABLED (no async PENDING_GENERATION).
+// Data plane:
+//
+//	POST   .../cryptoKeys/{k}:encrypt and .../cryptoKeyVersions/{v}:encrypt             : AES-GCM encrypt
+//	POST   .../cryptoKeys/{k}:decrypt                                                   : AES-GCM decrypt
+//	POST   .../cryptoKeyVersions/{v}:asymmetricSign and :asymmetricDecrypt              : RSA, ECDSA, Ed25519
+//	GET    .../cryptoKeyVersions/{v}/publicKey                                          : PKIX PEM public key
+//	POST   .../cryptoKeyVersions/{v}:macSign and :macVerify                             : HMAC
+//	POST   /v1/projects/{p}/locations/{l}:generateRandomBytes                           : Random bytes
+//
+// Each version gets real key material from the Go stdlib on first data-plane
+// use and keeps it, so ciphertexts and signatures stay valid after rotation.
+// The symmetric ciphertext carries its version id, so decrypt always picks the
+// version that sealed it. Import jobs, EKM/external keys and Autokey are out of
+// scope; new versions go straight to ENABLED (no async PENDING_GENERATION).
 package kms
 
 import (
 	"net/http"
 	"strings"
 
-	"github.com/stackshy/cloudemu/v2/config"
+	kmsprov "github.com/stackshy/cloudemu/v2/providers/gcp/kms"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -70,6 +82,7 @@ const (
 	kindCryptoKey
 	kindVersionColl
 	kindVersion
+	kindLocation // locations/{l}:generateRandomBytes
 )
 
 type route struct {
@@ -79,15 +92,25 @@ type route struct {
 	kind                        routeKind
 }
 
-// Handler serves cloudkms.googleapis.com v1 control-plane requests.
+// Handler serves cloudkms.googleapis.com v1 requests against the persisted
+// Cloud KMS provider mock. Key ring and crypto key IAM policies live in the
+// shared GCP resource-policy store.
 type Handler struct {
-	store *store
+	kms *kmsprov.Mock
+	iam gcpiam.Store
 }
 
-// New returns a Cloud KMS handler. clock stamps createTime/destroyTime; pass a
-// config.FakeClock for deterministic tests, or nil for the real clock.
-func New(clock config.Clock) *Handler {
-	return &Handler{store: newStore(clock)}
+// New returns a Cloud KMS handler over m, keeping IAM policies in iam.
+func New(m *kmsprov.Mock, iam gcpiam.Store) *Handler {
+	return &Handler{kms: m, iam: iam}
+}
+
+// ref converts the parsed path to the provider's resource reference.
+func (rt *route) ref() *kmsprov.Ref {
+	return &kmsprov.Ref{
+		Project: rt.project, Location: rt.location,
+		KeyRing: rt.keyRing, CryptoKey: rt.cryptoKey, Version: rt.version,
+	}
 }
 
 // Path-tail depths after the [projects, {p}, locations, {l}, keyRings] head:
@@ -98,6 +121,7 @@ const (
 	depthCryptoKey     = 3 // keyRings/{r}/cryptoKeys/{k}
 	depthVersionColl   = 4 // .../cryptoKeys/{k}/cryptoKeyVersions
 	depthVersion       = 5 // .../cryptoKeyVersions/{v}
+	depthPublicKey     = 6 // .../cryptoKeyVersions/{v}/publicKey
 )
 
 // parseRoute decomposes a Cloud KMS v1 path. The trailing segment may carry a
@@ -114,6 +138,15 @@ func parseRoute(urlPath string) (*route, bool) {
 	}
 
 	parts := strings.Split(strings.TrimPrefix(urlPath, "/v1/"), "/")
+	if len(parts) == minHeadParts-1 && parts[0] == projectsSeg && parts[2] == locationsSeg {
+		loc, verb, _ := strings.Cut(parts[3], ":")
+		if verb != verbGenerateRandomBytes {
+			return nil, false
+		}
+
+		return &route{project: parts[1], location: loc, verb: verb, kind: kindLocation}, true
+	}
+
 	if len(parts) < minHeadParts || parts[0] != projectsSeg ||
 		parts[2] != locationsSeg || parts[keyRingsHeadIndex] != keyRingsSeg {
 		return nil, false
@@ -166,6 +199,13 @@ func fillRoute(rt *route, rest []string) bool {
 		rt.keyRing, rt.cryptoKey = rest[0], rest[2]
 		rt.version, rt.verb, _ = strings.Cut(rest[4], ":")
 		rt.kind = kindVersion
+	case depthPublicKey:
+		if rest[1] != cryptoKeysSeg || rest[3] != versionsSeg || rest[5] != verbPublicKey {
+			return false
+		}
+
+		rt.keyRing, rt.cryptoKey, rt.version = rest[0], rest[2], rest[4]
+		rt.verb, rt.kind = verbPublicKey, kindVersion
 	default:
 		return false
 	}
@@ -205,6 +245,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveVersionCollection(w, r, rt)
 	case kindVersion:
 		h.serveVersion(w, r, rt)
+	case kindLocation:
+		postOnly(w, r, func() { h.generateRandomBytes(w, r) })
 	}
 }
 
@@ -250,6 +292,10 @@ func (h *Handler) serveCryptoKey(w http.ResponseWriter, r *http.Request, rt *rou
 		h.serveCryptoKeyNoVerb(w, r, rt)
 	case verbUpdatePrimary:
 		postOnly(w, r, func() { h.updatePrimaryVersion(w, r, rt) })
+	case verbEncrypt:
+		postOnly(w, r, func() { h.encrypt(w, r, rt) })
+	case verbDecrypt:
+		postOnly(w, r, func() { h.decrypt(w, r, rt) })
 	default:
 		h.serveIamVerb(w, r, rt)
 	}
@@ -286,6 +332,25 @@ func (h *Handler) serveVersion(w http.ResponseWriter, r *http.Request, rt *route
 	case verbRestore:
 		postOnly(w, r, func() { h.restoreVersion(w, rt) })
 	default:
+		h.serveVersionDataPlane(w, r, rt)
+	}
+}
+
+// serveVersionDataPlane dispatches the cryptographic custom methods that
+// address a specific CryptoKeyVersion.
+func (h *Handler) serveVersionDataPlane(w http.ResponseWriter, r *http.Request, rt *route) {
+	switch rt.verb {
+	case verbEncrypt:
+		postOnly(w, r, func() { h.encrypt(w, r, rt) })
+	case verbAsymmetricSign:
+		postOnly(w, r, func() { h.asymmetricSign(w, r, rt) })
+	case verbAsymmetricDecrypt:
+		postOnly(w, r, func() { h.asymmetricDecrypt(w, r, rt) })
+	case verbMacSign, verbMacVerify:
+		postOnly(w, r, func() { h.macOp(w, r, rt) })
+	case verbPublicKey:
+		getOnly(w, r, func() { h.getPublicKey(w, rt) })
+	default:
 		writeUnsupported(w)
 	}
 }
@@ -301,19 +366,29 @@ func (h *Handler) serveVersionNoVerb(w http.ResponseWriter, r *http.Request, rt 
 	}
 }
 
-// serveIamVerb dispatches the IAM policy custom methods shared by keyRings and
-// cryptoKeys.
+// serveIamVerb serves the IAM policy custom methods shared by keyRings and
+// cryptoKeys once the addressed resource is known to exist.
 func (h *Handler) serveIamVerb(w http.ResponseWriter, r *http.Request, rt *route) {
-	switch rt.verb {
-	case verbGetIam:
-		getOnly(w, r, func() { h.getIamPolicy(w, rt) })
-	case verbSetIam:
-		postOnly(w, r, func() { h.setIamPolicy(w, r, rt) })
-	case verbTestIam:
-		postOnly(w, r, func() { h.testIamPermissions(w, r) })
-	default:
+	if rt.verb != verbGetIam && rt.verb != verbSetIam && rt.verb != verbTestIam {
 		writeUnsupported(w)
+		return
 	}
+
+	ref := rt.ref()
+	name := kmsprov.RingName(ref)
+	_, err := h.kms.GetKeyRing(ref)
+
+	if rt.kind == kindCryptoKey {
+		name = kmsprov.KeyName(ref)
+		_, err = h.kms.GetCryptoKey(ref)
+	}
+
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	gcpiam.Serve(w, r, rt.verb, name, h.iam)
 }
 
 func writeUnsupported(w http.ResponseWriter) {

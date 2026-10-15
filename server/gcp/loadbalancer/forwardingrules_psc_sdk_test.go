@@ -13,11 +13,13 @@ import (
 )
 
 const (
-	pscNetwork    = "projects/" + testProject + "/global/networks/consumer-vpc"
-	pscSubnetwork = "projects/" + testProject + "/regions/" + testRegion + "/subnetworks/consumer-subnet"
-	pscAttachment = "projects/producer-proj/regions/" + testRegion + "/serviceAttachments/producer-sa"
-	pscAddress    = "projects/" + testProject + "/regions/" + testRegion + "/addresses/psc-endpoint-ip"
-	pscAccepted   = "ACCEPTED"
+	// pscProducerProject owns the attachment; the consumer rule lives in testProject.
+	pscProducerProject = "producer-proj"
+	pscNetwork         = "projects/" + testProject + "/global/networks/consumer-vpc"
+	pscSubnetwork      = "projects/" + testProject + "/regions/" + testRegion + "/subnetworks/consumer-subnet"
+	pscAttachment      = "projects/" + pscProducerProject + "/regions/" + testRegion + "/serviceAttachments/producer-sa"
+	pscAddress         = "projects/" + testProject + "/regions/" + testRegion + "/addresses/psc-endpoint-ip"
+	pscAccepted        = "ACCEPTED"
 )
 
 func newRegionalForwardingRulesClient(t *testing.T, url string, httpc option.ClientOption) *gcpcompute.ForwardingRulesClient {
@@ -73,7 +75,7 @@ func TestSDKGCPForwardingRulePSCServiceAttachment(t *testing.T) {
 	ctx := context.Background()
 	client := newRegionalForwardingRulesClient(t, ts.URL, option.WithHTTPClient(ts.Client()))
 
-	insertAttachment(ctx, t, ts, attachment("producer-sa", "ACCEPT_AUTOMATIC"))
+	insertAttachmentIn(ctx, t, ts, pscProducerProject, attachment("producer-sa", "ACCEPT_AUTOMATIC"))
 
 	op, err := client.Insert(ctx, &computepb.InsertForwardingRuleRequest{
 		Project: testProject,

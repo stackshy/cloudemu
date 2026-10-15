@@ -91,6 +91,11 @@ type layerVersionPolicySnapshot struct {
 // retain only their code identity (CodeSHA256) and config, not raw deployment-package bytes, so
 // there are no bulk object bodies to gate.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
+	// Held through the final Marshal: the snapshot shares funcData's policy and
+	// config maps, which writers edit under mu.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	snap := lambdaSnapshot{}
 
 	if m.funcs.Len() > 0 {
@@ -186,9 +191,15 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		return fmt.Errorf("lambda: parse snapshot: %w", err)
 	}
 
+	m.mu.Lock()
+	// In-flight engine calls belong to the replaced state: their finalize sees
+	// its reservation gone and does not write over a restored entry.
+	clear(m.engineOps)
+
 	for name, fs := range snap.Funcs {
 		m.funcs.Set(name, m.restoreFunc(name, fs))
 	}
+	m.mu.Unlock()
 
 	for name, ls := range snap.Layers {
 		ld, err := restoreLayerData(ls)

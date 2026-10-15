@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 )
 
@@ -63,5 +64,43 @@ func TestSDKCreateBucketValidName(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("CreateBucket(%q) failed: %v", name, err)
 		}
+	}
+}
+
+// TestSDKCreateBucketWithTags verifies the CreateBucketConfiguration tag set is
+// stored on the new bucket, and an invalid tag set rejects the create.
+func TestSDKCreateBucketWithTags(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateBucket(ctx, &awss3.CreateBucketInput{
+		Bucket: aws.String("tagged-bucket"),
+		CreateBucketConfiguration: &types.CreateBucketConfiguration{
+			Tags: []types.Tag{{Key: aws.String("env"), Value: aws.String("dev")}},
+		},
+	}); err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+
+	out, err := client.GetBucketTagging(ctx, &awss3.GetBucketTaggingInput{Bucket: aws.String("tagged-bucket")})
+	if err != nil {
+		t.Fatalf("GetBucketTagging: %v", err)
+	}
+
+	if got := tagMap(out.TagSet); len(got) != 1 || got["env"] != "dev" {
+		t.Fatalf("bucket tags = %v, want env=dev", got)
+	}
+
+	_, err = client.CreateBucket(ctx, &awss3.CreateBucketInput{
+		Bucket: aws.String("bad-tagged-bucket"),
+		CreateBucketConfiguration: &types.CreateBucketConfiguration{
+			Tags: []types.Tag{{Key: aws.String("aws:reserved"), Value: aws.String("x")}},
+		},
+	})
+	requireAPIError(t, err, 400, "InvalidTag")
+
+	_, err = client.HeadBucket(ctx, &awss3.HeadBucketInput{Bucket: aws.String("bad-tagged-bucket")})
+	if err == nil {
+		t.Fatal("bucket created despite an invalid tag set")
 	}
 }

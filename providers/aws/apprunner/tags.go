@@ -59,11 +59,20 @@ func (m *Mock) ListTagsForResource(_ context.Context, resourceArn string) ([]dri
 		return copyTags(c.Tags), nil
 	}
 
+	if c, ok := m.ingress.Get(resourceArn); ok {
+		return copyTags(c.Tags), nil
+	}
+
 	return nil, notFound("resource %q does not exist", resourceArn)
 }
 
 // mutateTags applies mutate to the tags of whichever store holds resourceArn.
 func (m *Mock) mutateTags(resourceArn string, mutate func([]driver.Tag) []driver.Tag) error {
+	// refMu is the service write lock: the service mutators read-modify-write the
+	// whole record under it, so a tag change must not interleave with them.
+	m.refMu.Lock()
+	defer m.refMu.Unlock()
+
 	if m.services.Update(resourceArn, func(s driver.Service) driver.Service {
 		s.Tags = mutate(copyTags(s.Tags))
 
@@ -103,6 +112,14 @@ func (m *Mock) mutateTagsRest(resourceArn string, mutate func([]driver.Tag) []dr
 	}
 
 	if m.observability.Update(resourceArn, func(c driver.ObservabilityConfiguration) driver.ObservabilityConfiguration {
+		c.Tags = mutate(copyTags(c.Tags))
+
+		return c
+	}) {
+		return nil
+	}
+
+	if m.ingress.Update(resourceArn, func(c driver.VpcIngressConnection) driver.VpcIngressConnection {
 		c.Tags = mutate(copyTags(c.Tags))
 
 		return c

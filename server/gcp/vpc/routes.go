@@ -3,10 +3,9 @@ package vpc
 import (
 	"encoding/json"
 	"net/http"
-	"sort"
 	"sync"
 
-	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -141,37 +140,18 @@ func (h *Handler) getRoute(w http.ResponseWriter, _ *http.Request, rp gcprest.Re
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) listRoutes(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	all := h.routes.list(rp.Project)
-	filter := r.URL.Query().Get("filter")
-
-	items := make([]json.RawMessage, 0, len(all))
-
-	for _, body := range all {
-		if nameMatches(filter, rawName(body)) {
-			items = append(items, body)
-		}
-	}
-
-	sort.SliceStable(items, func(i, j int) bool { return rawName(items[i]) < rawName(items[j]) })
-
-	page, err := pagination.Paginate(items, r.URL.Query().Get("pageToken"),
-		maxResultsOf(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	page, next, ok := gcplist.FilterPage(w, r, h.routes.list(rp.Project), rawName)
+	if !ok {
 		return
 	}
 
-	out := map[string]any{
-		"kind":     "compute#routeList",
-		"id":       "projects/" + rp.Project + "/global/routes",
-		"items":    page.Items,
-		"selfLink": gcprest.SelfLink(hostOf(r), rp.Project, gcprest.ScopeGlobal, "", resourceRoutes, ""),
-	}
-	if page.NextPageToken != "" {
-		out["nextPageToken"] = page.NextPageToken
-	}
-
-	gcprest.WriteJSON(w, http.StatusOK, out)
+	gcprest.WriteJSON(w, http.StatusOK, rawListResponse{
+		Kind:          "compute#routeList",
+		ID:            "projects/" + rp.Project + "/global/routes",
+		Items:         page,
+		NextPageToken: next,
+		SelfLink:      gcprest.SelfLink(hostOf(r), rp.Project, gcprest.ScopeGlobal, "", resourceRoutes, ""),
+	})
 }
 
 //nolint:gocritic // rp is a request-scoped value

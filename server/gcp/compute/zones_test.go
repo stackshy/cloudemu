@@ -130,11 +130,10 @@ func TestDiskInsertUnquotedSizeGb(t *testing.T) {
 	}
 }
 
-// TestDefaultServiceAccountRealistic verifies that an instance created without a
-// serviceAccounts block reads back the default compute SA with a realistic
-// project-scoped email (never the literal "default") and the default-access
-// scope set, matching real GCP.
-func TestDefaultServiceAccountRealistic(t *testing.T) {
+// TestNoDefaultServiceAccount verifies that an instance created without a
+// serviceAccounts block reads back none, as the compute API does. A synthesized
+// default account makes Terraform plan a perpetual diff on service_account.
+func TestNoDefaultServiceAccount(t *testing.T) {
 	ts := newGCPTestServer(t)
 	_ = insertInstance(t, ts, "vm-defsa")
 
@@ -155,16 +154,7 @@ func TestDefaultServiceAccountRealistic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(got.ServiceAccounts) != 1 {
-		t.Fatalf("serviceAccounts=%+v want 1", got.ServiceAccounts)
-	}
-
-	wantEmail := testProject + "-compute@developer.gserviceaccount.com"
-	if got.ServiceAccounts[0].Email != wantEmail {
-		t.Errorf("default SA email=%q want %q", got.ServiceAccounts[0].Email, wantEmail)
-	}
-
-	if len(got.ServiceAccounts[0].Scopes) != 6 {
-		t.Errorf("default SA scopes=%v want the 6 default-access scopes", got.ServiceAccounts[0].Scopes)
+	if len(got.ServiceAccounts) != 0 {
+		t.Fatalf("serviceAccounts=%+v want none", got.ServiceAccounts)
 	}
 }

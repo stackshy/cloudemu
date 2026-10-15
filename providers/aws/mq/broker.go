@@ -3,6 +3,7 @@ package mq
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -33,8 +34,8 @@ func (m *Mock) CreateBroker(_ context.Context, in *driver.CreateBrokerInput) (*d
 	}
 
 	engine := strings.ToUpper(in.EngineType)
-	if engine == "" {
-		return nil, badRequest("engineType is required")
+	if err := validateBrokerInput(engine, in); err != nil {
+		return nil, err
 	}
 
 	if m.brokerNameExists(in.BrokerName) {
@@ -184,4 +185,131 @@ func rawString(raw map[string]json.RawMessage, key string) string {
 	}
 
 	return s
+}
+
+// deploymentModes are the deployment modes each Amazon MQ engine accepts.
+//
+//nolint:gochecknoglobals // enum
+var deploymentModes = map[string][]string{
+	driver.EngineActiveMQ: {"SINGLE_INSTANCE", "ACTIVE_STANDBY_MULTI_AZ"},
+	driver.EngineRabbitMQ: {"SINGLE_INSTANCE", "CLUSTER_MULTI_AZ"},
+}
+
+// fieldAuthenticationStrategy is the request field naming how users sign in.
+// SIMPLE, the default, is the only strategy that needs broker users.
+const (
+	fieldAuthenticationStrategy = "authenticationStrategy"
+	authSimple                  = "SIMPLE"
+)
+
+// validateBrokerInput applies CreateBroker's request rules: a known engine and
+// a deployment mode that engine runs, users for SIMPLE authentication (one and
+// only one on RabbitMQ), and valid usernames and passwords.
+func validateBrokerInput(engine string, in *driver.CreateBrokerInput) error {
+	if engine == "" {
+		return badRequest("engineType is required")
+	}
+
+	modes, ok := deploymentModes[engine]
+	if !ok {
+		return badRequest("engineType %s is not one of %s, %s", in.EngineType, driver.EngineActiveMQ, driver.EngineRabbitMQ)
+	}
+
+	if mode := rawString(in.Config, fieldDeploymentMode); mode != "" && !slices.Contains(modes, mode) {
+		return badRequest("deploymentMode %s is not available for %s; want one of %s",
+			mode, engine, strings.Join(modes, ", "))
+	}
+
+	if err := validateBrokerUsers(engine, rawString(in.Config, fieldAuthenticationStrategy), in.Users); err != nil {
+		return err
+	}
+
+	for i := range in.Users {
+		if err := validateUser(engine, &in.Users[i]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateBrokerUsers checks the user count: SIMPLE authentication needs at
+// least one user, and RabbitMQ accepts one and only one. Other strategies,
+// such as OAuth 2.0 through CONFIG_MANAGED, may create a broker with none.
+func validateBrokerUsers(engine, strategy string, users []driver.User) error {
+	simple := strategy == "" || strings.EqualFold(strategy, authSimple)
+
+	switch {
+	case simple && len(users) == 0:
+		return badRequest("users is required: a broker with SIMPLE authentication needs at least one user")
+	case engine == driver.EngineRabbitMQ && len(users) > 1:
+		return badRequest("a RabbitMQ broker accepts one and only one administrative user, got %d", len(users))
+	}
+
+	return nil
+}
+
+// Username length bounds Amazon MQ enforces.
+const (
+	minUsernameLen = 2
+	maxUsernameLen = 100
+)
+
+// validateUser applies Amazon MQ's user rules: a username of 2 to 100
+// characters from letters, digits and - . _ ~ (no ~ and not "guest" on
+// RabbitMQ), and a valid password.
+func validateUser(engine string, user *driver.User) error {
+	name := user.Username
+	if n := len(name); n < minUsernameLen || n > maxUsernameLen {
+		return badRequest("username must be %d to %d characters long", minUsernameLen, maxUsernameLen)
+	}
+
+	allowed := "-._~"
+	if engine == driver.EngineRabbitMQ {
+		allowed = "-._"
+
+		if name == "guest" {
+			return badRequest("username guest is reserved on RabbitMQ")
+		}
+	}
+
+	if strings.IndexFunc(name, func(r rune) bool { return !usernameRune(r, allowed) }) >= 0 {
+		return badRequest("username %s may only contain letters, digits and %s", name, allowed)
+	}
+
+	return validatePassword(user.Password)
+}
+
+// usernameRune reports whether r is an ASCII letter or digit, or one of extra.
+func usernameRune(r rune, extra string) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune(extra, r)
+}
+
+// Password rules Amazon MQ applies to broker users.
+const (
+	minPasswordLen    = 12
+	minPasswordUnique = 4
+)
+
+// validatePassword applies Amazon MQ's broker user password rules: at least 12
+// characters, at least 4 of them unique, and none of ',' ':' '='.
+func validatePassword(password string) error {
+	if len([]rune(password)) < minPasswordLen {
+		return badRequest("password must be at least %d characters long", minPasswordLen)
+	}
+
+	if strings.ContainsAny(password, ",:=") {
+		return badRequest("password must not contain commas, colons, or equal signs")
+	}
+
+	unique := map[rune]bool{}
+	for _, r := range password {
+		unique[r] = true
+	}
+
+	if len(unique) < minPasswordUnique {
+		return badRequest("password must contain at least %d unique characters", minPasswordUnique)
+	}
+
+	return nil
 }

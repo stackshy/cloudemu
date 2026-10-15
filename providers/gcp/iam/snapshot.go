@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 )
 
@@ -130,7 +132,44 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		m.groupUsers = snap.GroupUsers
 	}
 
+	projectctx.WarnAdopted("iam", m.adoptLegacyRoles(), m.opts.ProjectID)
+
 	return nil
+}
+
+// adoptLegacyRoles rekeys custom roles restored from a snapshot taken before
+// project scoping. A role created over the wire kept its project in Path, so it
+// lands back in that project; any other legacy role belongs to the default
+// project. It returns how many roles were adopted into the default project.
+// Caller holds m.mu.
+func (m *Mock) adoptLegacyRoles() int {
+	n := 0
+
+	for name, r := range m.roles.All() {
+		if _, _, ok := projectctx.Split(name); ok {
+			continue
+		}
+
+		project := m.opts.ProjectID
+		if r.Path != "" && !strings.Contains(r.Path, "/") {
+			project = r.Path
+		}
+
+		key := projectctx.Key(project, name)
+		m.roles.Delete(name)
+		m.roles.Set(key, r)
+
+		if pol, ok := m.rolePolicies[name]; ok {
+			delete(m.rolePolicies, name)
+			m.rolePolicies[key] = pol
+		}
+
+		if project == m.opts.ProjectID {
+			n++
+		}
+	}
+
+	return n
 }
 
 func (m *Mock) restorePolicies(policies map[string]*policySnapshot) {

@@ -677,7 +677,7 @@ func TestUpdateMethodAndIntegrationPatches(t *testing.T) {
 	}
 
 	ig, err := m.UpdateIntegration(ctx(), apiID, resID, "GET", []driver.PatchOperation{
-		{Op: "replace", Path: "/uri", Value: "newuri"},
+		{Op: "replace", Path: "/uri", Value: lambdaURI + "?v=2"},
 		{Op: "replace", Path: "/timeoutInMillis", Value: "5000"},
 		{Op: "replace", Path: "/passthroughBehavior", Value: "NEVER"},
 	})
@@ -685,7 +685,7 @@ func TestUpdateMethodAndIntegrationPatches(t *testing.T) {
 		t.Fatalf("UpdateIntegration: %v", err)
 	}
 
-	if ig.URI != "newuri" || ig.TimeoutInMillis != 5000 || ig.PassthroughBehavior != "NEVER" {
+	if ig.URI != lambdaURI+"?v=2" || ig.TimeoutInMillis != 5000 || ig.PassthroughBehavior != "NEVER" {
 		t.Fatalf("UpdateIntegration not applied: %+v", ig)
 	}
 }

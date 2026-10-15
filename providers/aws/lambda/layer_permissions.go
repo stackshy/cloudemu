@@ -192,7 +192,7 @@ func layerStatementJSON(s driver.LayerPermissionStatement, resource string) map[
 
 	if s.OrganizationID != "" {
 		stmt["Condition"] = map[string]any{
-			"StringEquals": map[string]string{"aws:PrincipalOrgID": s.OrganizationID},
+			"StringEquals": map[string]string{condPrincipalOrgID: s.OrganizationID},
 		}
 	}
 

@@ -116,7 +116,7 @@ type childListResult struct {
 // serveChild routes CRUD for a workspace child collection (savedSearches /
 // tables / dataExports). A missing workspace name segment lists the collection.
 func (h *Handler) serveChild(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if _, err := h.logs.GetLogGroup(r.Context(), rp.ResourceName); err != nil {
+	if _, err := h.workspace(r.Context(), rp); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -155,12 +155,12 @@ func (h *Handler) putChild(w http.ResponseWriter, r *http.Request, rp *azurearm.
 		res.Properties = withProvisioningState(res.Properties)
 	}
 
-	h.children.set(rp.ResourceName, rp.SubResource, res)
+	h.children.set(workspaceKey(rp), rp.SubResource, res)
 	azurearm.WriteJSON(w, http.StatusOK, h.childToJSON(rp, res))
 }
 
 func (h *Handler) getChild(w http.ResponseWriter, rp *azurearm.ResourcePath) {
-	res, ok := h.children.get(rp.ResourceName, rp.SubResource, rp.SubResourceName)
+	res, ok := h.children.get(workspaceKey(rp), rp.SubResource, rp.SubResourceName)
 	if !ok {
 		azurearm.WriteError(w, http.StatusNotFound, "NotFound", rp.SubResource+" "+rp.SubResourceName+" not found")
 		return
@@ -176,7 +176,7 @@ func (h *Handler) getChild(w http.ResponseWriter, rp *azurearm.ResourcePath) {
 //   - savedSearches: only 200 is documented; a miss falls through to a 404
 //     ErrorResponse ("Other Status Codes")
 func (h *Handler) deleteChild(w http.ResponseWriter, rp *azurearm.ResourcePath) {
-	if h.children.delete(rp.ResourceName, rp.SubResource, rp.SubResourceName) {
+	if h.children.delete(workspaceKey(rp), rp.SubResource, rp.SubResourceName) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -190,7 +190,7 @@ func (h *Handler) deleteChild(w http.ResponseWriter, rp *azurearm.ResourcePath) 
 }
 
 func (h *Handler) listChildren(w http.ResponseWriter, rp *azurearm.ResourcePath) {
-	items := h.children.list(rp.ResourceName, rp.SubResource)
+	items := h.children.list(workspaceKey(rp), rp.SubResource)
 	out := childListResult{Value: make([]childJSON, 0, len(items))}
 
 	for _, res := range items {

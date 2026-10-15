@@ -228,3 +228,31 @@ func TestAccessPolicyApplicationIDSurvivesSnapshot(t *testing.T) {
 		t.Errorf("applicationId lost on restore: %+v", v.Properties.AccessPolicies)
 	}
 }
+
+func TestAccessPolicyRemoveByIdentityAndReplaceAbsent(t *testing.T) {
+	ctx := context.Background()
+	m := apMock(t)
+
+	if _, err := m.UpdateVaultAccessPolicies(ctx, "kv1", driver.KVAccessPolicyAdd,
+		[]driver.KVAccessPolicy{entry("obj-3", "", "Get", "List")}); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := m.UpdateVaultAccessPolicies(ctx, "kv1", driver.KVAccessPolicyRemove,
+		[]driver.KVAccessPolicy{entry("obj-3", "")})
+	if err != nil || findEntry(list, "obj-3", "") != nil {
+		t.Fatalf("remove by identity: err=%v entry=%+v, want entry gone", err, findEntry(list, "obj-3", ""))
+	}
+
+	before, _ := m.GetVault(ctx, "kv1")
+
+	_, err = m.UpdateVaultAccessPolicies(ctx, "kv1", driver.KVAccessPolicyReplace,
+		[]driver.KVAccessPolicy{entry("obj-absent", "", "Get")})
+	if !cerrors.IsNotFound(err) {
+		t.Fatalf("replace of absent principal err = %v, want NotFound", err)
+	}
+
+	if after, _ := m.GetVault(ctx, "kv1"); !reflect.DeepEqual(before, after) {
+		t.Errorf("failed replace changed the vault")
+	}
+}

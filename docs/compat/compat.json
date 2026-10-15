@@ -318,6 +318,19 @@
   },
   {
     "service": "cloudformation",
+    "operation": "CancelUpdateStack",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
     "operation": "ContinueUpdateRollback",
     "providers": {
       "aws": {
@@ -474,6 +487,19 @@
   },
   {
     "service": "cloudformation",
+    "operation": "GetStackPolicy",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
     "operation": "GetTemplate",
     "providers": {
       "aws": {
@@ -553,6 +579,32 @@
   {
     "service": "cloudformation",
     "operation": "ListStacks",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "RollbackStack",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
+    "operation": "SetStackPolicy",
     "providers": {
       "aws": {
         "native": "CloudFormation",

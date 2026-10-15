@@ -59,7 +59,7 @@ func (h *Handler) listVNetPeerings(w http.ResponseWriter, r *http.Request, rp az
 		return
 	}
 
-	out := vnetPeeringListResponse{}
+	out := vnetPeeringListResponse{Value: []vnetPeeringResponse{}}
 
 	for _, p := range meta.ListAzureVNetPeerings(r.Context(), vnet.ID) {
 		out.Value = append(out.Value, toVNetPeeringResponse(p, rp))

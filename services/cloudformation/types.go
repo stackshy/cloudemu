@@ -6,7 +6,7 @@ import (
 )
 
 // Stack status values, a subset of the real CloudFormation set covering the
-// lifecycle the synchronous emulator models.
+// lifecycle the emulator models.
 const (
 	StatusCreateInProgress   = "CREATE_IN_PROGRESS"
 	StatusCreateComplete     = "CREATE_COMPLETE"
@@ -95,6 +95,9 @@ type StackEvent struct {
 	Status       string
 	StatusReason string
 	Timestamp    time.Time
+	// ClientRequestToken is the token of the operation that recorded the
+	// event.
+	ClientRequestToken string `json:",omitempty"`
 }
 
 // Stack is the full state of a deployed stack.
@@ -164,6 +167,12 @@ type CreateStackInput struct {
 	// RetainExceptOnCreate deletes the created resources on a rollback,
 	// even those whose DeletionPolicy is Retain.
 	RetainExceptOnCreate bool
+	// StackPolicyBody or StackPolicyURL sets the stack policy.
+	StackPolicyBody string
+	StackPolicyURL  string
+	// ClientRequestToken identifies the request, so a retry is not taken
+	// for a second create.
+	ClientRequestToken string
 }
 
 // DeleteStackInput is the request to delete a stack.
@@ -175,7 +184,8 @@ type DeleteStackInput struct {
 	// DeletionMode is STANDARD (the default) or FORCE_DELETE_STACK, which
 	// deletes a DELETE_FAILED stack and keeps the resources it cannot
 	// delete.
-	DeletionMode string
+	DeletionMode       string
+	ClientRequestToken string
 }
 
 // UpdateTerminationProtectionInput turns a stack's termination protection
@@ -243,6 +253,39 @@ type UpdateStackInput struct {
 
 	// NotificationARNs replaces the stack's topics. Nil keeps them.
 	NotificationARNs []string
+
+	// StackPolicyBody or StackPolicyURL replaces the stack policy. Neither
+	// keeps it.
+	StackPolicyBody string
+	StackPolicyURL  string
+	// StackPolicyDuringUpdateBody or StackPolicyDuringUpdateURL overrides
+	// the stack policy for this update only.
+	StackPolicyDuringUpdateBody string
+	StackPolicyDuringUpdateURL  string
+	ClientRequestToken          string
+}
+
+// SetStackPolicyInput sets a stack's policy from a body or an S3 URL.
+type SetStackPolicyInput struct {
+	StackName       string
+	StackPolicyBody string
+	StackPolicyURL  string
+}
+
+// CancelUpdateStackInput cancels a stack update that is in progress.
+type CancelUpdateStackInput struct {
+	StackName          string
+	ClientRequestToken string
+}
+
+// RollbackStackInput rolls a CREATE_FAILED or UPDATE_FAILED stack back to its
+// last stable state.
+type RollbackStackInput struct {
+	StackName          string
+	ClientRequestToken string
+	// RetainExceptOnCreate deletes the resources the failed operation
+	// created, even those whose DeletionPolicy is Retain.
+	RetainExceptOnCreate bool
 }
 
 // ContinueUpdateRollbackInput is the request to retry the rollback of a stack
@@ -250,7 +293,8 @@ type UpdateStackInput struct {
 type ContinueUpdateRollbackInput struct {
 	StackName string
 	// ResourcesToSkip names failed resources the rollback leaves as they are.
-	ResourcesToSkip []string
+	ResourcesToSkip    []string
+	ClientRequestToken string
 }
 
 // ValidateTemplateInput is the request to validate a template. TemplateBody
@@ -318,4 +362,9 @@ type API interface {
 	UpdateTerminationProtection(ctx context.Context, in *UpdateTerminationProtectionInput) (string, error)
 	DescribeAccountLimits(ctx context.Context, nextToken string) ([]AccountLimit, error)
 	EstimateTemplateCost(ctx context.Context, in *EstimateTemplateCostInput) (string, error)
+
+	SetStackPolicy(ctx context.Context, in *SetStackPolicyInput) error
+	GetStackPolicy(ctx context.Context, stackName string) (string, error)
+	CancelUpdateStack(ctx context.Context, in *CancelUpdateStackInput) error
+	RollbackStack(ctx context.Context, in *RollbackStackInput) (string, error)
 }

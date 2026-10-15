@@ -22,6 +22,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
+	gcecompute "github.com/stackshy/cloudemu/v2/providers/gcp/compute"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -55,19 +59,20 @@ type Handler struct {
 	// networking driver wired), in which case IP allocation falls back to the
 	// compute provider's synthetic allocator.
 	net netdriver.Networking
-	// ops records the compute#operation names this handler mints so a poll of an
-	// operation that was never issued returns 404 instead of a fabricated DONE.
-	// Shared with the networks and load-balancing handlers (which mint compute
-	// operations this handler's /operations route serves). Nil in a package-level
-	// server, where every operation poll is answered DONE (legacy behavior).
+	// ops stores the compute#operations this handler mints so get, wait, list
+	// and delete read them back. Shared with the networks and load-balancing
+	// handlers, which mint compute operations this handler's /operations route
+	// serves.
 	ops *gcprest.OperationRegistry
+	// iam keeps resource policies keyed by full resource name.
+	iam gcpiam.Store
 }
 
 // New returns a Compute handler backed by c. net (may be nil) lets insert
 // allocate an instance's private networkIP from the referenced subnetwork's
 // CIDR.
 func New(c computedriver.Compute, net netdriver.Networking) *Handler {
-	return &Handler{compute: c, net: net}
+	return &Handler{compute: c, net: net, ops: gcprest.NewOperationRegistry(), iam: resourceiam.New()}
 }
 
 // SetOperationRegistry wires the shared compute-operation registry so this
@@ -86,7 +91,7 @@ func (*Handler) Matches(r *http.Request) bool {
 
 	switch rp.ResourceType {
 	case resourceInstances, resourceOperations, resourceDisks, resourceSnapshots,
-		resourceImages, resourceMachineTyp, resourceMIGs:
+		resourceImages, resourceMachineTyp, resourceMIGs, resourceTemplates:
 		return true
 	}
 
@@ -116,6 +121,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r = r.WithContext(projectctx.WithProject(r.Context(), rp.Project))
+
 	if rp.Scope == gcprest.ScopeAggregated {
 		h.serveAggregated(w, r, rp)
 		return
@@ -123,6 +130,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if isScopeResource(&rp) {
 		serveScopeResource(w, r, rp)
+		return
+	}
+
+	if h.serveIAM(w, r, rp) {
 		return
 	}
 
@@ -156,6 +167,9 @@ func (h *Handler) serveAggregated(w http.ResponseWriter, r *http.Request, rp gcp
 		case resourceMIGs:
 			h.aggregatedListMIGs(w, r, rp)
 			return
+		case resourceOperations:
+			h.aggregatedListOperations(w, r, rp)
+			return
 		}
 	}
 
@@ -180,6 +194,8 @@ func (h *Handler) routeResource(w http.ResponseWriter, r *http.Request, rp gcpre
 		serveMachineTypesRoute(w, r, rp)
 	case resourceMIGs:
 		h.serveInstanceGroupManagersRoute(w, r, rp)
+	case resourceTemplates:
+		h.serveInstanceTemplatesRoute(w, r, rp)
 	default:
 		return false
 	}
@@ -219,6 +235,16 @@ func (h *Handler) serveSnapshotsRoute(w http.ResponseWriter, r *http.Request, rp
 
 //nolint:gocritic,dupl // rp is a request-scoped value; route shape is duplicate-by-design across resource types
 func (h *Handler) serveImagesRoute(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	if gcecompute.IsPublicImageProject(rp.Project) {
+		servePublicImages(w, r, rp)
+		return
+	}
+
+	if r.Method == http.MethodGet && rp.ResourceName == imageFamilySegment && rp.Action != "" {
+		h.getImageFromFamily(w, r, rp)
+		return
+	}
+
 	if rp.ResourceName == "" {
 		switch r.Method {
 		case http.MethodPost:
@@ -390,55 +416,6 @@ func (h *Handler) dispatchInstanceMutationVerb(w http.ResponseWriter, r *http.Re
 	default:
 		writeNotImplemented(w, "action: "+rp.Action)
 	}
-}
-
-// serveOperations handles GET on operations/{name} and the POST
-// operations/{name}/wait verb. Since the mock executes synchronously, a known
-// operation always reads back DONE. gcloud and the typed google clients confirm
-// every mutation by calling zoneOperations.wait (a POST that blocks until the
-// operation is DONE, then returns it) rather than polling GET, so without wait
-// support `gcloud compute instances stop/start` (and every other mutation)
-// reports a failure even though the state changed. An operation name that was
-// never minted (a bogus poll, `gcloud compute operations describe <bogus>`) is
-// 404, matching real GCP, rather than a fabricated DONE, provided a shared
-// registry is wired (a nil registry keeps the legacy allow-all).
-//
-//nolint:gocritic // rp is a request-scoped value
-func (h *Handler) serveOperations(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	isWait := r.Method == http.MethodPost && strings.EqualFold(rp.Action, "wait")
-	if r.Method != http.MethodGet && !isWait {
-		writeNotImplemented(w, r.Method+" "+r.URL.Path)
-		return
-	}
-
-	if rp.ResourceName == "" {
-		// The mock runs synchronously and retains no pending operations, so a
-		// list is legitimately empty rather than unimplemented.
-		host := hostFromRequest(r)
-		gcprest.WriteJSON(w, http.StatusOK, map[string]any{
-			"kind":     "compute#operationList",
-			"id":       "projects/" + rp.Project + "/operations",
-			"items":    []any{},
-			"selfLink": gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "operations", ""),
-		})
-
-		return
-	}
-
-	if !h.ops.Has(rp.Scope, rp.ScopeName, rp.ResourceName) {
-		gcprest.WriteError(w, http.StatusNotFound, "notFound",
-			"The resource 'operations/"+rp.ResourceName+"' was not found")
-
-		return
-	}
-
-	op := gcprest.NewDoneOperation(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
-		"instances", strings.TrimPrefix(rp.ResourceName, "operation-"), "noop")
-	// Preserve the original operation name so SDK clients matching on Name
-	// still recognize the polled operation, but keep ID numeric (uint64).
-	op.Name = rp.ResourceName
-
-	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 
 func writeNotImplemented(w http.ResponseWriter, what string) {

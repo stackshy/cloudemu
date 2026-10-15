@@ -15,7 +15,6 @@ import (
 	"encoding/hex"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -63,8 +62,12 @@ type signInputs struct {
 	signedHeaders []string
 	signature     string
 	amzDate       string        // full timestamp used in the string-to-sign
-	expires       time.Duration // presigned validity window (X-Amz-Expires); 0 if absent
+	expires       time.Duration // presigned validity window (X-Amz-Expires), set by Verify
 	presigned     bool
+	// expiresRaw and expiresSet are the presigned X-Amz-Expires parameter as
+	// sent; Verify validates them.
+	expiresRaw string
+	expiresSet bool
 }
 
 // AccessKeyID returns the access key id presented by the request (header or
@@ -123,6 +126,16 @@ func Service(r *http.Request) string {
 func Verify(r *http.Request, body []byte, lookup LookupFunc, clock config.Clock) (authctx.Principal, *AuthError) {
 	in, err := parseInputs(r)
 	if err != nil {
+		return authctx.Principal{}, err
+	}
+
+	if in.presigned {
+		if in.expires, err = presignExpires(in.expiresRaw, in.expiresSet); err != nil {
+			return authctx.Principal{}, err
+		}
+	}
+
+	if err := checkSignedAmzHeaders(r, &in); err != nil {
 		return authctx.Principal{}, err
 	}
 
@@ -209,7 +222,7 @@ func checkExpiry(in *signInputs, clock config.Clock) *AuthError {
 	signed, ok := parseAmzDate(in.amzDate)
 	if !ok {
 		return &AuthError{
-			Code:       "AccessDenied",
+			Code:       codeAccessDenied,
 			Message:    "Request timestamp is missing or could not be parsed",
 			HTTPStatus: unsignedStatus,
 		}
@@ -218,7 +231,7 @@ func checkExpiry(in *signInputs, clock config.Clock) *AuthError {
 	now := clock.Now().UTC()
 
 	if in.presigned {
-		if in.expires > 0 && now.After(signed.Add(in.expires)) {
+		if now.After(signed.Add(in.expires)) {
 			return expiredErr()
 		}
 
@@ -257,7 +270,7 @@ func parseAmzDate(s string) (time.Time, bool) {
 
 func expiredErr() *AuthError {
 	return &AuthError{
-		Code:       "AccessDenied",
+		Code:       codeAccessDenied,
 		Message:    "Request has expired",
 		HTTPStatus: unsignedStatus,
 	}
@@ -331,11 +344,7 @@ func parsePresigned(r *http.Request) (signInputs, *AuthError) {
 		return in, aerr
 	}
 
-	if v := q.Get("X-Amz-Expires"); v != "" {
-		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
-			in.expires = time.Duration(secs) * time.Second
-		}
-	}
+	in.expiresRaw, in.expiresSet = q.Get("X-Amz-Expires"), q.Has("X-Amz-Expires")
 
 	return in, nil
 }

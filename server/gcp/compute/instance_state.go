@@ -25,6 +25,7 @@ const (
 	keyAccessConfigs      = "cloudemu:gcp:accessconfigs"
 	keyServiceAccts       = "cloudemu:gcp:serviceaccounts"
 	keyDeletionProtection = "cloudemu:gcp:deletionprotection"
+	keyProject            = "cloudemu:gcp:project"
 )
 
 // tagValueTrue is the tag-map encoding of a boolean-true internal flag

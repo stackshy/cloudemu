@@ -54,8 +54,10 @@ func (h *Handler) serveDataSources(w http.ResponseWriter, r *http.Request, segs 
 		h.serveDSCollection(w, r, kbID)
 	case len(segs) == dsItemSegments:
 		h.serveDSItem(w, r, kbID, segs[2])
-	case len(segs) == ingestionSegments && segs[3] == segIngestionJobs:
-		h.serveIngestion(w, r, kbID, segs[2])
+	case len(segs) >= ingestionSegments && segs[3] == segIngestionJobs:
+		h.serveIngestion(w, r, segs)
+	case len(segs) >= documentsSegments && segs[3] == segDocuments:
+		withCapability(h, w, "KnowledgeBaseDocuments", func(c badriver.KnowledgeBaseDocuments) { serveDocuments(w, r, c, segs) })
 	default:
 		notFound(w, r.URL.Path)
 	}
@@ -85,14 +87,45 @@ func (h *Handler) serveDSItem(w http.ResponseWriter, r *http.Request, kbID, dsID
 	}
 }
 
-func (h *Handler) serveIngestion(w http.ResponseWriter, r *http.Request, kbID, dsID string) {
-	if r.Method != http.MethodPut {
+// serveIngestion routes {kb}/datasources/{ds}/ingestionjobs/[{job}[/stop]].
+func (h *Handler) serveIngestion(w http.ResponseWriter, r *http.Request, segs []string) {
+	kbID, dsID := segs[0], segs[2]
+
+	if len(segs) > ingestionStopSegs || (len(segs) == ingestionStopSegs && segs[5] != segStop) {
+		notFound(w, r.URL.Path)
+
+		return
+	}
+
+	type route struct {
+		segs   int
+		method string
+	}
+
+	op := map[route]func(){
+		{ingestionSegments, http.MethodPut}: func() { h.startIngestionJob(w, r, kbID, dsID) },
+		{ingestionSegments, http.MethodPost}: func() {
+			withCapability(h, w, "ListIngestionJobs", func(c badriver.IngestionJobs) { listIngestionJobs(w, r, c, kbID, dsID) })
+		},
+		{ingestionJobSegments, http.MethodGet}: func() {
+			withCapability(h, w, "GetIngestionJob", func(c badriver.IngestionJobs) {
+				writeIngestionJob(w, http.StatusOK)(c.GetIngestionJob(r.Context(), kbID, dsID, segs[4]))
+			})
+		},
+		{ingestionStopSegs, http.MethodPost}: func() {
+			withCapability(h, w, "StopIngestionJob", func(c badriver.IngestionJobs) {
+				writeIngestionJob(w, http.StatusAccepted)(c.StopIngestionJob(r.Context(), kbID, dsID, segs[4]))
+			})
+		},
+	}[route{len(segs), r.Method}]
+
+	if op == nil {
 		methodNotAllowed(w)
 
 		return
 	}
 
-	h.startIngestionJob(w, r, kbID, dsID)
+	op()
 }
 
 // --- knowledge-base operations ---
@@ -117,7 +150,7 @@ func (h *Handler) createKnowledgeBase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, knowledgeBaseEnvelope{KnowledgeBase: toKnowledgeBaseJSON(kb)})
+	writeJSONStatus(w, http.StatusAccepted, knowledgeBaseEnvelope{KnowledgeBase: toKnowledgeBaseJSON(kb)})
 }
 
 func (h *Handler) getKnowledgeBase(w http.ResponseWriter, r *http.Request, id string) {
@@ -171,7 +204,7 @@ func (h *Handler) updateKnowledgeBase(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 
-	writeJSON(w, knowledgeBaseEnvelope{KnowledgeBase: toKnowledgeBaseJSON(kb)})
+	writeJSONStatus(w, http.StatusAccepted, knowledgeBaseEnvelope{KnowledgeBase: toKnowledgeBaseJSON(kb)})
 }
 
 func (h *Handler) deleteKnowledgeBase(w http.ResponseWriter, r *http.Request, id string) {
@@ -182,7 +215,7 @@ func (h *Handler) deleteKnowledgeBase(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 
-	writeJSON(w, deleteKnowledgeBaseResponse{KnowledgeBaseID: id, Status: status})
+	writeJSONStatus(w, http.StatusAccepted, deleteKnowledgeBaseResponse{KnowledgeBaseID: id, Status: status})
 }
 
 // --- data-source operations ---
@@ -272,7 +305,7 @@ func (h *Handler) deleteDataSource(w http.ResponseWriter, r *http.Request, kbID,
 		return
 	}
 
-	writeJSON(w, deleteDataSourceResponse{DataSourceID: dsID, KnowledgeBaseID: kbID, Status: status})
+	writeJSONStatus(w, http.StatusAccepted, deleteDataSourceResponse{DataSourceID: dsID, KnowledgeBaseID: kbID, Status: status})
 }
 
 func (h *Handler) startIngestionJob(w http.ResponseWriter, r *http.Request, kbID, dsID string) {
@@ -288,7 +321,7 @@ func (h *Handler) startIngestionJob(w http.ResponseWriter, r *http.Request, kbID
 		return
 	}
 
-	writeJSON(w, ingestionJobEnvelope{IngestionJob: toIngestionJobJSON(job)})
+	writeJSONStatus(w, http.StatusAccepted, ingestionJobEnvelope{IngestionJob: toIngestionJobJSON(job)})
 }
 
 // --- converters ---
@@ -350,6 +383,8 @@ func toIngestionJobJSON(j *badriver.IngestionJob) ingestionJobJSON {
 		DataSourceID:    j.DataSourceID,
 		Description:     j.Description,
 		Status:          j.Status,
+		Statistics:      toStatisticsJSON(j.Statistics),
+		FailureReasons:  j.FailureReasons,
 		StartedAt:       j.StartedAt,
 		UpdatedAt:       j.UpdatedAt,
 	}

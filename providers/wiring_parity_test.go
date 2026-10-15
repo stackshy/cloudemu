@@ -93,6 +93,18 @@ type exemption struct {
 	field, method, reason string
 }
 
+// awsExemptions lists AWS's deliberate non-wirings.
+var awsExemptions = []exemption{
+	{
+		field:  "APIGateway",
+		method: "SetHTTPClient",
+		reason: "apigateway.New defaults the HTTP and HTTP_PROXY integration client to a real " +
+			"net/http client that does not follow redirects, so integrations call their backends " +
+			"in production without any aws.go wiring. SetHTTPClient is only an override that " +
+			"swaps in a fake or instrumented client, so New deliberately does not call it.",
+	},
+}
+
 // azureExemptions lists Azure's one deliberate non-wiring.
 var azureExemptions = []exemption{
 	{
@@ -448,7 +460,7 @@ func checkWiringParity(t *testing.T, providerPtr any, newFile string, exemptions
 }
 
 func TestWiringParity_AWS(t *testing.T) {
-	checkWiringParity(t, aws.New(), filepath.Join("aws", "aws.go"), nil)
+	checkWiringParity(t, aws.New(), filepath.Join("aws", "aws.go"), awsExemptions)
 }
 
 func TestWiringParity_Azure(t *testing.T) {

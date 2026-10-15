@@ -41,16 +41,17 @@ func isQueryRequest(r *http.Request) bool {
 	return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == sigV4Service
 }
 
-// serveQuery handles a CloudWatch query-protocol request.
+// serveQuery handles a CloudWatch query-protocol request whose form Action
+// is action. parseErr is the form parse error cloudwatchOp hit, if any.
 //
-//nolint:gocyclo // first-match dispatch over many CloudWatch query actions.
-func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		writeQueryError(w, http.StatusBadRequest, "MalformedQueryString", err.Error())
+//nolint:gocyclo,funlen // first-match dispatch over many CloudWatch query actions.
+func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request, action string, parseErr error) {
+	if parseErr != nil {
+		writeQueryError(w, http.StatusBadRequest, "MalformedQueryString", parseErr.Error())
 		return
 	}
 
-	switch r.Form.Get("Action") {
+	switch action {
 	case opPutMetricData:
 		h.queryPutMetricData(w, r)
 	case opListMetrics:
@@ -110,7 +111,7 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request) {
 	case opDeleteAnomalyDetector:
 		h.queryDeleteAnomalyDetector(w, r)
 	default:
-		writeQueryError(w, http.StatusBadRequest, "InvalidAction", "unsupported CloudWatch action: "+r.Form.Get("Action"))
+		writeQueryError(w, http.StatusBadRequest, "InvalidAction", "unsupported CloudWatch action: "+action)
 	}
 }
 

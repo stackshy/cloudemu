@@ -4,14 +4,15 @@ import (
 	"context"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
 // GetSecretIAMPolicy returns the secret's stored IAM policy. An existing secret
 // with no policy yet returns an empty, versioned policy (real GCP never 404s
 // getIamPolicy on an existing resource).
-func (m *Mock) GetSecretIAMPolicy(_ context.Context, name string) (*driver.GCPIAMPolicy, error) {
-	sd, ok := m.secrets.Get(name)
+func (m *Mock) GetSecretIAMPolicy(ctx context.Context, name string) (*driver.GCPIAMPolicy, error) {
+	sd, ok := m.secrets.Get(m.key(ctx, name))
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
@@ -20,16 +21,17 @@ func (m *Mock) GetSecretIAMPolicy(_ context.Context, name string) (*driver.GCPIA
 	defer sd.mu.RUnlock()
 
 	if sd.iam == nil {
-		return &driver.GCPIAMPolicy{Version: 1, Etag: newEtag()}, nil
+		return &driver.GCPIAMPolicy{Version: 1, Etag: resourceiam.InitialEtag()}, nil
 	}
 
 	return clonePolicy(sd.iam), nil
 }
 
 // SetSecretIAMPolicy stores the secret's IAM policy and returns it with a
-// refreshed etag.
-func (m *Mock) SetSecretIAMPolicy(_ context.Context, name string, policy driver.GCPIAMPolicy) (*driver.GCPIAMPolicy, error) {
-	sd, ok := m.secrets.Get(name)
+// refreshed etag. An empty etag is a blind overwrite; an etag that no longer
+// matches the stored policy is resourceiam.ErrAborted (real 409 ABORTED).
+func (m *Mock) SetSecretIAMPolicy(ctx context.Context, name string, policy driver.GCPIAMPolicy) (*driver.GCPIAMPolicy, error) {
+	sd, ok := m.secrets.Get(m.key(ctx, name))
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
@@ -37,12 +39,21 @@ func (m *Mock) SetSecretIAMPolicy(_ context.Context, name string, policy driver.
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
+	cur := resourceiam.InitialEtag()
+	if sd.iam != nil {
+		cur = sd.iam.Etag
+	}
+
+	if policy.Etag != "" && policy.Etag != cur {
+		return nil, resourceiam.ErrAborted
+	}
+
 	stored := clonePolicy(&policy)
 	if stored.Version == 0 {
 		stored.Version = 1
 	}
 
-	stored.Etag = newEtag()
+	stored.Etag = resourceiam.NextEtag(cur)
 	sd.iam = stored
 
 	return clonePolicy(stored), nil
@@ -50,8 +61,8 @@ func (m *Mock) SetSecretIAMPolicy(_ context.Context, name string, policy driver.
 
 // TestSecretIAMPermissions echoes back the requested permissions. CloudEmu
 // does not enforce IAM, so every requested permission is reported as granted.
-func (m *Mock) TestSecretIAMPermissions(_ context.Context, name string, permissions []string) ([]string, error) {
-	sd, ok := m.secrets.Get(name)
+func (m *Mock) TestSecretIAMPermissions(ctx context.Context, name string, permissions []string) ([]string, error) {
+	sd, ok := m.secrets.Get(m.key(ctx, name))
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}

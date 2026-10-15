@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -313,6 +314,27 @@ func TestSDKServiceIam(t *testing.T) {
 
 	if len(pol.Bindings) != 1 || pol.Bindings[0].Members[0] != "allUsers" {
 		t.Fatalf("policy = %+v", pol.Bindings)
+	}
+
+	// Every set mints a new etag, even with the same number of bindings, and
+	// the etag it replaced is then stale (409 ABORTED).
+	set.Policy.Etag = pol.Etag
+	set.Policy.Bindings[0].Members = []string{"user:a@example.com"}
+
+	next, err := svc.Projects.Locations.Services.SetIamPolicy(resource, set).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("SetIamPolicy with etag: %v", err)
+	}
+
+	if next.Etag == pol.Etag {
+		t.Fatalf("etag %q did not change on set", next.Etag)
+	}
+
+	_, err = svc.Projects.Locations.Services.SetIamPolicy(resource, set).Context(ctx).Do()
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) || gerr.Code != http.StatusConflict {
+		t.Fatalf("stale etag: want 409, got %v", err)
 	}
 }
 

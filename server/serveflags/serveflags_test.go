@@ -23,9 +23,11 @@ func noEnv(string) string { return "" }
 //
 //nolint:gochecknoglobals // test fixture: the pinned common-flag name set
 var commonFlagNames = []string{
-	"account-id", "admin", "advertise-host", "async-settle", "aws-port", "azure-port", "azure-subscription",
+	"account-id", "admin", "admin-token", "admin-token-file", "advertise-host", "async-settle",
+	"aws-port", "azure-port", "azure-subscription",
 	"endpoints-file", "enforce-auth", "gcp-grpc-port", "gcp-port", "host", "init-dir", "k8s-nodes", "k8s-port",
-	"k8s-progression", "k8s-progression-interval", "latency", "log-requests", "oci-port",
+	"k8s-progression", "k8s-progression-interval", "latency", "log-requests", "oci-kms-endpoint-domain",
+	"oci-port", "oci-tenancy",
 	"persist", "persist-interval", "persist-metadata-only", "persist-strategy", "project-id",
 	"providers", "quiet", "region", "shutdown-timeout", "state-file", "tick-interval", "tls-cert", "tls-host",
 	"tls-key", "vcr", "vcr-cassette", "vcr-strict",
@@ -74,6 +76,7 @@ func TestRegisterCommonDefaults(t *testing.T) {
 		"aws-port":                 "4566",
 		"shutdown-timeout":         defaultShutdownTimeout.String(),
 		"tick-interval":            time.Second.String(),
+		"oci-kms-endpoint-domain":  "",
 	}
 
 	for name, want := range cases {
@@ -97,6 +100,7 @@ func TestRegisterCommonEnvFallback(t *testing.T) {
 		"CLOUDEMU_K8S_PROGRESSION":          "true",
 		"CLOUDEMU_K8S_PROGRESSION_INTERVAL": "5s",
 		"CLOUDEMU_TICK_INTERVAL":            "250ms",
+		"CLOUDEMU_OCI_KMS_ENDPOINT_DOMAIN":  "kms.localhost",
 	}
 	getenv := func(k string) string { return env[k] }
 
@@ -128,6 +132,36 @@ func TestRegisterCommonEnvFallback(t *testing.T) {
 	if c.TickInterval != 250*time.Millisecond {
 		t.Fatalf("tick-interval = %v, want 250ms (env)", c.TickInterval)
 	}
+
+	if c.OCIKMSEndpointDomain != "kms.localhost" {
+		t.Fatalf("oci-kms-endpoint-domain = %q, want kms.localhost (env)", c.OCIKMSEndpointDomain)
+	}
+}
+
+// TestAdminTokenFromEnvNotEchoed checks the admin token can come from the
+// environment and that -h never prints it as the flag default.
+func TestAdminTokenFromEnvNotEchoed(t *testing.T) {
+	env := map[string]string{"CLOUDEMU_ADMIN_TOKEN": "env-secret", "CLOUDEMU_ADMIN_TOKEN_FILE": "/run/tok"}
+
+	var c CommonConfig
+
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	RegisterCommon(fs, &c, func(k string) string { return env[k] })
+
+	if err := fs.Parse(nil); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	assertEqual(t, "admin-token (env)", c.AdminToken, "env-secret")
+	assertEqual(t, "admin-token-file (env)", c.AdminTokenFile, "/run/tok")
+	assertEqual(t, "admin-token default shown in -h", fs.Lookup("admin-token").DefValue, "")
+
+	if err := fs.Parse([]string{"--admin-token", "flag-secret"}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	assertEqual(t, "admin-token (flag wins)", c.AdminToken, "flag-secret")
+	assertEqual(t, "admin-token String()", fs.Lookup("admin-token").Value.String(), "")
 }
 
 // TestToServerkitConfigRoundTrip parses a representative arg set and asserts the
@@ -147,14 +181,14 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 		"--azure-subscription", "11111111-1111-1111-1111-111111111111",
 		"--latency", "20ms",
 		"--tls-cert", "/c.pem", "--tls-key", "/k.pem", "--tls-host", "a", "--tls-host", "b",
-		"--endpoints-file", "/eps.json",
+		"--endpoints-file", "/eps.json", "--admin-token", "tok-1", "--admin-token-file", "/tok",
 		"--admin=false", "--log-requests", "--quiet", "--enforce-auth", "--async-settle",
 		"--shutdown-timeout", "3s",
 		"--persist", "--state-file", "/s.json", "--persist-metadata-only",
 		"--persist-strategy", "manual", "--persist-interval", "7s",
 		"--init-dir", "/seeds",
 		"--k8s-progression", "--k8s-progression-interval", "4s", "--k8s-nodes", "3",
-		"--tick-interval", "2s",
+		"--tick-interval", "2s", "--oci-kms-endpoint-domain", "kms.test",
 		"--vcr", "record", "--vcr-cassette", "/c.json", "--vcr-strict=false",
 	}
 	if err := fs.Parse(args); err != nil {
@@ -185,6 +219,8 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 	assertEqual(t, "tls-key", sk.TLSKey, "/k.pem")
 	assertEqual(t, "endpoints-file", sk.EndpointsFile, "/eps.json")
 	assertEqual(t, "admin", sk.Admin, false)
+	assertEqual(t, "admin-token", sk.AdminToken, "tok-1")
+	assertEqual(t, "admin-token-file", sk.AdminTokenFile, "/tok")
 	assertEqual(t, "log-requests", sk.LogRequests, true)
 	assertEqual(t, "quiet", sk.Quiet, true)
 	assertEqual(t, "enforce-auth", sk.EnforceAuth, true)
@@ -200,6 +236,7 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 	assertEqual(t, "k8s-progression-interval", sk.K8sProgressionInterval, 4*time.Second)
 	assertEqual(t, "k8s-nodes", sk.K8sNodes, 3)
 	assertEqual(t, "tick-interval", sk.TickInterval, 2*time.Second)
+	assertEqual(t, "oci-kms-endpoint-domain", sk.OCIKMSEndpointDomain, "kms.test")
 	assertEqual(t, "vcr", sk.VCRMode, "record")
 	assertEqual(t, "vcr-cassette", sk.VCRCassette, "/c.json")
 	assertEqual(t, "vcr-strict", sk.VCRStrict, false)

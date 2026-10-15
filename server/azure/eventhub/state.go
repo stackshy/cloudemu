@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"time"
+
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
 
 // In-memory control-plane model for Event Hubs. Namespaces, event hubs,
@@ -72,6 +74,9 @@ type namespaceState struct {
 	UpdatedAt     time.Time
 	EventHubs     map[string]*eventHubRecord
 	AuthRules     map[string]*authRuleRecord
+	// NetworkRuleSet holds the stored properties of networkRuleSets/default.
+	// It is nil until first written; reads then return the defaults.
+	NetworkRuleSet *azurearm.NetworkRuleSetProps
 }
 
 type eventHubRecord struct {

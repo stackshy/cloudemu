@@ -3,11 +3,9 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -72,22 +70,22 @@ func runNet(args []string) error {
 		return err
 	}
 
-	base, err := adminBaseURL(dir)
+	api, err := newAdminAPI(dir)
 	if err != nil {
 		return err
 	}
 
 	switch args[0] {
 	case "can-connect":
-		return netCanConnect(base, pos[0], pos[1], port, proto, jsonOut)
+		return netCanConnect(api, pos[0], pos[1], port, proto, jsonOut)
 	case "trace":
-		return netTrace(base, pos[0], pos[1], jsonOut)
+		return netTrace(api, pos[0], pos[1], jsonOut)
 	default:
 		return errNetUsage
 	}
 }
 
-func netCanConnect(base, from, to, port, proto string, jsonOut bool) error {
+func netCanConnect(api adminAPI, from, to, port, proto string, jsonOut bool) error {
 	q := url.Values{}
 	q.Set("from", from)
 	q.Set("to", to)
@@ -100,7 +98,7 @@ func netCanConnect(base, from, to, port, proto string, jsonOut bool) error {
 		q.Set("protocol", proto)
 	}
 
-	body, err := netGET(base, "net/can-connect", q)
+	body, err := netGET(api, "net/can-connect", q)
 	if err != nil {
 		return err
 	}
@@ -127,12 +125,12 @@ func netCanConnect(base, from, to, port, proto string, jsonOut bool) error {
 	return nil
 }
 
-func netTrace(base, from, dest string, jsonOut bool) error {
+func netTrace(api adminAPI, from, dest string, jsonOut bool) error {
 	q := url.Values{}
 	q.Set("from", from)
 	q.Set("to", dest)
 
-	body, err := netGET(base, "net/trace", q)
+	body, err := netGET(api, "net/trace", q)
 	if err != nil {
 		return err
 	}
@@ -175,34 +173,18 @@ func printHops(hops []topology.RouteHop) {
 
 // netGET calls a /_cloudemu/<endpoint> control path and returns the body,
 // mapping the control plane's error statuses to clear CLI errors.
-func netGET(base, endpoint string, q url.Values) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), snapHTTPTimeout)
-	defer cancel()
-
-	u := base + "/_cloudemu/" + endpoint
+func netGET(api adminAPI, endpoint string, q url.Values) ([]byte, error) {
 	if len(q) > 0 {
-		u += "?" + q.Encode()
+		endpoint += "?" + q.Encode()
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
+	status, b, err := api.do(http.MethodGet, endpoint, nil, "")
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errSnapDaemonDown, err)
-	}
-	defer resp.Body.Close()
-
-	b, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode == http.StatusNotImplemented {
-		return nil, errSnapAdminOff
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: %s", errNetServer, serverErrMsg(b, resp.Status))
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("%w: %s", errNetServer, serverErrMsg(b, fmt.Sprintf("%d %s", status, http.StatusText(status))))
 	}
 
 	return b, nil

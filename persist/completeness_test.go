@@ -1,7 +1,11 @@
 package persist_test
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -151,4 +155,73 @@ func holdsStore(t reflect.Type, depth int) bool {
 	}
 
 	return false
+}
+
+// handlerStoreDebt lists the server/ packages that still build a memstore in a
+// wire handler, so that state is outside every provider snapshot and lost by
+// serve --persist on restart. Remove an entry when its state moves into a
+// persisted provider; do not add one.
+//
+//nolint:gochecknoglobals // test fixture: the reviewed ratchet of known gaps.
+var handlerStoreDebt = map[string]struct{}{
+	"server/aws/ec2":          {},
+	"server/aws/savingsplans": {},
+	"server/azure/eventhub":   {},
+	"server/azure/kusto":      {},
+	"server/azure/servicebus": {},
+	"server/azure/synapse":    {},
+	"server/gcp/firestore":    {},
+	"server/oci/workrequest":  {},
+}
+
+// TestNoNewHandlerStores is the wire-side half of the completeness guard.
+// TestSnapshotCompleteness only sees provider fields, so state a server/
+// handler keeps for itself never reaches it. This ratchet fails when a new
+// server/ package builds a memstore (the store a stateful handler reaches for
+// first). It cannot see plain maps, which many handlers use for caches and
+// static catalogs, so it narrows the gap rather than closing it.
+func TestNoNewHandlerStores(t *testing.T) {
+	root := filepath.Join("..", "server")
+	found := map[string]struct{}{}
+
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		if strings.Contains(string(src), "memstore.New") {
+			rel, _ := filepath.Rel("..", filepath.Dir(path))
+			found[filepath.ToSlash(rel)] = struct{}{}
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk server/: %v", err)
+	}
+
+	pkgs := make([]string, 0, len(found))
+	for p := range found {
+		pkgs = append(pkgs, p)
+	}
+
+	sort.Strings(pkgs)
+
+	for _, p := range pkgs {
+		if _, ok := handlerStoreDebt[p]; !ok {
+			t.Errorf("%s builds a memstore in a wire handler: move the state into a persisted provider "+
+				"(Snapshottable) so serve --persist keeps it", p)
+		}
+	}
+
+	for p := range handlerStoreDebt {
+		if _, ok := found[p]; !ok {
+			t.Errorf("handlerStoreDebt lists %s but it no longer builds a memstore: remove the entry", p)
+		}
+	}
 }

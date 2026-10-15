@@ -18,17 +18,6 @@ import (
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
-// cloudWatchJSONProbe answers any CloudWatch awsJson1_0 request with 200.
-type cloudWatchJSONProbe struct{}
-
-func (cloudWatchJSONProbe) Matches(r *http.Request) bool {
-	return strings.HasPrefix(r.Header.Get("X-Amz-Target"), "GraniteServiceVersion20100801.")
-}
-
-func (cloudWatchJSONProbe) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
-	_, _ = io.WriteString(w, "{}")
-}
-
 func signedCloudWatchJSONRequest(t *testing.T, url, op string, creds aws.Credentials) *http.Request {
 	t.Helper()
 
@@ -82,17 +71,17 @@ func TestAuthzGateCloudWatchJSON(t *testing.T) {
 		t.Fatalf("CreateAccessKey: %v", err)
 	}
 
-	srv := New(Drivers{IAM: cloud.IAM, AccountID: "123456789012", Region: "us-east-1", EnforceAuth: true})
-	srv.Register(cloudWatchJSONProbe{})
+	srv := New(Drivers{IAM: cloud.IAM, CloudWatch: cloud.CloudWatch, AccountID: "123456789012", Region: "us-east-1", EnforceAuth: true})
 
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
 	creds := aws.Credentials{AccessKeyID: ak.AccessKeyID, SecretAccessKey: ak.SecretAccessKey}
 
+	// PutMetricData with an empty body reaches the handler, which rejects it.
 	for op, want := range map[string]int{
 		"DescribeAlarms": http.StatusOK,
-		"PutMetricData":  http.StatusOK,
+		"PutMetricData":  http.StatusBadRequest,
 		"DeleteAlarms":   http.StatusForbidden,
 	} {
 		resp, err := http.DefaultClient.Do(signedCloudWatchJSONRequest(t, ts.URL+"/", op, creds))

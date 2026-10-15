@@ -218,7 +218,9 @@ func (m *Mock) exportInUse(sd *stackData) string {
 }
 
 // ListExports returns one page of the region's exports, sorted by name.
-func (m *Mock) ListExports(_ context.Context, nextToken string) (*cfn.ExportList, error) {
+func (m *Mock) ListExports(ctx context.Context, nextToken string) (*cfn.ExportList, error) {
+	m.settle(ctx)
+
 	entries := m.allExports()
 
 	all := make([]cfn.Export, len(entries))
@@ -237,7 +239,9 @@ func (m *Mock) ListExports(_ context.Context, nextToken string) (*cfn.ExportList
 // ListImports returns one page of the names of the stacks that import an
 // export. An export nothing imports, or that does not exist, is a
 // ValidationError.
-func (m *Mock) ListImports(_ context.Context, in *cfn.ListImportsInput) (*cfn.ImportList, error) {
+func (m *Mock) ListImports(ctx context.Context, in *cfn.ListImportsInput) (*cfn.ImportList, error) {
+	m.settle(ctx)
+
 	if in.ExportName == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, msgExportNameNeed)
 	}

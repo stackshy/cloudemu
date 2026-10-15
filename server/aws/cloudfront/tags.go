@@ -5,22 +5,27 @@ import (
 	"sort"
 
 	"github.com/stackshy/cloudemu/v2/server/wire"
+	cfdriver "github.com/stackshy/cloudemu/v2/services/cloudfront/driver"
 )
 
-// serveTagging handles /2020-05-31/tagging: ListTagsForResource (GET) and the
-// Tag/Untag operations (POST, distinguished by the Operation query parameter).
-func (h *Handler) serveTagging(w http.ResponseWriter, r *http.Request) {
-	arn := r.URL.Query().Get("Resource")
+// serveTagging runs a tagging operation on the distribution its Resource ARN
+// names. An ARN that is not a distribution ARN of this account names no
+// resource here: the driver resolves a distribution by the id at the end of
+// any ARN, so without this check an ARN of another account would act on this
+// account's distribution of the same id.
+func (h *Handler) serveTagging(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) {
+	if a.id == "" || (h.accountID != "" && a.resourceAccount != h.accountID) {
+		writeErr(w, cfdriver.ErrNoSuchResource)
+		return
+	}
 
-	switch {
-	case r.Method == http.MethodGet:
-		h.listTagsForResource(w, r, arn)
-	case r.Method == http.MethodPost && r.URL.Query().Get("Operation") == "Tag":
-		h.tagResource(w, r, arn)
-	case r.Method == http.MethodPost && r.URL.Query().Get("Operation") == "Untag":
-		h.untagResource(w, r, arn)
+	switch op {
+	case opTagResource:
+		h.tagResource(w, r, a.resource)
+	case opUntagResource:
+		h.untagResource(w, r, a.resource)
 	default:
-		writeError(w, http.StatusBadRequest, "InvalidArgument", "unsupported tagging operation")
+		h.listTagsForResource(w, r, a.resource)
 	}
 }
 

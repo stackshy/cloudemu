@@ -17,13 +17,16 @@ func (m *Mock) TagFunction(_ context.Context, name string, tags map[string]strin
 		return cerrors.Newf(cerrors.NotFound, "function %s not found", name)
 	}
 
-	if fd.info.Tags == nil {
-		fd.info.Tags = make(map[string]string, len(tags))
+	if m.engineBusy(name) {
+		return updateInProgress(fd.info.ARN)
 	}
 
-	for k, v := range tags {
-		fd.info.Tags[k] = v
-	}
+	// Copy before editing: GetFunction and ListFunctionTags read the stored
+	// map without mu.
+	next := make(map[string]string, len(fd.info.Tags)+len(tags))
+	maps.Copy(next, fd.info.Tags)
+	maps.Copy(next, tags)
+	fd.info.Tags = next
 
 	m.funcs.Set(name, fd)
 
@@ -40,9 +43,12 @@ func (m *Mock) UntagFunction(_ context.Context, name string, keys []string) erro
 		return cerrors.Newf(cerrors.NotFound, "function %s not found", name)
 	}
 
+	next := maps.Clone(fd.info.Tags)
 	for _, k := range keys {
-		delete(fd.info.Tags, k)
+		delete(next, k)
 	}
+
+	fd.info.Tags = next
 
 	m.funcs.Set(name, fd)
 

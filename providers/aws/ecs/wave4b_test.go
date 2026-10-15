@@ -268,7 +268,9 @@ func TestExecuteCommand(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	tasks, _, err := m.RunTask(ctx, driver.RunTaskInput{Cluster: "prod", TaskDefinition: "web", Count: 1})
+	tasks, _, err := m.RunTask(ctx, driver.RunTaskInput{
+		Cluster: "prod", TaskDefinition: "web", Count: 1, EnableExecuteCommand: true,
+	})
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 

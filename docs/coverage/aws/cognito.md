@@ -3,39 +3,80 @@
 
 AWS's `cognito` service · portable interface `driver.Cognito` · [AWS index](./README.md)
 
-## Operations (29)
+## Operations (50)
 
 | Operation | Description |
 | --- | --- |
 | `AddCustomAttributes` | AddCustomAttributes appends custom attributes to a pool's schema. Names get |
+| `AdminAddUserToGroup` |  |
+| `AdminConfirmSignUp` |  |
 | `AdminCreateUser` | AdminCreateUser creates a user in FORCE_CHANGE_PASSWORD with a generated |
 | `AdminDeleteUser` |  |
 | `AdminDeleteUserAttributes` |  |
 | `AdminDisableUser` |  |
 | `AdminEnableUser` |  |
 | `AdminGetUser` |  |
+| `AdminInitiateAuth` | AdminInitiateAuth runs ADMIN_USER_PASSWORD_AUTH, ADMIN_NO_SRP_AUTH or |
+| `AdminListGroupsForUser` |  |
+| `AdminRemoveUserFromGroup` |  |
 | `AdminResetUserPassword` | AdminResetUserPassword moves the user to RESET_REQUIRED. |
+| `AdminRespondToAuthChallenge` |  |
 | `AdminSetUserPassword` | AdminSetUserPassword sets a password checked against the pool policy. A |
 | `AdminUpdateUserAttributes` |  |
+| `AdminUserGlobalSignOut` |  |
+| `ConfirmSignUp` | ConfirmSignUp confirms a user with the code SignUp or |
+| `CreateGroup` | CreateGroup creates a group. A name already in the pool fails with |
 | `CreateUserPool` | CreateUserPool creates a user pool, generating its id and ARN, seeding the |
 | `CreateUserPoolClient` | CreateUserPoolClient creates an app client, generating its 26-character id |
 | `CreateUserPoolDomain` |  |
+| `DeleteGroup` | DeleteGroup removes a group and every membership in it. |
 | `DeleteUserPool` | DeleteUserPool removes a user pool with its users, clients and tags. Like |
 | `DeleteUserPoolClient` |  |
 | `DeleteUserPoolDomain` |  |
 | `DescribeUserPool` | DescribeUserPool returns a deep copy of a user pool, or a |
 | `DescribeUserPoolClient` |  |
 | `DescribeUserPoolDomain` | DescribeUserPoolDomain returns a domain's description. An unknown domain |
+| `GetGroup` |  |
+| `GetUser` | GetUser returns the user an access token was issued to. |
 | `GetUserPoolMfaConfig` | GetUserPoolMfaConfig returns a pool's MFA configuration. The Terraform AWS |
+| `GlobalSignOut` | GlobalSignOut revokes every token issued to the access token's user. |
+| `InitiateAuth` | InitiateAuth runs USER_PASSWORD_AUTH or REFRESH_TOKEN_AUTH for a client. |
+| `ListGroups` |  |
 | `ListTagsForResource` |  |
 | `ListUserPoolClients` | ListUserPoolClients returns client descriptions in a user pool in a |
 | `ListUserPools` | ListUserPools returns pool descriptions in a deterministic order. |
 | `ListUsers` | ListUsers returns users sorted by username, filtered by an optional |
+| `ListUsersInGroup` |  |
+| `ResendConfirmationCode` |  |
+| `RespondToAuthChallenge` | RespondToAuthChallenge answers the NEW_PASSWORD_REQUIRED challenge. |
+| `RevokeToken` | RevokeToken revokes a refresh token and the access and ID tokens minted |
 | `SetUserPoolMfaConfig` | SetUserPoolMfaConfig replaces a pool's MFA configuration and returns the |
+| `SignUp` | SignUp registers an UNCONFIRMED user, checks the password against the |
 | `TagResource` |  |
 | `UntagResource` |  |
+| `UpdateGroup` | UpdateGroup changes the fields the input sets and returns the group. |
 | `UpdateUserPool` | UpdateUserPool applies the mutable pool settings. A nil field is left |
 | `UpdateUserPoolClient` | UpdateUserPoolClient replaces the client's settings and returns the result. |
+
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### CodeInspector
+
+CodeInspector exposes the confirmation codes the emulator would have sent by
+
+| Operation | Description |
+| --- | --- |
+| `ConfirmationCode` |  |
+
+### KeySetProvider
+
+KeySetProvider publishes a user pool's token-signing keys and issuer for the
+
+| Operation | Description |
+| --- | --- |
+| `SigningKeys` | SigningKeys returns the pool's issuer URL and its public JSON Web Key Set. |
 
 ## Not in scope
 

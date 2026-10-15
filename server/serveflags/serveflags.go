@@ -79,20 +79,25 @@ type CommonConfig struct {
 
 	AccountID         string
 	AzureSubscription string
+	OCITenancy        string
 	Region            string
 	ProjectID         string
+
+	OCIKMSEndpointDomain string
 
 	Latency  time.Duration
 	TLSCert  string
 	TLSKey   string
 	TLSHosts StringList
 
-	EndpointsFile string
-	Admin         bool
-	LogRequests   bool
-	Quiet         bool
-	EnforceAuth   bool
-	AsyncSettle   bool
+	EndpointsFile  string
+	Admin          bool
+	AdminToken     string
+	AdminTokenFile string
+	LogRequests    bool
+	Quiet          bool
+	EnforceAuth    bool
+	AsyncSettle    bool
 
 	ShutdownTimeout time.Duration
 
@@ -132,10 +137,17 @@ func RegisterCommon(fs *flag.FlagSet, c *CommonConfig, getenv func(string) strin
 	fs.StringVar(&c.GCPGRPCPort, "gcp-grpc-port", "",
 		"port for the GCP gRPC transport (health+reflection; empty disables it). Point *_EMULATOR_HOST clients here")
 	fs.StringVar(&c.OCIPort, "oci-port", "4571", "port for the OCI endpoint (HTTP)")
+	fs.StringVar(&c.OCIKMSEndpointDomain, "oci-kms-endpoint-domain", getenv("CLOUDEMU_OCI_KMS_ENDPOINT_DOMAIN"),
+		"OCI Vault: report each vault's KMS endpoints as <label>-management.<domain> and <label>-crypto.<domain> "+
+			"(e.g. kms.localhost; the hosts must resolve to the emulator) instead of the plain OCI address "+
+			"(env CLOUDEMU_OCI_KMS_ENDPOINT_DOMAIN)")
 	fs.StringVar(&c.K8sPort, "k8s-port", "4570", "port for the shared Kubernetes data-plane (HTTPS); empty to disable")
 	fs.StringVar(&c.AccountID, "account-id", "000000000000", "AWS account ID (also GCP/OCI) reported by the emulator")
 	fs.StringVar(&c.AzureSubscription, "azure-subscription", "00000000-0000-0000-0000-000000000000",
 		"Azure subscription id reported by the emulator (a GUID; real Azure SDKs/CLIs require one)")
+	fs.StringVar(&c.OCITenancy, "oci-tenancy", config.DefaultTenancyOCID,
+		"OCI tenancy OCID reported by the emulator; it is also the root compartment and "+
+			"the Object Storage namespace is derived from it")
 	fs.StringVar(&c.Region, "region", "us-east-1", "default region reported by the emulator")
 	fs.StringVar(&c.ProjectID, "project-id", "cloudemu-local", "GCP project ID reported by the emulator")
 	fs.DurationVar(&c.Latency, "latency", 0, "artificial latency added to every emulated call (e.g. 20ms)")
@@ -143,7 +155,9 @@ func RegisterCommon(fs *flag.FlagSet, c *CommonConfig, getenv func(string) strin
 	fs.StringVar(&c.TLSKey, "tls-key", "", "PEM key file matching --tls-cert")
 	fs.Var(&c.TLSHosts, "tls-host", "extra SAN host/IP for the generated self-signed cert (repeatable)")
 	fs.StringVar(&c.EndpointsFile, "endpoints-file", "", "write the resolved endpoints as JSON to this path")
-	fs.BoolVar(&c.Admin, "admin", true, "mount the /_cloudemu control plane (reset, health) for test isolation")
+	fs.BoolVar(&c.Admin, "admin", true,
+		"mount the /_cloudemu control plane (reset, seed, snapshot, health) for test isolation; "+
+			"under --enforce-auth it needs --admin-token")
 	fs.BoolVar(&c.LogRequests, "log-requests", false, "log every HTTP request (method, path, status, duration)")
 	fs.BoolVar(&c.Quiet, "quiet", false, "suppress the startup banner")
 	fs.DurationVar(&c.ShutdownTimeout, "shutdown-timeout", defaultShutdownTimeout, "grace period for in-flight requests on shutdown")
@@ -156,7 +170,35 @@ func RegisterCommon(fs *flag.FlagSet, c *CommonConfig, getenv func(string) strin
 	registerK8sProgressionFlags(fs, c, getenv)
 	registerTickFlag(fs, c, getenv)
 	registerEnforceAuthFlag(fs, c)
+	registerAdminTokenFlags(fs, c, getenv)
 	registerVCRFlags(fs, c)
+}
+
+// secretFlag is a string flag whose value never shows up in -h output, so an
+// admin token taken from the environment is not echoed as the "default".
+type secretFlag struct{ p *string }
+
+func (secretFlag) String() string { return "" }
+
+func (s secretFlag) Set(v string) error {
+	*s.p = v
+
+	return nil
+}
+
+// registerAdminTokenFlags registers the credential that guards the /_cloudemu
+// control plane under --enforce-auth.
+func registerAdminTokenFlags(fs *flag.FlagSet, c *CommonConfig, getenv func(string) string) {
+	c.AdminToken = getenv("CLOUDEMU_ADMIN_TOKEN")
+	fs.Var(secretFlag{&c.AdminToken}, "admin-token",
+		"with --enforce-auth, the bearer token every /_cloudemu endpoint except health requires "+
+			"(Authorization: Bearer <token>). Default: a random token generated at startup and printed once, or written "+
+			"to --admin-token-file. Ignored without --enforce-auth, where the control plane stays open (env CLOUDEMU_ADMIN_TOKEN). "+
+			"Under --enforce-auth there is no unsigned way to create the first IAM access key, so seed it with this token: "+
+			`POST /_cloudemu/seed {"iamUsers":[{"name":"admin","accessKeys":[{"accessKeyId":"AKIA...","secretAccessKey":"..."}]}]}`)
+	fs.StringVar(&c.AdminTokenFile, "admin-token-file", getenv("CLOUDEMU_ADMIN_TOKEN_FILE"),
+		"with --enforce-auth, write the admin token to this file (mode 0600) instead of printing it; "+
+			"cloudemu start sets it so the snapshot, net and cost commands find the token (env CLOUDEMU_ADMIN_TOKEN_FILE)")
 }
 
 // registerVCRFlags registers the record/replay (VCR) flag group. --vcr selects
@@ -208,11 +250,19 @@ func registerEnforceAuthFlag(fs *flag.FlagSet, c *CommonConfig) {
 	fs.BoolVar(&c.EnforceAuth, "enforce-auth", false,
 		"require authentication on each request; off by default. AWS: verify the SigV4 signature against a registered IAM access "+
 			"key or an STS temporary (ASIA) credential (403 on failure). ASIA credentials are verified against the secret STS "+
-			"recorded when it issued them, and unknown or expired sessions are rejected. IAM authorization is then enforced for "+
-			"long-term (AKIA) keys on JSON-RPC services only, and applies only to principals that have IAM policies. Azure: "+
+			"recorded when it issued them, and unknown or expired sessions are rejected. Each request is then authorized against "+
+			"the caller's IAM policies: per operation for query and JSON-RPC services, S3 (on bucket and object ARNs) and Lambda "+
+			"(on function, version, alias, layer and event source mapping ARNs, with the function's resource-based policy for "+
+			"Invoke and function URLs; a function URL with AuthType NONE is public only when that policy grants public access), "+
+			"Route 53 (on hosted zone, health check and change ARNs) and CloudFront (on distribution ARNs), "+
+			"and at service level for the other REST services (only a service-wide grant such as eks:* passes, so fine-grained "+
+			"policies on them are denied until per-operation checks land). Root and users with no policies are unrestricted. "+
+			"AssumeRole is decided by the role's trust policy for the signed caller, and signed AssumeRoleWithWebIdentity/SAML "+
+			"calls are refused. Azure: "+
 			"validate each request's Bearer token claims (accepted audience, expiry, a principal claim) and reject "+
 			"missing/malformed/expired/wrong-audience tokens with 401. The token signature is not verified (no Azure AD signing "+
-			"key), so this is claims-based authentication only; RBAC authorization is a follow-up")
+			"key), so this is claims-based authentication only; RBAC authorization is a follow-up. The /_cloudemu admin endpoints "+
+			"(all but health) then require the --admin-token bearer token")
 }
 
 // Validate checks the cross-field constraints both entrypoints share: --tls-cert
@@ -265,7 +315,10 @@ func (c *CommonConfig) ToServerkitConfig(providers []string) serverkit.Config {
 		K8sNodes:               c.K8sNodes,
 		TickInterval:           c.TickInterval,
 		AzureSubscription:      c.AzureSubscription,
+		OCIKMSEndpointDomain:   c.OCIKMSEndpointDomain,
 		Admin:                  c.Admin,
+		AdminToken:             c.AdminToken,
+		AdminTokenFile:         c.AdminTokenFile,
 		Persist:                c.Persist,
 		StateFile:              c.StateFile,
 		PersistMetadataOnly:    c.PersistMetadataOnly,
@@ -289,6 +342,7 @@ func (c *CommonConfig) ToServerkitConfig(providers []string) serverkit.Config {
 			config.WithAccountID(c.AccountID),
 			config.WithRegion(c.Region),
 			config.WithProjectID(c.ProjectID),
+			config.WithTenancyOCID(c.OCITenancy),
 		},
 		Out: os.Stdout,
 	}

@@ -354,30 +354,32 @@ func (h *Handler) routeLaunchTemplates(w http.ResponseWriter, r *http.Request, a
 	return true
 }
 
-//nolint:dupl // action-dispatch switch; every route* function has this shape by design
+// autoScalingRoutes maps each Auto Scaling action the EC2 handler serves to
+// its implementation. It is the one list of those actions: routeAutoScaling
+// dispatches from it and IAMChecks uses it to authorize them as autoscaling:
+// rather than ec2:.
+//
+//nolint:gochecknoglobals // static dispatch table
+var autoScalingRoutes = map[string]func(*Handler, http.ResponseWriter, *http.Request){
+	"CreateAutoScalingGroup":    (*Handler).createAutoScalingGroup,
+	"UpdateAutoScalingGroup":    (*Handler).updateAutoScalingGroup,
+	"DeleteAutoScalingGroup":    (*Handler).deleteAutoScalingGroup,
+	"DescribeAutoScalingGroups": (*Handler).describeAutoScalingGroups,
+	"SetDesiredCapacity":        (*Handler).setDesiredCapacity,
+	"PutScalingPolicy":          (*Handler).putScalingPolicy,
+	"DeletePolicy":              (*Handler).deleteScalingPolicy,
+	"ExecutePolicy":             (*Handler).executePolicy,
+}
+
+// routeAutoScaling dispatches the Auto Scaling actions. Returns true if the
+// action was handled.
 func (h *Handler) routeAutoScaling(w http.ResponseWriter, r *http.Request, action string) bool {
-	switch action {
-	case "CreateAutoScalingGroup":
-		h.createAutoScalingGroup(w, r)
-	case "UpdateAutoScalingGroup":
-		h.updateAutoScalingGroup(w, r)
-	case "DeleteAutoScalingGroup":
-		h.deleteAutoScalingGroup(w, r)
-	case "DescribeAutoScalingGroups":
-		h.describeAutoScalingGroups(w, r)
-	case "SetDesiredCapacity":
-		h.setDesiredCapacity(w, r)
-	case "PutScalingPolicy":
-		h.putScalingPolicy(w, r)
-	case "DeletePolicy":
-		h.deleteScalingPolicy(w, r)
-	case "ExecutePolicy":
-		h.executePolicy(w, r)
-	default:
-		return false
+	route, ok := autoScalingRoutes[action]
+	if ok {
+		route(h, w, r)
 	}
 
-	return true
+	return ok
 }
 
 // routeInstances dispatches instance-lifecycle actions backed by the compute
@@ -684,3 +686,7 @@ func writeErrWithNotFound(w http.ResponseWriter, err error, notFoundCode, precon
 			"InternalError", msg)
 	}
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "ec2" }

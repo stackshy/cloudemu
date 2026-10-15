@@ -110,7 +110,21 @@ func (m *Mock) now() string {
 
 // resName builds a Vertex resource name under the given location and collection.
 func (m *Mock) resName(location, collection, id string) string {
-	return "projects/" + m.opts.ProjectID + "/locations/" + orLocation(location) + "/" + collection + "/" + id
+	return m.projectResName("", location, collection, id)
+}
+
+// projectResName builds a Vertex resource name under project, falling back to
+// the mock's configured project when project is empty.
+func (m *Mock) projectResName(project, location, collection, id string) string {
+	return "projects/" + m.projectOr(project) + "/locations/" + orLocation(location) + "/" + collection + "/" + id
+}
+
+func (m *Mock) projectOr(project string) string {
+	if project == "" {
+		return m.opts.ProjectID
+	}
+
+	return project
 }
 
 func orLocation(loc string) string {
@@ -133,9 +147,11 @@ func (*Mock) newEtag() string {
 }
 
 // doneOp records and returns an already-complete operation for the given
-// location, carrying the response resource name in its metadata.
+// location, carrying the response resource name in its metadata. The operation
+// lives under the resource's own project so a caller polls it at its path.
 func (m *Mock) doneOp(location, resourceName string) *driver.Operation {
-	name := "projects/" + m.opts.ProjectID + "/locations/" + orLocation(location) + "/operations/" + m.newID()
+	name := "projects/" + m.projectOr(projectOf(resourceName)) + "/locations/" + orLocation(location) +
+		"/operations/" + m.newID()
 	op := &driver.Operation{
 		Name:     name,
 		Done:     true,

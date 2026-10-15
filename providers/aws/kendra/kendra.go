@@ -1,30 +1,44 @@
-// Package kendra provides an in-memory mock of the Amazon Kendra control plane:
-// indexes and the data source connectors that belong to them, plus resource
-// tags. An index (and a data source) is created immediately in the ACTIVE state
-// with a stable id, status and createdAt/updatedAt; running a search engine and
-// indexing documents are out of scope. Real Kendra index creation takes ~30
-// minutes, so returning ACTIVE synchronously is what lets an IaC waiter complete
-// instead of hanging.
+// Package kendra provides an in-memory mock of Amazon Kendra: indexes, data
+// sources and their child resources (FAQs, thesauri, experiences, block lists,
+// access controls, featured results, principal mappings, query suggestions), plus
+// a small data plane. Documents added with BatchPutDocument are held in the index
+// and searched by Query and Retrieve with a term-matching engine (no semantic
+// ranking). An index and a data source are created immediately in the ACTIVE state
+// with a stable id, status and createdAt/updatedAt (CREATING first under async
+// settling); real Kendra index creation takes ~30 minutes, so returning ACTIVE
+// synchronously is what lets an IaC waiter complete instead of hanging.
 package kendra
 
 import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/kendra/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
-// Compile-time check that Mock implements driver.Kendra.
-var _ driver.Kendra = (*Mock)(nil)
-
-// defaultMaxResults caps a page when the caller requests none. Kendra documents
-// a default of 10 for its list operations.
-const defaultMaxResults = 10
+// Compile-time checks that Mock implements driver.Kendra and every optional
+// capability the wire handler serves.
+var (
+	_ driver.Kendra            = (*Mock)(nil)
+	_ driver.Documents         = (*Mock)(nil)
+	_ driver.SyncJobs          = (*Mock)(nil)
+	_ driver.Faqs              = (*Mock)(nil)
+	_ driver.Thesauri          = (*Mock)(nil)
+	_ driver.BlockLists        = (*Mock)(nil)
+	_ driver.Experiences       = (*Mock)(nil)
+	_ driver.AccessControls    = (*Mock)(nil)
+	_ driver.FeaturedResults   = (*Mock)(nil)
+	_ driver.PrincipalMappings = (*Mock)(nil)
+	_ driver.QuerySuggestions  = (*Mock)(nil)
+)
 
 // indexIDBytes is the number of random bytes rendered into a 36-character UUID
 // index id, matching Kendra's fixed 36-character index id contract.
@@ -35,29 +49,88 @@ const indexIDBytes = 16
 // [a-zA-Z0-9][a-zA-Z0-9_-]* pattern and 1-100 length).
 const dataSourceIDBytes = 16
 
-// Mock is an in-memory implementation of the Amazon Kendra control plane.
+// Mock is an in-memory implementation of the Amazon Kendra control plane and the
+// document, search and index-child capabilities built on it.
 type Mock struct {
+	// mu serializes every mutation (create, update, delete, ingest) so a child is
+	// never inserted under a parent that a concurrent cascade delete is removing,
+	// and the client-token lookup and the insert of a create are one step.
+	mu sync.Mutex
+
+	syncSeq uint64 // guarded by mu
+
 	indexes     *memstore.Store[driver.Index]
 	dataSources *memstore.Store[driver.DataSource]
-	opts        *config.Options
+
+	documents      *memstore.Store[storedDocument]
+	syncJobs       *memstore.Store[syncJobRecord]
+	faqs           *memstore.Store[driver.Faq]
+	thesauri       *memstore.Store[driver.Thesaurus]
+	blockLists     *memstore.Store[driver.BlockList]
+	experiences    *memstore.Store[driver.Experience]
+	accessControls *memstore.Store[driver.AccessControlConfiguration]
+	featured       *memstore.Store[driver.FeaturedResultsSet]
+	mappings       *memstore.Store[principalMapping]
+	suggestions    *memstore.Store[driver.SuggestionsConfig]
+	queryLog       queryLog
+
+	// settling overlays a transient CREATING/UPDATING status on resources when
+	// the server runs with async settling; it is inactive (final status at once)
+	// by default so IaC waiters complete.
+	settling *settle.Set
+
+	// tokenKey signs pagination tokens so they are opaque and unforgeable.
+	tokenKey []byte
+
+	monitoring mondriver.Monitoring
+	opts       *config.Options
 }
 
 // New creates a new Kendra mock with the given options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		indexes:     memstore.New[driver.Index](),
-		dataSources: memstore.New[driver.DataSource](),
-		opts:        opts,
+		indexes:        memstore.New[driver.Index](),
+		dataSources:    memstore.New[driver.DataSource](),
+		documents:      memstore.New[storedDocument](),
+		syncJobs:       memstore.New[syncJobRecord](),
+		faqs:           memstore.New[driver.Faq](),
+		thesauri:       memstore.New[driver.Thesaurus](),
+		blockLists:     memstore.New[driver.BlockList](),
+		experiences:    memstore.New[driver.Experience](),
+		accessControls: memstore.New[driver.AccessControlConfiguration](),
+		featured:       memstore.New[driver.FeaturedResultsSet](),
+		mappings:       memstore.New[principalMapping](),
+		suggestions:    memstore.New[driver.SuggestionsConfig](),
+		settling:       settle.NewSet(),
+		tokenKey:       newTokenKey(),
+		opts:           opts,
 	}
+}
+
+// settleWindow is how long a resource reports a transient status under async
+// settling.
+const settleWindow = settle.DefaultClusterSettle
+
+// settleStatus overlays the transient status of a resource (keyed by its store
+// key) onto its stored final status.
+func (m *Mock) settleStatus(key, final string) string {
+	return m.settling.State(key, m.opts.Clock.Now(), final)
+}
+
+// beginSettle starts a transient status window for a resource; it is a no-op
+// unless async settling is enabled.
+func (m *Mock) beginSettle(key, transient string) {
+	m.settling.Begin(key, transient, m.opts.Clock.Now(), m.opts.SettleDuration(settleWindow))
 }
 
 func (m *Mock) now() time.Time {
 	return m.opts.Clock.Now().UTC()
 }
 
-// newIndexID mints a fresh 36-character UUID index id. Minted once at create and
+// newUUID mints a fresh 36-character UUID, used for index ids and the ids of
+// the index child resources. Minted once at create and
 // stored, so the arn Terraform derives from it is stable across reads.
-func newIndexID() string {
+func newUUID() string {
 	b := make([]byte, indexIDBytes)
 	if _, err := rand.Read(b); err != nil {
 		// crypto/rand.Read never fails on supported platforms; fall back to a
@@ -131,40 +204,13 @@ func copyDataSource(d *driver.DataSource) driver.DataSource {
 	return out
 }
 
-// paginate returns the offset window and next token for a slice of length n,
-// honoring an opaque numeric offset token.
-func paginate(n int, page driver.Page) (start, end int, next string) {
-	start = decodeToken(page.NextToken)
-	if start > n {
-		start = n
+// deleteWithPrefix removes every entry of a store whose key starts with prefix and
+// calls drop with each removed key (to drop its settle window).
+func deleteWithPrefix[V any](s *memstore.Store[V], prefix string, drop func(key string)) {
+	for _, k := range s.Keys() {
+		if strings.HasPrefix(k, prefix) {
+			s.Delete(k)
+			drop(k)
+		}
 	}
-
-	limit := int(page.MaxResults)
-	if limit <= 0 {
-		limit = defaultMaxResults
-	}
-
-	end = start + limit
-	if end >= n {
-		return start, n, ""
-	}
-
-	return start, end, encodeToken(end)
-}
-
-func encodeToken(offset int) string {
-	return strconv.Itoa(offset)
-}
-
-func decodeToken(token string) int {
-	if token == "" {
-		return 0
-	}
-
-	n, err := strconv.Atoi(token)
-	if err != nil || n < 0 {
-		return 0
-	}
-
-	return n
 }

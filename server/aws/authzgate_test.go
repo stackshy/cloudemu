@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,18 +16,6 @@ import (
 	cloudemu "github.com/stackshy/cloudemu/v2"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
-
-// dynamoProbe answers any DynamoDB JSON-RPC request with 200, so a test can
-// observe whether the authorization gate let the request through to dispatch.
-type dynamoProbe struct{}
-
-func (dynamoProbe) Matches(r *http.Request) bool {
-	return strings.HasPrefix(r.Header.Get("X-Amz-Target"), "DynamoDB_20120810.")
-}
-
-func (dynamoProbe) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
-	_, _ = io.WriteString(w, "ok")
-}
 
 // signedDynamoRequest builds and SigV4-signs a DynamoDB PutItem request whose
 // body targets the given table.
@@ -83,23 +70,23 @@ func TestAuthzGateResourceScoped(t *testing.T) {
 		t.Fatalf("CreateAccessKey: %v", err)
 	}
 
-	srv := New(Drivers{IAM: cloud.IAM, AccountID: "123456789012", Region: "us-east-1", EnforceAuth: true})
-	srv.Register(dynamoProbe{})
+	srv := New(Drivers{IAM: cloud.IAM, DynamoDB: cloud.DynamoDB, AccountID: "123456789012", Region: "us-east-1", EnforceAuth: true})
 
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
 	creds := aws.Credentials{AccessKeyID: ak.AccessKeyID, SecretAccessKey: ak.SecretAccessKey}
 
-	// Matching table: the resource-scoped Allow applies, so the request proceeds.
+	// Matching table: the resource-scoped Allow applies, so the request reaches
+	// DynamoDB (which answers that the table does not exist).
 	resp, err := http.DefaultClient.Do(signedDynamoRequest(t, ts.URL+"/", "allowed", creds))
 	if err != nil {
 		t.Fatalf("do allowed: %v", err)
 	}
 	resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("matching table: want 200, got %d", resp.StatusCode)
+	if resp.StatusCode == http.StatusForbidden {
+		t.Fatalf("matching table: denied")
 	}
 
 	// Non-matching table: the Allow no longer applies, so the gate denies (403).

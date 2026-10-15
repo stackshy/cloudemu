@@ -2,9 +2,12 @@ package cloudfunctions_test
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"testing"
 
 	"google.golang.org/api/cloudfunctions/v1"
+	"google.golang.org/api/googleapi"
 )
 
 // TestSDKCloudFunctionsSetGetIamPolicy exercises the invoker-policy round-trip
@@ -68,6 +71,25 @@ func TestSDKCloudFunctionsSetGetIamPolicy(t *testing.T) {
 
 	if len(got.Bindings[0].Members) != 1 || got.Bindings[0].Members[0] != "allUsers" {
 		t.Fatalf("members = %v, want [allUsers]", got.Bindings[0].Members)
+	}
+
+	// Every set mints a new etag, even with the same number of bindings, and
+	// the etag it replaced is then stale (409 ABORTED).
+	req := &cloudfunctions.SetIamPolicyRequest{Policy: &cloudfunctions.Policy{
+		Etag:     got.Etag,
+		Bindings: []*cloudfunctions.Binding{{Role: "roles/cloudfunctions.invoker", Members: []string{"user:a@b.com"}}},
+	}}
+
+	next, err := svc.Projects.Locations.Functions.SetIamPolicy(name, req).Context(ctx).Do()
+	if err != nil || next.Etag == got.Etag {
+		t.Fatalf("SetIamPolicy with etag = %+v, %v; want a new etag", next, err)
+	}
+
+	_, err = svc.Projects.Locations.Functions.SetIamPolicy(name, req).Context(ctx).Do()
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) || gerr.Code != http.StatusConflict {
+		t.Fatalf("stale etag: want 409, got %v", err)
 	}
 }
 

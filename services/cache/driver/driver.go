@@ -419,3 +419,48 @@ type AccessKeys interface {
 	// and returns both current keys.
 	RegenerateCacheKey(ctx context.Context, name, keyType string) (primary, secondary string, err error)
 }
+
+// PatchScheduleEntry is one weekly maintenance window of an Azure Cache for
+// Redis patch schedule.
+type PatchScheduleEntry struct {
+	DayOfWeek         string // Monday..Sunday, Everyday or Weekend
+	StartHourUTC      int    // 0-23
+	MaintenanceWindow string // ISO 8601 duration, PT5H when unset
+}
+
+// FirewallRule is an Azure Cache for Redis IPv4 firewall rule.
+type FirewallRule struct {
+	Name    string
+	StartIP string
+	EndIP   string
+}
+
+// RedisChildren is an OPTIONAL capability, discovered by type assertion. Azure
+// Cache for Redis keeps a patch schedule and firewall rules per cache; no other
+// cloud in this emulator models them. Every method reports NotFound when the
+// cache is missing, and the child state is removed with the cache.
+type RedisChildren interface {
+	// SetPatchSchedule replaces the cache's patch schedule. created is true
+	// when the cache had none. Invalid entries report InvalidArgument.
+	SetPatchSchedule(ctx context.Context, cache string, entries []PatchScheduleEntry) (created bool, err error)
+
+	// GetPatchSchedule returns the patch schedule, NotFound when none is set.
+	GetPatchSchedule(ctx context.Context, cache string) ([]PatchScheduleEntry, error)
+
+	// DeletePatchSchedule removes the patch schedule and reports whether one
+	// existed.
+	DeletePatchSchedule(ctx context.Context, cache string) (existed bool, err error)
+
+	// PutFirewallRule creates or replaces a rule. created is true for a new
+	// rule. A non-IPv4 address or start above end reports InvalidArgument.
+	PutFirewallRule(ctx context.Context, cache string, rule FirewallRule) (created bool, err error)
+
+	// GetFirewallRule returns a rule, NotFound when it does not exist.
+	GetFirewallRule(ctx context.Context, cache, name string) (FirewallRule, error)
+
+	// DeleteFirewallRule removes a rule and reports whether it existed.
+	DeleteFirewallRule(ctx context.Context, cache, name string) (existed bool, err error)
+
+	// ListFirewallRules returns the cache's rules sorted by name.
+	ListFirewallRules(ctx context.Context, cache string) ([]FirewallRule, error)
+}

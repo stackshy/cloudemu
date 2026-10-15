@@ -1,11 +1,14 @@
 package sts
 
 import (
-	"crypto/rand"
+	"errors"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 )
 
 // Session is one set of temporary credentials STS minted, retained so the SigV4
@@ -31,10 +34,62 @@ type SessionOwner struct {
 	// the session: the assumed role, or the user that called GetSessionToken or
 	// GetFederationToken.
 	PolicyEntity string
-	// Role marks a role session. Its role's policies are evaluated strictly: a
-	// role with no allowing policy (or no such role) is denied, with none of the
-	// no-policy bootstrap leniency a long-term user key gets.
-	Role bool
+	// Kind is the kind of credential. A role session's role policies are
+	// evaluated strictly: a role with no allowing policy (or no such role) is
+	// denied, with none of the no-policy bootstrap leniency a long-term user key
+	// gets.
+	Kind SessionKind
+}
+
+// SessionKind is the STS operation a temporary credential came from. It
+// decides which STS and IAM operations the credential may call.
+type SessionKind int
+
+const (
+	// KindNone is not a session: a long-term access key.
+	KindNone SessionKind = iota
+	// KindRole is an AssumeRole-family session.
+	KindRole
+	// KindSessionToken is a GetSessionToken session.
+	KindSessionToken
+	// KindFederation is a GetFederationToken session.
+	KindFederation
+)
+
+// Forbids reports whether a credential of kind k may never perform action,
+// whatever its policies say. From the IAM User Guide, "Compare AWS STS
+// credentials":
+//
+//   - AssumeRole-family credentials cannot call GetFederationToken or
+//     GetSessionToken.
+//   - GetSessionToken credentials cannot call IAM (cloudemu does not verify
+//     MFA, so the MFA exception never applies) and cannot call STS except
+//     AssumeRole and GetCallerIdentity.
+//   - GetFederationToken credentials cannot call IAM, nor STS except
+//     GetCallerIdentity.
+//
+// sts:TagSession and sts:SetSourceIdentity are permissions of an AssumeRole
+// call, not operations, so they follow AssumeRole.
+func (k SessionKind) Forbids(action string) bool {
+	svc, op, _ := strings.Cut(action, ":")
+
+	isOp := func(names ...string) bool {
+		return slices.ContainsFunc(names, func(n string) bool { return strings.EqualFold(op, n) })
+	}
+
+	iam, sts := strings.EqualFold(svc, "iam"), strings.EqualFold(svc, "sts")
+
+	switch k {
+	case KindRole:
+		return sts && isOp(actionGetSessionToken, actionGetFederationToken)
+	case KindSessionToken:
+		return iam || sts && !isOp(actionAssumeRole, actionGetCallerIdentity, "TagSession", "SetSourceIdentity")
+	case KindFederation:
+		return iam || sts && !isOp(actionGetCallerIdentity)
+	case KindNone:
+	}
+
+	return false
 }
 
 // SessionStore records the temporary credentials STS issues so their signatures
@@ -58,56 +113,60 @@ func NewSessionStore(clock config.Clock) *SessionStore {
 	return &SessionStore{clock: clock, sessions: make(map[string]Session)}
 }
 
-// tempKeyRandomLen is the number of random uppercase-alphanumeric characters
-// after the ASIA prefix (real STS access key ids are 20 chars: 4 + 16).
-const tempKeyRandomLen = 16
-
-// secretLen is the length of a generated temporary secret (real STS secrets are
-// 40-character base64-ish strings; any high-entropy value works here).
-const secretLen = 40
-
-// sessionTokenRandomLen is the random suffix length of a generated session token.
-const sessionTokenRandomLen = 32
-
 // Mint generates a unique temporary credential set valid for dur acting as
-// owner, records it, and returns it. Each call yields a distinct access key id and a fresh
-// high-entropy secret, so a caller that does not hold the issued secret cannot
-// forge a valid signature. It fails closed on a crypto/rand read error rather
-// than issuing a predictable, forgeable credential.
+// owner, records it, and returns it. Each call yields a distinct ASIA access
+// key id, a fresh 40-character secret and a long session token, all from
+// crypto/rand, so a caller that does not hold the issued secret cannot forge a
+// valid signature. It fails closed on a crypto/rand error rather than issuing a
+// predictable credential.
 func (s *SessionStore) Mint(dur time.Duration, owner SessionOwner) (Session, error) {
 	if dur <= 0 {
 		dur = sessionDuration
 	}
 
-	akid, err := randUpperAlnum(tempKeyRandomLen)
+	secret, err := idgen.SecretAccessKey()
 	if err != nil {
 		return Session{}, err
 	}
 
-	secret, err := randUpperAlnum(secretLen)
-	if err != nil {
-		return Session{}, err
-	}
-
-	token, err := randUpperAlnum(sessionTokenRandomLen)
+	token, err := idgen.SessionToken()
 	if err != nil {
 		return Session{}, err
 	}
 
 	sess := Session{
-		AccessKeyID:     tempCredentialPrefix + akid,
 		SecretAccessKey: secret,
-		SessionToken:    "cloudemu-session-" + token,
+		SessionToken:    token,
 		Expiration:      s.clock.Now().UTC().Add(dur),
 		Owner:           owner,
 	}
 
 	s.mu.Lock()
-	s.sessions[sess.AccessKeyID] = sess
-	s.mu.Unlock()
+	defer s.mu.Unlock()
 
-	return sess, nil
+	for range maxKeyIDAttempts {
+		id, err := idgen.TempAccessKeyID()
+		if err != nil {
+			return Session{}, err
+		}
+
+		if _, taken := s.sessions[id]; !taken {
+			sess.AccessKeyID = id
+			s.sessions[id] = sess
+
+			return sess, nil
+		}
+	}
+
+	return Session{}, errKeyIDExhausted
 }
+
+// maxKeyIDAttempts bounds the retries when a freshly drawn access key id is
+// already taken. With 80 random bits a single collision is already unlikely.
+const maxKeyIDAttempts = 5
+
+// errKeyIDExhausted reports that every attempt drew an id already in use.
+var errKeyIDExhausted = errors.New("could not generate a unique temporary access key id")
 
 // Lookup returns the recorded session for id, if any. Expiry is not filtered
 // here: the gate compares the returned Expiration against its own clock so it
@@ -119,29 +178,4 @@ func (s *SessionStore) Lookup(id string) (Session, bool) {
 	sess, ok := s.sessions[id]
 
 	return sess, ok
-}
-
-// tempCredentialPrefix marks STS-issued temporary access key ids (real STS uses
-// the same "ASIA" prefix).
-const tempCredentialPrefix = "ASIA"
-
-// alnumUpper is the alphabet for generated key ids/secrets (AWS access key ids
-// are uppercase alphanumeric).
-const alnumUpper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-
-// randUpperAlnum returns n cryptographically-random uppercase-alphanumeric
-// characters drawn from crypto/rand. On the practically-impossible read error it
-// returns the error rather than a predictable fallback, so a caller never issues
-// a forgeable credential built from low-entropy bytes.
-func randUpperAlnum(n int) (string, error) {
-	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-
-	for i := range buf {
-		buf[i] = alnumUpper[int(buf[i])%len(alnumUpper)]
-	}
-
-	return string(buf), nil
 }

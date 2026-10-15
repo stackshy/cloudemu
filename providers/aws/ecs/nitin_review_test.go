@@ -119,7 +119,7 @@ func TestRunTaskRejectsDeletedCluster(t *testing.T) {
 }
 
 // A deleted cluster's name can be recreated (the INACTIVE tombstone is not a
-// permanent AlreadyExists), while an ACTIVE cluster of the same name still is.
+// permanent conflict), while re-creating an ACTIVE cluster is idempotent.
 func TestCreateClusterReusesDeletedName(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
@@ -127,10 +127,10 @@ func TestCreateClusterReusesDeletedName(t *testing.T) {
 	_, err := m.CreateCluster(ctx, driver.CreateClusterInput{Name: "prod"})
 	require.NoError(t, err)
 
-	// Re-creating an ACTIVE cluster of the same name is a conflict.
-	_, err = m.CreateCluster(ctx, driver.CreateClusterInput{Name: "prod"})
-	require.Error(t, err)
-	assert.True(t, errors.IsAlreadyExists(err), "got %v", err)
+	// Re-creating an ACTIVE cluster of the same name returns it (idempotent).
+	again, err := m.CreateCluster(ctx, driver.CreateClusterInput{Name: "prod"})
+	require.NoError(t, err)
+	assert.Equal(t, statusActive, again.Status)
 
 	// After delete, the name is free to reuse and the new cluster is ACTIVE.
 	_, err = m.DeleteCluster(ctx, "prod")

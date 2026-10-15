@@ -32,9 +32,14 @@ func (m *Mock) CreateServiceLinkedRole(
 			"service-linked role %q already exists (supply a different CustomSuffix)", name)
 	}
 
+	id, err := uniqueID("AROA")
+	if err != nil {
+		return nil, err
+	}
+
 	r := &roleData{
 		Name:                name,
-		ID:                  idgen.GenerateID("AROA"),
+		ID:                  id,
 		ARN:                 idgen.AWSARN("iam", "", m.opts.AccountID, "role/aws-service-role/"+awsServiceName+"/"+name),
 		Path:                "/aws-service-role/" + awsServiceName + "/",
 		Description:         description,

@@ -1,6 +1,10 @@
 package driver
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+	"strconv"
+)
 
 // Job status values shared across the asynchronous job resources.
 const (
@@ -19,6 +23,16 @@ const (
 	SecondaryTraining    = "Training"
 	SecondaryUploading   = "Uploading"
 	SecondaryCompleted   = "Completed"
+)
+
+// Secondary-status values of the other job families and the status messages of a
+// training job's history.
+const (
+	SecondaryStopping        = "Stopping"
+	SecondaryStopped         = "Stopped"
+	SecondaryAnalyzingData   = "AnalyzingData"
+	SecondaryFeatureEngineer = "FeatureEngineering"
+	SecondaryModelTuning     = "ModelTuning"
 )
 
 // HPO and labeling carry their own initial states.
@@ -62,6 +76,9 @@ type TrainingJobConfig struct {
 	Resources         ResourceConfig
 	MaxRuntimeSeconds int
 	Tags              []Tag
+	// Echo carries the remaining members of the create request; Describe
+	// returns them verbatim, as SageMaker echoes a job's inputs back.
+	Echo map[string]json.RawMessage
 }
 
 // SecondaryStatusTransition is one entry in a training job's status history.
@@ -92,6 +109,13 @@ type TrainingJob struct {
 	TrainingEndTime      string
 	LastModifiedTime     string
 	Tags                 []Tag
+	// Echo is the create request echoed back by Describe.
+	Echo map[string]json.RawMessage
+	// StopRequested is when StopXJob was accepted for an in-progress job.
+	StopRequested string
+	// TrainingTimeSeconds and BillableTimeSeconds are set once the job ends.
+	TrainingTimeSeconds int
+	BillableTimeSeconds int
 }
 
 // ProcessingJobConfig describes a processing job to create.
@@ -103,6 +127,9 @@ type ProcessingJobConfig struct {
 	OutputS3URI string
 	Resources   ResourceConfig
 	Tags        []Tag
+	// Echo carries the remaining members of the create request; Describe
+	// returns them verbatim, as SageMaker echoes a job's inputs back.
+	Echo map[string]json.RawMessage
 }
 
 // ProcessingJob describes a processing job.
@@ -120,6 +147,10 @@ type ProcessingJob struct {
 	ProcessingEndTime string
 	LastModifiedTime  string
 	Tags              []Tag
+	// Echo is the create request echoed back by Describe.
+	Echo map[string]json.RawMessage
+	// StopRequested is when StopXJob was accepted for an in-progress job.
+	StopRequested string
 }
 
 // TransformJobConfig describes a batch transform job to create.
@@ -131,6 +162,9 @@ type TransformJobConfig struct {
 	InstanceType  string
 	InstanceCount int
 	Tags          []Tag
+	// Echo carries the remaining members of the create request; Describe
+	// returns them verbatim, as SageMaker echoes a job's inputs back.
+	Echo map[string]json.RawMessage
 }
 
 // TransformJob describes a batch transform job.
@@ -148,6 +182,10 @@ type TransformJob struct {
 	TransformEndTime string
 	LastModifiedTime string
 	Tags             []Tag
+	// Echo is the create request echoed back by Describe.
+	Echo map[string]json.RawMessage
+	// StopRequested is when StopXJob was accepted for an in-progress job.
+	StopRequested string
 }
 
 // HyperParameterTuningJobConfig describes a tuning job to create.
@@ -160,6 +198,9 @@ type HyperParameterTuningJobConfig struct {
 	ObjectiveType      string // Maximize, Minimize
 	TrainingDefinition TrainingJobConfig
 	Tags               []Tag
+	// Echo carries the remaining members of the create request; Describe
+	// returns them verbatim, as SageMaker echoes a job's inputs back.
+	Echo map[string]json.RawMessage
 }
 
 // HyperParameterTuningJob describes a tuning job.
@@ -179,6 +220,10 @@ type HyperParameterTuningJob struct {
 	HPOJobEndTime     string
 	LastModifiedTime  string
 	Tags              []Tag
+	// Echo is the create request echoed back by Describe.
+	Echo map[string]json.RawMessage
+	// StopRequested is when StopXJob was accepted for an in-progress job.
+	StopRequested string
 }
 
 // AutoMLJobConfig describes an Autopilot (AutoML V2) job to create.
@@ -190,6 +235,9 @@ type AutoMLJobConfig struct {
 	ProblemType  string // BinaryClassification, MulticlassClassification, Regression
 	TargetColumn string
 	Tags         []Tag
+	// Echo carries the remaining members of the create request; Describe
+	// returns them verbatim, as SageMaker echoes a job's inputs back.
+	Echo map[string]json.RawMessage
 }
 
 // AutoMLJob describes an AutoML job.
@@ -209,6 +257,10 @@ type AutoMLJob struct {
 	AutoMLJobEndTime  string
 	LastModifiedTime  string
 	Tags              []Tag
+	// Echo is the create request echoed back by Describe.
+	Echo map[string]json.RawMessage
+	// StopRequested is when StopXJob was accepted for an in-progress job.
+	StopRequested string
 }
 
 // LabelingJobConfig describes a Ground Truth labeling job to create.
@@ -220,6 +272,9 @@ type LabelingJobConfig struct {
 	LabelAttribute string
 	WorkteamARN    string
 	Tags           []Tag
+	// Echo carries the remaining members of the create request; Describe
+	// returns them verbatim, as SageMaker echoes a job's inputs back.
+	Echo map[string]json.RawMessage
 }
 
 // LabelingJob describes a Ground Truth labeling job.
@@ -238,6 +293,10 @@ type LabelingJob struct {
 	LabelingEndTime  string
 	LastModifiedTime string
 	Tags             []Tag
+	// Echo is the create request echoed back by Describe.
+	Echo map[string]json.RawMessage
+	// StopRequested is when StopXJob was accepted for an in-progress job.
+	StopRequested string
 }
 
 // CompilationJobConfig describes a Neo compilation job to create.
@@ -249,6 +308,9 @@ type CompilationJobConfig struct {
 	TargetDevice string
 	Framework    string
 	Tags         []Tag
+	// Echo carries the remaining members of the create request; Describe
+	// returns them verbatim, as SageMaker echoes a job's inputs back.
+	Echo map[string]json.RawMessage
 }
 
 // CompilationJob describes a Neo compilation job.
@@ -266,6 +328,10 @@ type CompilationJob struct {
 	CompilationEndTime string
 	LastModifiedTime   string
 	Tags               []Tag
+	// Echo is the create request echoed back by Describe.
+	Echo map[string]json.RawMessage
+	// StopRequested is when StopXJob was accepted for an in-progress job.
+	StopRequested string
 }
 
 // jobsAPI covers every asynchronous SageMaker job resource. Create transitions
@@ -274,36 +340,57 @@ type CompilationJob struct {
 type jobsAPI interface {
 	CreateTrainingJob(ctx context.Context, cfg TrainingJobConfig) (*TrainingJob, error)
 	DescribeTrainingJob(ctx context.Context, name string) (*TrainingJob, error)
-	ListTrainingJobs(ctx context.Context) ([]TrainingJob, error)
+	ListTrainingJobs(ctx context.Context, opts ListOptions) (ListPage[TrainingJob], error)
 	StopTrainingJob(ctx context.Context, name string) error
 
 	CreateProcessingJob(ctx context.Context, cfg ProcessingJobConfig) (*ProcessingJob, error)
 	DescribeProcessingJob(ctx context.Context, name string) (*ProcessingJob, error)
-	ListProcessingJobs(ctx context.Context) ([]ProcessingJob, error)
+	ListProcessingJobs(ctx context.Context, opts ListOptions) (ListPage[ProcessingJob], error)
 	StopProcessingJob(ctx context.Context, name string) error
 
 	CreateTransformJob(ctx context.Context, cfg TransformJobConfig) (*TransformJob, error)
 	DescribeTransformJob(ctx context.Context, name string) (*TransformJob, error)
-	ListTransformJobs(ctx context.Context) ([]TransformJob, error)
+	ListTransformJobs(ctx context.Context, opts ListOptions) (ListPage[TransformJob], error)
 	StopTransformJob(ctx context.Context, name string) error
 
 	CreateHyperParameterTuningJob(ctx context.Context, cfg HyperParameterTuningJobConfig) (*HyperParameterTuningJob, error)
 	DescribeHyperParameterTuningJob(ctx context.Context, name string) (*HyperParameterTuningJob, error)
-	ListHyperParameterTuningJobs(ctx context.Context) ([]HyperParameterTuningJob, error)
+	ListHyperParameterTuningJobs(ctx context.Context, opts ListOptions) (ListPage[HyperParameterTuningJob], error)
 	StopHyperParameterTuningJob(ctx context.Context, name string) error
 
 	CreateAutoMLJobV2(ctx context.Context, cfg AutoMLJobConfig) (*AutoMLJob, error)
 	DescribeAutoMLJobV2(ctx context.Context, name string) (*AutoMLJob, error)
-	ListAutoMLJobs(ctx context.Context) ([]AutoMLJob, error)
+	ListAutoMLJobs(ctx context.Context, opts ListOptions) (ListPage[AutoMLJob], error)
 	StopAutoMLJob(ctx context.Context, name string) error
 
 	CreateLabelingJob(ctx context.Context, cfg LabelingJobConfig) (*LabelingJob, error)
 	DescribeLabelingJob(ctx context.Context, name string) (*LabelingJob, error)
-	ListLabelingJobs(ctx context.Context) ([]LabelingJob, error)
+	ListLabelingJobs(ctx context.Context, opts ListOptions) (ListPage[LabelingJob], error)
 	StopLabelingJob(ctx context.Context, name string) error
 
 	CreateCompilationJob(ctx context.Context, cfg CompilationJobConfig) (*CompilationJob, error)
 	DescribeCompilationJob(ctx context.Context, name string) (*CompilationJob, error)
-	ListCompilationJobs(ctx context.Context) ([]CompilationJob, error)
+	ListCompilationJobs(ctx context.Context, opts ListOptions) (ListPage[CompilationJob], error)
 	StopCompilationJob(ctx context.Context, name string) error
 }
+
+// SecondaryTransition builds a transition entry (end time left for the caller).
+func SecondaryTransition(status, start, message string) SecondaryStatusTransition {
+	return SecondaryStatusTransition{Status: status, StartTime: start, StatusMessage: message}
+}
+
+// JobReferenceCode is the stable, deterministic reference code of a labeling
+// job (the real service generates one per job).
+func JobReferenceCode(name string) string {
+	sum := 0
+	for _, c := range name {
+		sum = (sum*referenceCodeBase + int(c)) % referenceCodeMod
+	}
+
+	return "ref-" + strconv.Itoa(sum)
+}
+
+const (
+	referenceCodeBase = 31
+	referenceCodeMod  = 1000000007
+)

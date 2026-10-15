@@ -49,12 +49,12 @@ func esmLastModified(ts string) float64 {
 
 // serveEventSourceMappings dispatches the /2015-03-31/event-source-mappings
 // paths: collection (POST create, GET list) and per-UUID (GET/DELETE).
-func (h *Handler) serveEventSourceMappings(w http.ResponseWriter, r *http.Request, uuid string) {
+func (h *Handler) serveEventSourceMappings(w http.ResponseWriter, r *http.Request, op opID, uuid string) {
 	if uuid == "" {
-		switch r.Method {
-		case http.MethodPost:
+		switch op {
+		case opCreateEventSourceMapping:
 			h.createEventSourceMapping(w, r)
-		case http.MethodGet:
+		case opListEventSourceMappings:
 			h.listEventSourceMappings(w, r)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
@@ -63,8 +63,8 @@ func (h *Handler) serveEventSourceMappings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	switch r.Method {
-	case http.MethodGet:
+	switch op {
+	case opGetEventSourceMapping:
 		info, err := h.fn.GetEventSourceMapping(r.Context(), uuid)
 		if err != nil {
 			writeErr(w, err)
@@ -72,9 +72,9 @@ func (h *Handler) serveEventSourceMappings(w http.ResponseWriter, r *http.Reques
 		}
 
 		writeJSON(w, http.StatusOK, toESMJSON(info))
-	case http.MethodPut:
+	case opUpdateEventSourceMapping:
 		h.updateEventSourceMapping(w, r, uuid)
-	case http.MethodDelete:
+	case opDeleteEventSourceMapping:
 		// AWS returns 202 with the full EventSourceMappingConfiguration whose
 		// State is "Deleting" (the mapping enters a Deleting state and is not
 		// fully removed for several seconds). Snapshot it before deleting so the

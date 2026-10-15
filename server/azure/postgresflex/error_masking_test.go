@@ -71,7 +71,8 @@ func TestPutServerCreateErrorNotMasked(t *testing.T) {
 }
 
 // The idempotent-PUT upsert path is unchanged: an AlreadyExists create still
-// falls through to ModifyInstance and returns 200.
+// falls through to ModifyInstance and returns 202, the only success code
+// the 2025-08-01 API lists for a server PUT.
 func TestPutServerAlreadyExistsUpserts(t *testing.T) {
 	db := newFailingDB(cerrors.New(cerrors.AlreadyExists, "server already exists"))
 	if _, err := db.Mock.CreateInstance(context.Background(), rdsdriver.InstanceConfig{ID: "srv1"}); err != nil {
@@ -88,8 +89,8 @@ func TestPutServerAlreadyExistsUpserts(t *testing.T) {
 
 	h.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body: %s", rec.Code, rec.Body.String())
 	}
 
 	if !db.modifyCalled {

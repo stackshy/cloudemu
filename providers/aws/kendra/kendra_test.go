@@ -3,6 +3,8 @@ package kendra_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -10,7 +12,10 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/kendra/driver"
 )
 
-const roleArn = "arn:aws:iam::123456789012:role/kendra"
+const (
+	roleArn        = "arn:aws:iam::123456789012:role/kendra"
+	missingIndexID = "00000000-0000-4000-8000-000000000000"
+)
 
 func newMock() *kendra.Mock {
 	return kendra.New(config.NewOptions())
@@ -100,7 +105,7 @@ func TestCreateIndexDefaultsEnterprise(t *testing.T) {
 func TestDescribeIndexMissing404(t *testing.T) {
 	m := newMock()
 
-	_, err := m.DescribeIndex(context.Background(), "missing")
+	_, err := m.DescribeIndex(context.Background(), missingIndexID)
 	requireError(t, err)
 
 	var apiErr *driver.APIError
@@ -131,7 +136,7 @@ func TestDataSourceRequiresIndex(t *testing.T) {
 	m := newMock()
 
 	_, err := m.CreateDataSource(context.Background(), &driver.CreateDataSourceInput{
-		IndexID: "missing", Name: "ds", Type: driver.DataSourceTypeCustom,
+		IndexID: missingIndexID, Name: "ds", Type: driver.DataSourceTypeCustom,
 	})
 	requireError(t, err)
 
@@ -199,9 +204,9 @@ func TestDeleteIndexCascadesDataSources(t *testing.T) {
 	_, err = m.DescribeDataSource(ctx, idx.ID, ds.ID)
 	requireError(t, err)
 
-	list, _, err := m.ListDataSources(ctx, idx.ID, driver.Page{})
-	requireNoError(t, err)
-	assertEqual(t, len(list), 0)
+	// Listing under the deleted index is a ResourceNotFoundException.
+	_, _, err = m.ListDataSources(ctx, idx.ID, driver.Page{})
+	requireException(t, err, driver.ExResourceNotFound)
 }
 
 func TestTagLifecycleIndexAndDataSource(t *testing.T) {
@@ -298,4 +303,193 @@ func isAPIError(err error, target **driver.APIError) bool {
 	}
 
 	return false
+}
+
+func requireException(t *testing.T, err error, want string) {
+	t.Helper()
+
+	var apiErr *driver.APIError
+	if !isAPIError(err, &apiErr) || apiErr.Exception != want {
+		t.Fatalf("expected %s, got %v", want, err)
+	}
+}
+
+func TestCreateIndexClientTokenIsIdempotent(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	in := &driver.CreateIndexInput{ClientToken: "tok-1", Name: "docs", RoleArn: roleArn}
+
+	first, err := m.CreateIndex(ctx, in)
+	requireNoError(t, err)
+
+	second, err := m.CreateIndex(ctx, in)
+	requireNoError(t, err)
+	assertEqual(t, second.ID, first.ID)
+
+	list, _, err := m.ListIndices(ctx, driver.Page{})
+	requireNoError(t, err)
+	assertEqual(t, len(list), 1)
+
+	other, err := m.CreateIndex(ctx, &driver.CreateIndexInput{ClientToken: "tok-2", Name: "docs", RoleArn: roleArn})
+	requireNoError(t, err)
+
+	if other.ID == first.ID {
+		t.Fatalf("a different token must create a new index")
+	}
+}
+
+func TestCreateIndexEmptyClientTokenNeverDeduplicates(t *testing.T) {
+	m := newMock()
+	a := createIndex(t, m)
+	b := createIndex(t, m)
+
+	if a.ID == b.ID {
+		t.Fatalf("creates without a token must each create an index")
+	}
+}
+
+func TestCreateIndexClientTokenAfterDeleteCreatesNew(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	in := &driver.CreateIndexInput{ClientToken: "tok", Name: "docs", RoleArn: roleArn}
+
+	first, err := m.CreateIndex(ctx, in)
+	requireNoError(t, err)
+	requireNoError(t, m.DeleteIndex(ctx, first.ID))
+
+	second, err := m.CreateIndex(ctx, in)
+	requireNoError(t, err)
+
+	if second.ID == first.ID {
+		t.Fatalf("a deleted index must not be returned for a reused token")
+	}
+}
+
+func TestCreateIndexClientTokenConcurrent(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	const workers = 50
+
+	ids := make([]string, workers)
+
+	var wg sync.WaitGroup
+
+	for i := range workers {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			idx, err := m.CreateIndex(ctx, &driver.CreateIndexInput{ClientToken: "same", Name: "docs", RoleArn: roleArn})
+			if err == nil {
+				ids[i] = idx.ID
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	for _, id := range ids {
+		assertEqual(t, id, ids[0])
+	}
+
+	list, _, err := m.ListIndices(ctx, driver.Page{})
+	requireNoError(t, err)
+	assertEqual(t, len(list), 1)
+}
+
+func TestCreateDataSourceClientTokenIsIdempotentPerIndex(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	idxA := createIndex(t, m)
+	idxB := createIndex(t, m)
+	in := func(index string) *driver.CreateDataSourceInput {
+		return &driver.CreateDataSourceInput{ClientToken: "tok", IndexID: index, Name: "ds", Type: driver.DataSourceTypeCustom}
+	}
+
+	first, err := m.CreateDataSource(ctx, in(idxA.ID))
+	requireNoError(t, err)
+
+	again, err := m.CreateDataSource(ctx, in(idxA.ID))
+	requireNoError(t, err)
+	assertEqual(t, again.ID, first.ID)
+
+	onOther, err := m.CreateDataSource(ctx, in(idxB.ID))
+	requireNoError(t, err)
+
+	if onOther.ID == first.ID {
+		t.Fatalf("the same token under a different index must create its own data source")
+	}
+
+	list, _, err := m.ListDataSources(ctx, idxA.ID, driver.Page{})
+	requireNoError(t, err)
+	assertEqual(t, len(list), 1)
+}
+
+func TestClientTokenSurvivesSnapshotRestore(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	in := &driver.CreateIndexInput{ClientToken: "tok", Name: "docs", RoleArn: roleArn}
+
+	first, err := m.CreateIndex(ctx, in)
+	requireNoError(t, err)
+
+	data, err := m.Snapshot(ctx, false)
+	requireNoError(t, err)
+
+	restored := newMock()
+	requireNoError(t, restored.Restore(ctx, data))
+
+	again, err := restored.CreateIndex(ctx, in)
+	requireNoError(t, err)
+	assertEqual(t, again.ID, first.ID)
+}
+
+func TestListDataSourcesMissingIndex(t *testing.T) {
+	m := newMock()
+
+	_, _, err := m.ListDataSources(context.Background(), "00000000-0000-4000-8000-000000000000", driver.Page{})
+	requireException(t, err, driver.ExResourceNotFound)
+}
+
+func TestRoleArnValidation(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	idx := createIndex(t, m)
+
+	for _, bad := range []string{"not-an-arn", "arn:aws", "arn:aws:iam::123:/leading-slash", "role/kendra"} {
+		_, err := m.CreateIndex(ctx, &driver.CreateIndexInput{Name: "docs", RoleArn: bad})
+		requireException(t, err, driver.ExValidation)
+
+		_, err = m.CreateDataSource(ctx, &driver.CreateDataSourceInput{
+			IndexID: idx.ID, Name: "ds", Type: "S3", RoleArn: bad, Configuration: []byte(`{}`),
+		})
+		requireException(t, err, driver.ExValidation)
+
+		err = m.UpdateIndex(ctx, &driver.UpdateIndexInput{ID: idx.ID, RoleArn: &bad})
+		requireException(t, err, driver.ExValidation)
+	}
+
+	tooLong := "arn:aws:iam::123456789012:role/" + strings.Repeat("a", 1300)
+	_, err := m.CreateIndex(ctx, &driver.CreateIndexInput{Name: "docs", RoleArn: tooLong})
+	requireException(t, err, driver.ExValidation)
+
+	good := "arn:aws:iam::123456789012:role/other"
+	requireNoError(t, m.UpdateIndex(ctx, &driver.UpdateIndexInput{ID: idx.ID, RoleArn: &good}))
+}
+
+func TestUpdateDataSourceRoleArnValidation(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	idx := createIndex(t, m)
+
+	ds, err := m.CreateDataSource(ctx, &driver.CreateDataSourceInput{
+		IndexID: idx.ID, Name: "ds", Type: "S3", RoleArn: roleArn, Configuration: []byte(`{}`),
+	})
+	requireNoError(t, err)
+
+	bad := "nope"
+	err = m.UpdateDataSource(ctx, &driver.UpdateDataSourceInput{ID: ds.ID, IndexID: idx.ID, RoleArn: &bad})
+	requireException(t, err, driver.ExValidation)
 }

@@ -47,15 +47,27 @@ func (m *Mock) applyAssocCounts(s *driver.ServiceNetwork) {
 func (m *Mock) CreateServiceNetwork(
 	_ context.Context, in *driver.CreateServiceNetworkInput,
 ) (*driver.ServiceNetwork, error) {
+	if err := validateAuthType(in.AuthType); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.serviceNetworkNameTaken(in.Name) {
+		return nil, conflictf("service network %q already exists", in.Name)
+	}
 
 	authType := in.AuthType
 	if authType == "" {
 		authType = authTypeNone
 	}
 
-	id := idgen.GenerateLongID("sn-")
+	id, err := idgen.GenerateLongID("sn-")
+	if err != nil {
+		return nil, err
+	}
+
 	sn := &driver.ServiceNetwork{
 		ID:                   id,
 		ARN:                  m.arn("servicenetwork/" + id),
@@ -93,6 +105,10 @@ func (m *Mock) GetServiceNetwork(_ context.Context, identifier string) (*driver.
 func (m *Mock) UpdateServiceNetwork(
 	_ context.Context, identifier, authType string,
 ) (*driver.ServiceNetwork, error) {
+	if err := validateAuthType(authType); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

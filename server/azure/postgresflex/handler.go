@@ -16,8 +16,8 @@
 //	POST   .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}/stop       : Stop
 //	POST   .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}/restart    : Restart
 //
-// Mutating ops return 200 OK with the resource body inline so the SDK's LRO
-// poller terminates on the first response.
+// Mutating ops return 202 Accepted with an Azure-AsyncOperation header (see
+// writeAccepted); the status endpoint reports Succeeded on the first poll.
 package postgresflex
 
 import (
@@ -68,7 +68,8 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	return rp.Provider == providerName && rp.ResourceType == resourceFlexibleServers
+	return rp.Provider == providerName &&
+		(rp.ResourceType == resourceFlexibleServers || isAsyncStatusPath(&rp))
 }
 
 // ServeHTTP routes the request based on path shape and method.
@@ -76,6 +77,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "malformed ARM path")
+		return
+	}
+
+	if isAsyncStatusPath(&rp) {
+		serveAsyncStatus(w, r, &rp)
 		return
 	}
 

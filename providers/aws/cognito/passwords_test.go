@@ -1,42 +1,14 @@
 package cognito
 
 import (
+	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
-	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stackshy/cloudemu/v2/services/cognito/driver"
 )
-
-const maxTestIterations = 1_000_000
-
-// verifyPassword reports whether pw matches a stored salt and hash, in either
-// the PBKDF2 format or the legacy bare SHA-256 format older snapshots carry.
-func verifyPassword(salt, stored, pw string) bool {
-	if stored == "" {
-		return false
-	}
-
-	rest, ok := strings.CutPrefix(stored, pbkdf2Prefix)
-	if !ok {
-		sum := sha256.Sum256([]byte(salt + pw))
-
-		return subtle.ConstantTimeCompare([]byte(hex.EncodeToString(sum[:])), []byte(stored)) == 1
-	}
-
-	iterText, _, ok := strings.Cut(rest, "$")
-	if !ok {
-		return false
-	}
-
-	iter, err := strconv.Atoi(iterText)
-	if err != nil || iter <= 0 || iter > maxTestIterations {
-		return false
-	}
-
-	return subtle.ConstantTimeCompare([]byte(pbkdf2Hash(salt, pw, iter)), []byte(stored)) == 1
-}
 
 func TestVerifyPassword(t *testing.T) {
 	const pw = "Corr3ct!horse"
@@ -57,8 +29,7 @@ func TestVerifyPassword(t *testing.T) {
 		{"pbkdf2 match", salt, hash, pw, true},
 		{"pbkdf2 wrong password", salt, hash, "Wr0ng!horse", false},
 		{"pbkdf2 wrong salt", legacySalt, hash, pw, false},
-		{"legacy sha256 match", legacySalt, legacyHash, pw, true},
-		{"legacy sha256 wrong password", legacySalt, legacyHash, "Wr0ng!horse", false},
+		{"unprefixed sha256 hash rejected", legacySalt, legacyHash, pw, false},
 		{"empty stored hash", salt, "", pw, false},
 		{"malformed pbkdf2 hash", salt, pbkdf2Prefix + "abc", pw, false},
 		{"non-numeric iterations", salt, pbkdf2Prefix + "x$00", pw, false},
@@ -90,4 +61,29 @@ func TestHashPasswordFormat(t *testing.T) {
 	if again == hash {
 		t.Fatal("two hashes of the same password share a salt")
 	}
+}
+
+// TestSignInRejectsUnprefixedHash checks that a user record holding a bare
+// SHA-256 hash (written only by unreleased development builds) cannot sign in,
+// and that AdminSetUserPassword recovers the account.
+func TestSignInRejectsUnprefixedHash(t *testing.T) {
+	m, _ := newClockMock(t)
+	ctx := context.Background()
+	pool := mustCreateEmailPool(t, m)
+	client := mustCreateClient(t, m, pool.ID, false, passwordFlows...)
+	confirmedUser(t, m, pool.ID, client.ClientID, "alice")
+
+	key := userKey(pool.ID, "alice")
+	rec, _ := m.users.Get(key)
+	sum := sha256.Sum256([]byte(rec.PasswordSalt + testPassword))
+	rec.PasswordHash = hex.EncodeToString(sum[:])
+	m.users.Set(key, rec)
+
+	_, err := m.InitiateAuth(ctx, passwordAuth(client.ClientID, "alice", testPassword))
+	assertException(t, err, driver.ExNotAuthorized, "Incorrect username or password.")
+
+	requireNoError(t, m.AdminSetUserPassword(ctx, pool.ID, "alice", testPassword, true), "AdminSetUserPassword")
+
+	_, err = m.InitiateAuth(ctx, passwordAuth(client.ClientID, "alice", testPassword))
+	requireNoError(t, err, "InitiateAuth after reset")
 }

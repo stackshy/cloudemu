@@ -49,6 +49,13 @@ func (h *Handler) createNamespace(w http.ResponseWriter, r *http.Request, ep ehP
 	h.mu.Lock()
 
 	ns, existed := h.namespaces.Get(nsKey(ep.namespace))
+	if existed && (!strings.EqualFold(ns.Subscription, ep.sub) || !strings.EqualFold(ns.ResourceGroup, ep.rg)) {
+		h.mu.Unlock()
+		writeNamespaceNameTaken(w, ep.namespace)
+
+		return
+	}
+
 	if !existed {
 		ns = &namespaceState{
 			Name:          ep.namespace,
@@ -294,6 +301,12 @@ func toNamespaceResource(ns *namespaceState) namespaceResource {
 	props.MetricID = ns.Subscription + ":" + ns.Name
 	props.CreatedAt = &created
 	props.UpdatedAt = &updated
+
+	// Real Azure always reports maximumThroughputUnits, 0 when auto-inflate is
+	// off; azurerm dereferences it on every namespace read.
+	if props.MaximumThroughputUnits == nil {
+		props.MaximumThroughputUnits = new(int32)
+	}
 
 	return namespaceResource{
 		ID:       azurearm.BuildResourceID(ns.Subscription, ns.ResourceGroup, providerName, resourceType, ns.Name),

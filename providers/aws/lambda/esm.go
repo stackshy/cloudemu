@@ -2,19 +2,12 @@ package lambda
 
 import (
 	"context"
-	"fmt"
 	"strings"
-	"sync/atomic"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
-
-// mappingCounter is used to generate unique UUIDs for event source mappings.
-//
-//nolint:gochecknoglobals // atomic counter needed for unique mapping UUID generation across instances.
-var mappingCounter uint64
 
 // CreateEventSourceMapping creates a new event source mapping.
 func (m *Mock) CreateEventSourceMapping(
@@ -45,8 +38,9 @@ func (m *Mock) CreateEventSourceMapping(
 		state = stateEnabled
 	}
 
-	seq := atomic.AddUint64(&mappingCounter, 1)
-	uuid := fmt.Sprintf("esm-%d", seq)
+	// A random UUID, as real Lambda returns, so an id can never repeat, even
+	// after a snapshot restore brings back mappings created earlier.
+	uuid := idgen.UUID()
 
 	info := &driver.EventSourceMappingInfo{
 		UUID:             uuid,

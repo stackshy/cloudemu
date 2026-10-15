@@ -145,6 +145,25 @@ func stampSubscriptionDefaults(obj map[string]any) {
 	}
 
 	obj["retryPolicy"] = retryPolicyWithDefaults(obj["retryPolicy"])
+	obj["filter"] = filterWithDefaults(obj["filter"])
+}
+
+// filterWithDefaults returns the filter to report. Event Grid always reports
+// subjectBeginsWith and subjectEndsWith, as "" when unset; azurerm reads an
+// absent pair as a configured subject_filter block and plans a diff.
+func filterWithDefaults(existing any) map[string]any {
+	f, _ := existing.(map[string]any)
+	if f == nil {
+		f = map[string]any{}
+	}
+
+	for _, k := range []string{"subjectBeginsWith", "subjectEndsWith"} {
+		if _, ok := f[k]; !ok {
+			f[k] = ""
+		}
+	}
+
+	return f
 }
 
 // retryPolicyWithDefaults returns the retry policy to report: the caller's, with

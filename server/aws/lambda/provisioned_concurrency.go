@@ -114,32 +114,32 @@ func provisionedConcurrencyFunctionName(path string) (string, bool) {
 // sub-resource: PUT=Put, DELETE=Delete, GET=Get (or List when the List=ALL
 // query parameter is present, matching real Lambda's routing on this shared
 // path).
-func (h *Handler) serveProvisionedConcurrency(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) serveProvisionedConcurrency(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) {
 	mgr, ok := h.fn.(provisionedConcurrencyManager)
 	if !ok {
 		writeError(w, http.StatusNotImplemented, "InvalidRequestException", "provisioned concurrency not supported")
 		return
 	}
 
-	name, ok := provisionedConcurrencyFunctionName(r.URL.Path)
-	if !ok {
+	name := a.name
+	if name == "" {
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported Lambda path")
 		return
 	}
 
-	if r.Method == http.MethodGet && r.URL.Query().Get(provisionedConcurrencyListParam) == provisionedConcurrencyListParamAll {
+	if op == opListProvisionedConcurrency {
 		listProvisionedConcurrencyConfigs(w, r, mgr, name)
 		return
 	}
 
-	qualifier := r.URL.Query().Get("Qualifier")
+	qualifier := a.qualifier
 
-	switch r.Method {
-	case http.MethodPut:
+	switch op {
+	case opPutProvisionedConcurrency:
 		putProvisionedConcurrency(w, r, mgr, name, qualifier)
-	case http.MethodGet:
+	case opGetProvisionedConcurrency:
 		h.getProvisionedConcurrency(w, r, mgr, name, qualifier)
-	case http.MethodDelete:
+	case opDeleteProvisionedConcurrency:
 		h.deleteProvisionedConcurrency(w, r, mgr, name, qualifier)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")

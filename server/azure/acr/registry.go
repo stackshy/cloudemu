@@ -130,8 +130,9 @@ func (h *ARMHandler) createOrUpdateRegistry(w http.ResponseWriter, r *http.Reque
 	}
 
 	cfg := crdriver.AzureRegistryConfig{
-		Location: body.Location,
-		Tags:     fromPtrTags(body.Tags),
+		Subscription: rp.Subscription,
+		Location:     body.Location,
+		Tags:         fromPtrTags(body.Tags),
 	}
 
 	if body.SKU != nil {

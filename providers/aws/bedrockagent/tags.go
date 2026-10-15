@@ -33,6 +33,10 @@ const arnFields = 6
 // aliasARNIDs is the id count in an agent-alias ARN: agent-alias/AGENT/ALIAS.
 const aliasARNIDs = 2
 
+// flowAliasARNIDs is the segment count after "flow/" in a flow-alias ARN:
+// FLOW/alias/ALIAS.
+const flowAliasARNIDs = 3
+
 // taggableARNPattern is the TaggableResourcesArn pattern the service model
 // publishes, quoted verbatim in the validation message.
 const taggableARNPattern = `.*(^arn:aws:bedrock:[a-zA-Z0-9-]+:/d{12}:(agent|agent-alias|knowledge-base|flow|prompt)/[A-Z0-9]{10}` +
@@ -182,8 +186,8 @@ func (m *Mock) checkExists(resourceARN string) error {
 	return nil
 }
 
-// arnExists reports whether a taggable ARN names a stored resource. Flow
-// aliases and prompt versions are not modeled yet, so their ARNs never resolve.
+// arnExists reports whether a taggable ARN names a stored resource, including
+// flow aliases ("flow/F/alias/A") and prompt versions ("prompt/P:1").
 func (m *Mock) arnExists(resourceARN string) bool {
 	parts := strings.SplitN(resourceARN, ":", arnFields)
 	if len(parts) != arnFields {
@@ -203,12 +207,46 @@ func (m *Mock) arnExists(resourceARN string) bool {
 	case "knowledge-base":
 		stored = storedARN(m.knowledge, ids, 1, func(kb *driver.KnowledgeBase) string { return kb.ARN })
 	case "flow":
-		stored = storedARN(m.flows, ids, 1, func(f *driver.Flow) string { return f.ARN })
+		stored = m.flowARN(ids)
 	case "prompt":
-		stored = storedARN(m.prompts, ids, 1, func(p *driver.Prompt) string { return p.ARN })
+		stored = m.promptARN(ids)
 	}
 
 	return stored != "" && stored == resourceARN
+}
+
+// flowARN resolves "F" or "F/alias/A" to the stored flow or flow alias ARN.
+func (m *Mock) flowARN(ids []string) string {
+	if len(ids) == flowAliasARNIDs && ids[1] == "alias" {
+		return storedARN(m.flowAliases, ids, flowAliasARNIDs, func(a *driver.FlowAlias) string {
+			if a.FlowID != ids[0] {
+				return ""
+			}
+
+			return a.ARN
+		})
+	}
+
+	return storedARN(m.flows, ids, 1, func(f *driver.Flow) string { return f.ARN })
+}
+
+// promptARN resolves "P" or "P:N" to the stored prompt or prompt version ARN.
+func (m *Mock) promptARN(ids []string) string {
+	if len(ids) != 1 {
+		return ""
+	}
+
+	id, version, versioned := strings.Cut(ids[0], ":")
+	if !versioned {
+		return storedARN(m.prompts, ids, 1, func(p *driver.Prompt) string { return p.ARN })
+	}
+
+	p, ok := m.promptVersions.Get(versionKey(id, version))
+	if !ok {
+		return ""
+	}
+
+	return p.ARN
 }
 
 // storedARN returns the ARN of the resource whose id is the last of want ids,

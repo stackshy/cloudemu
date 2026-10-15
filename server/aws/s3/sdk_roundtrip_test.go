@@ -3,15 +3,18 @@ package s3_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 
 	"github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -552,5 +555,36 @@ func TestSDKObjectAclNoDataLoss(t *testing.T) {
 	}
 	if acl.Owner == nil || len(acl.Grants) == 0 {
 		t.Fatalf("GetObjectAcl returned no owner/grants: %+v", acl)
+	}
+}
+
+// requireAPIError asserts err is an S3 error with the given HTTP status and code.
+func requireAPIError(t *testing.T, err error, status int, code string) {
+	t.Helper()
+
+	var re *awshttp.ResponseError
+	if !errors.As(err, &re) {
+		t.Fatalf("err = %v (%T), want an HTTP response error", err, err)
+	}
+
+	if re.HTTPStatusCode() != status {
+		t.Fatalf("status = %d, want %d (err %v)", re.HTTPStatusCode(), status, err)
+	}
+
+	var ae smithy.APIError
+	if !errors.As(err, &ae) || ae.ErrorCode() != code {
+		t.Fatalf("error code = %v, want %s", err, code)
+	}
+}
+
+// requireNoObject asserts bucket/key does not exist.
+func requireNoObject(t *testing.T, client *awss3.Client, bucket, key string) {
+	t.Helper()
+
+	_, err := client.HeadObject(context.Background(), &awss3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+
+	var re *awshttp.ResponseError
+	if !errors.As(err, &re) || re.HTTPStatusCode() != 404 {
+		t.Fatalf("HeadObject(%s/%s) = %v, want 404", bucket, key, err)
 	}
 }

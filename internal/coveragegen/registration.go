@@ -91,36 +91,80 @@ func registeredServices(root, prov string) (map[string]bool, error) {
 	return out, nil
 }
 
-// usedDriversFields returns the field names referenced as `<param>.Field`
-// anywhere in New's body, where <param> is New's by-value Drivers parameter.
-// A field only declared on Drivers but never read in New backs no handler.
+// usedDriversFields returns the field names referenced as `<param>.Field` in
+// the server factory (see factoryFuncs), where <param> is each function's
+// by-value Drivers parameter. A field only declared on Drivers but never read
+// backs no handler.
 func usedDriversFields(file *ast.File) map[string]bool {
 	out := map[string]bool{}
 
-	fn := findFunc(file, "New")
-	if fn == nil || fn.Body == nil {
-		return out
-	}
+	for _, fn := range factoryFuncs(file) {
+		param := driversParamName(fn)
 
-	param := driversParamName(fn)
-	if param == "" {
-		return out
-	}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok {
+				if id, isIdent := sel.X.(*ast.Ident); isIdent && id.Name == param {
+					out[sel.Sel.Name] = true
+				}
+			}
 
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok {
 			return true
-		}
-
-		if id, isIdent := sel.X.(*ast.Ident); isIdent && id.Name == param {
-			out[sel.Sel.Name] = true
-		}
-
-		return true
-	})
+		})
+	}
 
 	return out
+}
+
+// factoryFuncs returns the functions that build a provider's wire server: New,
+// plus any top-level function of the same file New hands its Drivers to (for
+// example `newServer(d)`), followed transitively. Each has a body and a
+// Drivers parameter.
+func factoryFuncs(file *ast.File) []*ast.FuncDecl {
+	var out []*ast.FuncDecl
+
+	seen := map[string]bool{}
+
+	var visit func(fn *ast.FuncDecl)
+
+	visit = func(fn *ast.FuncDecl) {
+		if fn == nil || fn.Body == nil || seen[fn.Name.Name] {
+			return
+		}
+
+		seen[fn.Name.Name] = true
+
+		param := driversParamName(fn)
+		if param == "" {
+			return
+		}
+
+		out = append(out, fn)
+
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if callee, isIdent := call.Fun.(*ast.Ident); isIdent && passesIdent(call, param) {
+					visit(findFunc(file, callee.Name))
+				}
+			}
+
+			return true
+		})
+	}
+
+	visit(findFunc(file, "New"))
+
+	return out
+}
+
+// passesIdent reports whether call passes the identifier name as an argument.
+func passesIdent(call *ast.CallExpr, name string) bool {
+	for _, arg := range call.Args {
+		if id, ok := arg.(*ast.Ident); ok && id.Name == name {
+			return true
+		}
+	}
+
+	return false
 }
 
 // findFunc returns the top-level, non-method function declaration named

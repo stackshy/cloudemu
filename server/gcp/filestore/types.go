@@ -121,6 +121,7 @@ type listInstancesResponse struct {
 type operationJSON struct {
 	Name     string          `json:"name"`
 	Done     bool            `json:"done"`
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 	Response json.RawMessage `json:"response,omitempty"`
 }
 

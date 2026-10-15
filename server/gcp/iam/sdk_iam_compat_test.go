@@ -427,6 +427,20 @@ func TestSDKGCPIAMSetIamPolicyEtagConcurrency(t *testing.T) {
 	if apiErr.Code != 409 {
 		t.Fatalf("stale-etag: got HTTP %d, want 409", apiErr.Code)
 	}
+
+	// A write with no etag overwrites blindly, even over a stored policy (T4-14).
+	blind, err := svc.Projects.ServiceAccounts.SetIamPolicy(resource, &iamv1.SetIamPolicyRequest{
+		Policy: &iamv1.Policy{
+			Bindings: []*iamv1.Binding{{Role: "roles/editor", Members: []string{"user:d@x.com"}}},
+		},
+	}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("blind SetIamPolicy: %v", err)
+	}
+
+	if blind.Etag == second.Etag || len(blind.Bindings) != 1 || blind.Bindings[0].Role != "roles/editor" {
+		t.Fatalf("blind set = %+v, want d's editor binding under a new etag", blind)
+	}
 }
 
 // TestSDKGCPIAMListPagination guards the LOW finding: List honors

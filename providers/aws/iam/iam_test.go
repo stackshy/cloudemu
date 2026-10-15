@@ -441,7 +441,7 @@ func TestWildcardMatch(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := wildcardMatch(tc.pattern, tc.value)
+			result := globMatch(tc.pattern, tc.value)
 			assertEqual(t, tc.expect, result)
 		})
 	}

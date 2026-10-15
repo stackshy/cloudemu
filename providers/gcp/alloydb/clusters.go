@@ -247,7 +247,7 @@ func (m *Mock) CreateClusterSnapshot(
 
 	snap := rdsdriver.ClusterSnapshot{
 		ID:            cfg.ID,
-		ARN:           m.backupName(cfg.ID),
+		ARN:           m.backupName(m.clusterLocation(cfg.ClusterID), cfg.ID),
 		ClusterID:     cfg.ClusterID,
 		Engine:        cluster.Engine,
 		EngineVersion: cluster.EngineVersion,

@@ -32,6 +32,15 @@ func (m *Mock) CreateDeployment(
 		if err := validateStageName(in.StageName); err != nil {
 			return nil, err
 		}
+
+		if err := validateStageVariables(in.Variables); err != nil {
+			return nil, err
+		}
+
+		// The variables are merged into an existing stage's, which may push it over the limit.
+		if st, ok := ad.stages[in.StageName]; ok && mergedVariableCount(st.Variables, in.Variables) > maxStageVariables {
+			return nil, cerrors.New(cerrors.InvalidArgument, msgStageVariableLimits)
+		}
 	}
 
 	dep := &driver.Deployment{
@@ -198,6 +207,10 @@ func (m *Mock) CreateStage(_ context.Context, restAPIID string, in driver.Create
 		return nil, cerrors.New(cerrors.InvalidArgument, "deploymentId is required")
 	}
 
+	if err := validateStageVariables(in.Variables); err != nil {
+		return nil, err
+	}
+
 	ad, err := m.getAPI(restAPIID)
 	if err != nil {
 		return nil, err
@@ -221,7 +234,8 @@ func (m *Mock) CreateStage(_ context.Context, restAPIID string, in driver.Create
 	st := &driver.Stage{
 		StageName: in.StageName, RestAPIID: restAPIID, DeploymentID: in.DeploymentID,
 		Description: in.Description, CreatedDate: m.now(), Variables: copyStrMap(in.Variables),
-		DocumentationVersion: in.DocumentationVersion,
+		DocumentationVersion: in.DocumentationVersion, Tags: copyStrMap(in.Tags),
+		TracingEnabled: in.TracingEnabled, CacheClusterEnabled: in.CacheClusterEnabled, CacheClusterSize: in.CacheClusterSize,
 	}
 	ad.stages[in.StageName] = st
 
@@ -295,6 +309,34 @@ func (m *Mock) GetStage(_ context.Context, restAPIID, stageName string) (*driver
 func copyStage(s *driver.Stage) driver.Stage {
 	out := *s
 	out.Variables = copyStrMap(s.Variables)
+	out.Tags = copyStrMap(s.Tags)
+
+	if s.AccessLogSettings != nil {
+		als := *s.AccessLogSettings
+		out.AccessLogSettings = &als
+	}
+
+	if s.MethodSettings != nil {
+		out.MethodSettings = make(map[string]*driver.MethodSetting, len(s.MethodSettings))
+
+		for k, v := range s.MethodSettings {
+			ms := *v
+			out.MethodSettings[k] = &ms
+		}
+	}
 
 	return out
+}
+
+// mergedVariableCount is the number of distinct variable names after adding to cur.
+func mergedVariableCount(cur, add map[string]string) int {
+	n := len(cur)
+
+	for k := range add {
+		if _, ok := cur[k]; !ok {
+			n++
+		}
+	}
+
+	return n
 }

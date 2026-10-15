@@ -23,6 +23,9 @@ import (
 
 const targetPrefix = "AmazonSQS."
 
+// iamService is the IAM service prefix of SQS actions.
+const iamService = "sqs"
+
 // errNonExistentQueue is the __type value for a missing queue: "QueueDoesNotExist"
 // is the modeled AwsJson1_0 shape name, letting the SDK deserialize the body into
 // the typed sqs types.QueueDoesNotExist exception. SQS additionally carries the
@@ -1208,3 +1211,7 @@ func writeErr(w http.ResponseWriter, err error) {
 		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalError", cerrors.Message(err))
 	}
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return iamService }

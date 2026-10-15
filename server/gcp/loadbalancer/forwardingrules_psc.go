@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
@@ -116,7 +117,7 @@ func (h *Handler) applyPSCFields(ctx context.Context, out *forwardingRuleRespons
 	}
 
 	if region, name, parsed := attachmentRef(target); parsed {
-		out.PscConnectionStatus = store.GCPPSCConnectionStatus(ctx, region, name, out.PscConnectionID)
+		out.PscConnectionStatus = store.GCPPSCConnectionStatus(attachmentCtx(ctx, target), region, name, out.PscConnectionID)
 	}
 }
 
@@ -137,7 +138,7 @@ func (h *Handler) connectPSCEndpoint(ctx context.Context, rp gcprest.ResourcePat
 		return nil
 	}
 
-	_, err := store.ConnectGCPServiceAttachment(ctx, region, name, lbdriver.GCPPSCEndpoint{
+	_, err := store.ConnectGCPServiceAttachment(attachmentCtx(ctx, req.Target), region, name, lbdriver.GCPPSCEndpoint{
 		Endpoint:        gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, resourceForwardingRules, req.Name),
 		PscConnectionID: pscConnectionID(lb),
 		ConsumerNetwork: req.Network,
@@ -154,6 +155,12 @@ func (h *Handler) disconnectPSCEndpoint(ctx context.Context, lb *lbdriver.LBInfo
 	}
 
 	if region, name, parsed := attachmentRef(lb.Tags[frTargetTag]); parsed {
-		_ = store.DisconnectGCPServiceAttachment(ctx, region, name, pscConnectionID(lb))
+		_ = store.DisconnectGCPServiceAttachment(attachmentCtx(ctx, lb.Tags[frTargetTag]), region, name, pscConnectionID(lb))
 	}
+}
+
+// attachmentCtx addresses the project that owns the service attachment ref
+// names. A PSC consumer rule may target an attachment in another project.
+func attachmentCtx(ctx context.Context, ref string) context.Context {
+	return projectctx.WithProject(ctx, projectctx.FromPath(ref))
 }

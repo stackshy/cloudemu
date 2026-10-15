@@ -40,15 +40,7 @@ func nowRFC3339() string {
 // getChange answers GetChange. Every change the mock returns is applied
 // synchronously, so any change id is reported INSYNC. This unblocks the SDK's
 // ResourceRecordSetsChanged waiter and propagation polling.
-func (h *Handler) getChange(w http.ResponseWriter, r *http.Request, id string) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-
-	id = strings.TrimPrefix(id, "/")
-	id = strings.TrimPrefix(id, "change/")
-
+func (*Handler) getChange(w http.ResponseWriter, id string) {
 	wire.WriteXML(w, http.StatusOK, getChangeResponse{
 		Xmlns: xmlns,
 		ChangeInfo: changeInfoXML{
@@ -62,11 +54,6 @@ func (h *Handler) getChange(w http.ResponseWriter, r *http.Request, id string) {
 // getHostedZoneCount answers GetHostedZoneCount with the number of zones in the
 // account.
 func (h *Handler) getHostedZoneCount(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-
 	infos, err := h.dns.ListZones(r.Context(), scope.Scope{})
 	if err != nil {
 		writeErr(w, err)
@@ -82,11 +69,6 @@ func (h *Handler) getHostedZoneCount(w http.ResponseWriter, r *http.Request) {
 // listHostedZonesByName answers ListHostedZonesByName, returning zones sorted by
 // name with an optional dnsname start position.
 func (h *Handler) listHostedZonesByName(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-
 	infos, err := h.dns.ListZones(r.Context(), scope.Scope{})
 	if err != nil {
 		writeErr(w, err)
@@ -121,11 +103,6 @@ func (h *Handler) listHostedZonesByName(w http.ResponseWriter, r *http.Request) 
 // testDNSAnswer answers TestDNSAnswer by resolving the requested record against
 // the named zone, reporting NOERROR with the record's values or NXDOMAIN.
 func (h *Handler) testDNSAnswer(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-
 	q := r.URL.Query()
 	zoneID := trimZonePrefix(q.Get("hostedzoneid"))
 	// Records are stored as FQDNs, so normalize the queried name to a trailing

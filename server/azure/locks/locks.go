@@ -27,14 +27,15 @@
 // keeps all lock semantics cohesive and unit-testable without a server.
 //
 // Locks are a pure management-plane concept with no per-provider driver
-// counterpart (there is no AWS/GCP analog), so the handler owns its own
-// in-memory store rather than delegating to a services/*/driver interface.
+// counterpart (there is no AWS/GCP analog), so there is no services/*/driver
+// interface; the lock records live in providers/azure/locks so they persist.
 package locks
 
 import (
 	"net/http"
 	"strings"
 
+	lockprov "github.com/stackshy/cloudemu/v2/providers/azure/managementlocks"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
 
@@ -56,15 +57,20 @@ const (
 	levelReadOnly     = "ReadOnly"
 )
 
-// Handler serves Microsoft.Authorization/locks ARM requests from an in-memory
-// store keyed by (scope, lockName).
+// Handler serves Microsoft.Authorization/locks ARM requests from the provider's
+// persisted lock store, keyed by (scope, lockName).
 type Handler struct {
-	store *store
+	store *lockprov.Mock
 }
 
-// New returns a locks handler with an empty in-memory store.
-func New() *Handler {
-	return &Handler{store: newStore()}
+// New returns a locks handler over store. A nil store gives the handler a
+// private one.
+func New(store *lockprov.Mock) *Handler {
+	if store == nil {
+		store = lockprov.New()
+	}
+
+	return &Handler{store: store}
 }
 
 // Enforce evaluates the management locks covering a control-plane request and
@@ -87,18 +93,18 @@ func (h *Handler) Enforce(resourcePath, method string) (lockedScope, level strin
 
 	switch strings.ToUpper(method) {
 	case http.MethodDelete:
-		if l, ok := mostSpecificBlocking(h.store.covering(path), blocksDelete); ok {
-			return l.scope, l.level, true
+		if l, ok := mostSpecificBlocking(h.store.Covering(path), blocksDelete); ok {
+			return l.Scope, l.Level, true
 		}
 
 		// A delete of a container (RG/subscription/parent resource) is blocked
 		// if any lock sits at or below the target; reuse the downward list.
-		if l, ok := mostSpecificBlocking(h.store.list(path), blocksDelete); ok {
-			return l.scope, l.level, true
+		if l, ok := mostSpecificBlocking(h.store.List(path), blocksDelete); ok {
+			return l.Scope, l.Level, true
 		}
 	case http.MethodPut, http.MethodPatch, http.MethodPost:
-		if l, ok := mostSpecificBlocking(h.store.covering(path), blocksWrite); ok {
-			return l.scope, l.level, true
+		if l, ok := mostSpecificBlocking(h.store.Covering(path), blocksWrite); ok {
+			return l.Scope, l.Level, true
 		}
 	}
 
@@ -121,14 +127,14 @@ func blocksWrite(level string) bool {
 // broken by scope then name for determinism) among those whose level satisfies
 // the predicate. The longest scope is the tightest lock, giving the most
 // faithful error message.
-func mostSpecificBlocking(candidates []storedLock, blocks func(string) bool) (storedLock, bool) {
+func mostSpecificBlocking(candidates []lockprov.Lock, blocks func(string) bool) (lockprov.Lock, bool) {
 	var (
-		best  storedLock
+		best  lockprov.Lock
 		found bool
 	)
 
 	for _, l := range candidates {
-		if !blocks(l.level) {
+		if !blocks(l.Level) {
 			continue
 		}
 
@@ -144,16 +150,16 @@ func mostSpecificBlocking(candidates []storedLock, blocks func(string) bool) (st
 // moreSpecific reports whether lock a should be preferred over b as the named
 // blocking lock: a longer scope wins; equal-length scopes break to the
 // lexicographically smaller (scope, name) so the choice is stable.
-func moreSpecific(a, b storedLock) bool {
-	if len(a.scope) != len(b.scope) {
-		return len(a.scope) > len(b.scope)
+func moreSpecific(a, b lockprov.Lock) bool {
+	if len(a.Scope) != len(b.Scope) {
+		return len(a.Scope) > len(b.Scope)
 	}
 
-	if a.scope != b.scope {
-		return a.scope < b.scope
+	if a.Scope != b.Scope {
+		return a.Scope < b.Scope
 	}
 
-	return a.name < b.name
+	return a.Name < b.Name
 }
 
 // Matches claims any path carrying the /providers/Microsoft.Authorization/locks
@@ -198,7 +204,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, scope, 
 		return
 	}
 
-	l, created := h.store.put(scope, name, req.Properties.Level, req.Properties.Notes)
+	l, created := h.store.Put(scope, name, req.Properties.Level, req.Properties.Notes)
 
 	status := http.StatusOK
 	if created {
@@ -209,7 +215,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, scope, 
 }
 
 func (h *Handler) get(w http.ResponseWriter, scope, name string) {
-	l, ok := h.store.get(scope, name)
+	l, ok := h.store.Get(scope, name)
 	if !ok {
 		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "management lock not found: "+name)
 		return
@@ -221,7 +227,7 @@ func (h *Handler) get(w http.ResponseWriter, scope, name string) {
 func (h *Handler) delete(w http.ResponseWriter, scope, name string) {
 	// ARM DELETE is idempotent: a removed lock returns 200 OK, a missing one
 	// 204 No Content. The armlocks client accepts both.
-	if h.store.delete(scope, name) {
+	if h.store.Delete(scope, name) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -235,7 +241,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, scope string) {
 		return
 	}
 
-	stored := h.store.list(scope)
+	stored := h.store.List(scope)
 
 	out := listResponse{Value: make([]lockResponse, 0, len(stored))}
 	for i := range stored {

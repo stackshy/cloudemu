@@ -77,6 +77,14 @@ type AzureStorageAccounts interface {
 	ContainerEncryptionScope(ctx context.Context, container string) (ContainerEncryptionScope, error)
 }
 
+// AzureTableACLKind is the AccountServiceSettings kind that holds a table's
+// stored access policies (a JSON []SignedIdentifier). The ARM table resource
+// and the Table data plane's Get/Set Table ACL share it, and it goes away with
+// the account.
+func AzureTableACLKind(table string) string {
+	return "tableacl/" + table
+}
+
 // AzureContainerKey returns the store key of container name in account. The
 // default account's containers keep their bare name, so every existing caller
 // is unchanged; other accounts' containers are qualified "account/name".

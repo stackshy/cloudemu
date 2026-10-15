@@ -42,7 +42,7 @@ func (h *Handler) serveBillingFeatures(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	existing, ok := h.store.get(rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	existing, ok := h.store.Get(rp.Subscription, rp.ResourceGroup, rp.ResourceName)
 	if !ok {
 		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "component "+rp.ResourceName+" not found")
 		return
@@ -60,7 +60,7 @@ func (h *Handler) serveBillingFeatures(w http.ResponseWriter, r *http.Request, r
 
 	updated := *existing
 	updated.Billing = mergeBilling(&req)
-	h.store.set(&updated)
+	h.store.Set(&updated)
 
 	azurearm.WriteJSON(w, http.StatusOK, updated.Billing)
 }

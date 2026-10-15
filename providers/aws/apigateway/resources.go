@@ -197,13 +197,7 @@ func copyResource(r *driver.Resource) driver.Resource {
 	out.Methods = make(map[string]*driver.Method, len(r.Methods))
 
 	for k, mth := range r.Methods {
-		cp := *mth
-
-		if mth.Integration != nil {
-			ig := *mth.Integration
-			cp.Integration = &ig
-		}
-
+		cp := copyMethod(mth)
 		out.Methods[k] = &cp
 	}
 

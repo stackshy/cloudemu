@@ -113,6 +113,8 @@ func (h *Handler) deleteDataset(w http.ResponseWriter, r *http.Request, rt route
 		return
 	}
 
+	h.iam.Delete(datasetResource(rt))
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

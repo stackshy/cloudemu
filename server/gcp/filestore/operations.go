@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/gcp/opmeta"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -42,7 +43,7 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, rt rout
 		return
 	}
 
-	h.writeDoneOperation(w, rt, m)
+	h.writeDoneOperation(w, rt, "create", m)
 }
 
 // getInstance handles GET .../instances/{i}: Get.
@@ -86,7 +87,7 @@ func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, rt route
 		return
 	}
 
-	h.writeDoneOperation(w, rt, m)
+	h.writeDoneOperation(w, rt, "update", m)
 }
 
 // deleteInstance handles DELETE .../instances/{i}: Delete (LRO).
@@ -97,37 +98,37 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, rt route) {
 		return
 	}
 
-	h.writeDeleteOperation(w, rt)
+	h.writeOperation(w, rt, "delete", name, opmeta.Empty())
 }
 
+// Filestore Any type URLs a done operation carries.
+const (
+	instanceTypeURL = "type.googleapis.com/google.cloud.filestore.v1.Instance"
+	opMetaTypeURL   = "type.googleapis.com/google.cloud.common.OperationMetadata"
+)
+
 // writeDoneOperation registers and returns a completed operation carrying the
-// instance as its response (Create / Update).
-func (h *Handler) writeDoneOperation(w http.ResponseWriter, rt route, m *instanceModel) {
-	raw, err := json.Marshal(toJSON(m))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusInternalServerError, "internalError", err.Error())
+// instance as a typed Any response (Create / Update).
+func (h *Handler) writeDoneOperation(w http.ResponseWriter, rt route, verb string, m *instanceModel) {
+	resp := opmeta.Response(toJSON(m), instanceTypeURL)
+	if resp == nil {
+		gcprest.WriteError(w, http.StatusInternalServerError, "internalError", "cannot render instance")
 		return
 	}
 
-	name := operationName(rt.project, rt.location, h.store.newOpID())
-	// Register the response as RawMessage: the shared LRO handler marshals a
-	// plain []byte as a base64 string, which would garble a client that polls
-	// the operation (SDK/gcloud wait loops) rather than reading the inline
-	// response.
-	h.ops.Register(name, json.RawMessage(raw))
-
-	gcprest.WriteJSON(w, http.StatusOK, operationJSON{Name: name, Done: true, Response: raw})
+	h.writeOperation(w, rt, verb, m.name, resp)
 }
 
-// writeDeleteOperation registers and returns a completed operation with an empty
-// response (Delete).
-func (h *Handler) writeDeleteOperation(w http.ResponseWriter, rt route) {
-	empty := json.RawMessage("{}")
+// writeOperation registers and writes a completed operation with the given
+// response and an OperationMetadata Any. Each call mints a fresh operation id.
+func (h *Handler) writeOperation(w http.ResponseWriter, rt route, verb, target string, resp json.RawMessage) {
+	now := h.store.clock.Now()
+	name := operationName(rt.project, rt.location, opmeta.NewID(now))
+	meta := opmeta.Metadata(opMetaTypeURL, now, target, verb)
 
-	name := operationName(rt.project, rt.location, h.store.newOpID())
-	h.ops.Register(name, empty)
+	h.ops.RegisterWithMetadata(name, resp, meta)
 
-	gcprest.WriteJSON(w, http.StatusOK, operationJSON{Name: name, Done: true, Response: empty})
+	gcprest.WriteJSON(w, http.StatusOK, operationJSON{Name: name, Done: true, Metadata: meta, Response: resp})
 }
 
 // buildModel validates and normalizes a create body into a stored model. On any

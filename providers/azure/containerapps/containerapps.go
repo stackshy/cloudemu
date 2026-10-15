@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -146,7 +147,7 @@ type ContainerApp struct {
 	EnvironmentID          string                          `json:"environmentId,omitempty"`
 	ActiveRevMode          string                          `json:"activeRevisionsMode,omitempty"`
 	Ingress                *Ingress                        `json:"ingress,omitempty"`
-	SecretNames            []string                        `json:"secretNames,omitempty"`
+	Secrets                []AppSecret                     `json:"secrets,omitempty"`
 	Template               Template                        `json:"template"`
 	Fqdn                   string                          `json:"fqdn,omitempty"`
 	LatestRevisionName     string                          `json:"latestRevisionName"`
@@ -155,6 +156,30 @@ type ContainerApp struct {
 	PrincipalID            string                          `json:"principalId,omitempty"`
 	TenantID               string                          `json:"tenantId,omitempty"`
 	UserAssignedIdentities map[string]UserAssignedIdentity `json:"userAssignedIdentities,omitempty"`
+}
+
+// AppSecret is one configuration.secrets entry: an inline Value, or a Key Vault
+// reference (KeyVaultURL read with Identity). Real Azure returns values only
+// from the listSecrets action, never on a GET.
+type AppSecret struct {
+	Name        string `json:"name"`
+	Value       string `json:"value,omitempty"`
+	Identity    string `json:"identity,omitempty"`
+	KeyVaultURL string `json:"keyVaultUrl,omitempty"`
+}
+
+// ListAppSecrets returns the container app's secrets with their values, backing
+// the containerApps/{name}/listSecrets action.
+func (m *Mock) ListAppSecrets(_ context.Context, sub, rg, name string) ([]AppSecret, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	app, ok := m.apps.Get(key(sub, rg, typeContainerApps, name))
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "container app %q not found", name)
+	}
+
+	return slices.Clone(app.Secrets), nil
 }
 
 // ARMID returns the fully-qualified ARM id for the container app.
@@ -179,7 +204,7 @@ type AppInput struct {
 	EnvironmentID   string
 	ActiveRevMode   string
 	Ingress         *Ingress
-	SecretNames     []string
+	Secrets         []AppSecret
 	Template        Template
 	IdentityType    string
 	UserAssignedIDs []string
@@ -334,7 +359,7 @@ func (m *Mock) CreateOrUpdateApp(
 	app.EnvironmentID = in.EnvironmentID
 	app.ActiveRevMode = in.ActiveRevMode
 	app.Ingress = cloneIngress(in.Ingress)
-	app.SecretNames = append([]string(nil), in.SecretNames...)
+	app.Secrets = slices.Clone(in.Secrets)
 	app.Template = cloneTemplate(in.Template)
 	applyAppDefaults(&app)
 	applyAppIdentity(&app, in.IdentityType, in.UserAssignedIDs)

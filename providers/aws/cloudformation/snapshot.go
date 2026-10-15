@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"slices"
 
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	cfn "github.com/stackshy/cloudemu/v2/services/cloudformation"
@@ -31,28 +32,42 @@ type stackSnapshot struct {
 	Retained       []retainedResource              `json:"retained,omitempty"`
 	Imports        []string                        `json:"imports,omitempty"`
 	Policies       map[string]resourcePolicy       `json:"policies,omitempty"`
+	StackPolicy    string                          `json:"stackPolicy,omitempty"`
+	Pending        *pendingOp                      `json:"pending,omitempty"`
+	Tokens         map[string]string               `json:"tokens,omitempty"`
+	OpToken        string                          `json:"opToken,omitempty"`
+	Stable         *storedPrior                    `json:"stable,omitempty"`
 }
 
 // Snapshot captures every stack's state under its own name so a restore
-// preserves stack ids, resource mappings, outputs, and events.
+// preserves stack ids, resource mappings, outputs, and events. Each stack
+// is read under its opMu, so a phase still running is captured before or
+// after it, never halfway.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := mockSnapshot{Stacks: map[string]*stackSnapshot{}}
 
 	for name, sd := range m.stacks.All() {
+		sd.opMu.Lock()
 		sd.mu.RLock()
 		snap.Stacks[name] = &stackSnapshot{
-			Stack:          sd.stack,
+			Stack:          cloneStack(&sd.stack),
 			ProvisionOrder: append([]string(nil), sd.provisionOrder...),
 			Resolved:       cloneResolved(sd.resolved),
 			DeleteIDs:      cloneStringMap(sd.deleteIDs),
 			Props:          cloneProps(sd.props),
 			RollbackFailed: append([]string(nil), sd.rollbackFailed...),
 			ChangeSets:     cloneChangeSets(sd.changeSets),
-			Retained:       append([]retainedResource(nil), sd.retained...),
+			Retained:       slices.Clone(sd.retained),
 			Imports:        append([]string(nil), sd.imports...),
 			Policies:       maps.Clone(sd.policies),
+			StackPolicy:    sd.stackPolicy,
+			Pending:        clonePending(sd.pending),
+			Tokens:         maps.Clone(sd.tokens),
+			OpToken:        sd.opToken,
+			Stable:         sd.stable,
 		}
 		sd.mu.RUnlock()
+		sd.opMu.Unlock()
 	}
 
 	return json.Marshal(snap)
@@ -76,6 +91,11 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 			retained:       ss.Retained,
 			imports:        ss.Imports,
 			policies:       ss.Policies,
+			stackPolicy:    ss.StackPolicy,
+			pending:        ss.Pending,
+			tokens:         ss.Tokens,
+			opToken:        ss.OpToken,
+			stable:         ss.Stable,
 		}
 
 		for i := range ss.ChangeSets {
@@ -94,10 +114,43 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 			sd.props = map[string]map[string]any{}
 		}
 
+		normalizeStranded(sd)
+
 		m.stacks.Set(name, sd)
 	}
 
 	return nil
+}
+
+// cloneStack copies a stack with fresh slices and maps, so a snapshot
+// encoded after the locks are released never reads state an operation
+// is filtering in place.
+func cloneStack(s *cfn.Stack) cfn.Stack {
+	out := *s
+	out.Parameters = slices.Clone(s.Parameters)
+	out.Outputs = slices.Clone(s.Outputs)
+	out.Resources = slices.Clone(s.Resources)
+	out.Events = slices.Clone(s.Events)
+	out.Capabilities = slices.Clone(s.Capabilities)
+	out.NotificationARNs = slices.Clone(s.NotificationARNs)
+	out.Tags = maps.Clone(s.Tags)
+
+	return out
+}
+
+// clonePending copies the pending phase for a snapshot, with fresh slices.
+func clonePending(op *pendingOp) *pendingOp {
+	if op == nil {
+		return nil
+	}
+
+	out := *op
+	out.Replaced = slices.Clone(op.Replaced)
+	out.Imports = slices.Clone(op.Imports)
+	out.Skip = slices.Clone(op.Skip)
+	out.Retain = slices.Clone(op.Retain)
+
+	return &out
 }
 
 // cloneChangeSets copies the stored change sets. Their slices and maps are

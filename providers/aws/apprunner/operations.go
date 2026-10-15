@@ -7,8 +7,9 @@ import (
 )
 
 // PauseService moves a RUNNING service to PAUSED and records a PAUSE_SERVICE
-// operation. Pausing a service that is not RUNNING is rejected with
-// InvalidStateException; an unknown ARN yields ResourceNotFoundException.
+// operation. Pausing a service that is not RUNNING, or is still applying another
+// operation, is rejected with InvalidStateException; an unknown ARN yields
+// ResourceNotFoundException.
 func (m *Mock) PauseService(_ context.Context, serviceArn string) (*driver.ServiceResult, error) {
 	return m.transition(serviceArn, driver.StatusRunning, driver.StatusPaused, driver.OpPauseService, "paused")
 }
@@ -24,9 +25,16 @@ func (m *Mock) ResumeService(_ context.Context, serviceArn string) (*driver.Serv
 // current status to equal from, sets it to to, records opType, and returns the
 // updated service. A mismatch is an InvalidStateException.
 func (m *Mock) transition(serviceArn, from, to, opType, verb string) (*driver.ServiceResult, error) {
+	m.refMu.Lock()
+	defer m.refMu.Unlock()
+
 	svc, ok := m.services.Get(serviceArn)
 	if !ok {
 		return nil, notFound("service %q does not exist", serviceArn)
+	}
+
+	if err := m.requireIdle(&svc); err != nil {
+		return nil, err
 	}
 
 	if svc.Status != from {
@@ -38,17 +46,27 @@ func (m *Mock) transition(serviceArn, from, to, opType, verb string) (*driver.Se
 	svc.UpdatedAt = now
 	appendOperation(&svc, opType, now)
 	m.services.Set(serviceArn, svc)
+	m.beginOperation(serviceArn)
+	m.publishServiceMetrics(&svc)
 
-	return serviceResult(&svc), nil
+	return m.serviceResult(&svc), nil
 }
 
 // StartDeployment starts a new deployment of a RUNNING service, records a
 // START_DEPLOYMENT operation and returns its id. Starting a deployment on a
-// service that is not RUNNING is rejected with InvalidStateException.
+// service that is not RUNNING, or is still applying another operation, is
+// rejected with InvalidStateException.
 func (m *Mock) StartDeployment(_ context.Context, serviceArn string) (string, error) {
+	m.refMu.Lock()
+	defer m.refMu.Unlock()
+
 	svc, ok := m.services.Get(serviceArn)
 	if !ok {
 		return "", notFound("service %q does not exist", serviceArn)
+	}
+
+	if err := m.requireIdle(&svc); err != nil {
+		return "", err
 	}
 
 	if svc.Status != driver.StatusRunning {
@@ -59,21 +77,28 @@ func (m *Mock) StartDeployment(_ context.Context, serviceArn string) (string, er
 	svc.UpdatedAt = now
 	opID := appendOperation(&svc, driver.OpStartDeployment, now)
 	m.services.Set(serviceArn, svc)
+	m.beginOperation(serviceArn)
 
 	return opID, nil
 }
 
 // ListOperations returns a deterministic page of a service's operations, newest
-// first. An unknown ARN yields ResourceNotFoundException.
+// first; the latest one is IN_PROGRESS while the service settles. An unknown ARN
+// yields ResourceNotFoundException.
 func (m *Mock) ListOperations(
 	_ context.Context, serviceArn string, page driver.Page,
 ) ([]driver.Operation, string, error) {
+	if err := validatePage(page); err != nil {
+		return nil, "", err
+	}
+
 	svc, ok := m.services.Get(serviceArn)
 	if !ok {
 		return nil, "", notFound("service %q does not exist", serviceArn)
 	}
 
-	ordered := reverseOperations(svc.Operations)
+	view := m.viewService(&svc)
+	ordered := reverseOperations(view.Operations)
 	start, end, next := paginate(len(ordered), page)
 
 	return ordered[start:end], next, nil

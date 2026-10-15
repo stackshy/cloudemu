@@ -3,15 +3,18 @@ module github.com/stackshy/cloudemu/v2
 go 1.25.0
 
 require (
+	cloud.google.com/go/alloydb v1.28.0
 	cloud.google.com/go/artifactregistry v1.20.0
 	cloud.google.com/go/backupdr v1.16.0
 	cloud.google.com/go/bigtable v1.42.0
 	cloud.google.com/go/compute v1.60.0
 	cloud.google.com/go/dataplex v1.28.0
 	cloud.google.com/go/eventarc v1.18.0
+	cloud.google.com/go/filestore v1.10.3
 	cloud.google.com/go/firestore v1.22.0
 	cloud.google.com/go/functions v1.19.7
 	cloud.google.com/go/iam v1.11.0
+	cloud.google.com/go/kms v1.31.0
 	cloud.google.com/go/longrunning v1.2.0
 	cloud.google.com/go/managedkafka v1.0.0
 	cloud.google.com/go/orchestration v1.11.10
@@ -69,6 +72,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.14
 	github.com/aws/aws-sdk-go-v2/service/acm v1.38.3
 	github.com/aws/aws-sdk-go-v2/service/amp v1.30.0
+	github.com/aws/aws-sdk-go-v2/service/apigateway v1.39.3
 	github.com/aws/aws-sdk-go-v2/service/appflow v1.59.0
 	github.com/aws/aws-sdk-go-v2/service/apprunner v1.39.14
 	github.com/aws/aws-sdk-go-v2/service/appsync v1.60.0
@@ -151,6 +155,7 @@ require (
 	github.com/databricks/databricks-sdk-go v0.144.0
 	github.com/fxamacker/cbor/v2 v2.9.1
 	github.com/google/gnostic-models v0.6.8
+	github.com/oracle/oci-go-sdk/v65 v65.106.1
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.54.0
 	golang.org/x/net v0.57.0
@@ -205,6 +210,7 @@ require (
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
+	github.com/gofrs/flock v0.10.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
@@ -229,9 +235,11 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/samber/lo v1.38.1 // indirect
 	github.com/shopspring/decimal v1.3.1 // indirect
+	github.com/sony/gobreaker v0.5.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.43.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.67.0 // indirect

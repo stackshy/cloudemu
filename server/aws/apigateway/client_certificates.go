@@ -121,7 +121,9 @@ func ownsTagsPath(p string) bool {
 	_, resource, found := strings.Cut(arn, "::")
 
 	return found && strings.Contains(arn, ":apigateway:") &&
-		(strings.HasPrefix(resource, controlPrefix+"/") || strings.HasPrefix(resource, certsPrefix+"/"))
+		(strings.HasPrefix(resource, controlPrefix+"/") || strings.HasPrefix(resource, certsPrefix+"/") ||
+			strings.HasPrefix(resource, apiKeysPrefix+"/") || strings.HasPrefix(resource, usagePlansPrefix+"/") ||
+			strings.HasPrefix(resource, domainNamesPrefix+"/") || strings.HasPrefix(resource, vpcLinksPrefix+"/"))
 }
 
 type tagsBody struct {

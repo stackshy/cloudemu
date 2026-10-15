@@ -5,7 +5,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -22,9 +21,19 @@ const stackResourceType = "AWS::CloudFormation::Stack"
 // ROLLBACK_COMPLETE, reported through the stack status and events, not as an
 // API error, mirroring CloudFormation's asynchronous create. A template that
 // needs an unacknowledged capability is refused before anything is created.
+//
+// Under AsyncSettle the stack stays CREATE_IN_PROGRESS for the settle window
+// and its events arrive one after another. A retry with the
+// ClientRequestToken of the create returns the stack it made.
 func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.Stack, error) {
+	m.settle(ctx)
+
 	if in.StackName == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "stack name is required")
+	}
+
+	if prior, err := m.retriedCreate(in); prior != nil || err != nil {
+		return prior, err
 	}
 
 	onFailure, err := createFailureMode(in)
@@ -63,11 +72,17 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 		return nil, lerr
 	}
 
+	policy, err := m.policyBody(ctx, in.StackPolicyBody, in.StackPolicyURL, msgBothPolicies)
+	if err != nil {
+		return nil, err
+	}
+
 	now := m.clock.Now()
 	sd := &stackData{
-		resolved:  map[string]cfn.ResolvedResource{},
-		deleteIDs: map[string]string{},
-		props:     map[string]map[string]any{},
+		resolved:    map[string]cfn.ResolvedResource{},
+		deleteIDs:   map[string]string{},
+		props:       map[string]map[string]any{},
+		stackPolicy: policy,
 		stack: cfn.Stack{
 			ID: stackID, Name: in.StackName, Status: cfn.StatusCreateInProgress,
 			Description: t.Description, Parameters: params, Tags: in.Tags,
@@ -79,24 +94,52 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 		},
 	}
 
+	sd.recordToken(in.ClientRequestToken, actionCreateStack)
+	m.startCursor(sd)
+
+	// Held until the create is done or pending, before the stack is visible.
+	sd.opMu.Lock()
+	defer sd.opMu.Unlock()
+
 	if !m.claimStackSlot(in.StackName, sd) {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "Stack [%s] already exists", in.StackName)
 	}
 
 	m.emitStackEvent(sd, cfn.StatusCreateInProgress, "User Initiated")
 
-	m.provision(ctx, sd, effective, resolver, onFailure)
+	m.provision(ctx, sd, effective, resolver, &pendingOp{OnFailure: onFailure})
 
 	out := sd.snapshotStack()
 
 	return &out, nil
 }
 
-// provision creates the resources of a new stack. It reports whether every
-// resource was created. On a failure onFailure decides what happens next:
-// ROLLBACK deletes what was created and leaves ROLLBACK_COMPLETE,
-// DO_NOTHING keeps it and leaves CREATE_FAILED, and DELETE deletes the stack.
-func (m *Mock) provision(ctx context.Context, sd *stackData, t *cfn.Template, res *cfn.Resolver, onFailure string) bool {
+// retriedCreate returns the stack a CreateStack with the same
+// ClientRequestToken already made, or the TokenAlreadyExistsException for a
+// token another operation of that stack used.
+func (m *Mock) retriedCreate(in *cfn.CreateStackInput) (*cfn.Stack, error) {
+	if in.ClientRequestToken == "" {
+		return nil, nil
+	}
+
+	sd, _, ok := m.findStack(in.StackName)
+	if !ok || sd.status() == cfn.StatusDeleteComplete {
+		return nil, nil
+	}
+
+	retry, err := sd.checkToken(in.ClientRequestToken, actionCreateStack)
+	if err != nil || !retry {
+		return nil, err
+	}
+
+	out := sd.snapshotStack()
+
+	return &out, nil
+}
+
+// provision creates the resources of a new stack, then ends the create in
+// op's last phase.
+func (m *Mock) provision(ctx context.Context, sd *stackData, t *cfn.Template, res *cfn.Resolver, op *pendingOp) {
 	var failures []applyFailure
 
 	if _, f := m.bindImports(sd, t, res, nil); f != nil {
@@ -105,14 +148,28 @@ func (m *Mock) provision(ctx context.Context, sd *stackData, t *cfn.Template, re
 		failures, _ = m.converge(ctx, sd, t, res, convergeOpts{stopOnFailure: true})
 	}
 
-	if len(failures) == 0 {
-		m.emitStackEvent(sd, cfn.StatusCreateComplete, "")
-		return true
+	op.Kind = opCreate
+	if len(failures) > 0 {
+		op.Failure = failureSummary(failures)
 	}
 
-	reason := failureSummary(failures)
+	m.finish(ctx, sd, op)
+}
 
-	switch onFailure {
+// completeCreate ends a create. On a failure OnFailure decides what happens
+// next: ROLLBACK deletes what was created and leaves ROLLBACK_COMPLETE,
+// DO_NOTHING keeps it and leaves CREATE_FAILED, and DELETE deletes the stack.
+func (m *Mock) completeCreate(ctx context.Context, sd *stackData, op *pendingOp) {
+	sd.finishChangeSet(op.ChangeSetID, op.Failure == "")
+
+	if op.Failure == "" {
+		m.emitStackEvent(sd, cfn.StatusCreateComplete, "")
+		return
+	}
+
+	reason := op.Failure
+
+	switch op.OnFailure {
 	case cfn.OnStackFailureDoNothing:
 		m.emitStackEvent(sd, cfn.StatusCreateFailed, reason)
 	case cfn.OnStackFailureDelete:
@@ -124,13 +181,11 @@ func (m *Mock) provision(ctx context.Context, sd *stackData, t *cfn.Template, re
 
 		if tf := m.teardown(ctx, sd, teardownOpts{rollbackOfCreate: true}); len(tf) > 0 {
 			m.emitStackEvent(sd, cfn.StatusRollbackFailed, failureSummary(tf))
-			return false
+			return
 		}
 
 		m.emitTerminalEvent(sd, cfn.StatusRollbackComplete, reason)
 	}
-
-	return false
 }
 
 // createFailureMode resolves CreateStack's OnFailure and DisableRollback to
@@ -384,20 +439,17 @@ func (m *Mock) emitResourceEvent(sd *stackData, logicalID, physicalID, rtype, st
 	sd.stack.Events = append(sd.stack.Events, m.event(sd, logicalID, physicalID, rtype, status, reason))
 }
 
-// event builds a StackEvent stamped with a fresh id and the current clock time.
+// event builds a StackEvent stamped with a fresh id, the time eventTime
+// gives and the running operation's ClientRequestToken. The caller holds
+// sd.mu. Equal timestamps, as under a FakeClock, stay ordered by append
+// position, which DescribeStackEvents preserves.
 func (m *Mock) event(sd *stackData, logicalID, physicalID, rtype, status, reason string) cfn.StackEvent {
 	return cfn.StackEvent{
 		EventID: idgen.UUID(), StackID: sd.stack.ID, StackName: sd.stack.Name,
 		LogicalID: logicalID, PhysicalID: physicalID, ResourceType: rtype,
-		Status: status, StatusReason: reason, Timestamp: m.tick(),
+		Status: status, StatusReason: reason, Timestamp: m.eventTime(sd),
+		ClientRequestToken: sd.opToken,
 	}
-}
-
-// tick returns the clock time; a monotonic real clock keeps events ordered even
-// under a FakeClock that returns a fixed instant (equal timestamps are still
-// ordered by append position, which DescribeStackEvents preserves).
-func (m *Mock) tick() time.Time {
-	return m.clock.Now()
 }
 
 func (m *Mock) applyStackMeta(sd *stackData, in *cfn.UpdateStackInput, p *updatePlan) {
@@ -416,6 +468,10 @@ func (m *Mock) applyStackMeta(sd *stackData, in *cfn.UpdateStackInput, p *update
 
 	if in.Capabilities != nil {
 		sd.stack.Capabilities = in.Capabilities
+	}
+
+	if p.newPolicy != "" {
+		sd.stackPolicy = p.newPolicy
 	}
 }
 

@@ -48,6 +48,13 @@ func (h *Handler) createNamespace(w http.ResponseWriter, r *http.Request, sp sbP
 	h.mu.Lock()
 
 	ns, existed := h.namespaces.Get(nsKey(sp.namespace))
+	if existed && (!strings.EqualFold(ns.Subscription, sp.sub) || !strings.EqualFold(ns.ResourceGroup, sp.rg)) {
+		h.mu.Unlock()
+		writeNamespaceNameTaken(w, sp.namespace)
+
+		return
+	}
+
 	if !existed {
 		ns = &namespaceState{
 			Name:          sp.namespace,
@@ -310,6 +317,15 @@ func toNamespaceResource(ns *namespaceState) namespaceResource {
 func writeNSNotFound(w http.ResponseWriter, name string) {
 	azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
 		"namespace not found: "+name)
+}
+
+// writeNamespaceNameTaken answers a PUT for a namespace name another resource
+// group or subscription already owns. Namespace names are global DNS labels,
+// so real Azure rejects the PUT with 409 Conflict instead of touching the
+// existing namespace.
+func writeNamespaceNameTaken(w http.ResponseWriter, name string) {
+	azurearm.WriteError(w, http.StatusConflict, "Conflict",
+		"Namespace name '"+name+"' is not available. The specified name is already in use.")
 }
 
 // paginate returns the listPageSize-sized window of resources that starts at the

@@ -122,7 +122,40 @@ func (h *Handler) getOperation(w http.ResponseWriter, r *http.Request, rt *route
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, &bt.Operation{Name: op.Name, Done: op.Done})
+	gcprest.WriteJSON(w, http.StatusOK, doneOp(op, h.operationResponse(r, op)))
+}
+
+// operationResponse re-fetches the resource an operation acted on so a poll can
+// replay it. The resource kind is the last word of the operation type (e.g.
+// "create-instance"). A resource since removed yields nil.
+func (h *Handler) operationResponse(r *http.Request, op *btdriver.Operation) any {
+	ctx, n := r.Context(), op.TargetName
+
+	fetch := map[string]func() any{
+		"instance":   func() any { return wire(toWireInstance)(h.db.GetInstance(ctx, n)) },
+		"cluster":    func() any { return wire(toWireCluster)(h.db.GetCluster(ctx, n)) },
+		"table":      func() any { return wire(toWireTable)(h.db.GetTable(ctx, n)) },
+		"appprofile": func() any { return wire(toWireAppProfile)(h.db.GetAppProfile(ctx, n)) },
+		"backup":     func() any { return wire(toWireBackup)(h.db.GetBackup(ctx, n)) },
+	}
+
+	if get, ok := fetch[op.Type[strings.LastIndex(op.Type, "-")+1:]]; ok {
+		return get()
+	}
+
+	return nil
+}
+
+// wire adapts a driver getter's (value, error) result to a wire converter; a
+// failed get (the resource since removed) yields nil.
+func wire[T, W any](conv func(*T) W) func(*T, error) any {
+	return func(v *T, err error) any {
+		if err != nil {
+			return nil
+		}
+
+		return conv(v)
+	}
 }
 
 // serveIamVerb handles the :getIamPolicy / :setIamPolicy / :testIamPermissions

@@ -5,6 +5,7 @@
 package vpclattice
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"sync"
@@ -13,13 +14,25 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
+	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	"github.com/stackshy/cloudemu/v2/services/vpclattice/driver"
 )
 
 // Compile-time check that Mock implements the driver contract.
 var _ driver.VPCLattice = (*Mock)(nil)
 
-const authTypeNone = "NONE"
+const (
+	authTypeNone = "NONE"
+
+	statusCreateInProgress = "CREATE_IN_PROGRESS"
+)
+
+// VPCDescriber looks VPCs up so an association can be refused for a VPC that
+// does not exist. The networking driver satisfies it.
+type VPCDescriber interface {
+	DescribeVPCs(ctx context.Context, ids []string) ([]netdriver.VPCInfo, error)
+}
 
 // Mock is an in-memory mock of AWS VPC Lattice.
 type Mock struct {
@@ -40,7 +53,9 @@ type Mock struct {
 	domainVerifs    *memstore.Store[*driver.DomainVerification] // keyed by verification ID
 	tags            *memstore.Store[map[string]string]          // keyed by resource ARN
 	opts            *config.Options
-	mu              sync.Mutex // serializes read-modify-write on stored records
+	networking      VPCDescriber // optional; nil skips VPC existence checks
+	statusSettle    *settle.Set  // resource id (targets: groupID|target) -> CREATE_IN_PROGRESS/INITIAL window
+	mu              sync.Mutex   // serializes read-modify-write on stored records
 }
 
 // New returns a VPC Lattice mock.
@@ -63,7 +78,28 @@ func New(opts *config.Options) *Mock {
 		domainVerifs:    memstore.New[*driver.DomainVerification](),
 		tags:            memstore.New[map[string]string](),
 		opts:            opts,
+		statusSettle:    settle.NewSet(),
 	}
+}
+
+// SetNetworking wires the VPC lookup used to validate VPC associations. Without
+// it (a standalone mock) VPC ids are accepted as given.
+func (m *Mock) SetNetworking(n VPCDescriber) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.networking = n
+}
+
+// beginSettle starts the CREATE_IN_PROGRESS window for a resource id. It is a
+// no-op unless async settling is enabled.
+func (m *Mock) beginSettle(id string) {
+	m.statusSettle.Begin(id, statusCreateInProgress, m.opts.Clock.Now(), m.opts.SettleDuration(settle.DefaultLatticeSettle))
+}
+
+// observe overlays the settle window onto a stored final status.
+func (m *Mock) observe(id, final string) string {
+	return m.statusSettle.State(id, m.opts.Clock.Now(), final)
 }
 
 // now returns the current time (via the injectable clock) in RFC 3339, the

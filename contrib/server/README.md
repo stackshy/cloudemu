@@ -153,7 +153,9 @@ Flag names and defaults mirror `cloudemu serve`.
 | `--tls-host`          | —                                        | extra SAN host/IP for the self-signed cert (repeatable) |
 | `--log-requests`      | `false`                                  | log every HTTP request (method, path, status, duration) |
 | `--quiet`             | `false`                                  | suppress the startup banner                |
-| `--enforce-auth`      | `false`                                  | require authentication on each request (AWS SigV4 → 403 on an unregistered key; Azure Bearer-claims) |
+| `--enforce-auth`      | `false`                                  | require authentication on each request (AWS SigV4 → 403 on an unregistered key; Azure Bearer-claims), then IAM authorization for AWS (see below). The `/_cloudemu` admin endpoints then need `--admin-token` |
+| `--admin-token`       | *(random)*                               | with `--enforce-auth`, the bearer token for `/_cloudemu/*` (all but `health`). Unset: a random token is generated and printed once (env `CLOUDEMU_ADMIN_TOKEN`) |
+| `--admin-token-file`  | *(none)*                                 | with `--enforce-auth`, write the admin token to this file (mode 0600) instead of printing it (env `CLOUDEMU_ADMIN_TOKEN_FILE`) |
 | `--endpoints-file`    | *(none)*                                 | write the resolved endpoints as JSON to this path |
 | `--shutdown-timeout`  | `10s`                                    | grace period for in-flight requests        |
 
@@ -161,6 +163,124 @@ The OCI endpoint (`--providers` includes `oci`) and the shared Kubernetes
 data-plane (`--k8s-port`) are wired through the same `server/serverkit` assembly
 as `cloudemu serve`. The Kubernetes port serves HTTPS with its own self-signed
 serving certificate (`--tls-cert`/`--tls-key` apply only to the Azure endpoint).
+
+### IAM authorization under `--enforce-auth`
+
+With `--enforce-auth`, every signed AWS request is also checked against the
+caller's IAM policies. The check is bound to the service handler that will
+actually run the request, so neither the SigV4 signing scope nor a forged
+`X-Amz-Target` header can change which action is checked.
+
+- Query services (IAM, STS, EC2 and Auto Scaling, RDS, Redshift, ElastiCache,
+  ELBv2, SNS, CloudFormation, CloudWatch), SageMaker, and the JSON-RPC
+  services are checked per operation, for example `iam:CreateUser` or
+  `autoscaling:CreateAutoScalingGroup`. A denied EC2 call returns
+  `UnauthorizedOperation`, and other query services return `AccessDenied`.
+  `sts:GetCallerIdentity` needs no permission, and `sts:GetSessionToken` is
+  blocked only by an explicit `Deny`.
+- S3 is checked per operation on the bucket ARN (`arn:aws:s3:::bucket`) or
+  object ARN (`arn:aws:s3:::bucket/key`), for path-style, virtual-hosted and
+  presigned requests. Virtual-hosted means a Host of `<bucket>.s3.localhost`,
+  `<bucket>.s3.localhost.localstack.cloud` or one of the AWS S3 endpoint forms
+  (`<bucket>.s3.amazonaws.com`, `<bucket>.s3.<region>.amazonaws.com`,
+  `<bucket>.s3-<region>.amazonaws.com`); every other Host is path-style. A
+  presigned URL needs `X-Amz-Expires` between 1 and 604800 seconds, and an S3
+  request carrying an `x-amz-*` header that is not signed is refused. CopyObject and UploadPartCopy also need `s3:GetObject`
+  on the source. A DeleteObjects request is checked key by key, and one
+  denied key denies the whole request (real S3 deletes the allowed keys and
+  reports the others). Bucket policies are not evaluated yet.
+- Lambda is checked per operation on the function ARN, or the version or alias
+  ARN when the request names one (`function:name:prod`); layers on the layer or
+  layer version ARN, and event source mappings on their ARN. Lambda condition
+  keys such as `lambda:FunctionUrlAuthType`, `lambda:Principal`,
+  `lambda:FunctionArn` and `lambda:Layer`, and the `aws:RequestTag`,
+  `aws:TagKeys` and `aws:ResourceTag` keys, are set. Creating a function with
+  tags also needs `lambda:TagResource`, and with layers `lambda:GetLayerVersion`
+  on each layer version. `Invoke` is also allowed when the function's
+  resource-based policy names the caller's user or role session ARN. A function
+  URL with `AWS_IAM` auth needs `lambda:InvokeFunctionUrl` and
+  `lambda:InvokeFunction`; one with `NONE` auth is called without a signature,
+  and only when the function's resource-based policy grants both actions to
+  `*` (as `aws lambda add-permission --principal '*'` does); otherwise it
+  answers 403 Forbidden.
+- Route 53 is checked per operation on the hosted zone, health check or
+  change ARN (`arn:aws:route53:::hostedzone/Z1`, no region or account).
+  `ChangeResourceRecordSets` sets `route53:ChangeResourceRecordSetsActions`,
+  `route53:ChangeResourceRecordSetsRecordTypes` and
+  `route53:ChangeResourceRecordSetsNormalizedRecordNames` (lower case, no
+  trailing dot, other characters as `\ooo` octal escapes, so `*` is `\052`).
+  The VPC operations set `route53:VPCs` (`VPCId=<id>,VPCRegion=<region>`), and
+  creating a private zone or associating a VPC also needs `ec2:DescribeVpcs`.
+- CloudFront is checked per operation on the distribution ARN
+  (`arn:aws:cloudfront::<account>:distribution/<id>`); invalidations are
+  checked on their distribution. `CreateDistribution` and `ListDistributions`
+  take no resource. `CreateDistributionWithTags` also needs
+  `cloudfront:TagResource`, checked on `distribution/*` since the id is not
+  known yet. The `aws:RequestTag`, `aws:TagKeys` and `aws:ResourceTag` keys are
+  set.
+- The other REST services (API Gateway, EKS and the rest) are checked at
+  service level for now. A request passes only when the
+  caller's policies allow every action of that service on every resource, such
+  as `eks:*` on `*` or `AdministratorAccess`. **A fine-grained or
+  resource-scoped policy on one of these services is denied until that service
+  gets per-operation checks.** A `Deny` that touches the service also denies
+  the request.
+- The account root and IAM users with no policies are unrestricted, so a
+  freshly created user can bootstrap others. Role sessions are always
+  evaluated on the role's policies.
+- `sts:AssumeRole` is decided by the role's trust policy for the real caller.
+  A trust that names the caller's user, role session or federated user ARN is
+  enough on its own; one that names the caller's role ARN still needs the
+  role's permissions boundary to allow `sts:AssumeRole`; one that names the
+  account (`arn:aws:iam::ACCOUNT:root`) also needs an identity policy that
+  allows it. A user or role named in a trust policy is bound to that entity:
+  deleting it and creating another with the same name does not inherit the
+  trust. Trust conditions such as `sts:ExternalId` are
+  checked, passing tags needs `sts:TagSession` and passing a source identity
+  needs `sts:SetSourceIdentity`. The `RoleArn` must match the role's ARN,
+  including its account and path.
+- Temporary credentials are limited like in AWS: `GetFederationToken`
+  credentials cannot call IAM or STS (except `GetCallerIdentity`),
+  `GetSessionToken` credentials cannot call IAM or STS (except `AssumeRole`
+  and `GetCallerIdentity`), and role sessions cannot call `GetSessionToken` or
+  `GetFederationToken`.
+- Signed `AssumeRoleWithWebIdentity` and `AssumeRoleWithSAML` calls are
+  refused, because the token or assertion is not validated yet.
+- Operations AWS serves without credentials (Cognito sign-in, API Gateway
+  invoke) and the Kubernetes data plane are not IAM-authorized. The
+  `/_cloudemu/*` admin endpoints use the admin token instead (next section).
+
+### Admin token and the first IAM user
+
+Under `--enforce-auth` every `/_cloudemu/*` endpoint except `health` needs
+`Authorization: Bearer <admin token>`, and answers `401` without it. That
+covers `snapshot` (which returns IAM secret keys), `reset`, `seed`, `cost`,
+`net/*` and the named snapshots. `health` stays open for liveness probes.
+
+Pass the token with `--admin-token` or `CLOUDEMU_ADMIN_TOKEN`. If you set
+neither, serve generates a random one and prints it once on stderr, or writes
+it to `--admin-token-file` (mode 0600) when that is set. Without
+`--enforce-auth` the token is ignored and the control plane stays open, as
+before.
+
+There is no unsigned way to create an IAM access key under `--enforce-auth`,
+so use the admin token to seed the first user with a key you choose:
+
+```bash
+export CLOUDEMU_ADMIN_TOKEN=$(openssl rand -hex 32)
+go run . --enforce-auth &
+
+curl -X POST http://127.0.0.1:4566/_cloudemu/seed \
+  -H "Authorization: Bearer $CLOUDEMU_ADMIN_TOKEN" \
+  -d '{"iamUsers":[{"name":"admin","accessKeys":[
+        {"accessKeyId":"AKIAADMIN00000000001","secretAccessKey":"change-me"}]}]}'
+
+AWS_ACCESS_KEY_ID=AKIAADMIN00000000001 AWS_SECRET_ACCESS_KEY=change-me \
+  aws --endpoint-url http://127.0.0.1:4566 iam create-user --user-name app
+```
+
+A user with no policies is unrestricted, so this one can create the rest over
+the normal IAM API. The same `iamUsers` fixture works in `--init-dir`.
 
 ## Admin, persistence & seeding
 
@@ -188,7 +308,8 @@ go run . --init-dir ./fixtures
 
 `--admin` is on by default; on a non-loopback `--host` it prints a warning, since
 `POST /_cloudemu/reset` wipes all state and `GET /_cloudemu/snapshot` dumps it
-(secrets included) to any caller. Pass `--admin=false` to disable it.
+(secrets included) to any caller. Pass `--enforce-auth` to put it behind the
+admin token, or `--admin=false` to disable it.
 
 The Azure endpoint serves HTTPS with an in-memory self-signed certificate
 (covering `localhost` and the loopback IPs); clients must trust it or skip

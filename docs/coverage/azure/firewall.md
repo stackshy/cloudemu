@@ -3,18 +3,22 @@
 
 Azure's `azurefirewall` service · portable interface `driver.AzureFirewalls` · [Azure index](./README.md)
 
-## Operations (8)
+## Operations (12)
 
 | Operation | Description |
 | --- | --- |
 | `CreateOrUpdateAzureFirewall` | CreateOrUpdateAzureFirewall stores fw as a full replace and reports whether |
 | `CreateOrUpdateFirewallPolicy` | CreateOrUpdateFirewallPolicy stores pol as a full replace and reports |
+| `CreateOrUpdateRuleCollectionGroup` | Rule collection groups are children of a policy and are deleted with |
 | `DeleteAzureFirewall` | DeleteAzureFirewall removes the firewall, returning NotFound if it does not |
 | `DeleteFirewallPolicy` | DeleteFirewallPolicy removes the policy, returning NotFound if it does not |
+| `DeleteRuleCollectionGroup` |  |
 | `GetAzureFirewall` | GetAzureFirewall returns the firewall identified by (resourceGroup, name), |
 | `GetFirewallPolicy` | GetFirewallPolicy returns the policy identified by (resourceGroup, name), |
+| `GetRuleCollectionGroup` |  |
 | `ListAzureFirewalls` | ListAzureFirewalls returns the firewalls in rg, or all when rg is empty |
 | `ListFirewallPolicies` | ListFirewallPolicies returns the policies in rg, or all when rg is empty |
+| `ListRuleCollectionGroups` |  |
 
 ## Not in scope
 

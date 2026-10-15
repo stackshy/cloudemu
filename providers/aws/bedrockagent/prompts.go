@@ -20,7 +20,11 @@ func (m *Mock) CreatePrompt(_ context.Context, cfg driver.PromptConfig) (*driver
 		return nil, err
 	}
 
-	id := newID(m.prompts)
+	id, err := newID(m.prompts)
+	if err != nil {
+		return nil, err
+	}
+
 	now := m.now()
 	prompt := &driver.Prompt{
 		ID:                       id,
@@ -42,8 +46,14 @@ func (m *Mock) CreatePrompt(_ context.Context, cfg driver.PromptConfig) (*driver
 	return &result, nil
 }
 
-// GetPrompt returns a prompt by identifier.
-func (m *Mock) GetPrompt(_ context.Context, id string) (*driver.Prompt, error) {
+// GetPrompt returns a prompt by id or ARN. An ARN ending in ":<version>"
+// returns that version.
+func (m *Mock) GetPrompt(ctx context.Context, id string) (*driver.Prompt, error) {
+	id, version := splitPromptIdentifier(id)
+	if version != "" {
+		return m.GetPromptVersion(ctx, id, version)
+	}
+
 	prompt, ok := m.prompts.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "prompt %q not found", id)
@@ -70,9 +80,18 @@ func (m *Mock) ListPrompts(_ context.Context, page driver.Page) ([]driver.Prompt
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (m *Mock) UpdatePrompt(_ context.Context, id string, cfg driver.PromptConfig) (*driver.Prompt, error) {
+	id, version := splitPromptIdentifier(id)
+	if version != "" {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"Prompt version %s of %s can't be updated: versions are immutable. Update the prompt's DRAFT instead.", version, id)
+	}
+
 	if err := validatePrompt(cfg); err != nil {
 		return nil, err
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	prompt, ok := m.prompts.Get(id)
 	if !ok {
@@ -96,8 +115,18 @@ func (m *Mock) UpdatePrompt(_ context.Context, id string, cfg driver.PromptConfi
 	return &result, nil
 }
 
-// DeletePrompt deletes a prompt and its tags and returns its identifier.
-func (m *Mock) DeletePrompt(_ context.Context, id string) (string, error) {
+// DeletePrompt deletes a prompt, every version of it and their tags, and
+// returns its identifier. A version-qualified identifier (prompt/ID:N)
+// deletes only that version.
+func (m *Mock) DeletePrompt(ctx context.Context, id string) (string, error) {
+	id, version := splitPromptIdentifier(id)
+	if version != "" {
+		return id, m.DeletePromptVersion(ctx, id, version)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	prompt, ok := m.prompts.Get(id)
 	if !ok {
 		return "", errors.Newf(errors.NotFound, "prompt %q not found", id)
@@ -105,6 +134,7 @@ func (m *Mock) DeletePrompt(_ context.Context, id string) (string, error) {
 
 	m.prompts.Delete(id)
 	m.dropTags(prompt.ARN)
+	m.deletePromptChildren(id)
 
 	return id, nil
 }

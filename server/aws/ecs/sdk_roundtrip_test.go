@@ -526,6 +526,11 @@ func TestSDKEC2Placement(t *testing.T) {
 	if got := remainingResource(ci.ContainerInstances[0].RemainingResources, "CPU"); got != 1024-256 {
 		t.Fatalf("remaining CPU = %d, want %d", got, 1024-256)
 	}
+
+	// The placement is a change to the instance: seeded at version 1, now 2.
+	if ci.ContainerInstances[0].Version != 2 {
+		t.Fatalf("container instance version after placement = %d, want 2", ci.ContainerInstances[0].Version)
+	}
 }
 
 // remainingResource returns the integerValue of the named INTEGER resource.
@@ -1015,6 +1020,10 @@ func TestSDKContainerInstanceRoundtrip(t *testing.T) {
 
 	ciARN := aws.ToString(reg.ContainerInstance.ContainerInstanceArn)
 
+	if reg.ContainerInstance.Version != 1 {
+		t.Fatalf("Register version = %d, want 1", reg.ContainerInstance.Version)
+	}
+
 	listCI, err := client.ListContainerInstances(ctx, &awsecs.ListContainerInstancesInput{Cluster: aws.String("prod")})
 	if err != nil {
 		t.Fatalf("ListContainerInstances: %v", err)
@@ -1036,6 +1045,10 @@ func TestSDKContainerInstanceRoundtrip(t *testing.T) {
 		t.Fatalf("DescribeContainerInstances = %d, want 1", len(descCI.ContainerInstances))
 	}
 
+	if descCI.ContainerInstances[0].Version != 1 {
+		t.Fatalf("Describe version = %d, want 1", descCI.ContainerInstances[0].Version)
+	}
+
 	upd, err := client.UpdateContainerInstancesState(ctx, &awsecs.UpdateContainerInstancesStateInput{
 		Cluster:            aws.String("prod"),
 		ContainerInstances: []string{ciARN, "i-missing"},
@@ -1047,6 +1060,10 @@ func TestSDKContainerInstanceRoundtrip(t *testing.T) {
 
 	if len(upd.ContainerInstances) != 1 || aws.ToString(upd.ContainerInstances[0].Status) != "DRAINING" {
 		t.Fatalf("UpdateContainerInstancesState instances = %+v", upd.ContainerInstances)
+	}
+
+	if upd.ContainerInstances[0].Version != 2 {
+		t.Fatalf("Update version = %d, want 2", upd.ContainerInstances[0].Version)
 	}
 
 	if len(upd.Failures) != 1 {
@@ -1222,6 +1239,7 @@ func TestSDKExecuteCommand(t *testing.T) {
 
 	run, err := client.RunTask(ctx, &awsecs.RunTaskInput{
 		Cluster: aws.String("prod"), TaskDefinition: aws.String("web"), Count: aws.Int32(1),
+		EnableExecuteCommand: true,
 	})
 	if err != nil {
 		t.Fatalf("RunTask: %v", err)

@@ -53,6 +53,7 @@ type Store interface {
 	DeleteApp(ctx context.Context, sub, rg, name string) (bool, error)
 	ListAppsByResourceGroup(ctx context.Context, sub, rg string) ([]containerapps.ContainerApp, error)
 	ListAppsBySubscription(ctx context.Context, sub string) ([]containerapps.ContainerApp, error)
+	ListAppSecrets(ctx context.Context, sub, rg, name string) ([]containerapps.AppSecret, error)
 
 	ListRevisions(ctx context.Context, sub, rg, app string) ([]containerapps.Revision, error)
 	GetRevision(ctx context.Context, sub, rg, app, rev string) (containerapps.Revision, error)
@@ -211,6 +212,11 @@ func (h *Handler) serveApp(w http.ResponseWriter, r *http.Request, rp *azurearm.
 		return
 	}
 
+	if strings.EqualFold(rp.SubResource, actionListSecrets) && rp.SubResourceName == "" {
+		h.listAppSecrets(w, r, rp)
+		return
+	}
+
 	if azurearm.GuardLeaf(w, r, rp, "authConfigs", "sourcecontrols") {
 		return
 	}
@@ -247,6 +253,28 @@ func (h *Handler) putApp(w http.ResponseWriter, r *http.Request, rp *azurearm.Re
 	}
 
 	azurearm.WriteJSON(w, createStatus(created), toAppResponse(&app))
+}
+
+// listAppSecrets serves POST containerApps/{app}/listSecrets, the only read
+// that returns secret values (azurerm_container_app reads them here).
+func (h *Handler) listAppSecrets(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if r.Method != http.MethodPost {
+		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		return
+	}
+
+	secrets, err := h.store.ListAppSecrets(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	out := toAppSecrets(secrets, true)
+	if out == nil {
+		out = []appSecret{}
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, listEnvelope[appSecret]{Value: out})
 }
 
 func (h *Handler) getApp(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

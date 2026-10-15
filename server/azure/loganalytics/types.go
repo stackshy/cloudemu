@@ -1,6 +1,8 @@
 package loganalytics
 
 import (
+	"maps"
+
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
 
@@ -28,6 +30,18 @@ type workspaceProperties struct {
 	CustomerID        string        `json:"customerId,omitempty"`
 	SKU               *workspaceSKU `json:"sku,omitempty"`
 	CreatedDate       string        `json:"createdDate,omitempty"`
+
+	Features                        map[string]any         `json:"features"`
+	PublicNetworkAccessForIngestion string                 `json:"publicNetworkAccessForIngestion"`
+	PublicNetworkAccessForQuery     string                 `json:"publicNetworkAccessForQuery"`
+	ForceCmkForQuery                *bool                  `json:"forceCmkForQuery,omitempty"`
+	WorkspaceCapping                workspaceCappingOutput `json:"workspaceCapping"`
+}
+
+// workspaceCappingOutput is properties.workspaceCapping as real ARM reports it.
+type workspaceCappingOutput struct {
+	DailyQuotaGb        float64 `json:"dailyQuotaGb"`
+	DataIngestionStatus string  `json:"dataIngestionStatus"`
 }
 
 // workspaceJSON is the ARM Workspace resource envelope.
@@ -52,7 +66,37 @@ type workspaceRequest struct {
 	Properties *struct {
 		RetentionInDays *int32        `json:"retentionInDays"`
 		SKU             *workspaceSKU `json:"sku"`
+
+		Features                        map[string]any `json:"features"`
+		PublicNetworkAccessForIngestion string         `json:"publicNetworkAccessForIngestion"`
+		PublicNetworkAccessForQuery     string         `json:"publicNetworkAccessForQuery"`
+		ForceCmkForQuery                *bool          `json:"forceCmkForQuery"`
+		WorkspaceCapping                *struct {
+			DailyQuotaGb *float64 `json:"dailyQuotaGb"`
+		} `json:"workspaceCapping"`
 	} `json:"properties"`
+}
+
+// settings returns the request's workspace settings. A PUT replaces them, so
+// anything the body leaves out reads back as the real default.
+func (req *workspaceRequest) settings() workspaceSettings {
+	p := req.Properties
+	if p == nil {
+		return workspaceSettings{}
+	}
+
+	ws := workspaceSettings{
+		Features:        maps.Clone(p.Features),
+		IngestionAccess: p.PublicNetworkAccessForIngestion,
+		QueryAccess:     p.PublicNetworkAccessForQuery,
+		ForceCmk:        p.ForceCmkForQuery,
+	}
+
+	if p.WorkspaceCapping != nil {
+		ws.DailyQuotaGb = p.WorkspaceCapping.DailyQuotaGb
+	}
+
+	return ws
 }
 
 // retentionDays returns the requested retention, or 0 when unset (the driver
@@ -91,6 +135,20 @@ func toWorkspaceJSON(info *logdriver.LogGroupInfo, meta *workspaceMeta) workspac
 			CustomerID:        meta.CustomerID,
 			SKU:               &workspaceSKU{Name: meta.SKU},
 			CreatedDate:       info.CreatedAt,
+
+			Features:                        meta.Settings.features(),
+			PublicNetworkAccessForIngestion: orDefault(meta.Settings.IngestionAccess, accessEnabled),
+			PublicNetworkAccessForQuery:     orDefault(meta.Settings.QueryAccess, accessEnabled),
+			ForceCmkForQuery:                meta.Settings.ForceCmk,
+			WorkspaceCapping:                meta.Settings.capping(),
 		},
 	}
+}
+
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+
+	return v
 }

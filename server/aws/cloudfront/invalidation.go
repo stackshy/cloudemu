@@ -7,23 +7,7 @@ import (
 	cfdriver "github.com/stackshy/cloudemu/v2/services/cloudfront/driver"
 )
 
-func (h *Handler) serveInvalidationCollection(w http.ResponseWriter, r *http.Request, distID string) {
-	switch r.Method {
-	case http.MethodPost:
-		h.createInvalidation(w, r, distID)
-	case http.MethodGet:
-		h.listInvalidations(w, r, distID)
-	default:
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-	}
-}
-
-func (h *Handler) serveInvalidationItem(w http.ResponseWriter, r *http.Request, distID, invID string) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
-		return
-	}
-
+func (h *Handler) getInvalidation(w http.ResponseWriter, r *http.Request, distID, invID string) {
 	inv, err := h.cf.GetInvalidation(r.Context(), distID, invID)
 	if err != nil {
 		writeErr(w, err)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/stackshy/cloudemu/v2/services/apigateway/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
@@ -27,29 +26,6 @@ const (
 // request metrics. Nil-safe: with no backend wired nothing is published.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
-}
-
-// stageAPIName returns the API's name when req targets an existing API and
-// stage, since those are the requests real API Gateway attributes metrics to.
-func (m *Mock) stageAPIName(req *driver.ProxyRequest) (string, bool) {
-	ad, err := m.getAPI(req.RestAPIID)
-	if err != nil {
-		return "", false
-	}
-
-	ad.mu.RLock()
-	defer ad.mu.RUnlock()
-
-	if _, ok := ad.stages[req.StageName]; !ok {
-		return "", false
-	}
-
-	// API Gateway uses the API id as ApiName when the name has no ASCII.
-	if ad.api.Name == "" {
-		return req.RestAPIID, true
-	}
-
-	return ad.api.Name, true
 }
 
 func millis(d time.Duration) float64 {

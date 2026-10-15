@@ -135,12 +135,7 @@ func (h *Handler) listRules(w http.ResponseWriter, r *http.Request, serviceID, l
 		return
 	}
 
-	items := make([]wireRule, 0, len(rules))
-	for i := range rules {
-		items = append(items, ruleToWire(&rules[i]))
-	}
-
-	writeJSON(w, map[string]any{"items": items})
+	writeItems(w, r, rules, ruleToWire)
 }
 
 func (h *Handler) batchUpdateRule(w http.ResponseWriter, r *http.Request, serviceID, listenerID string) {

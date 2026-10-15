@@ -81,6 +81,8 @@ func (m *Mock) ValidateTemplate(ctx context.Context, in *cfn.ValidateTemplateInp
 // as a body or URL, the way ValidateTemplate does, plus its resource types
 // and format version.
 func (m *Mock) GetTemplateSummary(ctx context.Context, in *cfn.GetTemplateSummaryInput) (*cfn.TemplateSummary, error) {
+	m.settle(ctx)
+
 	if in.StackName == "" {
 		return m.ValidateTemplate(ctx, &cfn.ValidateTemplateInput{TemplateBody: in.TemplateBody, TemplateURL: in.TemplateURL})
 	}

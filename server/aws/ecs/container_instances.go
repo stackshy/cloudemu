@@ -100,7 +100,7 @@ func (h *Handler) updateContainerInstancesState(w http.ResponseWriter, r *http.R
 		out = append(out, instanceToWire(&instances[i]))
 	}
 
-	wire.WriteJSON(w, map[string]any{"containerInstances": out, "failures": fromFailures(failures)})
+	wire.WriteJSON(w, map[string]any{"containerInstances": out, keyFailures: fromFailures(failures)})
 }
 
 func (h *Handler) listContainerInstances(w http.ResponseWriter, r *http.Request) {
@@ -167,5 +167,5 @@ func (h *Handler) describeContainerInstances(w http.ResponseWriter, r *http.Requ
 		out = append(out, wci)
 	}
 
-	wire.WriteJSON(w, map[string]any{"containerInstances": out, "failures": fromFailures(failures)})
+	wire.WriteJSON(w, map[string]any{"containerInstances": out, keyFailures: fromFailures(failures)})
 }

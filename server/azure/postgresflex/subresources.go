@@ -134,7 +134,7 @@ func (*Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm
 		out = existing
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp))
+	writeAccepted(w, r, rp, toARMDatabase(out, rp))
 }
 
 func (*Handler) getDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db rdsdriver.Databases) {
@@ -155,7 +155,7 @@ func (*Handler) deleteDatabase(
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	writeAccepted(w, r, rp, nil)
 }
 
 //nolint:dupl // mirrors the sibling list handler by design.
@@ -242,7 +242,7 @@ func (*Handler) putFirewallRule(
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMFirewallRule(out, rp))
+	writeAccepted(w, r, rp, toARMFirewallRule(out, rp))
 }
 
 func (*Handler) getFirewallRule(
@@ -265,7 +265,7 @@ func (*Handler) deleteFirewallRule(
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	writeAccepted(w, r, rp, nil)
 }
 
 //nolint:dupl // mirrors the sibling list handler by design.
@@ -351,7 +351,7 @@ func (*Handler) putConfiguration(
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMConfiguration(out, rp))
+	writeAccepted(w, r, rp, toARMConfiguration(out, rp))
 }
 
 func (*Handler) getConfiguration(

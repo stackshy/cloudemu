@@ -502,6 +502,105 @@ func TestPathStyleBlobDataPlaneForARMAccount(t *testing.T) {
 	assert.NotContains(t, body, "<Name>ctr1</Name>")
 }
 
+// rawHost is raw with the request Host set, as a virtual-host client
+// (https://{account}.blob.core.windows.net/) sends it. An empty host keeps the
+// test server's own host. Extra headers are name/value pairs.
+func (e *nsEnv) rawHost(host, method, path, body string, headers ...string) (int, string) {
+	e.t.Helper()
+
+	req, err := http.NewRequestWithContext(context.Background(), method, e.ts.URL+path, strings.NewReader(body))
+	require.NoError(e.t, err)
+
+	if host != "" {
+		req.Host = host
+	}
+
+	for i := 0; i+1 < len(headers); i += 2 {
+		req.Header.Set(headers[i], headers[i+1])
+	}
+
+	resp, err := e.ts.Client().Do(req)
+	require.NoError(e.t, err)
+
+	defer resp.Body.Close()
+
+	b, _ := io.ReadAll(resp.Body)
+
+	return resp.StatusCode, string(b)
+}
+
+// TestVhostBlobDataPlaneForARMAccount: on a virtual-host request the account
+// is the host label, so an ARM container is reachable at
+// https://{account}.blob.core.windows.net/{container}, shares its blobs with
+// the path form, and stays private to its account.
+func TestVhostBlobDataPlaneForARMAccount(t *testing.T) {
+	ctx := context.Background()
+	e := newNSEnv(t)
+	e.mustCreateAccount("sub-1", "rg1", "stbsdk01")
+	e.mustCreateAccount("sub-1", "rg1", "stbother")
+
+	_, err := e.containers("sub-1").Create(ctx, "rg1", "stbsdk01", "armcont", armstorage.BlobContainer{}, nil)
+	require.NoError(t, err)
+
+	const (
+		hostA   = "stbsdk01.blob.core.windows.net:4568"
+		hostB   = "StbOther.blob.core.windows.net"
+		defHost = "cloudemu.blob.core.windows.net:4568"
+		unknown = "nosuchacct.blob.core.windows.net"
+		copySrc = "https://stbsdk01.blob.core.windows.net:4568/armcont/b.txt"
+	)
+
+	steps := []struct {
+		name, host, method, path, body string
+		headers                        []string
+		want                           int
+		wantBody, notBody              string
+	}{
+		{name: "list sees ARM container", host: hostA, method: http.MethodGet, path: "/?comp=list",
+			want: http.StatusOK, wantBody: "<Name>armcont</Name>"},
+		{name: "put blob", host: hostA, method: http.MethodPut, path: "/armcont/b.txt", body: "hello",
+			headers: []string{"x-ms-blob-type", "BlockBlob"}, want: http.StatusCreated},
+		{name: "get blob", host: hostA, method: http.MethodGet, path: "/armcont/b.txt",
+			want: http.StatusOK, wantBody: "hello"},
+		{name: "list blobs", host: hostA, method: http.MethodGet, path: "/armcont?restype=container&comp=list",
+			want: http.StatusOK, wantBody: "<Name>b.txt</Name>"},
+		{name: "path form sees the vhost blob", method: http.MethodGet, path: "/stbsdk01/armcont/b.txt",
+			want: http.StatusOK, wantBody: "hello"},
+		{name: "copy from a vhost source", host: hostA, method: http.MethodPut, path: "/armcont/copy.txt",
+			headers: []string{"x-ms-copy-source", copySrc}, want: http.StatusAccepted},
+		{name: "get copy", host: hostA, method: http.MethodGet, path: "/armcont/copy.txt",
+			want: http.StatusOK, wantBody: "hello"},
+		{name: "other account does not see it", host: hostB, method: http.MethodGet,
+			path: "/armcont?restype=container", want: http.StatusNotFound},
+		{name: "other account list", host: hostB, method: http.MethodGet, path: "/?comp=list",
+			want: http.StatusOK, notBody: "<Name>armcont</Name>"},
+		{name: "default host uses the default namespace", host: defHost, method: http.MethodPut,
+			path: "/defctr?restype=container", want: http.StatusCreated},
+		{name: "bare host sees the default container", method: http.MethodGet,
+			path: "/defctr?restype=container", want: http.StatusOK},
+		{name: "unknown account host falls back to the default namespace", host: unknown,
+			method: http.MethodGet, path: "/defctr?restype=container", want: http.StatusOK},
+		{name: "bare host does not see the account container", method: http.MethodGet,
+			path: "/armcont?restype=container", want: http.StatusNotFound},
+	}
+
+	for _, s := range steps {
+		status, body := e.rawHost(s.host, s.method, s.path, s.body, s.headers...)
+		require.Equal(t, s.want, status, "%s: %s", s.name, body)
+
+		if s.wantBody != "" {
+			assert.Contains(t, body, s.wantBody, s.name)
+		}
+
+		if s.notBody != "" {
+			assert.NotContains(t, body, s.notBody, s.name)
+		}
+	}
+
+	_, err = e.containers("sub-1").Get(ctx, "rg1", "stbsdk01", "armcont", nil)
+	require.NoError(t, err, "the vhost container is the account's ARM container")
+}
+
 // TestPathStylePeelRule pins the conditions under which the leading segment
 // is not an account: a segment that names no account, a path that ends at the
 // segment, and an account shadowed by a default container of the same name.

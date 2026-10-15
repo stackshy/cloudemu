@@ -469,3 +469,7 @@ func (h *Handler) serveRuntime(w http.ResponseWriter, r *http.Request, rest stri
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unknown runtime action: "+action)
 	}
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "bedrock" }

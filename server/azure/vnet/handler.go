@@ -30,6 +30,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
 
@@ -124,6 +125,7 @@ type Handler struct {
 	// not atomic). It guards only that get-modify-put window.
 	patchMu sync.Mutex
 	net     netdriver.Networking
+	lbs     lbdriver.AzureLoadBalancers
 }
 
 // New returns a network handler.
@@ -1612,6 +1614,15 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		skuTier = req.SKU.Tier
 	}
 
+	// Standard SKU public IPs only support static allocation.
+	if strings.EqualFold(sku, "Standard") && strings.EqualFold(req.Properties.PublicIPAllocationMethod, "Dynamic") {
+		azurearm.WriteError(w, http.StatusBadRequest, "StandardSkuPublicIPAddressesCannotBeDynamic",
+			"Standard sku publicIp /subscriptions/"+rp.Subscription+"/resourceGroups/"+rp.ResourceGroup+
+				"/providers/Microsoft.Network/publicIPAddresses/"+rp.ResourceName+" must have AllocationMethod set to Static.")
+
+		return
+	}
+
 	tags := mergeTags(req.Tags, armPublicIPTag, rp.ResourceName)
 	tags = mergeTags(tags, armPublicIPRGTag, rp.ResourceGroup)
 
@@ -1630,6 +1641,7 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		Tags:               tags,
 		Zones:              req.Zones,
 		IdleTimeoutMinutes: req.Properties.IdleTimeoutInMinutes,
+		Location:           req.Location,
 	}
 
 	if req.Properties.DNSSettings != nil {
@@ -1642,12 +1654,7 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
-	loc := req.Location
-	if loc == "" {
-		loc = defaultLoc
-	}
-
-	body := h.toPublicIPResponse(r.Context(), info, rp, loc)
+	body := h.toPublicIPResponse(r.Context(), info, rp)
 
 	writeAcceptedAsync(w, r, rp.Subscription, "publicip-create-"+rp.ResourceName, body)
 }
@@ -1691,7 +1698,7 @@ func (h *Handler) getPublicIP(w http.ResponseWriter, r *http.Request, rp azurear
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, h.toPublicIPResponse(r.Context(), info, rp, defaultLoc))
+	azurearm.WriteJSON(w, http.StatusOK, h.toPublicIPResponse(r.Context(), info, rp))
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -1713,16 +1720,18 @@ func (h *Handler) deletePublicIP(w http.ResponseWriter, r *http.Request, rp azur
 
 	if h.publicIPConfigurationRef(r.Context(), rp.Subscription, id) != nil {
 		azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeDeleted",
-			"public IP "+rp.ResourceName+" is still referenced by a network interface ipConfiguration")
+			"Public IP address "+id+" can not be deleted since it is still allocated to a network interface ipConfiguration.")
 
 		return
 	}
 
 	if err := h.net.ReleaseAddress(r.Context(), info.AllocationID); err != nil {
 		// A public IP still bound to a NIC/NAT gateway: ARM answers 400 with
-		// this specific code, not the generic 409 WriteCErr would emit.
+		// this specific code, naming the ARM resource id (never the internal
+		// allocation id), not the generic 409 WriteCErr would emit.
 		if cerrors.IsFailedPrecondition(err) {
-			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeDeleted", cerrors.Message(err))
+			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeDeleted",
+				"Public IP address "+id+" can not be deleted since it is still allocated to a resource.")
 			return
 		}
 
@@ -1757,7 +1766,7 @@ func (h *Handler) listPublicIPs(w http.ResponseWriter, r *http.Request, rp azure
 		scope := rp
 		scope.ResourceGroup = tagOr(infos[i].Tags, armPublicIPRGTag, rp.ResourceGroup)
 		scope.ResourceName = tagOr(infos[i].Tags, armPublicIPTag, infos[i].AllocationID)
-		out.Value = append(out.Value, h.toPublicIPResponse(r.Context(), &infos[i], scope, defaultLoc))
+		out.Value = append(out.Value, h.toPublicIPResponse(r.Context(), &infos[i], scope))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, out)
@@ -2142,11 +2151,9 @@ func nicResourceID(nsgARMID, nicResourceGroup, nicName string) string {
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) toPublicIPResponse(
-	ctx context.Context, info *netdriver.ElasticIP, rp azurearm.ResourcePath, location string,
+	ctx context.Context, info *netdriver.ElasticIP, rp azurearm.ResourcePath,
 ) publicIPResponse {
-	if location == "" {
-		location = defaultLoc
-	}
+	location := orDefault(info.Location, defaultLoc)
 
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typePublicIP, rp.ResourceName)
 
@@ -2179,6 +2186,14 @@ func (h *Handler) toPublicIPResponse(
 	}
 
 	out.Properties.IPConfiguration = h.publicIPConfigurationRef(ctx, rp.Subscription, id)
+
+	// A Dynamic public IP has no address until it is attached to a resource (a
+	// NIC ipConfiguration or a NAT gateway); real ARM omits ipAddress until then.
+	// Static addresses are assigned at create.
+	if strings.EqualFold(info.AllocationMethod, "Dynamic") &&
+		out.Properties.IPConfiguration == nil && info.AssociationID == "" {
+		out.Properties.IPAddress = ""
+	}
 
 	if prefixID := tagOr(info.Tags, armPublicIPPrefixTag, ""); prefixID != "" {
 		out.Properties.PublicIPPrefix = &armIDRef{ID: prefixID}

@@ -3,6 +3,7 @@ package loganalytics
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"maps"
 	"sync"
 )
 
@@ -15,6 +16,49 @@ type workspaceMeta struct {
 	Location   string
 	CustomerID string
 	SKU        string
+	Settings   workspaceSettings
+}
+
+const (
+	accessEnabled = "Enabled"
+	// noDailyQuota is the dailyQuotaGb real Log Analytics reports when the
+	// workspace has no daily cap.
+	noDailyQuota = -1
+)
+
+// workspaceSettings are the writable workspace properties azurerm reads back:
+// features, public network access, the CMK-for-query flag and the daily cap.
+// Empty fields read back as the real defaults.
+type workspaceSettings struct {
+	Features        map[string]any
+	IngestionAccess string
+	QueryAccess     string
+	ForceCmk        *bool
+	DailyQuotaGb    *float64
+}
+
+// features returns properties.features: what the caller sent over the real
+// defaults. azurerm polls a new workspace until
+// enableLogAccessUsingOnlyResourcePermissions is present.
+func (s *workspaceSettings) features() map[string]any {
+	out := map[string]any{
+		"enableLogAccessUsingOnlyResourcePermissions": true,
+		"legacy":        0,
+		"searchVersion": 1,
+	}
+
+	maps.Copy(out, s.Features)
+
+	return out
+}
+
+func (s *workspaceSettings) capping() workspaceCappingOutput {
+	quota := float64(noDailyQuota)
+	if s.DailyQuotaGb != nil {
+		quota = *s.DailyQuotaGb
+	}
+
+	return workspaceCappingOutput{DailyQuotaGb: quota, DataIngestionStatus: "RespectQuota"}
 }
 
 // metaStore is a concurrency-safe map of workspace name to its ARM metadata.
@@ -30,7 +74,7 @@ func newMetaStore() *metaStore {
 // upsert records the metadata for a workspace on create/update. The customerId
 // GUID is assigned once (on first create) and preserved across updates so a
 // client that re-reads the workspace always sees the same workspace ID.
-func (s *metaStore) upsert(name, resourceID, location, sku string) *workspaceMeta {
+func (s *metaStore) upsert(name, resourceID, location, sku string, settings workspaceSettings) *workspaceMeta {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -49,6 +93,8 @@ func (s *metaStore) upsert(name, resourceID, location, sku string) *workspaceMet
 	} else if meta.SKU == "" {
 		meta.SKU = defaultSKUName
 	}
+
+	meta.Settings = settings
 
 	clone := *meta
 

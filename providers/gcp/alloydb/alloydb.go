@@ -54,6 +54,8 @@ const (
 	instanceTypeReadPool  = "READ_POOL"
 	instanceTypeSecondary = "SECONDARY"
 
+	availabilityZonal = "ZONAL"
+
 	// Cluster types.
 	clusterTypePrimary   = "PRIMARY"
 	clusterTypeSecondary = "SECONDARY"
@@ -74,6 +76,10 @@ type clusterExtra struct {
 	// DisplayName is the caller-supplied display name (empty when unset); real
 	// AlloyDB echoes only what the caller sent, never the id.
 	DisplayName string
+	// Location is the region the cluster was created in; empty (a cluster from
+	// the portable API or an older snapshot) means the default region.
+	Location         string
+	AllocatedIPRange string
 	// UpdatedAt is the last-modification time; zero until the first modify, in
 	// which case the cluster's CreatedAt stands in as the update time.
 	UpdatedAt time.Time
@@ -156,15 +162,33 @@ func (m *Mock) Region() string {
 }
 
 func (m *Mock) clusterName(id string) string {
-	return fmt.Sprintf("projects/%s/locations/%s/clusters/%s", m.opts.ProjectID, m.opts.Region, id)
+	return m.clusterNameIn(m.clusterLocation(id), id)
+}
+
+func (m *Mock) clusterNameIn(location, id string) string {
+	return fmt.Sprintf("projects/%s/locations/%s/clusters/%s", m.opts.ProjectID, location, id)
+}
+
+// clusterLocation is the region cluster id lives in. Caller holds m.mu.
+func (m *Mock) clusterLocation(id string) string {
+	return m.locationOr(m.clusterExtra[id].Location)
+}
+
+// locationOr returns loc, or the default region when loc is empty.
+func (m *Mock) locationOr(loc string) string {
+	if loc == "" {
+		return m.opts.Region
+	}
+
+	return loc
 }
 
 func (m *Mock) instanceName(cluster, instance string) string {
 	return m.clusterName(cluster) + "/instances/" + instance
 }
 
-func (m *Mock) backupName(id string) string {
-	return fmt.Sprintf("projects/%s/locations/%s/backups/%s", m.opts.ProjectID, m.opts.Region, id)
+func (m *Mock) backupName(location, id string) string {
+	return fmt.Sprintf("projects/%s/locations/%s/backups/%s", m.opts.ProjectID, location, id)
 }
 
 func instanceKey(cluster, instance string) string { return cluster + "/" + instance }

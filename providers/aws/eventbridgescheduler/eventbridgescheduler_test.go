@@ -203,3 +203,54 @@ func assertException(t *testing.T, err error, want string) {
 		t.Fatalf("exception = %q, want %q", apiErr.Exception, want)
 	}
 }
+
+// Enum fields and FlexibleTimeWindow are validated the way AWS does, on
+// create and update alike.
+func TestScheduleInputEnumsAreValidated(t *testing.T) {
+	cases := map[string]func(*driver.ScheduleInput){
+		"unknown State":                 func(in *driver.ScheduleInput) { in.State = "PAUSED" },
+		"unknown ActionAfterCompletion": func(in *driver.ScheduleInput) { in.ActionAfterCompletion = "ARCHIVE" },
+		"unknown Mode": func(in *driver.ScheduleInput) {
+			in.FlexibleTimeWindow = json.RawMessage(`{"Mode":"SOMETIMES"}`)
+		},
+		"FLEXIBLE without a window": func(in *driver.ScheduleInput) {
+			in.FlexibleTimeWindow = json.RawMessage(`{"Mode":"FLEXIBLE"}`)
+		},
+		"FLEXIBLE window above 1440": func(in *driver.ScheduleInput) {
+			in.FlexibleTimeWindow = json.RawMessage(`{"Mode":"FLEXIBLE","MaximumWindowInMinutes":1441}`)
+		},
+		"FLEXIBLE window of 0": func(in *driver.ScheduleInput) {
+			in.FlexibleTimeWindow = json.RawMessage(`{"Mode":"FLEXIBLE","MaximumWindowInMinutes":0}`)
+		},
+	}
+
+	m := newMock()
+	ctx := context.Background()
+
+	_, err := m.CreateSchedule(ctx, scheduleInput("existing", ""))
+	requireNoError(t, err)
+
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			in := scheduleInput("bad", "")
+			mutate(in)
+
+			_, err := m.CreateSchedule(ctx, in)
+			assertException(t, err, driver.ExValidation)
+
+			upd := scheduleInput("existing", "")
+			mutate(upd)
+
+			_, err = m.UpdateSchedule(ctx, upd)
+			assertException(t, err, driver.ExValidation)
+		})
+	}
+
+	ok := scheduleInput("valid", "")
+	ok.State = driver.ScheduleDisabled
+	ok.ActionAfterCompletion = "DELETE"
+	ok.FlexibleTimeWindow = json.RawMessage(`{"Mode":"FLEXIBLE","MaximumWindowInMinutes":15}`)
+
+	_, err = m.CreateSchedule(ctx, ok)
+	requireNoError(t, err)
+}

@@ -106,6 +106,10 @@ type Mock struct {
 	// read-modify-write across nextPrefixBlock and the azurePrefixes store that
 	// memstore cannot make atomic on its own.
 	prefixMu sync.Mutex
+	// pipMu serializes public IP allocation: choosing a free address and storing
+	// the new allocation must be one step, or two concurrent creates could pick
+	// the same address.
+	pipMu sync.Mutex
 	// nextPrefixBlock is the monotonic /24 block index the CIDR allocator hands out.
 	// It is intentionally not serialized: each prefix persists its own synthesized
 	// IPPrefix, so a restore preserves every allocation, and the counter only needs

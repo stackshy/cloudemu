@@ -206,3 +206,7 @@ func atoiDefault(s string, def int32) int32 {
 
 	return int32(n)
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "appsync" }

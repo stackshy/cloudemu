@@ -234,7 +234,7 @@ func TestSDKUserPoolClientExplicitTokenUnits(t *testing.T) {
 	out, err := c.CreateUserPoolClient(ctx, &cip.CreateUserPoolClientInput{
 		UserPoolId:          aws.String(id),
 		ClientName:          aws.String("units-client"),
-		AccessTokenValidity: aws.Int32(2),
+		AccessTokenValidity: aws.Int32(15),
 		TokenValidityUnits: &ciptypes.TokenValidityUnitsType{
 			AccessToken: ciptypes.TimeUnitsTypeMinutes,
 		},
@@ -244,8 +244,8 @@ func TestSDKUserPoolClientExplicitTokenUnits(t *testing.T) {
 	}
 
 	client := out.UserPoolClient
-	if aws.ToInt32(client.AccessTokenValidity) != 2 {
-		t.Fatalf("AccessTokenValidity = %d, want 2", aws.ToInt32(client.AccessTokenValidity))
+	if aws.ToInt32(client.AccessTokenValidity) != 15 {
+		t.Fatalf("AccessTokenValidity = %d, want 15", aws.ToInt32(client.AccessTokenValidity))
 	}
 
 	if client.TokenValidityUnits == nil || client.TokenValidityUnits.AccessToken != ciptypes.TimeUnitsTypeMinutes {

@@ -64,6 +64,32 @@ type indexDescriptionJSON struct {
 	UserTokenConfigurations           json.RawMessage `json:"UserTokenConfigurations,omitempty"`
 	CreatedAt                         int64           `json:"CreatedAt"`
 	UpdatedAt                         int64           `json:"UpdatedAt"`
+	ErrorMessage                      string          `json:"ErrorMessage,omitempty"`
+	IndexStatistics                   *indexStatsJSON `json:"IndexStatistics,omitempty"`
+}
+
+// indexStatsJSON is the IndexStatistics block of DescribeIndex.
+type indexStatsJSON struct {
+	FaqStatistics struct {
+		IndexedQuestionAnswersCount int32 `json:"IndexedQuestionAnswersCount"`
+	} `json:"FaqStatistics"`
+	TextDocumentStatistics struct {
+		IndexedTextDocumentsCount int32 `json:"IndexedTextDocumentsCount"`
+		IndexedTextBytes          int64 `json:"IndexedTextBytes"`
+	} `json:"TextDocumentStatistics"`
+}
+
+func toIndexStats(s *driver.IndexStatistics) *indexStatsJSON {
+	if s == nil {
+		return nil
+	}
+
+	out := &indexStatsJSON{}
+	out.FaqStatistics.IndexedQuestionAnswersCount = s.IndexedQuestionAnswers
+	out.TextDocumentStatistics.IndexedTextDocumentsCount = s.IndexedTextDocuments
+	out.TextDocumentStatistics.IndexedTextBytes = s.IndexedTextBytes
+
+	return out
 }
 
 func toIndexDescription(i *driver.Index) indexDescriptionJSON {
@@ -82,6 +108,8 @@ func toIndexDescription(i *driver.Index) indexDescriptionJSON {
 		UserTokenConfigurations:           i.UserTokenConfigurations,
 		CreatedAt:                         epochSeconds(i.CreatedAt),
 		UpdatedAt:                         epochSeconds(i.UpdatedAt),
+		ErrorMessage:                      i.ErrorMessage,
+		IndexStatistics:                   toIndexStats(i.Statistics),
 	}
 }
 

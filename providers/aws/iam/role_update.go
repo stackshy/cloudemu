@@ -45,6 +45,7 @@ func (m *Mock) UpdateAssumeRolePolicy(_ context.Context, roleName, policyDocumen
 	}
 
 	rd.AssumeRolePolicyDoc = policyDocument
+	rd.TrustPrincipalIDs = m.resolveTrustPrincipals(policyDocument)
 	m.roles.Set(roleName, rd)
 
 	return nil

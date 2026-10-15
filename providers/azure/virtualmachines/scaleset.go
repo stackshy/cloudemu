@@ -3,6 +3,7 @@ package virtualmachines
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,12 +24,15 @@ const (
 // discoverer prices on are modeled: the SKU (VM size / tier / instance count)
 // and the per-VM profile (Spot priority, hybrid-benefit license, OS type).
 type ScaleSet struct {
-	Name     string
-	ID       string
-	Location string
-	SKUName  string
-	SKUTier  string
-	Capacity int
+	Name string
+	ID   string
+	// Subscription is the subscription the scale set was created in. Empty for
+	// one created through the portable API or restored from an older snapshot.
+	Subscription string
+	Location     string
+	SKUName      string
+	SKUTier      string
+	Capacity     int
 	// CapacityZero must be set true when Capacity==0 is an explicit
 	// scale-in-to-zero request rather than an omitted field. Without it,
 	// CreateScaleSet cannot tell "capacity not specified" (default to 1)
@@ -71,7 +75,8 @@ func (m *Mock) CreateScaleSet(_ context.Context, s ScaleSet) (*ScaleSet, error) 
 	// CreateOrUpdate is idempotent: on a re-PUT of an existing scale set, carry
 	// its already-materialized instances forward so their power state survives,
 	// then reconcile only the count to the requested capacity.
-	if existing, ok := m.scaleSets.Get(s.Name); ok {
+	key := scaleSetKey(s.Subscription, s.ResourceGroup, s.Name)
+	if existing, ok := m.scaleSets.Get(key); ok {
 		s.Instances = existing.Instances
 	}
 
@@ -79,7 +84,7 @@ func (m *Mock) CreateScaleSet(_ context.Context, s ScaleSet) (*ScaleSet, error) 
 
 	stored := s
 
-	m.scaleSets.Set(s.Name, &stored)
+	m.scaleSets.Set(key, &stored)
 
 	out := stored
 
@@ -194,26 +199,51 @@ func ordinalOf(id string) (int, bool) {
 	return n, true
 }
 
-// findScaleSetKey resolves a scale-set name to the exact store key, matching
-// case-insensitively (ARM resource names are case-insensitive).
-func (m *Mock) findScaleSetKey(name string) (string, bool) {
-	if m.scaleSets.Has(name) {
-		return name, true
-	}
+// scaleSetKey is the store key of a scale set. Scale set names are unique per
+// resource group (and case-insensitive), so the same name in two resource
+// groups is two scale sets.
+func scaleSetKey(subscription, resourceGroup, name string) string {
+	return strings.ToLower(subscription + "/" + resourceGroup + "/" + name)
+}
 
-	for _, s := range m.scaleSets.SortedValues() {
-		if strings.EqualFold(s.Name, name) {
-			return s.Name, true
+// findScaleSetKey resolves a scale set to its store key, matching names
+// case-insensitively. An empty subscription or resource group matches any, for
+// callers that address a scale set by name alone; the first match in key
+// order wins.
+func (m *Mock) findScaleSetKey(subscription, resourceGroup, name string) (string, bool) {
+	keys := m.scaleSets.Keys()
+	slices.Sort(keys)
+
+	for _, key := range keys {
+		s, ok := m.scaleSets.Get(key)
+		if ok && strings.EqualFold(s.Name, name) && matchesOrAny(s.Subscription, subscription) &&
+			matchesOrAny(s.ResourceGroup, resourceGroup) {
+			return key, true
 		}
 	}
 
 	return "", false
 }
 
+func matchesOrAny(recorded, want string) bool {
+	return want == "" || strings.EqualFold(recorded, want)
+}
+
+// rekeyScaleSets moves restored scale sets to their scoped keys, migrating
+// snapshots taken when scale sets were keyed by name alone.
+func (m *Mock) rekeyScaleSets() {
+	for key, s := range m.scaleSets.All() {
+		if want := scaleSetKey(s.Subscription, s.ResourceGroup, s.Name); want != key {
+			m.scaleSets.Delete(key)
+			m.scaleSets.Set(want, s)
+		}
+	}
+}
+
 // ListScaleSetVMs returns the materialized VMs of a scale set (ARM VMSS VMs
 // List). Returns NotFound when no scale set with that name exists.
-func (m *Mock) ListScaleSetVMs(_ context.Context, vmssName string) ([]ScaleSetVM, error) {
-	key, ok := m.findScaleSetKey(vmssName)
+func (m *Mock) ListScaleSetVMs(_ context.Context, subscription, resourceGroup, vmssName string) ([]ScaleSetVM, error) {
+	key, ok := m.findScaleSetKey(subscription, resourceGroup, vmssName)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "virtualMachineScaleSet %q not found", vmssName)
 	}
@@ -227,8 +257,8 @@ func (m *Mock) ListScaleSetVMs(_ context.Context, vmssName string) ([]ScaleSetVM
 }
 
 // GetScaleSetVM returns a single materialized VM of a scale set by instanceId.
-func (m *Mock) GetScaleSetVM(_ context.Context, vmssName, instanceID string) (*ScaleSetVM, error) {
-	key, ok := m.findScaleSetKey(vmssName)
+func (m *Mock) GetScaleSetVM(_ context.Context, subscription, resourceGroup, vmssName, instanceID string) (*ScaleSetVM, error) {
+	key, ok := m.findScaleSetKey(subscription, resourceGroup, vmssName)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "virtualMachineScaleSet %q not found", vmssName)
 	}
@@ -247,8 +277,8 @@ func (m *Mock) GetScaleSetVM(_ context.Context, vmssName, instanceID string) (*S
 
 // DeleteScaleSetVM removes one instance from a scale set and decrements its
 // effective capacity, so a follow-up list reports one fewer VM.
-func (m *Mock) DeleteScaleSetVM(_ context.Context, vmssName, instanceID string) error {
-	key, ok := m.findScaleSetKey(vmssName)
+func (m *Mock) DeleteScaleSetVM(_ context.Context, subscription, resourceGroup, vmssName, instanceID string) error {
+	key, ok := m.findScaleSetKey(subscription, resourceGroup, vmssName)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "virtualMachineScaleSet %q not found", vmssName)
 	}
@@ -281,8 +311,8 @@ func (m *Mock) DeleteScaleSetVM(_ context.Context, vmssName, instanceID string) 
 // PowerScaleSetVM applies a per-instance power action (start / poweroff /
 // deallocate / restart / reimage) to one VM of a scale set, updating its power
 // state. Unknown actions are rejected with InvalidArgument.
-func (m *Mock) PowerScaleSetVM(_ context.Context, vmssName, instanceID, action string) error {
-	key, ok := m.findScaleSetKey(vmssName)
+func (m *Mock) PowerScaleSetVM(_ context.Context, subscription, resourceGroup, vmssName, instanceID, action string) error {
+	key, ok := m.findScaleSetKey(subscription, resourceGroup, vmssName)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "virtualMachineScaleSet %q not found", vmssName)
 	}
@@ -320,8 +350,8 @@ func (m *Mock) PowerScaleSetVM(_ context.Context, vmssName, instanceID, action s
 // each affected instance's power state so a subsequent instanceView reflects it.
 // Returns NotFound when the scale set (or a named instance) does not exist and
 // InvalidArgument for an unknown action.
-func (m *Mock) PowerScaleSet(_ context.Context, vmssName, action string, instanceIDs []string) error {
-	key, ok := m.findScaleSetKey(vmssName)
+func (m *Mock) PowerScaleSet(_ context.Context, subscription, resourceGroup, vmssName, action string, instanceIDs []string) error {
+	key, ok := m.findScaleSetKey(subscription, resourceGroup, vmssName)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "virtualMachineScaleSet %q not found", vmssName)
 	}
@@ -393,8 +423,8 @@ type ScaleSetPatch struct {
 // resource. Returns NotFound when no scale set with that name exists.
 //
 //nolint:gocritic // patch mirrors a request-scoped value passed once per call.
-func (m *Mock) UpdateScaleSet(_ context.Context, name string, patch ScaleSetPatch) (*ScaleSet, error) {
-	key, ok := m.findScaleSetKey(name)
+func (m *Mock) UpdateScaleSet(_ context.Context, subscription, resourceGroup, name string, patch ScaleSetPatch) (*ScaleSet, error) {
+	key, ok := m.findScaleSetKey(subscription, resourceGroup, name)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "virtualMachineScaleSet %q not found", name)
 	}
@@ -460,8 +490,9 @@ func powerStateForAction(action string) (string, error) {
 
 // DeleteScaleSet removes a stored VMSS by name (ARM VMSS Delete). Returns
 // NotFound when no scale set with that name exists.
-func (m *Mock) DeleteScaleSet(_ context.Context, name string) error {
-	if !m.scaleSets.Delete(name) {
+func (m *Mock) DeleteScaleSet(_ context.Context, subscription, resourceGroup, name string) error {
+	key, ok := m.findScaleSetKey(subscription, resourceGroup, name)
+	if !ok || !m.scaleSets.Delete(key) {
 		return cerrors.Newf(cerrors.NotFound, "virtualMachineScaleSet %q not found", name)
 	}
 

@@ -37,7 +37,12 @@ func (m *Mock) CreateInferenceProfile(_ context.Context, cfg driver.InferencePro
 	}
 
 	now := m.now()
-	id := idgen.BedrockInferenceProfileID()
+
+	id, err := idgen.BedrockInferenceProfileID()
+	if err != nil {
+		return nil, err
+	}
+
 	arn := idgen.AWSARN("bedrock", m.opts.Region, m.opts.AccountID, "application-inference-profile/"+id)
 
 	profile := &driver.InferenceProfile{

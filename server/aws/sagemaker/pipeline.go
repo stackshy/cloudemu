@@ -7,59 +7,6 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
 
-func (h *Handler) routePipelines(w http.ResponseWriter, r *http.Request, op string) bool {
-	switch op {
-	case "CreatePipeline":
-		h.createPipeline(w, r)
-	case "DescribePipeline":
-		h.describePipeline(w, r)
-	case "ListPipelines":
-		h.listPipelines(w, r)
-	case "UpdatePipeline":
-		h.updatePipeline(w, r)
-	case "DeletePipeline":
-		h.deletePipeline(w, r)
-	case "StartPipelineExecution":
-		h.startPipelineExecution(w, r)
-	case "DescribePipelineExecution":
-		h.describePipelineExecution(w, r)
-	case "ListPipelineExecutions":
-		h.listPipelineExecutions(w, r)
-	case "StopPipelineExecution":
-		h.stopPipelineExecution(w, r)
-	default:
-		return h.routePipelinesMeta(w, r, op)
-	}
-
-	return true
-}
-
-//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
-func (h *Handler) routePipelinesMeta(w http.ResponseWriter, r *http.Request, op string) bool {
-	switch op {
-	case "CreateExperiment":
-		h.createExperiment(w, r)
-	case "DescribeExperiment":
-		h.describeExperiment(w, r)
-	case "ListExperiments":
-		h.listExperiments(w, r)
-	case "DeleteExperiment":
-		h.deleteExperiment(w, r)
-	case "CreateTrial":
-		h.createTrial(w, r)
-	case "DescribeTrial":
-		h.describeTrial(w, r)
-	case "ListTrials":
-		h.listTrials(w, r)
-	case "DeleteTrial":
-		h.deleteTrial(w, r)
-	default:
-		return false
-	}
-
-	return true
-}
-
 //nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) createPipeline(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -112,7 +59,12 @@ func (h *Handler) describePipeline(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listPipelines(w http.ResponseWriter, r *http.Request) {
-	pipelines, err := h.svc.ListPipelines(r.Context())
+	req, ok := decodeListReq(w, r)
+	if !ok {
+		return
+	}
+
+	pipelines, err := h.svc.ListPipelines(r.Context(), req.options())
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -201,12 +153,12 @@ func (h *Handler) describePipelineExecution(w http.ResponseWriter, r *http.Reque
 
 //nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) listPipelineExecutions(w http.ResponseWriter, r *http.Request) {
-	name, ok := decodeName1(w, r, "PipelineName")
+	req, ok := decodeListReq(w, r)
 	if !ok {
 		return
 	}
 
-	exs, err := h.svc.ListPipelineExecutions(r.Context(), name)
+	exs, err := h.svc.ListPipelineExecutions(r.Context(), req.PipelineName, req.options())
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -285,7 +237,12 @@ func (h *Handler) describeExperiment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listExperiments(w http.ResponseWriter, r *http.Request) {
-	exps, err := h.svc.ListExperiments(r.Context())
+	req, ok := decodeListReq(w, r)
+	if !ok {
+		return
+	}
+
+	exps, err := h.svc.ListExperiments(r.Context(), req.options())
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -365,12 +322,12 @@ func (h *Handler) describeTrial(w http.ResponseWriter, r *http.Request) {
 
 //nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) listTrials(w http.ResponseWriter, r *http.Request) {
-	expName, ok := decodeName1(w, r, "ExperimentName")
+	req, ok := decodeListReq(w, r)
 	if !ok {
 		return
 	}
 
-	trials, err := h.svc.ListTrials(r.Context(), expName)
+	trials, err := h.svc.ListTrials(r.Context(), req.ExperimentName, req.options())
 	if err != nil {
 		writeDriverError(w, err)
 

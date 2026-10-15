@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"math"
 	"time"
+
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
 
 // In-memory control-plane model for Service Bus. Namespaces, topics,
@@ -73,6 +75,9 @@ type namespaceState struct {
 	Queues        map[string]*queueRecord
 	Topics        map[string]*topicRecord
 	AuthRules     map[string]*authRuleRecord
+	// NetworkRuleSet holds the stored properties of networkRuleSets/default.
+	// It is nil until first written; reads then return the defaults.
+	NetworkRuleSet *azurearm.NetworkRuleSetProps
 }
 
 type queueRecord struct {
@@ -81,6 +86,7 @@ type queueRecord struct {
 	// DLQURL is the backing store of this queue's $DeadLetterQueue sub-queue.
 	DLQURL    string
 	Props     queueProperties
+	AuthRules map[string]*authRuleRecord
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -89,6 +95,7 @@ type topicRecord struct {
 	Name      string
 	Props     topicProperties
 	Subs      map[string]*subscriptionRecord
+	AuthRules map[string]*authRuleRecord
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

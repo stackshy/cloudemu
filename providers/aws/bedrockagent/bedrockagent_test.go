@@ -60,8 +60,12 @@ func TestCreateAgentValidation(t *testing.T) {
 func TestAgentAliasRequiresAgent(t *testing.T) {
 	m := newMock()
 
-	_, err := m.CreateAgentAlias(context.Background(), driver.AgentAliasConfig{AgentID: "nope", Name: "x"})
+	_, err := m.CreateAgentAlias(context.Background(), driver.AgentAliasConfig{AgentID: "NOPE000000", Name: "x"})
 	assert.True(t, cerrors.IsNotFound(err))
+
+	// An id that breaks the [0-9a-zA-Z]{10} pattern fails validation first.
+	_, err = m.CreateAgentAlias(context.Background(), driver.AgentAliasConfig{AgentID: "nope", Name: "x"})
+	assert.True(t, cerrors.IsInvalidArgument(err))
 }
 
 func TestKnowledgeBaseAndDataSource(t *testing.T) {

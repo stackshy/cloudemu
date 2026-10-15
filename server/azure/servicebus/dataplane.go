@@ -604,15 +604,22 @@ func (b *wireBrokerProps) sendInput(url, body string, defaultTTLSecs int) mqdriv
 		in.MessageTTLSeconds = &ttl
 	}
 
-	if b.ScheduledEnqueueTimeUtc != "" {
-		if t, err := time.Parse(time.RFC3339, b.ScheduledEnqueueTimeUtc); err == nil {
-			if delay := int(time.Until(t).Seconds()); delay > 0 {
-				in.DelaySeconds = delay
-			}
+	in.ScheduledEnqueueTime = parseScheduledEnqueueTime(b.ScheduledEnqueueTimeUtc)
+
+	return in
+}
+
+// parseScheduledEnqueueTime reads ScheduledEnqueueTimeUtc. The Service Bus REST
+// docs use the RFC 1123 form ("Sun, 06 Nov 1994 08:49:37 GMT"); ISO 8601 is
+// accepted too. An empty or unparseable value means no schedule.
+func parseScheduledEnqueueTime(raw string) time.Time {
+	for _, layout := range []string{time.RFC1123, time.RFC1123Z, time.RFC3339Nano, "2006-01-02T15:04:05"} {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t
 		}
 	}
 
-	return in
+	return time.Time{}
 }
 
 // readSendBody reads a size-capped request body, writing an error on failure.

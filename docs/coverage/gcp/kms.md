@@ -3,24 +3,29 @@
 
 provider-native `kms-gcp` wire service (GCP-only) · no portable driver · [GCP index](./README.md)
 
-## Operations (17)
+## Operations (22)
 
 | Operation | Description |
 | --- | --- |
+| `AsymmetricDecrypt` |  |
+| `AsymmetricSign` |  |
 | `CreateCryptoKey` |  |
 | `CreateCryptoKeyVersion` |  |
 | `CreateKeyRing` |  |
+| `Decrypt` |  |
 | `DestroyCryptoKeyVersion` |  |
+| `Encrypt` |  |
+| `GenerateRandomBytes` |  |
 | `GetCryptoKey` |  |
 | `GetCryptoKeyVersion` |  |
-| `GetIamPolicy` |  |
 | `GetKeyRing` |  |
+| `GetPublicKey` |  |
 | `ListCryptoKeyVersions` |  |
 | `ListCryptoKeys` |  |
 | `ListKeyRings` |  |
+| `MacSign` |  |
+| `MacVerify` |  |
 | `RestoreCryptoKeyVersion` |  |
-| `SetIamPolicy` |  |
-| `TestIamPermissions` |  |
 | `UpdateCryptoKey` |  |
 | `UpdateCryptoKeyPrimaryVersion` |  |
 | `UpdateCryptoKeyVersion` |  |

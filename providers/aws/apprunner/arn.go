@@ -24,7 +24,7 @@ func arnResource(arn string) string {
 func autoScalingRefFromARN(arn string) (name string, revision int32) {
 	const (
 		nameSegments     = 2
-		revisionSegments = 4
+		revisionSegments = 3
 		revisionBits     = 32
 	)
 

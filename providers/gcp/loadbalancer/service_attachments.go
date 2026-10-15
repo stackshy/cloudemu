@@ -56,8 +56,8 @@ func (m *Mock) InsertGCPServiceAttachment(ctx context.Context, res driver.GCPRes
 }
 
 // GetGCPServiceAttachment returns the named attachment, or NotFound.
-func (m *Mock) GetGCPServiceAttachment(_ context.Context, region, name string) (*driver.GCPResource, error) {
-	res, ok := m.gcpResources.Get(gcpResourceKey(driver.GCPServiceAttachmentCollection, region, name))
+func (m *Mock) GetGCPServiceAttachment(ctx context.Context, region, name string) (*driver.GCPResource, error) {
+	res, ok := m.gcpResources.Get(m.resourceKey(ctx, driver.GCPServiceAttachmentCollection, region, name))
 	if !ok {
 		return nil, serviceAttachmentNotFound(name)
 	}
@@ -80,10 +80,10 @@ func (m *Mock) ListGCPServiceAttachments(ctx context.Context, region string) ([]
 // UpdateGCPServiceAttachment applies mutate under the store lock, keeps the
 // connected endpoints (they are output-only), validates the result and
 // re-evaluates every connection against the new lists.
-func (m *Mock) UpdateGCPServiceAttachment(_ context.Context, region, name string,
+func (m *Mock) UpdateGCPServiceAttachment(ctx context.Context, region, name string,
 	mutate func(*driver.GCPResource) error,
 ) error {
-	return m.updateServiceAttachment(region, name, func(res *driver.GCPResource) error {
+	return m.updateServiceAttachment(ctx, region, name, func(res *driver.GCPResource) error {
 		endpoints := cloneBody(res.Body)[saConnectedEndpoints]
 
 		next := *res
@@ -111,8 +111,8 @@ func (m *Mock) UpdateGCPServiceAttachment(_ context.Context, region, name string
 }
 
 // DeleteGCPServiceAttachment removes the named attachment, or NotFound.
-func (m *Mock) DeleteGCPServiceAttachment(_ context.Context, region, name string) error {
-	if !m.gcpResources.Delete(gcpResourceKey(driver.GCPServiceAttachmentCollection, region, name)) {
+func (m *Mock) DeleteGCPServiceAttachment(ctx context.Context, region, name string) error {
+	if !m.gcpResources.Delete(m.resourceKey(ctx, driver.GCPServiceAttachmentCollection, region, name)) {
 		return serviceAttachmentNotFound(name)
 	}
 
@@ -121,12 +121,12 @@ func (m *Mock) DeleteGCPServiceAttachment(_ context.Context, region, name string
 
 // ConnectGCPServiceAttachment appends a consumer endpoint and returns the
 // status the evaluation gave it.
-func (m *Mock) ConnectGCPServiceAttachment(_ context.Context, region, name string,
+func (m *Mock) ConnectGCPServiceAttachment(ctx context.Context, region, name string,
 	ep driver.GCPPSCEndpoint,
 ) (string, error) {
 	status := ""
 
-	err := m.updateServiceAttachment(region, name, func(res *driver.GCPResource) error {
+	err := m.updateServiceAttachment(ctx, region, name, func(res *driver.GCPResource) error {
 		body := cloneBody(res.Body)
 		eps := endpointsOf(body)
 
@@ -145,7 +145,7 @@ func (m *Mock) ConnectGCPServiceAttachment(_ context.Context, region, name strin
 		return "", err
 	}
 
-	res, _ := m.gcpResources.Get(gcpResourceKey(driver.GCPServiceAttachmentCollection, region, name))
+	res, _ := m.gcpResources.Get(m.resourceKey(ctx, driver.GCPServiceAttachmentCollection, region, name))
 	for _, e := range endpointsOf(res.Body) {
 		if e[epPscConnectionID] == ep.PscConnectionID {
 			status, _ = e[epStatus].(string)
@@ -157,8 +157,8 @@ func (m *Mock) ConnectGCPServiceAttachment(_ context.Context, region, name strin
 
 // DisconnectGCPServiceAttachment removes a consumer endpoint by
 // pscConnectionId; a missing attachment or endpoint is not an error.
-func (m *Mock) DisconnectGCPServiceAttachment(_ context.Context, region, name, pscConnectionID string) error {
-	err := m.updateServiceAttachment(region, name, func(res *driver.GCPResource) error {
+func (m *Mock) DisconnectGCPServiceAttachment(ctx context.Context, region, name, pscConnectionID string) error {
+	err := m.updateServiceAttachment(ctx, region, name, func(res *driver.GCPResource) error {
 		body := cloneBody(res.Body)
 		eps := endpointsOf(body)
 		kept := eps[:0]
@@ -183,8 +183,8 @@ func (m *Mock) DisconnectGCPServiceAttachment(_ context.Context, region, name, p
 
 // GCPPSCConnectionStatus returns a consumer endpoint's current status, or
 // CLOSED when the attachment or the endpoint is gone.
-func (m *Mock) GCPPSCConnectionStatus(_ context.Context, region, name, pscConnectionID string) string {
-	res, ok := m.gcpResources.Get(gcpResourceKey(driver.GCPServiceAttachmentCollection, region, name))
+func (m *Mock) GCPPSCConnectionStatus(ctx context.Context, region, name, pscConnectionID string) string {
+	res, ok := m.gcpResources.Get(m.resourceKey(ctx, driver.GCPServiceAttachmentCollection, region, name))
 	if !ok {
 		return driver.PSCStatusClosed
 	}
@@ -202,10 +202,10 @@ func (m *Mock) GCPPSCConnectionStatus(_ context.Context, region, name, pscConnec
 
 // updateServiceAttachment runs mutate under the store lock and then
 // re-evaluates every connection. A mutate error leaves the record unchanged.
-func (m *Mock) updateServiceAttachment(region, name string, mutate func(*driver.GCPResource) error) error {
+func (m *Mock) updateServiceAttachment(ctx context.Context, region, name string, mutate func(*driver.GCPResource) error) error {
 	var mutateErr error
 
-	updated := m.gcpResources.Update(gcpResourceKey(driver.GCPServiceAttachmentCollection, region, name),
+	updated := m.gcpResources.Update(m.resourceKey(ctx, driver.GCPServiceAttachmentCollection, region, name),
 		func(res driver.GCPResource) driver.GCPResource {
 			next := res
 			if err := mutate(&next); err != nil {

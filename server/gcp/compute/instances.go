@@ -2,12 +2,14 @@ package compute
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/internal/ipalloc"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcplist"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -67,6 +69,19 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 	}
 
 	subnet := firstSubnet(req.NetworkInterfaces)
+	if subnet == "" {
+		subnet = h.autoSubnetFor(r.Context(), firstNetwork(req.NetworkInterfaces), rp.ScopeName)
+	}
+
+	// Hold the subnet's allocation lock from picking the IP until the instance
+	// is stored, so concurrent launches and address reservations in the subnet
+	// never share an IP.
+	unlock := func() {}
+
+	if subnet != "" {
+		region, name := parseSubnetRef(subnet, rp.ScopeName)
+		unlock = ipalloc.LockSubnet(subnetProject(subnet, rp.Project), region, name)
+	}
 
 	cfg := computedriver.InstanceConfig{
 		ImageID:      bootImage(req.Disks),
@@ -78,6 +93,9 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 	}
 
 	instances, err := h.compute.RunInstances(r.Context(), cfg, 1)
+
+	unlock()
+
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
@@ -96,8 +114,8 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
-	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
-		"instances", req.Name, "insert")
+	op := h.ops.RecordDoneTarget(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
+		"instances", req.Name, numericID(instances[0].ID), "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
@@ -323,34 +341,24 @@ func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, rp gcpre
 	}
 
 	host := hostFromRequest(r)
-	pred := parseFilter(r.URL.Query().Get("filter"))
-
 	out := make([]instanceResponse, 0, len(instances))
 
 	for i := range instances {
-		if !instanceInZone(&instances[i], rp.ScopeName) {
-			continue
-		}
-
-		resp := h.toInstanceResponse(r.Context(), &instances[i], rp.Project, host)
-		if pred(&resp) {
-			out = append(out, resp)
+		if instanceInZone(&instances[i], rp.ScopeName) {
+			out = append(out, h.toInstanceResponse(r.Context(), &instances[i], rp.Project, host))
 		}
 	}
 
-	page, err := pagination.PaginateSorted(out,
-		func(a, b instanceResponse) bool { return a.Name < b.Name },
-		r.URL.Query().Get("pageToken"), parseMaxResults(r.URL.Query().Get("maxResults")))
-	if err != nil {
-		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "invalid pageToken")
+	items, next, ok := gcplist.FilterPage(w, r, out, func(i instanceResponse) string { return i.Name })
+	if !ok {
 		return
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, instanceListResponse{
 		Kind:          "compute#instanceList",
 		ID:            "projects/" + rp.Project + "/zones/" + rp.ScopeName + "/instances",
-		Items:         page.Items,
-		NextPageToken: page.NextPageToken,
+		Items:         items,
+		NextPageToken: next,
 		SelfLink:      gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, "instances", ""),
 	})
 }
@@ -368,26 +376,30 @@ func (h *Handler) aggregatedListInstances(w http.ResponseWriter, r *http.Request
 	}
 
 	host := hostFromRequest(r)
-	pred := parseFilter(r.URL.Query().Get("filter"))
-	items := make(map[string]instancesScopedList)
+	all := make([]gcplist.Scoped[instanceResponse], 0, len(instances))
 
 	for i := range instances {
-		resp := h.toInstanceResponse(r.Context(), &instances[i], rp.Project, host)
-		if !pred(&resp) {
-			continue
-		}
+		all = append(all, gcplist.Scoped[instanceResponse]{Scope: "zones/" + tagOr(instances[i].Tags, keyZone, "unknown"),
+			Item: h.toInstanceResponse(r.Context(), &instances[i], rp.Project, host),
+		})
+	}
 
-		scope := "zones/" + tagOr(instances[i].Tags, keyZone, "unknown")
-		bucket := items[scope]
-		bucket.Instances = append(bucket.Instances, resp)
-		items[scope] = bucket
+	grouped, next, ok := gcplist.AggregatedPage(w, r, all, func(i instanceResponse) string { return i.Name })
+	if !ok {
+		return
+	}
+
+	items := make(map[string]instancesScopedList, len(grouped))
+	for scope, list := range grouped {
+		items[scope] = instancesScopedList{Instances: list}
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, aggregatedListResponse{
-		Kind:     "compute#instanceAggregatedList",
-		ID:       "projects/" + rp.Project + "/aggregated/instances",
-		Items:    items,
-		SelfLink: host + "/compute/v1/projects/" + rp.Project + "/aggregated/instances",
+		Kind:          "compute#instanceAggregatedList",
+		ID:            "projects/" + rp.Project + "/aggregated/instances",
+		Items:         items,
+		NextPageToken: next,
+		SelfLink:      host + "/compute/v1/projects/" + rp.Project + "/aggregated/instances",
 	})
 }
 
@@ -424,6 +436,8 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 		gcprest.WriteCErr(w, err)
 		return
 	}
+
+	h.dropPolicy(rp)
 
 	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
 		"instances", rp.ResourceName, "delete")
@@ -732,9 +746,9 @@ func tagOr(m map[string]string, key, fallback string) string {
 	return fallback
 }
 
-// numericID returns a stable uint64-shaped string derived from a driver
-// resource ID. GCP IDs in the wire protocol are uint64; non-numeric values
-// fail the SDK's protobuf unmarshalling.
+// numericID returns a stable numeric string derived from a driver resource
+// ID. GCP IDs in the wire protocol are uint64, but real ids fit int64 and the
+// Terraform provider parses them as int64, so the top bit is cleared.
 func numericID(driverID string) string {
 	const fnvOffset uint64 = 14695981039346656037
 
@@ -746,7 +760,7 @@ func numericID(driverID string) string {
 		h *= fnvPrime
 	}
 
-	return strconv.FormatUint(h, 10)
+	return strconv.FormatUint(h&math.MaxInt64, 10)
 }
 
 // gcpStatusFor maps driver states to GCP Compute Engine instance status.

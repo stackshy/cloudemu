@@ -3,6 +3,7 @@ package pubsub
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -64,6 +66,36 @@ type Mock struct {
 	mu         sync.RWMutex
 	triggers   map[string]FunctionTrigger // subscriptionURL -> trigger
 	monitoring mondriver.Monitoring
+
+	// wire is the Pub/Sub-native state the REST handler keeps (subscriptions,
+	// topic config, snapshots, message logs), which the SQS-style driver cannot
+	// express. Snapshot and Restore carry it so serve --persist keeps it.
+	// pendingWire holds restored wire state until a handler attaches.
+	wire        WireState
+	pendingWire json.RawMessage
+}
+
+// WireState is implemented by the Pub/Sub REST handler so the provider snapshot
+// includes the handler-held native state.
+type WireState interface {
+	ExportWire() (json.RawMessage, error)
+	ImportWire(data json.RawMessage) error
+}
+
+// AttachWireState registers the handler whose native state Snapshot and Restore
+// carry. Wire state restored before the handler attached is handed over now.
+func (m *Mock) AttachWireState(ws WireState) error {
+	m.mu.Lock()
+	m.wire = ws
+	pending := m.pendingWire
+	m.pendingWire = nil
+	m.mu.Unlock()
+
+	if len(pending) == 0 {
+		return nil
+	}
+
+	return ws.ImportWire(pending)
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -124,7 +156,9 @@ func (m *Mock) RemoveTrigger(queueURL string) {
 }
 
 // CreateQueue creates a new Pub/Sub topic and subscription pair.
-func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.QueueInfo, error) {
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) CreateQueue(ctx context.Context, cfg driver.QueueConfig) (*driver.QueueInfo, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "topic name is required")
 	}
@@ -133,8 +167,9 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 		return nil, cerrors.New(cerrors.InvalidArgument, "FIFO topic name must end with .fifo")
 	}
 
-	url := fmt.Sprintf("projects/%s/subscriptions/%s", m.opts.ProjectID, cfg.Name)
-	arn := idgen.GCPID(m.opts.ProjectID, "topics", cfg.Name)
+	project := projectctx.ProjectOr(ctx, m.opts.ProjectID)
+	url := fmt.Sprintf("projects/%s/subscriptions/%s", project, cfg.Name)
+	arn := idgen.GCPID(project, "topics", cfg.Name)
 
 	if m.queues.Has(url) {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "topic %q already exists", cfg.Name)
@@ -216,14 +251,21 @@ func (m *Mock) GetQueueInfo(_ context.Context, url string) (*driver.QueueInfo, e
 	return &info, nil
 }
 
-// ListQueues returns all topics whose names match the given prefix.
-// If prefix is empty, all topics are returned.
-func (m *Mock) ListQueues(_ context.Context, prefix string) ([]driver.QueueInfo, error) {
+// ListQueues returns the request project's topics whose names match the given
+// prefix, or every project's under projectctx.AllProjects. If prefix is
+// empty, all of them are returned.
+func (m *Mock) ListQueues(ctx context.Context, prefix string) ([]driver.QueueInfo, error) {
 	all := m.queues.All()
+	project := projectctx.ProjectOr(ctx, m.opts.ProjectID)
+	every := projectctx.IsAllProjects(ctx)
 
 	results := make([]driver.QueueInfo, 0, len(all))
 
 	for _, qd := range all {
+		if !every && projectctx.FromPath(qd.info.URL) != project {
+			continue
+		}
+
 		if prefix == "" || strings.HasPrefix(qd.info.Name, prefix) {
 			results = append(results, qd.info)
 		}

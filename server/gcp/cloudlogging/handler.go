@@ -35,6 +35,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
@@ -137,6 +138,10 @@ func bucketsPath(p string) (project, location, tail string, ok bool) {
 
 // ServeHTTP routes on the path and method.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Logs live per project. entries:write and entries:list name their
+	// projects in the body and stamp them there.
+	r = r.WithContext(projectctx.WithProject(r.Context(), projectctx.FromPath(r.URL.Path)))
+
 	switch r.URL.Path {
 	case entriesWrite:
 		h.serveEntriesWrite(w, r)

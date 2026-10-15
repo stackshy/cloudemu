@@ -3,6 +3,7 @@ package resourcediscovery
 import (
 	"context"
 
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
@@ -291,6 +292,9 @@ func (e *Engine) ListAll(ctx context.Context) ([]Resource, error) {
 //
 //nolint:gocritic // q is the public Query filter, taken by value by API contract
 func (e *Engine) List(ctx context.Context, q Query) ([]Resource, error) {
+	// GCP drivers scope every list to one project; the inventory spans them all.
+	ctx = projectctx.AllProjects(ctx)
+
 	var out []Resource
 
 	for _, walk := range e.walkers() {

@@ -476,3 +476,18 @@ func TestCouldMatchService(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceWideRejectsMalformedService(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	userWithDocs(t, m, "root-like", polDoc(polStmt("Allow", map[string]any{"Action": "*", "Resource": "*"})))
+
+	for _, svc := range []string{"", "a:b", "s3:*", "*", "s*", "S3", "-s3", "s3 "} {
+		assertEqual(t, driver.DecisionImplicitDeny, m.EvaluateServiceWide(ctx, "root-like", svc, nil))
+	}
+
+	for _, svc := range []string{"s3", "resource-explorer-2", "ec2"} {
+		assertEqual(t, driver.DecisionAllowed, m.EvaluateServiceWide(ctx, "root-like", svc, nil))
+	}
+}

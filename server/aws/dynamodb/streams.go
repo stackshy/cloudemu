@@ -473,3 +473,7 @@ func writeStreamsErr(w http.ResponseWriter, err error) {
 		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalServerError", msg)
 	}
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves. DynamoDB Streams actions are in the dynamodb namespace.
+func (*StreamsHandler) IAMService() string { return iamServicePrefix }

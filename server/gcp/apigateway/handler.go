@@ -37,8 +37,10 @@
 package apigateway
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
@@ -77,10 +79,17 @@ type Handler struct {
 	// resolves the typed response (and unknown names 404). Nil in a standalone
 	// package server, where this handler serves its own /v1/ operation poll.
 	ops *lro.Registry
+
+	// mu guards responses, the typed response each minted operation carried,
+	// which a poll this handler answers (/v1beta/, or /v1/ standalone) replays.
+	mu        sync.RWMutex
+	responses map[string]json.RawMessage
 }
 
 // New returns an API Gateway handler backed by db.
-func New(db agdriver.APIGateway) *Handler { return &Handler{db: db} }
+func New(db agdriver.APIGateway) *Handler {
+	return &Handler{db: db, responses: make(map[string]json.RawMessage)}
+}
 
 // SetOperationRegistry wires the shared LRO poller so created operations are
 // resolvable (with their response) through the full server's /v1/ operations

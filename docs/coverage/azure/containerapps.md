@@ -3,7 +3,7 @@
 
 provider-native `containerapps` wire service (Azure-only) · no portable driver · [Azure index](./README.md)
 
-## Operations (27)
+## Operations (28)
 
 | Operation | Description |
 | --- | --- |
@@ -23,6 +23,7 @@ provider-native `containerapps` wire service (Azure-only) · no portable driver 
 | `GetEnvStorage` |  |
 | `GetEnvironment` |  |
 | `GetRevision` |  |
+| `ListAppSecrets` |  |
 | `ListAppsByResourceGroup` |  |
 | `ListAppsBySubscription` |  |
 | `ListDaprComponents` |  |

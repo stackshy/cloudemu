@@ -69,6 +69,7 @@ func toContainerJSONs(in []driver.ContainerInstance) []containerJSON {
 				Image:                c.Image,
 				Command:              c.Command,
 				EnvironmentVariables: toEnvVarJSONs(c.Env),
+				Ports:                toContainerPortJSONs(c.Ports),
 				Resources:            resourcesJSON(c),
 				InstanceView: &containerInstanceView{
 					CurrentState: toStateJSON(&c.Current),
@@ -80,13 +81,22 @@ func toContainerJSONs(in []driver.ContainerInstance) []containerJSON {
 	return out
 }
 
-// resourcesJSON builds the ARM resource requirements from a container's
-// requested CPU/memory, omitting the block when neither is set.
-func resourcesJSON(c *driver.ContainerInstance) *resourceRequirements {
-	if c.CPU == 0 && c.MemoryInGB == 0 {
-		return nil
+// toContainerPortJSONs maps a container's exposed ports onto the ARM shape,
+// returning an empty (never nil) slice so GET always carries "ports": [].
+func toContainerPortJSONs(in []driver.Port) []portJSON {
+	out := make([]portJSON, 0, len(in))
+	for _, p := range in {
+		out = append(out, portJSON{Port: p.Port, Protocol: p.Protocol})
 	}
 
+	return out
+}
+
+// resourcesJSON builds the ARM resource requirements from a container's
+// requested CPU/memory. The block is always present: resources.requests is a
+// required ContainerProperties field that real ARM always reports and azurerm
+// dereferences without a nil check.
+func resourcesJSON(c *driver.ContainerInstance) *resourceRequirements {
 	return &resourceRequirements{
 		Requests: &resourceRequests{CPU: c.CPU, MemoryInGB: c.MemoryInGB},
 	}

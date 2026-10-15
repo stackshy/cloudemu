@@ -46,7 +46,6 @@ var rgPurgeExempt = map[string]exemption{
 	"server/azure/locks.Handler":                        {Reason: "the lock gate blocks a group delete while any lock exists at or below it"},
 	"server/azure/resourcegroups.Handler":               {Reason: "owns the cascade itself"},
 	"server/azure/monitor.MetricsHandler":               {Reason: "read-only metrics over other resources"},
-	"server/azure/monitor.DiagnosticSettingsHandler":    {Reason: "Azure keeps diagnostic settings of a deleted resource (deferred, plan A.9)"},
 	"server/azure/monitor.ActivityLogHandler":           {Reason: "read-only activity log"},
 	"server/azure/disks.Handler":                        {Reason: "shares the compute driver", PurgedBy: vmPurger},
 	"server/azure/snapshots.Handler":                    {Reason: "shares the compute driver", PurgedBy: vmPurger},
@@ -93,17 +92,7 @@ var rgPurgeExempt = map[string]exemption{
 // fails the guard, so the entry has to be removed when the purge lands.
 //
 //nolint:gochecknoglobals // test fixture table
-var pendingPurger = map[string]string{
-	"server/azure/monitor.Handler":             "AZRM-02 (A3)",
-	"server/azure/eventgrid.Handler":           "AZRM-02 (A3)",
-	"server/azure/notificationhubs.Handler":    "AZRM-02 (A3)",
-	"server/azure/databricks.Handler":          "AZRM-02 (A3)",
-	"server/azure/kusto.Handler":               "AZRM-02 (A3)",
-	"server/azure/ai.CognitiveServicesHandler": "AZRM-02 (A3)",
-	"server/azure/ai.MachineLearningHandler":   "AZRM-02 (A3)",
-	"server/azure/iam.Handler":                 "AZRM-02 (A3)",
-	"server/azure/tags.Handler":                "AZRM-02 (A3)",
-}
+var pendingPurger = map[string]string{}
 
 // driversWithEverything returns a Drivers bundle with every driver field set,
 // so every handler New can register is registered.
@@ -227,6 +216,8 @@ func TestPurgeDriversImplementNarrowInterfaces(t *testing.T) {
 		"DNS": d.DNS, "ACR": d.ACR, "AKS": d.AKS, "ContainerInstances": d.ContainerInstances,
 		"KeyVault": d.KeyVault, "SQL": d.SQL, "Cache": d.Cache, "Functions": d.Functions,
 		"MySQLFlex": d.MySQLFlex, "PostgresFlex": d.PostgresFlex, "SearchControl": d.SearchControl,
+		"EventGrid": d.EventGrid, "NotificationHubs": d.NotificationHubs, "Databricks": d.Databricks,
+		"CognitiveServices": d.CognitiveServices, "MachineLearning": d.MachineLearning,
 	} {
 		if _, ok := drv.(resourcegroups.ResourceGroupPurger); !ok {
 			t.Errorf("Drivers.%s (%T) has no PurgeResourceGroup(ctx, sub, rg) error method", name, drv)

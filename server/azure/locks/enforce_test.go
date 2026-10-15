@@ -8,7 +8,7 @@ import (
 // seedLock stores a lock directly in the handler's store, bypassing the wire
 // layer, so Enforce can be unit-tested without a server.
 func seedLock(h *Handler, scope, name, level string) {
-	h.store.put(scope, name, level, "")
+	h.store.Put(scope, name, level, "")
 }
 
 const (
@@ -69,7 +69,7 @@ func TestEnforceLevelsAndMethods(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			h := New()
+			h := New(nil)
 			if tc.lockScope != "" {
 				seedLock(h, tc.lockScope, "lk", tc.lockLevel)
 			}
@@ -87,7 +87,7 @@ func TestEnforceLevelsAndMethods(t *testing.T) {
 // though no lock covers the RG scope itself: the RG-delete-with-locked-child
 // asymmetry.
 func TestEnforceDeleteBlockedByDescendantLock(t *testing.T) {
-	h := New()
+	h := New(nil)
 	seedLock(h, vm, "child-lock", levelCanNotDelete)
 
 	lockedScope, _, blocked := h.Enforce(rg, http.MethodDelete)
@@ -108,7 +108,7 @@ func TestEnforceDeleteBlockedByDescendantLock(t *testing.T) {
 // TestEnforceMostRestrictiveWins proves that when both a CanNotDelete and a
 // ReadOnly lock cover a path, a write still finds the ReadOnly and blocks.
 func TestEnforceMostRestrictiveWins(t *testing.T) {
-	h := New()
+	h := New(nil)
 	seedLock(h, rg, "nodel", levelCanNotDelete)
 	seedLock(h, sub, "ro", levelReadOnly)
 
@@ -120,7 +120,7 @@ func TestEnforceMostRestrictiveWins(t *testing.T) {
 // TestEnforceMessageNamesMostSpecificLock proves the tightest (longest-scope)
 // covering lock is reported for the error message.
 func TestEnforceMessageNamesMostSpecificLock(t *testing.T) {
-	h := New()
+	h := New(nil)
 	seedLock(h, sub, "sub-lock", levelReadOnly)
 	seedLock(h, rg, "rg-lock", levelReadOnly)
 

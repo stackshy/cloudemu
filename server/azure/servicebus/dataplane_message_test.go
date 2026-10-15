@@ -151,6 +151,54 @@ func TestDataPlaneScheduledMessageDelayed(t *testing.T) {
 	}
 }
 
+// TestDataPlaneScheduledEnqueueTimeFormats is the regression for an RFC 1123
+// ScheduledEnqueueTimeUtc (the form the REST docs use) being ignored, so the
+// message was delivered at once. Each accepted form must hold the message
+// until the scheduled instant on the provider clock, then deliver it.
+func TestDataPlaneScheduledEnqueueTimeFormats(t *testing.T) {
+	tests := []struct {
+		name   string
+		layout string
+	}{
+		{name: "rfc1123", layout: time.RFC1123},
+		{name: "rfc3339", layout: time.RFC3339},
+		{name: "iso8601-no-zone", layout: "2006-01-02T15:04:05"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, clk := newClockServer(t)
+			seedNamespace(t, srv)
+
+			if r := doRequest(t, srv, http.MethodPut, queueURL("fmt")+apiVer, `{"properties":{}}`); r.StatusCode != http.StatusOK {
+				t.Fatalf("create queue = %d", r.StatusCode)
+			}
+
+			// A FakeClock far from the wall clock proves the schedule is measured
+			// on the provider clock.
+			clk.Advance(48 * time.Hour)
+			at := clk.Now().Add(time.Minute).UTC().Truncate(time.Second)
+			broker := fmt.Sprintf(`{"ScheduledEnqueueTimeUtc":%q}`, at.Format(tt.layout))
+
+			send := doRequest(t, srv, http.MethodPost, "/"+nsName+"/fmt/messages", "later",
+				map[string]string{"BrokerProperties": broker})
+			if send.StatusCode != http.StatusCreated {
+				t.Fatalf("send = %d, want 201", send.StatusCode)
+			}
+
+			if early := doRequest(t, srv, http.MethodDelete, "/"+nsName+"/fmt/messages/head", ""); early.StatusCode != http.StatusNoContent {
+				t.Fatalf("receive before schedule = %d, want 204", early.StatusCode)
+			}
+
+			clk.Advance(time.Minute + time.Second)
+
+			if got := doRequest(t, srv, http.MethodDelete, "/"+nsName+"/fmt/messages/head", ""); got.StatusCode != http.StatusOK {
+				t.Fatalf("receive after schedule = %d, want 200", got.StatusCode)
+			}
+		})
+	}
+}
+
 // TestDataPlaneScheduledMessageTTLFromEnqueue is the regression for silent loss
 // of a scheduled message whose TTL is shorter than the schedule delay: a message
 // scheduled for +120s with a 30s TimeToLive must still be delivered once it
@@ -164,9 +212,7 @@ func TestDataPlaneScheduledMessageTTLFromEnqueue(t *testing.T) {
 		t.Fatalf("create queue = %d", r.StatusCode)
 	}
 
-	// The dataplane derives the delivery delay from ScheduledEnqueueTimeUtc via the
-	// wall clock, while TTL reaping runs on the FakeClock (both anchored at start).
-	schedule := time.Now().Add(120 * time.Second).UTC().Format(time.RFC3339)
+	schedule := clk.Now().Add(120 * time.Second).UTC().Format(time.RFC3339)
 	broker := fmt.Sprintf(`{"ScheduledEnqueueTimeUtc":%q,"TimeToLive":30}`, schedule)
 
 	send := doRequest(t, srv, http.MethodPost, "/"+nsName+"/schedttl/messages", "future",

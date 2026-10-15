@@ -869,3 +869,70 @@ func TestEchoEvictsSubResourceOverlayOnDelete(t *testing.T) {
 		t.Fatalf("GET on recreated database still carries the deleted database's catalogCollation: %v", v)
 	}
 }
+
+// TestEchoVMAdditionalCapabilitiesShape covers the VM additionalCapabilities
+// read-back. azurerm sends "additionalCapabilities": {} when the config has no
+// additional_capabilities block; real ARM omits it on GET, and echoing {} made
+// every plan show a diff. A populated block is still returned as sent.
+func TestEchoVMAdditionalCapabilitiesShape(t *testing.T) {
+	tests := []struct {
+		name    string
+		vm      string
+		sent    map[string]any
+		want    map[string]any
+		present bool
+	}{
+		{name: "empty block is omitted", vm: "capvm1", sent: map[string]any{}, present: false},
+		{
+			name:    "set block is echoed",
+			vm:      "capvm2",
+			sent:    map[string]any{"ultraSSDEnabled": false, "hibernationEnabled": false},
+			want:    map[string]any{"ultraSSDEnabled": false, "hibernationEnabled": false},
+			present: true,
+		},
+		{
+			name:    "enabled block is echoed",
+			vm:      "capvm3",
+			sent:    map[string]any{"ultraSSDEnabled": true},
+			want:    map[string]any{"ultraSSDEnabled": true},
+			present: true,
+		},
+	}
+
+	ts, c := echoTestServer(t)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			url := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/" +
+				tc.vm + "?api-version=2024-03-01"
+
+			putJSON(t, c, url, map[string]any{
+				"location": "eastus",
+				"properties": map[string]any{
+					"hardwareProfile":        map[string]any{"vmSize": "Standard_B1s"},
+					"additionalCapabilities": tc.sent,
+				},
+			})
+
+			got, present := props(t, getJSON(t, c, url))["additionalCapabilities"]
+			if present != tc.present {
+				t.Fatalf("additionalCapabilities present = %v, want %v (got %v)", present, tc.present, got)
+			}
+
+			if !tc.present {
+				return
+			}
+
+			gotMap, ok := got.(map[string]any)
+			if !ok || len(gotMap) != len(tc.want) {
+				t.Fatalf("additionalCapabilities = %v, want %v", got, tc.want)
+			}
+
+			for k, v := range tc.want {
+				if gotMap[k] != v {
+					t.Errorf("additionalCapabilities[%s] = %v, want %v", k, gotMap[k], v)
+				}
+			}
+		})
+	}
+}

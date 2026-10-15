@@ -3,6 +3,7 @@ package binaryauthorization
 import (
 	"net/http"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -24,7 +25,7 @@ func (h *Handler) setIamPolicy(w http.ResponseWriter, r *http.Request, rt route)
 
 	pol, err := h.ba.SetIamPolicy(r.Context(), rt.attestorName(), fromPolicyIAMJSON(req.Policy))
 	if err != nil {
-		gcprest.WriteCErr(w, err)
+		gcpiam.WriteErr(w, err)
 		return
 	}
 

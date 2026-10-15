@@ -35,6 +35,14 @@ Methods: `AWSEndpoint`, `AzureEndpoint`, `GCPEndpoint`, `KubernetesEndpoint`,
 `Reset`, `Seed`, plus the embedded Testcontainers container (`Terminate`, …).
 Pin a version or use a local image with `cloudemu.WithImage("...")`.
 
+`cloudemu.WithEnforceAuth(token)` starts the server with `--enforce-auth` and
+the given admin token (pass `""` to have one generated); `Reset` and `Seed`
+send it for you. The flag is appended to any command set by an earlier option.
+Access key ids must look like real ones (`AKIA` plus 16 uppercase letters or
+digits). Seed your first IAM
+user with a known key (`{"iamUsers":[{"name":"admin","accessKeys":[{"accessKeyId":"AKIA...","secretAccessKey":"..."}]}]}`)
+before making signed calls.
+
 The module's own acceptance test builds the image from the repo `Dockerfile`, so
 it needs Docker; run it with `go test ./...` from this directory (skipped under
 `-short`).

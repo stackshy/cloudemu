@@ -16,6 +16,7 @@
 package kusto
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"strconv"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 const (
@@ -56,6 +58,22 @@ type Handler struct {
 // New returns a Kusto control-plane handler.
 func New() *Handler {
 	return &Handler{clusters: memstore.New[*clusterState]()}
+}
+
+// PurgeResourceGroup deletes every cluster, with its databases, in
+// subscription/resourceGroup, backing the resource-group cascade delete. The
+// clusters live in this handler and are not persisted.
+func (h *Handler) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for k, c := range h.clusters.All() {
+		if (scope.Scope{Subscription: c.Subscription, ResourceGroup: c.ResourceGroup}).InResourceGroup(subscription, resourceGroup) {
+			h.clusters.Delete(k)
+		}
+	}
+
+	return nil
 }
 
 // kustoPath is a parsed Kusto ARM URL. segs holds the path segments that follow

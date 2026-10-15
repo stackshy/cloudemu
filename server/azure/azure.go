@@ -11,6 +11,9 @@ import (
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	aiprov "github.com/stackshy/cloudemu/v2/providers/azure/insightscomponents"
+	lockprov "github.com/stackshy/cloudemu/v2/providers/azure/managementlocks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/tagsatscope"
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/azure/aad"
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
@@ -103,6 +106,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/server/azure/vnet"
 	webpubsubsrv "github.com/stackshy/cloudemu/v2/server/azure/webpubsub"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	agdriver "github.com/stackshy/cloudemu/v2/services/applicationgateway/driver"
 	azureaidriver "github.com/stackshy/cloudemu/v2/services/azureai/driver"
 	fwdriver "github.com/stackshy/cloudemu/v2/services/azurefirewall/driver"
@@ -186,6 +190,12 @@ type Drivers struct {
 	DigitalTwins digitaltwinssrv.Store
 	// ManagedGrafana serves Microsoft.Dashboard/grafana.
 	ManagedGrafana managedgrafanasrv.Store
+	// AppInsights, ManagementLocks and ScopeTags are the persisted stores behind
+	// the always-on components, locks and tags-at-scope handlers. A nil store
+	// gives that handler a private, unpersisted one.
+	AppInsights     *aiprov.Mock
+	ManagementLocks *lockprov.Mock
+	ScopeTags       *tagsatscope.Mock
 	// DevCenter serves Microsoft.DevCenter/devcenters.
 	DevCenter devcentersrv.Store
 	// Purview serves Microsoft.Purview/accounts.
@@ -296,6 +306,13 @@ type Drivers struct {
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
 	// the same backend. Leave nil to disable Kubernetes data-plane support.
 	K8sAPI *kubernetes.APIServer
+	// ResourceGroups stores ARM resource groups. Leave nil for a private
+	// in-memory store that is not part of any snapshot.
+	ResourceGroups resourcegroups.Store
+	// PropertyOverlay stores the request properties echoed back although no
+	// handler models them. Leave nil for a private in-memory store that is not
+	// part of any snapshot.
+	PropertyOverlay PropertyStore
 	// ResourceDiscovery is the cross-service inventory engine. Required to
 	// serve Azure Resource Graph (armresourcegraph) requests. Leave nil to
 	// omit the handler. SubscriptionID is needed for the subscription-scoping
@@ -345,7 +362,7 @@ func New(d Drivers) http.Handler {
 	// Management locks are constructed once and shared: the same instance is
 	// registered as the CRUD handler and handed to the enforcement gate below,
 	// so the gate reads the exact store callers write to.
-	locksHandler := locks.New()
+	locksHandler := locks.New(d.ManagementLocks)
 
 	tenantID := d.TenantID
 	if tenantID == "" {
@@ -453,6 +470,12 @@ func New(d Drivers) http.Handler {
 	if d.LB != nil {
 		lbHandler = lbsrv.New(d.LB)
 
+		if vnetHandler != nil {
+			if az, ok := d.LB.(lbdriver.AzureLoadBalancers); ok {
+				vnetHandler.SetLBResolver(az)
+			}
+		}
+
 		// Project a backend address pool's read-only backendIPConfigurations from
 		// the NIC side of the association, so NIC↔LB pool membership reflects on
 		// both sides. Only wired when the networking driver exposes NICs.
@@ -493,10 +516,16 @@ func New(d Drivers) http.Handler {
 	// cascade. Registered further below.
 	if d.PrivateDNS != nil {
 		privateDNS = privatednssrv.New(d.PrivateDNS)
+
+		if vnetHandler != nil {
+			privateDNS.SetVNetResolver(vnetHandler.VNetExists)
+		}
 	}
 
 	if d.BlobStorage != nil {
-		storageHandler = storageaccountsrv.New(d.BlobStorage)
+		// ARM queues and tables share the data-plane stores, so either surface
+		// sees what the other created.
+		storageHandler = storageaccountsrv.New(d.BlobStorage).WithQueues(d.QueueStorage).WithTables(d.TableStorage)
 	}
 
 	// User-assigned managed identities: a resource-group-scoped resource, so its
@@ -684,7 +713,7 @@ func New(d Drivers) http.Handler {
 	// Application Insights components (Microsoft.Insights/components) are
 	// resource-group-scoped, so the (always-on, driverless) handler joins the
 	// purge cascade. Registered further below.
-	appInsightsHandler := appinsightssrv.New()
+	appInsightsHandler := appinsightssrv.New(d.AppInsights)
 
 	// Data Factory (Microsoft.DataFactory/factories) is a resource-group-scoped
 	// resource, so its handler joins the purge cascade. Registered further below.
@@ -698,16 +727,22 @@ func New(d Drivers) http.Handler {
 	// discovery engine (nil-safe) lets exportTemplate enumerate that membership;
 	// the purgers (collected once every handler is registered) cascade a group
 	// delete into its resources.
-	rgHandler := resourcegroups.New(d.ResourceDiscovery)
+	rgHandler := resourcegroups.NewWithStore(d.ResourceGroups, d.ResourceDiscovery)
 	srv.Register(rgHandler)
 
-	// Tags resource provider (Microsoft.Resources/tags/default). Self-contained
-	// (no driver): it owns the per-scope tag sets an armresources TagsClient
-	// manages at subscription or resource scope. Its path suffix
+	// Tags resource provider (Microsoft.Resources/tags/default). Resource-group
+	// and resource scopes read and write the resource's own tags through the
+	// router (wired at the end); the store keeps subscription tag sets. Its path suffix
 	// /providers/Microsoft.Resources/tags/default is disjoint from the
 	// resource-group paths above and the Microsoft.ResourceGraph/generic-resources
 	// listings, so registration order is unconstrained.
-	srv.Register(tagssrv.New())
+	scopeTags := d.ScopeTags
+	if scopeTags == nil {
+		scopeTags = tagsatscope.New()
+	}
+
+	tagsHandler := tagssrv.New(scopeTags)
+	srv.Register(tagsHandler)
 
 	// microsoft.insights extension resources (metrics, metricDefinitions,
 	// diagnosticSettings) hang off an arbitrary resource URI, so they must claim
@@ -1215,8 +1250,12 @@ func New(d Drivers) http.Handler {
 	// that contain parentheses or a bare JSON POST, disjoint from Blob's
 	// container/blob paths and Queue's /messages surface. Registered before the
 	// permissive Blob fallback.
+	// Storage accounts scope the queue and table namespaces the same way they
+	// scope blob containers.
+	storageAccounts, _ := d.BlobStorage.(storagedriver.AzureStorageAccounts)
+
 	if d.TableStorage != nil {
-		srv.Register(tablesrv.New(d.TableStorage))
+		srv.Register(tablesrv.New(d.TableStorage).WithAccounts(storageAccounts))
 	}
 
 	// Queue Storage matches the queue data-plane surface (/{queue}/messages,
@@ -1225,7 +1264,7 @@ func New(d Drivers) http.Handler {
 	// carries OData parentheses). Registered before the permissive Blob
 	// fallback.
 	if d.QueueStorage != nil {
-		srv.Register(queue.New(d.QueueStorage))
+		srv.Register(queue.New(d.QueueStorage).WithAccounts(storageAccounts))
 	}
 
 	// Storage-account ARM control plane (Microsoft.Storage/storageAccounts).
@@ -1257,6 +1296,10 @@ func New(d Drivers) http.Handler {
 		authGate = newAuthGate(config.RealClock{})
 	}
 
+	srv.SetNotImplemented(func(w http.ResponseWriter, r *http.Request) {
+		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
+			"cloudemu does not implement "+r.Method+" "+r.URL.Path+".")
+	})
 	srv.SetPreDispatch(composePreDispatch(authGate, newResourceGroupGate(rgHandler), newLockGate(locksHandler)))
 
 	// When the monitoring backend can record Activity Log events, observe every
@@ -1270,7 +1313,13 @@ func New(d Drivers) http.Handler {
 	// Every handler is registered now, so collect the resource-group purgers.
 	rgHandler.SetPurgers(resourcegroups.CollectPurgers(srv.Handlers()))
 
-	return echoUnmodeledProperties(srv, newPropertyOverlay())
+	router := echoUnmodeledProperties(srv, newPropertyOverlay(d.PropertyOverlay), scopeTags)
+
+	// The Tags API reads and writes resource and resource-group tags on the
+	// resource itself, through the full router so locks and overlays apply.
+	tagsHandler.SetRouter(router)
+
+	return router
 }
 
 // registerDatabricksDataPlane registers the Databricks workspace data-plane

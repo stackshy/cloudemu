@@ -23,6 +23,7 @@
 //	GET    .../blobServices/default/containers : list containers
 //	GET/PUT .../{queue,table,file}Services/default : service properties
 //	GET/PUT/DELETE .../managementPolicies/default : lifecycle management policy
+//	GET    .../accountMigrations[/default] : redundancy migration status (none)
 //
 // Every other child path is answered without touching the account: child
 // types real Azure has read as empty or not found and their writes are 501,
@@ -43,7 +44,9 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
+	tabledriver "github.com/stackshy/cloudemu/v2/services/tablestorage/driver"
 )
 
 const (
@@ -113,6 +116,8 @@ type Handler struct {
 	blobSvc    storagedriver.BlobServiceConfig       // nil when the driver doesn't expose blob service properties
 	encryption storagedriver.AccountEncryptionConfig // nil when the driver doesn't expose account encryption
 	settings   storagedriver.AccountServiceSettings  // nil when the driver doesn't keep account settings
+	queues     mqdriver.MessageQueue                 // nil unless WithQueues wires the Queue Storage plane
+	tables     tabledriver.TableStorage              // nil unless WithTables wires the Table Storage plane
 }
 
 // New returns a storage-account handler backed by b.
@@ -276,6 +281,7 @@ func (h *Handler) subResourceRoutes() map[string]func(http.ResponseWriter, *http
 		kindTableServices:    h.serveServiceSettings,
 		kindFileServices:     h.serveServiceSettings,
 		"managementpolicies": h.serveManagementPolicy,
+		"accountmigrations":  h.serveAccountMigrations,
 	}
 }
 
@@ -801,6 +807,11 @@ func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, rp *azur
 		return
 	}
 
+	if err := h.purgeQueuesAndTables(r.Context(), a.Name); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -811,6 +822,23 @@ func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, rp *azur
 func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
 	if h.accounts == nil {
 		return nil
+	}
+
+	accounts, err := h.accounts.ListStorageAccounts(ctx)
+	if err != nil {
+		return err
+	}
+
+	rp := azurearm.ResourcePath{Subscription: subscription, ResourceGroup: resourceGroup}
+
+	for i := range accounts {
+		if !inScope(&accounts[i], &rp) {
+			continue
+		}
+
+		if err := h.purgeQueuesAndTables(ctx, accounts[i].Name); err != nil {
+			return err
+		}
 	}
 
 	return h.accounts.PurgeResourceGroup(ctx, subscription, resourceGroup)

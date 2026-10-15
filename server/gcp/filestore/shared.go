@@ -1,12 +1,11 @@
 package filestore
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
+	"github.com/stackshy/cloudemu/v2/server/wire"
 )
 
 // Memorystore for Redis serves the same .../locations/{l}/instances paths.
@@ -37,9 +36,7 @@ func bodyHasFilestoreTier(r *http.Request) bool {
 		return false
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxProbeBytes))
-	_ = r.Body.Close()
-	r.Body = io.NopCloser(bytes.NewReader(raw))
+	raw, err := wire.PeekBody(r, maxProbeBytes)
 
 	if err != nil {
 		return false

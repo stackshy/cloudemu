@@ -154,3 +154,7 @@ func atoiDefault(s string) int32 {
 
 	return int32(n) //nolint:gosec // explicitly range-checked against math.MaxInt32 above; gosec's G109 can't see the guard.
 }
+
+// IAMService returns the IAM service prefix of the operations this handler
+// serves.
+func (*Handler) IAMService() string { return "backup" }

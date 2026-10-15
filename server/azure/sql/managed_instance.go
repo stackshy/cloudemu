@@ -6,6 +6,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // ---- ARM JSON shapes ----
@@ -103,7 +104,10 @@ func (h *Handler) serveManagedInstance(
 }
 
 func miCfgFromBody(body *armManagedInstance, rp *azurearm.ResourcePath) rdsdriver.ManagedInstanceConfig {
-	cfg := rdsdriver.ManagedInstanceConfig{Name: rp.ResourceName, Location: body.Location, Tags: body.Tags}
+	cfg := rdsdriver.ManagedInstanceConfig{
+		Name: rp.ResourceName, Location: body.Location, Tags: body.Tags,
+		Scope: scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
+	}
 	if body.SKU != nil {
 		cfg.SKUName = body.SKU.Name
 		cfg.SKUTier = body.SKU.Tier

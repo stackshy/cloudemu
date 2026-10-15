@@ -146,6 +146,10 @@ func TestSDKProjectIamPolicyConditionAndAuditRoundTrip(t *testing.T) {
 			}},
 			Etag: pol.Etag,
 		},
+		// Without auditConfigs in the mask, real IAM keeps the stored audit
+		// configs (the default mask is "bindings,etag"). Terraform's
+		// google_project_iam_audit_config sends this mask.
+		UpdateMask: "bindings,etag,auditConfigs",
 	}).Context(ctx).Do()
 	if err != nil {
 		t.Fatalf("SetIamPolicy: %v", err)
@@ -183,5 +187,80 @@ func TestSDKProjectTestIamPermissions(t *testing.T) {
 
 	if len(resp.Permissions) != len(want) {
 		t.Fatalf("got %v, want %v", resp.Permissions, want)
+	}
+}
+
+// TestSDKProjectIamPolicyBlindWrite: a setIamPolicy without an etag overwrites
+// unconditionally, even when a policy is already stored (T4-14).
+func TestSDKProjectIamPolicyBlindWrite(t *testing.T) {
+	svc := newCRMService(t)
+	ctx := context.Background()
+
+	for _, member := range []string{"user:a@example.com", "user:b@example.com"} {
+		_, err := svc.Projects.SetIamPolicy(testProject, &crm.SetIamPolicyRequest{
+			Policy: &crm.Policy{Bindings: []*crm.Binding{{Role: "roles/viewer", Members: []string{member}}}},
+		}).Context(ctx).Do()
+		if err != nil {
+			t.Fatalf("blind SetIamPolicy(%s): %v", member, err)
+		}
+	}
+
+	got, err := svc.Projects.GetIamPolicy(testProject, &crm.GetIamPolicyRequest{}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("GetIamPolicy: %v", err)
+	}
+
+	if len(got.Bindings) != 1 || got.Bindings[0].Members[0] != "user:b@example.com" {
+		t.Fatalf("blind write did not overwrite: %+v", got.Bindings)
+	}
+}
+
+// TestSDKOrganizationIamPolicy: organizations/{o} serves the same IAM verbs
+// as projects, with a policy separate from any project's.
+func TestSDKOrganizationIamPolicy(t *testing.T) {
+	svc := newCRMService(t)
+	ctx := context.Background()
+
+	const org = "organizations/123456"
+
+	pol, err := svc.Organizations.GetIamPolicy(org, &crm.GetIamPolicyRequest{}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("GetIamPolicy: %v", err)
+	}
+
+	set, err := svc.Organizations.SetIamPolicy(org, &crm.SetIamPolicyRequest{
+		Policy: &crm.Policy{
+			Bindings: []*crm.Binding{{Role: "roles/browser", Members: []string{"user:o@example.com"}}},
+			Etag:     pol.Etag,
+		},
+	}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("SetIamPolicy: %v", err)
+	}
+
+	_, err = svc.Organizations.SetIamPolicy(org, &crm.SetIamPolicyRequest{
+		Policy: &crm.Policy{Etag: pol.Etag},
+	}).Context(ctx).Do()
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) || gerr.Code != 409 {
+		t.Fatalf("stale-etag set: want 409, got %v", err)
+	}
+
+	got, err := svc.Organizations.GetIamPolicy(org, &crm.GetIamPolicyRequest{}).Context(ctx).Do()
+	if err != nil || got.Etag != set.Etag || len(got.Bindings) != 1 {
+		t.Fatalf("GetIamPolicy after set = %+v, %v", got, err)
+	}
+
+	proj, err := svc.Projects.GetIamPolicy(testProject, &crm.GetIamPolicyRequest{}).Context(ctx).Do()
+	if err != nil || len(proj.Bindings) != 0 {
+		t.Fatalf("org policy leaked into project: %+v, %v", proj, err)
+	}
+
+	perms, err := svc.Organizations.TestIamPermissions(org, &crm.TestIamPermissionsRequest{
+		Permissions: []string{"resourcemanager.organizations.get"},
+	}).Context(ctx).Do()
+	if err != nil || len(perms.Permissions) != 1 {
+		t.Fatalf("TestIamPermissions = %+v, %v", perms, err)
 	}
 }

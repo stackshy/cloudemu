@@ -2,6 +2,7 @@ package sagemaker
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
@@ -14,16 +15,16 @@ func recordKey(group, recordID string) string {
 
 //nolint:gocritic // cfg matches the driver signature; copied on entry.
 func (m *Mock) CreateFeatureGroup(_ context.Context, cfg driver.FeatureGroupSpec) (*driver.FeatureGroup, error) {
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	if cfg.GroupName == "" {
 		return nil, errors.New(errors.InvalidArgument, "featureGroupName is required")
 	}
 
 	if cfg.RecordIdentifierName == "" {
 		return nil, errors.New(errors.InvalidArgument, "recordIdentifierFeatureName is required")
-	}
-
-	if m.featureGroups.Has(cfg.GroupName) {
-		return nil, errors.Newf(errors.AlreadyExists, "feature group %q already exists", cfg.GroupName)
 	}
 
 	arn := m.arn("feature-group/" + cfg.GroupName)
@@ -40,9 +41,11 @@ func (m *Mock) CreateFeatureGroup(_ context.Context, cfg driver.FeatureGroupSpec
 		CreationTime:         m.now(),
 		Tags:                 copyTags(cfg.Tags),
 	}
-	m.featureGroups.Set(cfg.GroupName, fg)
+
+	if !m.featureGroups.SetIfAbsent(cfg.GroupName, fg) {
+		return nil, driver.InUse("feature group %q already exists", cfg.GroupName)
+	}
 	m.setTags(arn, cfg.Tags)
-	m.emitResourceCreated("FeatureGroup")
 
 	out := *fg
 
@@ -60,15 +63,17 @@ func (m *Mock) DescribeFeatureGroup(_ context.Context, name string) (*driver.Fea
 	return &out, nil
 }
 
-func (m *Mock) ListFeatureGroups(_ context.Context) ([]driver.FeatureGroup, error) {
-	all := m.featureGroups.All()
-	out := make([]driver.FeatureGroup, 0, len(all))
-
-	for _, v := range all {
-		out = append(out, *v)
-	}
-
-	return out, nil
+//nolint:gocritic // large value params mirror the driver interface
+func (m *Mock) ListFeatureGroups(_ context.Context, opts driver.ListOptions) (driver.ListPage[driver.FeatureGroup], error) {
+	return listFrom(m.featureGroups, listSpec[driver.FeatureGroup]{
+		name:    func(t *driver.FeatureGroup) string { return t.GroupName },
+		status:  func(t *driver.FeatureGroup) string { return t.Status },
+		created: func(t *driver.FeatureGroup) string { return t.CreationTime },
+		keys: map[string]func(*driver.FeatureGroup) string{
+			"FeatureGroupStatus": func(t *driver.FeatureGroup) string { return t.Status },
+			"OfflineStoreStatus": func(t *driver.FeatureGroup) string { return t.Status },
+		},
+	}, opts)
 }
 
 func (m *Mock) DeleteFeatureGroup(_ context.Context, name string) error {
@@ -77,6 +82,14 @@ func (m *Mock) DeleteFeatureGroup(_ context.Context, name string) error {
 	}
 
 	m.featureGroups.Delete(name)
+	m.dropTags(m.arn("feature-group/" + name))
+
+	prefix := recordKey(name, "")
+	for _, k := range m.featureRecords.Keys() {
+		if strings.HasPrefix(k, prefix) {
+			m.featureRecords.Delete(k)
+		}
+	}
 
 	return nil
 }

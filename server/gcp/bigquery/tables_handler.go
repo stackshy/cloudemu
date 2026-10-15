@@ -103,6 +103,8 @@ func (h *Handler) deleteTable(w http.ResponseWriter, r *http.Request, rt route) 
 		return
 	}
 
+	h.iam.Delete(tableResource(rt))
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

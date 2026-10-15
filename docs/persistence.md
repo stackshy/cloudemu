@@ -165,7 +165,10 @@ curl -X POST http://127.0.0.1:4566/_cloudemu/snapshot --data @state.json
 ```
 
 Both return `501` when the server is started with `--admin=false`. A POST larger
-than 512 MiB is rejected. See the control-plane section of
+than 512 MiB is rejected. The export includes secret values such as IAM secret
+access keys, so under `--enforce-auth` both directions (and the named snapshots
+below) need `-H "Authorization: Bearer $CLOUDEMU_ADMIN_TOKEN"` and return `401`
+without it. See the control-plane section of
 [standalone-server.md](standalone-server.md#resetting-state-between-tests-_cloudemu)
 for the related `reset`/`seed` endpoints.
 

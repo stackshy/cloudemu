@@ -62,3 +62,18 @@ func (s Scope) InResourceGroup(subscription, resourceGroup string) bool {
 
 	return s.Subscription == "" || subscription == "" || strings.EqualFold(s.Subscription, subscription)
 }
+
+// IDInResourceGroup reports whether the ARM resource id or scope string id is
+// the resource group resourceGroup of subscription, or lies under it. Leading
+// and trailing slashes are ignored and segments compare case-insensitively.
+// The match stops at a segment boundary, so rg1 never selects rg10.
+func IDInResourceGroup(id, subscription, resourceGroup string) bool {
+	if subscription == "" || resourceGroup == "" {
+		return false
+	}
+
+	got := strings.ToLower(strings.Trim(id, "/"))
+	want := strings.ToLower("subscriptions/" + subscription + "/resourcegroups/" + resourceGroup)
+
+	return got == want || strings.HasPrefix(got, want+"/")
+}

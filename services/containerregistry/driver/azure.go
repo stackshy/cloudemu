@@ -17,6 +17,9 @@ import (
 // AzureRegistryConfig is the full create-or-replace payload for an ACR registry
 // (ARM PUT).
 type AzureRegistryConfig struct {
+	// Subscription is the subscription the registry is created in. It is
+	// recorded on create so a resource-group delete stays in its subscription.
+	Subscription     string
 	Location         string
 	Tags             map[string]string
 	SKUName          string // Basic / Standard / Premium (defaults to Standard)
@@ -55,8 +58,11 @@ type AzureUserAssignedIdentity struct {
 
 // AzureRegistry is a stored/returned ACR registry resource.
 type AzureRegistry struct {
-	Name              string
-	ResourceGroup     string
+	Name          string
+	ResourceGroup string
+	// Subscription is the subscription the registry was created in. Empty on a
+	// registry restored from an older snapshot.
+	Subscription      string
 	Location          string
 	SKUName           string
 	SKUTier           string

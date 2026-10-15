@@ -52,19 +52,33 @@ type createResourceRequest struct {
 
 // putMethodRequest is the PutMethod request body.
 type putMethodRequest struct {
-	AuthorizationType string `json:"authorizationType"`
-	APIKeyRequired    bool   `json:"apiKeyRequired"`
+	AuthorizationType   string            `json:"authorizationType"`
+	APIKeyRequired      bool              `json:"apiKeyRequired"`
+	OperationName       string            `json:"operationName"`
+	RequestParameters   map[string]bool   `json:"requestParameters"`
+	RequestModels       map[string]string `json:"requestModels"`
+	AuthorizerID        string            `json:"authorizerId"`
+	RequestValidatorID  string            `json:"requestValidatorId"`
+	AuthorizationScopes []string          `json:"authorizationScopes"`
 }
 
 // putIntegrationRequest is the PutIntegration request body. The integration's
 // backend method travels as "httpMethod" on the wire (the model's locationName
 // for integrationHttpMethod).
 type putIntegrationRequest struct {
-	Type                  string `json:"type"`
-	IntegrationHTTPMethod string `json:"httpMethod"`
-	URI                   string `json:"uri"`
-	PassthroughBehavior   string `json:"passthroughBehavior"`
-	TimeoutInMillis       int    `json:"timeoutInMillis"`
+	Type                  string            `json:"type"`
+	IntegrationHTTPMethod string            `json:"httpMethod"`
+	URI                   string            `json:"uri"`
+	PassthroughBehavior   string            `json:"passthroughBehavior"`
+	TimeoutInMillis       int               `json:"timeoutInMillis"`
+	Credentials           string            `json:"credentials"`
+	RequestParameters     map[string]string `json:"requestParameters"`
+	RequestTemplates      map[string]string `json:"requestTemplates"`
+	ContentHandling       string            `json:"contentHandling"`
+	CacheNamespace        string            `json:"cacheNamespace"`
+	CacheKeyParameters    []string          `json:"cacheKeyParameters"`
+	ConnectionType        string            `json:"connectionType"`
+	ConnectionID          string            `json:"connectionId"`
 }
 
 // createDeploymentRequest is the CreateDeployment request body.
@@ -82,6 +96,10 @@ type createStageRequest struct {
 	Description          string            `json:"description"`
 	Variables            map[string]string `json:"variables"`
 	DocumentationVersion string            `json:"documentationVersion"`
+	Tags                 map[string]string `json:"tags"`
+	TracingEnabled       bool              `json:"tracingEnabled"`
+	CacheClusterEnabled  bool              `json:"cacheClusterEnabled"`
+	CacheClusterSize     string            `json:"cacheClusterSize"`
 }
 
 // apiStatusAvailable is the RestApi apiStatus of a ready API.
@@ -128,19 +146,65 @@ type listResourcesResponse struct {
 
 // methodResponse is the Method wire object.
 type methodResponse struct {
-	HTTPMethod        string               `json:"httpMethod,omitempty"`
-	AuthorizationType string               `json:"authorizationType,omitempty"`
-	APIKeyRequired    bool                 `json:"apiKeyRequired"`
-	MethodIntegration *integrationResponse `json:"methodIntegration,omitempty"`
+	HTTPMethod          string                          `json:"httpMethod,omitempty"`
+	AuthorizationType   string                          `json:"authorizationType,omitempty"`
+	APIKeyRequired      bool                            `json:"apiKeyRequired"`
+	OperationName       string                          `json:"operationName,omitempty"`
+	RequestParameters   map[string]bool                 `json:"requestParameters,omitempty"`
+	RequestModels       map[string]string               `json:"requestModels,omitempty"`
+	MethodResponses     map[string]methodResponseObject `json:"methodResponses,omitempty"`
+	MethodIntegration   *integrationResponse            `json:"methodIntegration,omitempty"`
+	AuthorizerID        string                          `json:"authorizerId,omitempty"`
+	RequestValidatorID  string                          `json:"requestValidatorId,omitempty"`
+	AuthorizationScopes []string                        `json:"authorizationScopes,omitempty"`
 }
 
 // integrationResponse is the Integration wire object.
 type integrationResponse struct {
-	Type                string `json:"type"`
-	HTTPMethod          string `json:"httpMethod,omitempty"`
-	URI                 string `json:"uri,omitempty"`
-	PassthroughBehavior string `json:"passthroughBehavior,omitempty"`
-	TimeoutInMillis     int    `json:"timeoutInMillis,omitempty"`
+	Type                 string                               `json:"type"`
+	HTTPMethod           string                               `json:"httpMethod,omitempty"`
+	URI                  string                               `json:"uri,omitempty"`
+	PassthroughBehavior  string                               `json:"passthroughBehavior,omitempty"`
+	TimeoutInMillis      int                                  `json:"timeoutInMillis,omitempty"`
+	Credentials          string                               `json:"credentials,omitempty"`
+	RequestParameters    map[string]string                    `json:"requestParameters,omitempty"`
+	RequestTemplates     map[string]string                    `json:"requestTemplates,omitempty"`
+	ContentHandling      string                               `json:"contentHandling,omitempty"`
+	CacheNamespace       string                               `json:"cacheNamespace,omitempty"`
+	CacheKeyParameters   []string                             `json:"cacheKeyParameters"`
+	IntegrationResponses map[string]integrationResponseObject `json:"integrationResponses,omitempty"`
+	ConnectionType       string                               `json:"connectionType,omitempty"`
+	ConnectionID         string                               `json:"connectionId,omitempty"`
+}
+
+// methodResponseObject is the MethodResponse wire object.
+type methodResponseObject struct {
+	StatusCode         string            `json:"statusCode"`
+	ResponseParameters map[string]bool   `json:"responseParameters,omitempty"`
+	ResponseModels     map[string]string `json:"responseModels,omitempty"`
+}
+
+// integrationResponseObject is the IntegrationResponse wire object.
+type integrationResponseObject struct {
+	StatusCode         string            `json:"statusCode"`
+	SelectionPattern   string            `json:"selectionPattern,omitempty"`
+	ResponseParameters map[string]string `json:"responseParameters,omitempty"`
+	ResponseTemplates  map[string]string `json:"responseTemplates,omitempty"`
+	ContentHandling    string            `json:"contentHandling,omitempty"`
+}
+
+// putMethodResponseRequest is the PutMethodResponse request body.
+type putMethodResponseRequest struct {
+	ResponseParameters map[string]bool   `json:"responseParameters"`
+	ResponseModels     map[string]string `json:"responseModels"`
+}
+
+// putIntegrationResponseRequest is the PutIntegrationResponse request body.
+type putIntegrationResponseRequest struct {
+	SelectionPattern   string            `json:"selectionPattern"`
+	ResponseParameters map[string]string `json:"responseParameters"`
+	ResponseTemplates  map[string]string `json:"responseTemplates"`
+	ContentHandling    string            `json:"contentHandling"`
 }
 
 // deploymentResponse is the Deployment wire object. APISummary is only sent
@@ -165,13 +229,35 @@ type listDeploymentsResponse struct {
 
 // stageResponse is the Stage wire object.
 type stageResponse struct {
-	StageName            string            `json:"stageName"`
-	DeploymentID         string            `json:"deploymentId,omitempty"`
-	Description          string            `json:"description,omitempty"`
-	CreatedDate          int64             `json:"createdDate"`
-	Variables            map[string]string `json:"variables,omitempty"`
-	ClientCertificateID  string            `json:"clientCertificateId,omitempty"`
-	DocumentationVersion string            `json:"documentationVersion,omitempty"`
+	StageName            string                       `json:"stageName"`
+	DeploymentID         string                       `json:"deploymentId,omitempty"`
+	Description          string                       `json:"description,omitempty"`
+	CreatedDate          int64                        `json:"createdDate"`
+	Variables            map[string]string            `json:"variables,omitempty"`
+	ClientCertificateID  string                       `json:"clientCertificateId,omitempty"`
+	DocumentationVersion string                       `json:"documentationVersion,omitempty"`
+	Tags                 map[string]string            `json:"tags,omitempty"`
+	TracingEnabled       bool                         `json:"tracingEnabled"`
+	CacheClusterEnabled  bool                         `json:"cacheClusterEnabled"`
+	CacheClusterSize     string                       `json:"cacheClusterSize,omitempty"`
+	CacheClusterStatus   string                       `json:"cacheClusterStatus,omitempty"`
+	AccessLogSettings    *accessLogJSON               `json:"accessLogSettings,omitempty"`
+	MethodSettings       map[string]methodSettingJSON `json:"methodSettings,omitempty"`
+}
+
+type accessLogJSON struct {
+	DestinationARN string `json:"destinationArn"`
+	Format         string `json:"format"`
+}
+
+type methodSettingJSON struct {
+	MetricsEnabled       bool    `json:"metricsEnabled"`
+	LoggingLevel         string  `json:"loggingLevel,omitempty"`
+	DataTraceEnabled     bool    `json:"dataTraceEnabled"`
+	ThrottlingBurstLimit int     `json:"throttlingBurstLimit"`
+	ThrottlingRateLimit  float64 `json:"throttlingRateLimit"`
+	CachingEnabled       bool    `json:"cachingEnabled"`
+	CacheTTLInSeconds    int     `json:"cacheTtlInSeconds"`
 }
 
 // listStagesResponse is the GetStages wire object.
@@ -229,7 +315,17 @@ func renderResource(r *driver.Resource, embedMethods bool) resourceResponse {
 func toMethodResponse(mth *driver.Method) methodResponse {
 	resp := methodResponse{
 		HTTPMethod: mth.HTTPMethod, AuthorizationType: mth.AuthorizationType,
-		APIKeyRequired: mth.APIKeyRequired,
+		APIKeyRequired: mth.APIKeyRequired, OperationName: mth.OperationName,
+		RequestParameters: mth.RequestParameters, RequestModels: mth.RequestModels,
+		AuthorizerID: mth.AuthorizerID, RequestValidatorID: mth.RequestValidatorID,
+		AuthorizationScopes: mth.AuthorizationScopes,
+	}
+
+	if len(mth.MethodResponses) > 0 {
+		resp.MethodResponses = make(map[string]methodResponseObject, len(mth.MethodResponses))
+		for code, mr := range mth.MethodResponses {
+			resp.MethodResponses[code] = toMethodResponseObject(mr)
+		}
 	}
 
 	if mth.Integration != nil {
@@ -241,10 +337,40 @@ func toMethodResponse(mth *driver.Method) methodResponse {
 }
 
 func toIntegrationResponse(ig *driver.Integration) integrationResponse {
-	return integrationResponse{
+	resp := integrationResponse{
 		Type: ig.Type, HTTPMethod: ig.IntegrationHTTPMethod,
 		URI: ig.URI, PassthroughBehavior: ig.PassthroughBehavior,
-		TimeoutInMillis: ig.TimeoutInMillis,
+		TimeoutInMillis: ig.TimeoutInMillis, Credentials: ig.Credentials,
+		RequestParameters: ig.RequestParameters, RequestTemplates: ig.RequestTemplates,
+		ContentHandling: ig.ContentHandling, CacheNamespace: ig.CacheNamespace,
+		CacheKeyParameters: ig.CacheKeyParameters, ConnectionType: ig.ConnectionType, ConnectionID: ig.ConnectionID,
+	}
+
+	if resp.CacheKeyParameters == nil {
+		resp.CacheKeyParameters = []string{}
+	}
+
+	if len(ig.IntegrationResponses) > 0 {
+		resp.IntegrationResponses = make(map[string]integrationResponseObject, len(ig.IntegrationResponses))
+		for code, ir := range ig.IntegrationResponses {
+			resp.IntegrationResponses[code] = toIntegrationResponseObject(ir)
+		}
+	}
+
+	return resp
+}
+
+func toMethodResponseObject(mr *driver.MethodResponse) methodResponseObject {
+	return methodResponseObject{
+		StatusCode: mr.StatusCode, ResponseParameters: mr.ResponseParameters, ResponseModels: mr.ResponseModels,
+	}
+}
+
+func toIntegrationResponseObject(ir *driver.IntegrationResponse) integrationResponseObject {
+	return integrationResponseObject{
+		StatusCode: ir.StatusCode, SelectionPattern: ir.SelectionPattern,
+		ResponseParameters: ir.ResponseParameters, ResponseTemplates: ir.ResponseTemplates,
+		ContentHandling: ir.ContentHandling,
 	}
 }
 
@@ -271,9 +397,35 @@ func toDeploymentSummaryResponse(d *driver.Deployment) deploymentResponse {
 }
 
 func toStageResponse(s *driver.Stage) stageResponse {
-	return stageResponse{
+	resp := stageResponse{
 		StageName: s.StageName, DeploymentID: s.DeploymentID, Description: s.Description,
 		CreatedDate: s.CreatedDate, Variables: s.Variables,
 		ClientCertificateID: s.ClientCertificateID, DocumentationVersion: s.DocumentationVersion,
+		Tags: s.Tags, TracingEnabled: s.TracingEnabled, CacheClusterEnabled: s.CacheClusterEnabled,
+		CacheClusterSize: s.CacheClusterSize,
 	}
+
+	if s.CacheClusterEnabled {
+		resp.CacheClusterStatus = "AVAILABLE"
+	} else {
+		resp.CacheClusterStatus = "NOT_AVAILABLE"
+	}
+
+	if s.AccessLogSettings != nil {
+		resp.AccessLogSettings = &accessLogJSON{DestinationARN: s.AccessLogSettings.DestinationARN, Format: s.AccessLogSettings.Format}
+	}
+
+	if len(s.MethodSettings) > 0 {
+		resp.MethodSettings = make(map[string]methodSettingJSON, len(s.MethodSettings))
+
+		for k, ms := range s.MethodSettings {
+			resp.MethodSettings[k] = methodSettingJSON{
+				MetricsEnabled: ms.MetricsEnabled, LoggingLevel: ms.LoggingLevel, DataTraceEnabled: ms.DataTraceEnabled,
+				ThrottlingBurstLimit: ms.ThrottlingBurstLimit, ThrottlingRateLimit: ms.ThrottlingRateLimit,
+				CachingEnabled: ms.CachingEnabled, CacheTTLInSeconds: ms.CacheTTLInSeconds,
+			}
+		}
+	}
+
+	return resp
 }

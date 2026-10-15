@@ -28,6 +28,10 @@ var _ driver.IAM = (*Mock)(nil)
 // by the AWS SigV4 authentication gate.
 var _ driver.AccessKeyResolver = (*Mock)(nil)
 
+// Compile-time check that Mock implements the optional access-key importer the
+// seed fixtures use to bootstrap the first IAM user.
+var _ driver.AccessKeyImporter = (*Mock)(nil)
+
 // Compile-time check that Mock implements the optional policy inspector used by
 // the AWS IAM authorization gate.
 var _ driver.PolicyInspector = (*Mock)(nil)
@@ -73,6 +77,9 @@ type roleData struct {
 	Path                string
 	Description         string
 	AssumeRolePolicyDoc string
+	// TrustPrincipalIDs maps each user or role ARN the trust policy names to
+	// the unique id it resolved to when the policy was saved.
+	TrustPrincipalIDs   map[string]string
 	MaxSessionDuration  int
 	CreatedAt           string
 	Tags                map[string]string
@@ -149,7 +156,11 @@ func (m *Mock) CreateUser(_ context.Context, cfg driver.UserConfig) (*driver.Use
 		path = "/"
 	}
 
-	id := idgen.GenerateID("AIDA")
+	id, err := uniqueID("AIDA")
+	if err != nil {
+		return nil, err
+	}
+
 	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "user/"+strings.TrimPrefix(path, "/")+cfg.Name)
 	tags := copyTags(cfg.Tags)
 
@@ -263,7 +274,11 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 		path = "/"
 	}
 
-	id := idgen.GenerateID("AROA")
+	id, err := uniqueID("AROA")
+	if err != nil {
+		return nil, err
+	}
+
 	arn := idgen.AWSARN("iam", "", m.opts.AccountID, "role/"+strings.TrimPrefix(path, "/")+cfg.Name)
 	tags := copyTags(cfg.Tags)
 
@@ -279,6 +294,7 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 		Path:                path,
 		Description:         cfg.Description,
 		AssumeRolePolicyDoc: cfg.AssumeRolePolicyDoc,
+		TrustPrincipalIDs:   m.resolveTrustPrincipals(cfg.AssumeRolePolicyDoc),
 		MaxSessionDuration:  maxSession,
 		CreatedAt:           m.opts.Clock.Now().UTC().Format(timeFormat),
 		Tags:                tags,
@@ -806,35 +822,6 @@ func (s *policyStatement) resourceMatches(resource string) bool {
 	}
 }
 
-func wildcardMatch(pattern, value string) bool {
-	if pattern == "*" {
-		return true
-	}
-
-	pParts := strings.Split(pattern, "*")
-
-	if len(pParts) == 1 {
-		return pattern == value
-	}
-
-	if !strings.HasPrefix(value, pParts[0]) {
-		return false
-	}
-
-	remaining := value[len(pParts[0]):]
-
-	for i := 1; i < len(pParts); i++ {
-		idx := strings.Index(remaining, pParts[i])
-		if idx < 0 {
-			return false
-		}
-
-		remaining = remaining[idx+len(pParts[i]):]
-	}
-
-	return true
-}
-
 func toStringSlice(v any) []string {
 	switch val := v.(type) {
 	case string:
@@ -856,7 +843,7 @@ func toStringSlice(v any) []string {
 
 func matchesAction(actions []string, action string) bool {
 	for _, a := range actions {
-		if wildcardMatch(a, action) {
+		if actionMatch(a, action) {
 			return true
 		}
 	}
@@ -866,7 +853,7 @@ func matchesAction(actions []string, action string) bool {
 
 func matchesResource(resources []string, resource string) bool {
 	for _, r := range resources {
-		if wildcardMatch(r, resource) {
+		if globMatch(r, resource) {
 			return true
 		}
 	}
@@ -1016,9 +1003,14 @@ func (m *Mock) CreateGroup(
 		"iam", "", m.opts.AccountID, "group/"+strings.TrimPrefix(path, "/")+cfg.Name,
 	)
 
+	id, err := uniqueID("AGPA")
+	if err != nil {
+		return nil, err
+	}
+
 	g := &groupData{
 		Name:      cfg.Name,
-		ID:        idgen.GenerateID("AGPA"),
+		ID:        id,
 		ARN:       arn,
 		Path:      path,
 		CreatedAt: m.opts.Clock.Now().UTC().Format(timeFormat),
@@ -1246,8 +1238,17 @@ func (m *Mock) CreateAccessKey(
 			"Cannot exceed quota for AccessKeysPerUser: %d", maxAccessKeysPerUser)
 	}
 
-	keyID := idgen.AccessKeyID()
-	secret := fmt.Sprintf("secret-%s", idgen.GenerateID(""))
+	keyID, err := m.newAccessKeyID()
+	if err != nil {
+		return nil, err
+	}
+
+	// The secret signs SigV4 requests, so it must be unguessable even to a
+	// caller who knows the key id.
+	secret, err := idgen.SecretAccessKey()
+	if err != nil {
+		return nil, errors.Newf(errors.Internal, "generate access key secret: %v", err)
+	}
 
 	ak := &accessKeyData{
 		AccessKeyID:     keyID,
@@ -1261,6 +1262,58 @@ func (m *Mock) CreateAccessKey(
 	info := toAccessKeyInfo(ak)
 
 	return &info, nil
+}
+
+// ImportAccessKey registers an Active access key with a caller-chosen id and
+// secret for an existing user. It applies the same per-user quota as
+// CreateAccessKey and refuses an id that is already registered.
+func (m *Mock) ImportAccessKey(_ context.Context, userName, accessKeyID, secretAccessKey string) error {
+	if accessKeyID == "" || secretAccessKey == "" {
+		return errors.Newf(errors.InvalidArgument, "access key id and secret are required")
+	}
+
+	if !m.users.Has(userName) {
+		return errors.Newf(errors.NotFound, "user %q not found", userName)
+	}
+
+	if m.countAccessKeys(userName) >= maxAccessKeysPerUser {
+		return errors.Newf(errors.ResourceExhausted,
+			"Cannot exceed quota for AccessKeysPerUser: %d", maxAccessKeysPerUser)
+	}
+
+	// SetIfAbsent checks and inserts under one lock, so two concurrent imports of
+	// the same id can't overwrite each other's secret.
+	if !m.accessKeys.SetIfAbsent(accessKeyID, &accessKeyData{
+		AccessKeyID:     accessKeyID,
+		SecretAccessKey: secretAccessKey,
+		UserName:        userName,
+		Status:          "Active",
+		CreatedAt:       m.opts.Clock.Now().UTC().Format(timeFormat),
+	}) {
+		return errors.Newf(errors.AlreadyExists, "access key %q already exists", accessKeyID)
+	}
+
+	return nil
+}
+
+// maxKeyIDAttempts bounds the retries when a freshly drawn access key id is
+// already taken. With 80 random bits a single collision is already unlikely.
+const maxKeyIDAttempts = 5
+
+// newAccessKeyID draws an AKIA id not already held by another key.
+func (m *Mock) newAccessKeyID() (string, error) {
+	for range maxKeyIDAttempts {
+		id, err := idgen.AccessKeyID()
+		if err != nil {
+			return "", errors.Newf(errors.Internal, "generate access key id: %v", err)
+		}
+
+		if !m.accessKeys.Has(id) {
+			return id, nil
+		}
+	}
+
+	return "", errors.Newf(errors.Internal, "could not generate a unique access key id")
 }
 
 // DeleteAccessKey deletes an access key.
@@ -1360,7 +1413,11 @@ func (m *Mock) CreateInstanceProfile(
 		path = "/"
 	}
 
-	id := idgen.GenerateID("AIPA")
+	id, err := uniqueID("AIPA")
+	if err != nil {
+		return nil, err
+	}
+
 	arn := idgen.AWSARN(
 		"iam", "", m.opts.AccountID,
 		"instance-profile/"+strings.TrimPrefix(path, "/")+cfg.Name,

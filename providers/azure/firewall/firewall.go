@@ -22,6 +22,7 @@ var _ driver.AzureFirewalls = (*Mock)(nil)
 type Mock struct {
 	firewalls *memstore.Store[driver.AzureFirewall]
 	policies  *memstore.Store[driver.FirewallPolicy]
+	groups    *memstore.Store[driver.RuleCollectionGroup]
 	opts      *config.Options
 }
 
@@ -30,6 +31,7 @@ func New(opts *config.Options) *Mock {
 	return &Mock{
 		firewalls: memstore.New[driver.AzureFirewall](),
 		policies:  memstore.New[driver.FirewallPolicy](),
+		groups:    memstore.New[driver.RuleCollectionGroup](),
 		opts:      opts,
 	}
 }
@@ -146,6 +148,8 @@ func (m *Mock) DeleteFirewallPolicy(_ context.Context, rg, name string) error {
 	if !m.policies.Delete(key(rg, name)) {
 		return cerrors.Newf(cerrors.NotFound, "firewall policy %q not found", name)
 	}
+
+	m.dropGroups(rg, name)
 
 	return nil
 }

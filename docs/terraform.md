@@ -84,10 +84,17 @@ each service you use at the GCP port:
 
 ```hcl
 provider "google" {
-  project = "cloudemu"
+  project = "cloudemu" # run serve with --project-id cloudemu
   # e.g. storage_custom_endpoint = "http://localhost:4569/storage/v1/"
 }
 ```
+
+GCP resources are scoped to the project in the request path, so two provider
+aliases with different `project` values keep same-named resources apart.
+Pub/Sub, Secret Manager and IAM custom roles are scoped this way today.
+Resources created through the Go API, `--init-dir` seeds, and project-less
+state restored from an older snapshot belong to `--project-id` (default
+`cloudemu-local`). Set `--project-id` to the project your provider or SDK uses.
 
 ### Shared REST paths and the API alias
 

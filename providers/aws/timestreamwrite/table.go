@@ -14,6 +14,12 @@ import (
 //nolint:gochecknoglobals // static default document
 var defaultMagneticStoreWriteProperties = json.RawMessage(`{"EnableMagneticStoreWrites":false}`)
 
+// Retention a table gets when CreateTable omits RetentionProperties.
+const (
+	defaultMemoryStoreRetentionHours  = 6
+	defaultMagneticStoreRetentionDays = 73000
+)
+
 // defaultSchema is the composite partition key Timestream assigns when a table
 // is created without a schema: a single MEASURE partition key. Stored once at
 // create, it round-trips stably across reads.
@@ -54,6 +60,14 @@ func (m *Mock) CreateTable(_ context.Context, in *driver.CreateTableInput) (*dri
 		schema = copyRaw(defaultSchema)
 	}
 
+	retention := copyRetention(in.RetentionProperties)
+	if retention == nil {
+		retention = &driver.RetentionProperties{
+			MemoryStoreRetentionPeriodInHours:  defaultMemoryStoreRetentionHours,
+			MagneticStoreRetentionPeriodInDays: defaultMagneticStoreRetentionDays,
+		}
+	}
+
 	now := m.now()
 
 	table := driver.Table{
@@ -61,7 +75,7 @@ func (m *Mock) CreateTable(_ context.Context, in *driver.CreateTableInput) (*dri
 		TableName:                    in.TableName,
 		DatabaseName:                 in.DatabaseName,
 		TableStatus:                  driver.TableStatusActive,
-		RetentionProperties:          copyRetention(in.RetentionProperties),
+		RetentionProperties:          retention,
 		MagneticStoreWriteProperties: magneticProps,
 		Schema:                       schema,
 		CreationTime:                 now,

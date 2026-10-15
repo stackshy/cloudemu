@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	pcadriver "github.com/stackshy/cloudemu/v2/services/privateca/driver"
 )
@@ -53,6 +54,24 @@ func (h *Handler) serveVerb(w http.ResponseWriter, r *http.Request, rt *route) {
 	default:
 		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unsupported verb for "+rt.coll)
 	}
+}
+
+// serveIAM answers an IAM verb on a caPool or certificateTemplate once the
+// resource is confirmed to exist, so a missing one is a 404. In the real v1
+// API only these two collections carry IAM policies.
+func (h *Handler) serveIAM(w http.ResponseWriter, r *http.Request, rt *route) {
+	if _, err := h.driverGet(r.Context(), rt); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	gcpiam.Serve(w, r, rt.verb, iamName(rt), h.iam)
+}
+
+// iamName is the full resource name a caPool or certificateTemplate policy is
+// stored under.
+func iamName(rt *route) string {
+	return "projects/" + rt.project + "/locations/" + rt.location + "/" + rt.coll + "/" + rt.name
 }
 
 // serveAuthorityVerb drives the certificate-authority state machine

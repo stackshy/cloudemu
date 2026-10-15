@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
@@ -141,7 +142,13 @@ func (h *Handler) heldPermissions(r *http.Request, email string) map[string]bool
 		// Custom roles are "projects/{p}/roles/{id}". Resolve their perms.
 		id := roleName[strings.LastIndex(roleName, "/")+1:]
 
-		dr, err := h.iam.GetRole(r.Context(), id)
+		// A custom role resolves in the project or organization its name carries.
+		ctx := r.Context()
+		if scope := roleScopeOf(roleName); scope != "" {
+			ctx = projectctx.WithProject(ctx, scope)
+		}
+
+		dr, err := h.iam.GetRole(ctx, id)
 		if err != nil {
 			continue
 		}
@@ -239,9 +246,11 @@ func (h *Handler) getSAIamPolicy(w http.ResponseWriter, email string) {
 	writeJSON(w, pol)
 }
 
-// setSAIamPolicy enforces optimistic concurrency. If a policy already exists,
-// the request's policy.etag must match the stored etag or the write is
-// rejected with 409 ABORTED, mirroring real GCP's read-modify-write contract.
+// setSAIamPolicy enforces optimistic concurrency. A request that carries an
+// etag must match the current one (the unset-policy etag when nothing is
+// stored) or the write is rejected with 409 ABORTED, mirroring real GCP's
+// read-modify-write contract. A request with no etag overwrites blindly, as
+// real IAM does.
 // Each accepted write bumps a per-SA version so successive states get distinct
 // etags (the old base64(email+bindingCount) scheme collided across states).
 func (h *Handler) setSAIamPolicy(w http.ResponseWriter, r *http.Request, email string) {
@@ -255,7 +264,12 @@ func (h *Handler) setSAIamPolicy(w http.ResponseWriter, r *http.Request, email s
 
 	h.mu.Lock()
 
-	if cur := h.saPolicy[email]; cur != nil && body.Policy.Etag != cur.Etag {
+	cur := etagFor(email, 0)
+	if p := h.saPolicy[email]; p != nil {
+		cur = p.Etag
+	}
+
+	if body.Policy.Etag != "" && body.Policy.Etag != cur {
 		h.mu.Unlock()
 		writeError(w, http.StatusConflict, "ABORTED",
 			"there were concurrent policy changes; please retry the whole "+

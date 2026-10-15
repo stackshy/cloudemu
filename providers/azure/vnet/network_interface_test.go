@@ -195,3 +195,29 @@ func TestNICDeleteAttachedIsRejected(t *testing.T) {
 		t.Errorf("delete attached err=%v want FailedPrecondition", err)
 	}
 }
+
+func TestNICStaticAddressInUse(t *testing.T) {
+	m := newNICMock(t)
+	ctx := context.Background()
+
+	cfg := driver.AzureNICConfig{
+		Location: "eastus",
+		IPConfigs: []driver.AzureIPConfig{{
+			Name: "ipconfig1", SubnetID: "subnet-1", SubnetCIDR: "10.0.1.0/24",
+			AllocationMethod: "Static", PrivateIP: "10.0.1.50",
+		}},
+	}
+
+	if _, err := m.CreateOrUpdateNetworkInterface(ctx, "rg-1", "nic-a", cfg); err != nil {
+		t.Fatalf("create nic-a: %v", err)
+	}
+
+	// Re-PUT of the same NIC keeps its own address.
+	if _, err := m.CreateOrUpdateNetworkInterface(ctx, "rg-1", "nic-a", cfg); err != nil {
+		t.Fatalf("re-PUT nic-a: %v", err)
+	}
+
+	if _, err := m.CreateOrUpdateNetworkInterface(ctx, "rg-1", "nic-b", cfg); !cerrors.IsInvalidArgument(err) {
+		t.Errorf("err=%v want InvalidArgument for a static IP another NIC holds", err)
+	}
+}

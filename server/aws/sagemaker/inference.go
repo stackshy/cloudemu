@@ -109,7 +109,12 @@ func (h *Handler) describeModel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listModels(w http.ResponseWriter, r *http.Request) {
-	models, err := h.svc.ListModels(r.Context())
+	req, ok := decodeListReq(w, r)
+	if !ok {
+		return
+	}
+
+	models, err := h.svc.ListModels(r.Context(), req.options())
 	if err != nil {
 		writeDriverError(w, err)
 
@@ -149,7 +154,7 @@ type wireVariant struct {
 	ModelName            string          `json:"ModelName,omitempty"`
 	InstanceType         string          `json:"InstanceType,omitempty"`
 	InitialInstanceCount int             `json:"InitialInstanceCount,omitempty"`
-	InitialVariantWeight float64         `json:"InitialVariantWeight,omitempty"`
+	InitialVariantWeight *float64        `json:"InitialVariantWeight,omitempty"`
 	ServerlessConfig     *wireServerless `json:"ServerlessConfig,omitempty"`
 }
 
@@ -160,9 +165,19 @@ type wireServerless struct {
 
 func (h *Handler) createEndpointConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		EndpointConfigName string        `json:"EndpointConfigName"`
-		ProductionVariants []wireVariant `json:"ProductionVariants"`
-		Tags               []wireTag     `json:"Tags"`
+		EndpointConfigName string `json:"EndpointConfigName"`
+		ProductionVariants []struct {
+			wireVariant
+			// InitialVariantWeight shadows the embedded field so an omitted
+			// weight can default to 1 (an explicit 0 is a valid weight).
+			InitialVariantWeight *float64 `json:"InitialVariantWeight"`
+		} `json:"ProductionVariants"`
+		AsyncInferenceConfig *struct {
+			OutputConfig struct {
+				S3OutputPath string `json:"S3OutputPath"`
+			} `json:"OutputConfig"`
+		} `json:"AsyncInferenceConfig"`
+		Tags []wireTag `json:"Tags"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -170,13 +185,17 @@ func (h *Handler) createEndpointConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	spec := driver.EndpointConfigSpec{ConfigName: req.EndpointConfigName, Tags: toTags(req.Tags)}
+	if req.AsyncInferenceConfig != nil {
+		spec.AsyncOutputS3URI = req.AsyncInferenceConfig.OutputConfig.S3OutputPath
+	}
+
 	for _, v := range req.ProductionVariants {
 		spec.ProductionVariants = append(spec.ProductionVariants, driver.ProductionVariant{
 			VariantName:          v.VariantName,
 			ModelName:            v.ModelName,
 			InstanceType:         v.InstanceType,
 			InitialInstanceCount: v.InitialInstanceCount,
-			InitialVariantWeight: v.InitialVariantWeight,
+			InitialVariantWeight: v.InitialVariantWeight, // nil when omitted: the provider applies the default
 		})
 		if v.ServerlessConfig != nil {
 			spec.Serverless = &driver.ServerlessConfig{
@@ -212,11 +231,39 @@ func (h *Handler) describeEndpointConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{
+	resp := map[string]any{
 		"EndpointConfigName": ec.ConfigName,
 		"EndpointConfigArn":  ec.ConfigARN,
-		"ProductionVariants": variantsToWire(ec.ProductionVariants),
+		"ProductionVariants": variantsToWire(ec.ProductionVariants, ec.Serverless),
 		"CreationTime":       epoch(ec.CreationTime),
+	}
+	if ec.AsyncOutputS3URI != "" {
+		resp["AsyncInferenceConfig"] = map[string]any{"OutputConfig": map[string]any{"S3OutputPath": ec.AsyncOutputS3URI}}
+	}
+
+	wire.WriteJSON(w, resp)
+}
+
+//nolint:dupl // per-resource shim mirrors the SDK shape
+func (h *Handler) listEndpointConfigs(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeListReq(w, r)
+	if !ok {
+		return
+	}
+
+	page, err := h.svc.ListEndpointConfigs(r.Context(), req.options())
+	if err != nil {
+		writeDriverError(w, err)
+
+		return
+	}
+
+	writeSummaries(w, "EndpointConfigs", page, func(c *driver.EndpointConfig) map[string]any {
+		return map[string]any{
+			"EndpointConfigName": c.ConfigName,
+			"EndpointConfigArn":  c.ConfigARN,
+			"CreationTime":       epoch(c.CreationTime),
+		}
 	})
 }
 
@@ -238,16 +285,24 @@ func (h *Handler) deleteEndpointConfig(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{})
 }
 
-func variantsToWire(in []driver.ProductionVariant) []wireVariant {
+func variantsToWire(in []driver.ProductionVariant, serverless *driver.ServerlessConfig) []wireVariant {
 	out := make([]wireVariant, 0, len(in))
-	for _, v := range in {
-		out = append(out, wireVariant{
+
+	for i := range in {
+		v := &in[i]
+		wv := wireVariant{
 			VariantName:          v.VariantName,
 			ModelName:            v.ModelName,
 			InstanceType:         v.InstanceType,
 			InitialInstanceCount: v.InitialInstanceCount,
-			InitialVariantWeight: v.InitialVariantWeight,
-		})
+			InitialVariantWeight: v.InitialVariantWeight, // stored resolved; an explicit 0 is a valid weight
+		}
+
+		if serverless != nil {
+			wv.ServerlessConfig = &wireServerless{MemorySizeInMB: serverless.MemorySizeInMB, MaxConcurrency: serverless.MaxConcurrency}
+		}
+
+		out = append(out, wv)
 	}
 
 	return out
@@ -279,36 +334,13 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{"EndpointArn": ep.EndpointARN})
 }
 
-func (h *Handler) describeEndpoint(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		EndpointName string `json:"EndpointName"`
-	}
-
-	if !wire.DecodeJSON(w, r, &req) {
-		return
-	}
-
-	ep, err := h.svc.DescribeEndpoint(r.Context(), req.EndpointName)
-	if err != nil {
-		writeDriverError(w, err)
-
-		return
-	}
-
-	wire.WriteJSON(w, map[string]any{
-		"EndpointName":       ep.EndpointName,
-		"EndpointArn":        ep.EndpointARN,
-		"EndpointConfigName": ep.ConfigName,
-		"EndpointStatus":     ep.Status,
-		"ProductionVariants": variantsToWire(ep.Variants),
-		"CreationTime":       epoch(ep.CreationTime),
-		"LastModifiedTime":   epoch(ep.LastModifiedTime),
-	})
-}
-
-//nolint:dupl // SDK-compat decode/encode shim; the skeleton recurs but each op maps a distinct type.
 func (h *Handler) listEndpoints(w http.ResponseWriter, r *http.Request) {
-	eps, err := h.svc.ListEndpoints(r.Context())
+	req, ok := decodeListReq(w, r)
+	if !ok {
+		return
+	}
+
+	eps, err := h.svc.ListEndpoints(r.Context(), req.options())
 	if err != nil {
 		writeDriverError(w, err)
 

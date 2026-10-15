@@ -46,6 +46,13 @@ import (
 // Private DNS driver.
 type Handler struct {
 	pdns pddriver.PrivateDNS
+	// vnetExists validates a link's virtualNetwork reference; nil skips it.
+	vnetExists func(ctx context.Context, vnetID string) bool
+}
+
+// SetVNetResolver wires the virtual network lookup used to validate links.
+func (h *Handler) SetVNetResolver(f func(ctx context.Context, vnetID string) bool) {
+	h.vnetExists = f
 }
 
 // New returns an Azure Private DNS handler backed by d.

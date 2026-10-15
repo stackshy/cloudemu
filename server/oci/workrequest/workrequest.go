@@ -3,8 +3,10 @@
 // Real OCI returns 202 with an opc-work-request-id from most mutating calls,
 // and SDK waiters poll GET /{version}/workRequests/{id} until the status is
 // terminal. Each service publishes that endpoint under its own API version
-// prefix; CloudEmu collapses every service onto one HTTP server, so this
-// handler claims any path ending in workRequests and answers uniformly.
+// prefix (Object Storage, which has none, at the root); CloudEmu collapses every
+// service onto one HTTP server, so this handler answers them all uniformly.
+// workRequests is only recognized at that anchored position: elsewhere in a path
+// it is user data, such as an object key or a bucket name.
 //
 // Every CloudEmu mutation completes synchronously, so an accepted work request
 // is already SUCCEEDED. The envelope exists to keep SDK waiters happy and to
@@ -29,6 +31,9 @@ const (
 	StatusInProgress = "IN_PROGRESS"
 	StatusSucceeded  = "SUCCEEDED"
 	StatusFailed     = "FAILED"
+	// StatusCompleted is Object Storage's terminal success state; its
+	// WorkRequestStatusEnum has no SUCCEEDED.
+	StatusCompleted = "COMPLETED"
 )
 
 // Action types a work request reports against an affected resource.
@@ -82,13 +87,18 @@ func New(opts *config.Options) *Store {
 // Accept records a completed work request and returns its OCID, which the
 // caller stamps as opc-work-request-id.
 func (s *Store) Accept(operationType, compartmentID string, resources ...Resource) string {
+	return s.AcceptAs(StatusSucceeded, operationType, compartmentID, resources...)
+}
+
+// AcceptAs is Accept with the terminal status the calling service reports.
+func (s *Store) AcceptAs(status, operationType, compartmentID string, resources ...Resource) string {
 	now := s.opts.Clock.Now().UTC().Format(time.RFC3339)
 	id := idgen.OCID("workrequest", s.opts.Realm, s.opts.OCIRegion())
 
 	wr := &WorkRequest{
 		ID:              id,
 		OperationType:   operationType,
-		Status:          StatusSucceeded,
+		Status:          status,
 		CompartmentID:   compartmentID,
 		Resources:       resources,
 		PercentComplete: 100,
@@ -143,8 +153,7 @@ type Handler struct{ store *Store }
 // NewHandler returns the work request handler backed by store.
 func NewHandler(store *Store) *Handler { return &Handler{store: store} }
 
-// Matches claims GET on any path under a workRequests segment, regardless of
-// the service's API version prefix.
+// Matches claims GET on /{version}/workRequests[/…] and /workRequests[/…].
 func (*Handler) Matches(r *http.Request) bool {
 	if r.Method != http.MethodGet {
 		return false
@@ -196,26 +205,45 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// parse splits /{version}/workRequests[/{id}[/{sub}]].
+// parse splits /{version}/workRequests[/{id}[/{sub}]], or the unversioned
+// /workRequests[/…] Object Storage uses. The segment must sit directly after a
+// date-style version, or lead the path, so a workRequests object key or bucket
+// under /n/… is never claimed.
 func parse(urlPath string) (id, sub string, ok bool) {
 	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
 
-	for i, p := range parts {
-		if p != segment {
-			continue
-		}
+	switch {
+	case parts[0] == segment:
+		parts = parts[1:]
+	case len(parts) > 1 && isAPIVersion(parts[0]) && parts[1] == segment:
+		parts = parts[2:]
+	default:
+		return "", "", false
+	}
 
-		switch rest := parts[i+1:]; {
-		case len(rest) == 0:
-			return "", "", true
-		case len(rest) == 1:
-			return rest[0], "", true
-		case len(rest) == 2: //nolint:mnd // an id plus one sub-collection segment
-			return rest[0], rest[1], true
-		default:
-			return "", "", false
+	switch len(parts) {
+	case 0:
+		return "", "", true
+	case 1:
+		return parts[0], "", true
+	case 2: //nolint:mnd // an id plus one sub-collection segment
+		return parts[0], parts[1], true
+	default:
+		return "", "", false
+	}
+}
+
+// isAPIVersion reports whether s is an OCI date-style API version, YYYYMMDD.
+func isAPIVersion(s string) bool {
+	if len(s) != len("20160918") {
+		return false
+	}
+
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
 		}
 	}
 
-	return "", "", false
+	return true
 }

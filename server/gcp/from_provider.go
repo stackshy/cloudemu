@@ -28,6 +28,7 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		CertificateManager:   p.CertificateManager,
 		AccessContextManager: p.AccessContextManager,
 		PrivateCA:            p.PrivateCA,
+		KMS:                  p.KMS,
 		GKEBackup:            p.GKEBackup,
 		GKEHub:               p.GKEHub,
 		DataFusion:           p.DataFusion,
@@ -66,6 +67,7 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		// handlers split them by hint, path shape and ownership.
 		AlloyDB:           p.AlloyDB,
 		ResourceDiscovery: p.ResourceDiscovery,
+		ResourceIAM:       p.ResourceIAM,
 		ProjectID:         p.ProjectID,
 		Clock:             p.Clock,
 	}
