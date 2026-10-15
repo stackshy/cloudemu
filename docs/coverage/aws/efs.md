@@ -3,7 +3,7 @@
 
 AWS's `efs` service · portable interface `driver.EFS` · [AWS index](./README.md)
 
-## Operations (27)
+## Operations (28)
 
 | Operation | Description |
 | --- | --- |
@@ -34,6 +34,7 @@ AWS's `efs` service · portable interface `driver.EFS` · [AWS index](./README.m
 | `TagResource` | Tags (current + legacy APIs share this backing). |
 | `UntagResource` |  |
 | `UpdateFileSystem` |  |
+| `UpdateFileSystemProtection` | UpdateFileSystemProtection sets the replication-overwrite protection. An |
 
 ## Optional capabilities
 

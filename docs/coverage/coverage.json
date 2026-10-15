@@ -7478,6 +7478,10 @@
       },
       {
         "name": "UpdateFileSystem"
+      },
+      {
+        "name": "UpdateFileSystemProtection",
+        "doc": "UpdateFileSystemProtection sets the replication-overwrite protection. An"
       }
     ],
     "optionalCapabilities": [

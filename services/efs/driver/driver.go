@@ -39,6 +39,13 @@ type FileSystemSize struct {
 	ValueInStandard int64
 }
 
+// Replication-overwrite protection values (FileSystemProtection).
+const (
+	ProtectionEnabled     = "ENABLED"
+	ProtectionDisabled    = "DISABLED"
+	ProtectionReplicating = "REPLICATING"
+)
+
 // FileSystemProtection is the replication-overwrite protection setting.
 type FileSystemProtection struct {
 	ReplicationOverwriteProtection string // ENABLED | DISABLED | REPLICATING
@@ -100,6 +107,11 @@ type EFS interface {
 	DeleteFileSystem(ctx context.Context, fileSystemID string) error
 	DescribeFileSystems(ctx context.Context, fileSystemID, creationToken string) ([]FileSystem, error)
 	UpdateFileSystem(ctx context.Context, in UpdateFileSystemInput) (*FileSystem, error)
+	// UpdateFileSystemProtection sets the replication-overwrite protection. An
+	// empty value leaves the current setting unchanged.
+	UpdateFileSystemProtection(
+		ctx context.Context, fileSystemID, replicationOverwriteProtection string,
+	) (*FileSystemProtection, error)
 
 	// File system policy.
 	PutFileSystemPolicy(ctx context.Context, fileSystemID, policy string, bypassCheck bool) (string, error)

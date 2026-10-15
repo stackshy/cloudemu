@@ -81,7 +81,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `disks` | - | [Disks](./azure/disks.md) | - | - | 7 |
 | `dns` | [Route53](./aws/route53.md) | [DNS](./azure/dns.md) | [CloudDNS](./gcp/clouddns.md) | - | 16 |
 | `ecs` | [ECS](./aws/ecs.md) | - | - | - | 41 |
-| `efs` | [EFS](./aws/efs.md) | - | - | - | 27 |
+| `efs` | [EFS](./aws/efs.md) | - | - | - | 28 |
 | `eks` | [EKS](./aws/eks.md) | - | - | - | 40 |
 | `elasticsan` | - | [ElasticSan](./azure/elasticsan.md) | - | - | 8 |
 | `emr` | [EMR](./aws/emr.md) | - | - | - | 22 |

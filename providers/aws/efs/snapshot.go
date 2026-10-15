@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/services/efs/driver"
@@ -37,6 +38,15 @@ type fsDataSnapshot struct {
 	AccessPts   map[string]*driver.AccessPoint   `json:"accessPts,omitempty"`
 	Lifecycle   []driver.LifecyclePolicy         `json:"lifecycle,omitempty"`
 	Replication *driver.ReplicationConfiguration `json:"replication,omitempty"`
+	// Lifecycle windows (AsyncSettle): a restored "creating"/"deleting" file
+	// system or mount target keeps its transient state until the window ends.
+	ReadyAt    time.Time            `json:"readyAt,omitzero"`
+	DeleteAt   time.Time            `json:"deleteAt,omitzero"`
+	MTReadyAt  map[string]time.Time `json:"mtReadyAt,omitempty"`
+	MTDeleteAt map[string]time.Time `json:"mtDeleteAt,omitempty"`
+	// Metric sample times, so a restore keeps the publishing cadence.
+	StorageSampleAt    time.Time `json:"storageSampleAt,omitzero"`
+	ThroughputSampleAt time.Time `json:"throughputSampleAt,omitzero"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused. EFS holds no bulk
@@ -74,6 +84,8 @@ func (m *Mock) snapshotFileSystems() map[string]*fsDataSnapshot {
 		out[id] = &fsDataSnapshot{
 			FS: d.fs, Policy: d.policy, Backup: d.backup, MountTgts: d.mountTgts,
 			AccessPts: d.accessPts, Lifecycle: d.lifecycle, Replication: d.replication,
+			ReadyAt: d.readyAt, DeleteAt: d.deleteAt, MTReadyAt: d.mtReadyAt, MTDeleteAt: d.mtDeleteAt,
+			StorageSampleAt: d.storageSampleAt, ThroughputSampleAt: d.throughputSampleAt,
 		}
 		d.mu.RUnlock()
 	}
@@ -116,6 +128,8 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		m.fileSystems.Set(id, &fsData{
 			fs: s.FS, policy: s.Policy, backup: s.Backup, mountTgts: s.MountTgts,
 			accessPts: s.AccessPts, lifecycle: s.Lifecycle, replication: s.Replication,
+			readyAt: s.ReadyAt, deleteAt: s.DeleteAt, mtReadyAt: s.MTReadyAt, mtDeleteAt: s.MTDeleteAt,
+			storageSampleAt: s.StorageSampleAt, throughputSampleAt: s.ThroughputSampleAt,
 		})
 	}
 

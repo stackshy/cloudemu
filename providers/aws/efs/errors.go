@@ -27,6 +27,14 @@ func conflictWithID(kind, resourceID, format string, args ...any) error {
 	}
 }
 
+// incorrectFSState builds the IncorrectFileSystemLifeCycleState condition: a
+// kind-tagged FailedPrecondition the wire layer maps to that 409 exception.
+func incorrectFSState(fileSystemID, state string) error {
+	return &driver.ResourceError{Kind: driver.KindFileSystemState, Err: errors.Newf(errors.FailedPrecondition,
+		"file system %q is in lifecycle state %q; the operation requires it to be %q",
+		fileSystemID, state, driver.StateAvailable)}
+}
+
 // inUse builds a kind-tagged FailedPrecondition error.
 func inUse(kind, format string, args ...any) error {
 	return &driver.ResourceError{Kind: kind, Err: errors.Newf(errors.FailedPrecondition, format, args...)}

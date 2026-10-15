@@ -45,7 +45,7 @@ func (h *Handler) serveFileSystemByID(w http.ResponseWriter, r *http.Request, id
 }
 
 // serveFileSystemSub routes /file-systems/{id}/{sub}: policy, lifecycle-
-// configuration, backup-policy, and replication-configuration.
+// configuration, backup-policy, replication-configuration, and protection.
 func (h *Handler) serveFileSystemSub(w http.ResponseWriter, r *http.Request, id, sub string) {
 	switch sub {
 	case "policy":
@@ -56,6 +56,13 @@ func (h *Handler) serveFileSystemSub(w http.ResponseWriter, r *http.Request, id,
 		h.serveBackupPolicy(w, r, id)
 	case "replication-configuration":
 		h.serveReplicationConfig(w, r, id)
+	case "protection":
+		if r.Method != http.MethodPut {
+			methodNotAllowed(w)
+			return
+		}
+
+		h.updateFileSystemProtection(w, r, id)
 	default:
 		notFound(w, r.URL.Path)
 	}
@@ -210,4 +217,21 @@ func (h *Handler) deleteFileSystemPolicy(w http.ResponseWriter, r *http.Request,
 	}
 
 	writeStatus(w, http.StatusOK)
+}
+
+// updateFileSystemProtection serves UpdateFileSystemProtection
+// (PUT /file-systems/{id}/protection), returning the resulting protection.
+func (h *Handler) updateFileSystemProtection(w http.ResponseWriter, r *http.Request, id string) {
+	var req fileSystemProtectionJSON
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	p, err := h.efs.UpdateFileSystemProtection(r.Context(), id, req.ReplicationOverwriteProtection)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, fileSystemProtectionJSON{ReplicationOverwriteProtection: p.ReplicationOverwriteProtection})
 }

@@ -3,11 +3,13 @@ package efs
 
 import (
 	"sync"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/efs/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 // Compile-time check that Mock implements driver.EFS.
@@ -24,7 +26,22 @@ type fsData struct {
 	accessPts   map[string]*driver.AccessPoint
 	lifecycle   []driver.LifecyclePolicy
 	replication *driver.ReplicationConfiguration
-	mu          sync.RWMutex
+
+	// readyAt is when a just-created file system leaves "creating" (zero: no
+	// window); deleteAt, once set by DeleteFileSystem, is when the "deleting"
+	// file system disappears. mtReadyAt/mtDeleteAt are the same per mount
+	// target. All are zero/empty unless config.Options.AsyncSettle is set.
+	readyAt    time.Time
+	deleteAt   time.Time
+	mtReadyAt  map[string]time.Time
+	mtDeleteAt map[string]time.Time
+
+	// storageSampleAt and throughputSampleAt are when Tick last published the
+	// file system's StorageBytes and PermittedThroughput metrics.
+	storageSampleAt    time.Time
+	throughputSampleAt time.Time
+
+	mu sync.RWMutex
 }
 
 // Mock is an in-memory implementation of AWS EFS.
@@ -60,6 +77,9 @@ type Mock struct {
 	ipCounters map[string]int
 	ipMu       sync.Mutex
 
+	// monitoring receives the AWS/EFS CloudWatch metrics; nil publishes nothing.
+	monitoring mondriver.Monitoring
+
 	opts *config.Options
 }
 
@@ -91,11 +111,6 @@ const defaultEFSKeyID = "d7a8f6c0-3b2e-4f1a-9c5d-6e7f80912a34"
 // defaultKMSKeyARN returns the ARN of the account's default EFS CMK.
 func (m *Mock) defaultKMSKeyARN() string {
 	return idgen.AWSARN("kms", m.opts.Region, m.opts.AccountID, "key/"+defaultEFSKeyID)
-}
-
-// getFS resolves a file system by id under a read lock check.
-func (m *Mock) getFS(id string) (*fsData, bool) {
-	return m.fileSystems.Get(id)
 }
 
 func copyTags(in map[string]string) map[string]string {

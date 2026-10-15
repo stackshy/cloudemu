@@ -461,6 +461,7 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	// EFS mount targets derive their VpcId and AZ from the subnet, so all mount
 	// targets of a file system share a VpcId and each reflects its subnet's zone.
 	p.EFS.SetSubnetResolver(p.VPC)
+	p.EFS.SetMonitoring(p.CloudWatch)
 	// An IamInstanceProfile passed to RunInstances resolves through IAM so the
 	// role->profile->instance chain reads back on DescribeInstances.
 	p.EC2.SetInstanceProfileResolver(p.IAM)
@@ -628,7 +629,9 @@ func awsDrivers(p *Provider) *resourcediscovery.Drivers {
 // background ticker calls each one on its interval. New time-driven services
 // register here.
 func (p *Provider) Tickables() []config.Tickable {
-	return []config.Tickable{p.CloudWatch, p.SSM, p.CloudFormation}
+	// EFS runs before CloudWatch so the alarms evaluated in the same tick see
+	// the AWS/EFS metrics it just published.
+	return []config.Tickable{p.EFS, p.CloudWatch, p.SSM, p.CloudFormation}
 }
 
 // Close tears down any real engines wired into the provider via
