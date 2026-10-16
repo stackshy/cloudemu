@@ -36,6 +36,26 @@ func newClient(t *testing.T) *networkfirewall.Client {
 	})
 }
 
+// policyToken reads the current update token of a firewall policy.
+func policyToken(t *testing.T, c *networkfirewall.Client, name string) *string {
+	t.Helper()
+
+	d, err := c.DescribeFirewallPolicy(context.Background(), &networkfirewall.DescribeFirewallPolicyInput{FirewallPolicyName: aws.String(name)})
+	require.NoError(t, err)
+
+	return d.UpdateToken
+}
+
+// ruleGroupToken reads the current update token of a rule group.
+func ruleGroupToken(t *testing.T, c *networkfirewall.Client, name string, typ nftypes.RuleGroupType) *string {
+	t.Helper()
+
+	d, err := c.DescribeRuleGroup(context.Background(), &networkfirewall.DescribeRuleGroupInput{RuleGroupName: aws.String(name), Type: typ})
+	require.NoError(t, err)
+
+	return d.UpdateToken
+}
+
 func TestSDKNetworkFirewall(t *testing.T) {
 	client := newClient(t)
 	ctx := context.Background()
@@ -222,7 +242,7 @@ func TestSDKUpdateFirewallPolicy(t *testing.T) {
 
 	_, err = client.UpdateFirewallPolicy(ctx, &networkfirewall.UpdateFirewallPolicyInput{
 		FirewallPolicyName: aws.String("pol-upd"),
-		UpdateToken:        aws.String("00000000-0000-0000-0000-000000000000"),
+		UpdateToken:        policyToken(t, client, "pol-upd"),
 		Description:        aws.String("updated"),
 		FirewallPolicy: &nftypes.FirewallPolicy{
 			StatelessDefaultActions:         []string{"aws:drop"},
@@ -256,7 +276,7 @@ func TestSDKUpdateRuleGroup(t *testing.T) {
 	_, err = client.UpdateRuleGroup(ctx, &networkfirewall.UpdateRuleGroupInput{
 		RuleGroupName: aws.String("rg-upd"),
 		Type:          nftypes.RuleGroupTypeStateful,
-		UpdateToken:   aws.String("00000000-0000-0000-0000-000000000000"),
+		UpdateToken:   ruleGroupToken(t, client, "rg-upd", nftypes.RuleGroupTypeStateful),
 		Description:   aws.String("after"),
 	})
 	require.NoError(t, err)
@@ -338,7 +358,7 @@ func TestSDKCreateRuleGroupWithRules(t *testing.T) {
 	_, err = client.UpdateRuleGroup(ctx, &networkfirewall.UpdateRuleGroupInput{
 		RuleGroupName: aws.String("rg-stateful"),
 		Type:          nftypes.RuleGroupTypeStateful,
-		UpdateToken:   aws.String("00000000-0000-0000-0000-000000000000"),
+		UpdateToken:   ruleGroupToken(t, client, "rg-stateful", nftypes.RuleGroupTypeStateful),
 		RuleGroup: &nftypes.RuleGroup{
 			RulesSource: &nftypes.RulesSource{
 				RulesString: aws.String(`drop tcp any any -> any any (msg:"blocked"; sid:2;)`),
@@ -407,7 +427,7 @@ func TestSDKFirewallPolicyRuleGroupReferences(t *testing.T) {
 	// UpdateFirewallPolicy with a different reference set round-trips too.
 	_, err = client.UpdateFirewallPolicy(ctx, &networkfirewall.UpdateFirewallPolicyInput{
 		FirewallPolicyName: aws.String("pol-refs"),
-		UpdateToken:        aws.String("00000000-0000-0000-0000-000000000000"),
+		UpdateToken:        policyToken(t, client, "pol-refs"),
 		FirewallPolicy: &nftypes.FirewallPolicy{
 			StatelessDefaultActions:         []string{"aws:forward_to_sfe"},
 			StatelessFragmentDefaultActions: []string{"aws:forward_to_sfe"},

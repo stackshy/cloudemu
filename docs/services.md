@@ -3959,7 +3959,7 @@ delete) is still enforced.
 | Serverless | 26 |
 | Networking | 51 |
 | Networking: AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN / Traffic Mirroring / Network Insights / VPC Block Public Access / IPAM full incl. discovery/BYOASN/BYOIP/resolver/policy + AWS/IPAM metrics) | 162 |
-| Network Firewall: AWS | 20 |
+| Network Firewall: AWS | 23 (+30 optional) |
 | Monitoring | 12 |
 | IAM | 35 |
 | DNS | 15 |
@@ -4005,7 +4005,7 @@ delete) is still enforced.
 | Data Integration: AWS Glue | 299 |
 | Threat Detection: Amazon GuardDuty | 87 |
 | Streaming: Amazon MSK | 59 |
-| **Grand Total** | **2842** (+227 optional) |
+| **Grand Total** | **2845** (+257 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

@@ -12531,6 +12531,148 @@
         "name": "UpdateRuleGroup"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "AnalysisReports",
+        "doc": "AnalysisReports covers the analysis report family.",
+        "operations": [
+          {
+            "name": "GetAnalysisReport",
+            "doc": "GetAnalysisReport returns one report (its results are always empty)."
+          },
+          {
+            "name": "ListAnalysisReports"
+          },
+          {
+            "name": "StartAnalysisReport"
+          }
+        ]
+      },
+      {
+        "name": "AvailabilityZones",
+        "doc": "AvailabilityZones covers the Availability-Zone associations of a transit",
+        "operations": [
+          {
+            "name": "AssociateAvailabilityZones"
+          },
+          {
+            "name": "DisassociateAvailabilityZones"
+          }
+        ]
+      },
+      {
+        "name": "FirewallSettings",
+        "doc": "FirewallSettings covers the firewall-level setters.",
+        "operations": [
+          {
+            "name": "UpdateAvailabilityZoneChangeProtection"
+          },
+          {
+            "name": "UpdateFirewallAnalysisSettings"
+          },
+          {
+            "name": "UpdateFirewallDescription"
+          },
+          {
+            "name": "UpdateFirewallPolicyChangeProtection"
+          },
+          {
+            "name": "UpdateSubnetChangeProtection"
+          }
+        ]
+      },
+      {
+        "name": "FlowOperations",
+        "doc": "FlowOperations covers the flow capture / flush family.",
+        "operations": [
+          {
+            "name": "DescribeFlowOperation"
+          },
+          {
+            "name": "ListFlowOperationResults",
+            "doc": "ListFlowOperationResults returns the operation and its (always empty, there is no"
+          },
+          {
+            "name": "ListFlowOperations"
+          },
+          {
+            "name": "StartFlowCapture"
+          },
+          {
+            "name": "StartFlowFlush"
+          }
+        ]
+      },
+      {
+        "name": "Metadata",
+        "doc": "Metadata covers the read-only metadata/summary operations.",
+        "operations": [
+          {
+            "name": "DescribeFirewallMetadata"
+          },
+          {
+            "name": "DescribeRuleGroupMetadata"
+          },
+          {
+            "name": "DescribeRuleGroupSummary"
+          }
+        ]
+      },
+      {
+        "name": "ResourcePolicies",
+        "doc": "ResourcePolicies covers the resource-sharing IAM policies attached to a rule",
+        "operations": [
+          {
+            "name": "DeleteResourcePolicy"
+          },
+          {
+            "name": "DescribeResourcePolicy"
+          },
+          {
+            "name": "PutResourcePolicy"
+          }
+        ]
+      },
+      {
+        "name": "TLSInspection",
+        "doc": "TLSInspection covers the TLS inspection configuration family.",
+        "operations": [
+          {
+            "name": "CreateTLSInspectionConfiguration"
+          },
+          {
+            "name": "DeleteTLSInspectionConfiguration"
+          },
+          {
+            "name": "DescribeTLSInspectionConfiguration"
+          },
+          {
+            "name": "ListTLSInspectionConfigurations"
+          },
+          {
+            "name": "UpdateTLSInspectionConfiguration"
+          }
+        ]
+      },
+      {
+        "name": "VPCEndpointAssociations",
+        "doc": "VPCEndpointAssociations covers the VPC endpoint association family.",
+        "operations": [
+          {
+            "name": "CreateVpcEndpointAssociation"
+          },
+          {
+            "name": "DeleteVpcEndpointAssociation"
+          },
+          {
+            "name": "DescribeVpcEndpointAssociation"
+          },
+          {
+            "name": "ListVpcEndpointAssociations"
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "NetworkFirewall"
     }

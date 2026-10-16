@@ -74,6 +74,8 @@ const (
 
 	DefaultBedrockIngestionSettle = 2 * time.Second // Bedrock KB ingestion job IN_PROGRESS->COMPLETE
 
+	DefaultFlowOperationSettle = 2 * time.Second // Network Firewall flow operation IN_PROGRESS->COMPLETED
+
 	// S3 RestoreObject ongoing-request="true"->"false", by retrieval tier.
 	DefaultRestoreExpeditedSettle = 1 * time.Second
 	DefaultRestoreStandardSettle  = 3 * time.Second

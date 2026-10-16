@@ -141,14 +141,97 @@ func (d taggedDiscovery) discoverKMS(ctx context.Context) ([]resourcediscovery.D
 }
 
 func (d taggedDiscovery) discoverNetworkFirewall(ctx context.Context) ([]resourcediscovery.DiscoveredResource, error) {
-	firewalls, err := d.p.NetworkFirewall.ListFirewalls(ctx)
+	nf := d.p.NetworkFirewall
+
+	collectors := []func() ([]resourcediscovery.DiscoveredResource, error){
+		func() ([]resourcediscovery.DiscoveredResource, error) {
+			return pageRows(func(token string) ([]nfdriver.Firewall, string, error) {
+				return nf.ListFirewalls(ctx, nil, nfdriver.ListOptions{NextToken: token})
+			}, func(f *nfdriver.Firewall) resourcediscovery.DiscoveredResource {
+				return row("network-firewall", "firewall", f.Name, f.ARN, f.Tags)
+			})
+		},
+		func() ([]resourcediscovery.DiscoveredResource, error) {
+			return pageRows(func(token string) ([]nfdriver.FirewallPolicy, string, error) {
+				return nf.ListFirewallPolicies(ctx, nfdriver.ListOptions{NextToken: token})
+			}, func(p *nfdriver.FirewallPolicy) resourcediscovery.DiscoveredResource {
+				return row("network-firewall", "firewall-policy", p.Name, p.ARN, p.Tags)
+			})
+		},
+		func() ([]resourcediscovery.DiscoveredResource, error) {
+			return pageRows(func(token string) ([]nfdriver.RuleGroup, string, error) {
+				return nf.ListRuleGroups(ctx, nfdriver.RuleGroupFilter{}, nfdriver.ListOptions{NextToken: token})
+			}, func(g *nfdriver.RuleGroup) resourcediscovery.DiscoveredResource {
+				return row("network-firewall", "rule-group", g.Name, g.ARN, g.Tags)
+			})
+		},
+		func() ([]resourcediscovery.DiscoveredResource, error) {
+			return pageRows(func(token string) ([]nfdriver.TLSInspectionConfig, string, error) {
+				return nf.ListTLSInspectionConfigurations(ctx, nfdriver.ListOptions{NextToken: token})
+			}, func(c *nfdriver.TLSInspectionConfig) resourcediscovery.DiscoveredResource {
+				return row("network-firewall", "tls-configuration", c.Name, c.ARN, c.Tags)
+			})
+		},
+		func() ([]resourcediscovery.DiscoveredResource, error) {
+			return pageRows(func(token string) ([]nfdriver.VPCEndpointAssociation, string, error) {
+				return nf.ListVpcEndpointAssociations(ctx, "", nfdriver.ListOptions{NextToken: token})
+			}, func(a *nfdriver.VPCEndpointAssociation) resourcediscovery.DiscoveredResource {
+				return row("network-firewall", "vpc-endpoint-association", a.ID, a.ARN, a.Tags)
+			})
+		},
+	}
+
+	var out []resourcediscovery.DiscoveredResource
+
+	for _, collect := range collectors {
+		rows, err := collect()
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, rows...)
+	}
+
+	return out, nil
+}
+
+// pageRows drains a NextToken-paginated list call and maps every item to a row.
+func pageRows[T any](
+	list func(token string) ([]T, string, error), toRow func(*T) resourcediscovery.DiscoveredResource,
+) ([]resourcediscovery.DiscoveredResource, error) {
+	items, err := allPages(list)
 	if err != nil {
 		return nil, err
 	}
 
-	return project(ctx, firewalls, func(_ context.Context, f nfdriver.Firewall) (resourcediscovery.DiscoveredResource, error) {
-		return row("network-firewall", "firewall", f.Name, f.ARN, f.Tags), nil
-	})
+	rows := make([]resourcediscovery.DiscoveredResource, 0, len(items))
+	for i := range items {
+		rows = append(rows, toRow(&items[i]))
+	}
+
+	return rows, nil
+}
+
+// allPages drains a NextToken-paginated list call.
+func allPages[T any](list func(token string) ([]T, string, error)) ([]T, error) {
+	var all []T
+
+	token := ""
+
+	for {
+		items, next, err := list(token)
+		if err != nil {
+			return nil, err
+		}
+
+		all = append(all, items...)
+
+		if next == "" {
+			return all, nil
+		}
+
+		token = next
+	}
 }
 
 func (d taggedDiscovery) discoverSESv2(ctx context.Context) ([]resourcediscovery.DiscoveredResource, error) {
