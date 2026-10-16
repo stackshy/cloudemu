@@ -32,6 +32,15 @@ type secretListEntryJSON struct {
 	// KmsKeyId is the customer KMS key the secret is encrypted with, echoed on
 	// DescribeSecret. Omitted when the default aws/secretsmanager key is used.
 	KmsKeyID string `json:"KmsKeyId,omitempty"`
+	// LastAccessedDate is the day (midnight UTC) the value was last retrieved;
+	// omitted when the secret has never been retrieved.
+	LastAccessedDate float64 `json:"LastAccessedDate,omitempty"`
+	// PrimaryRegion is the Region the secret was created in.
+	PrimaryRegion string `json:"PrimaryRegion,omitempty"`
+	// ReplicationStatus lists the secret's replicas. DescribeSecret only: the
+	// ListSecrets SecretListEntry shape has no such member, so listSecrets
+	// leaves it nil.
+	ReplicationStatus []replicationStatusJSON `json:"ReplicationStatus,omitempty"`
 
 	VersionIDsToStages map[string][]string `json:"VersionIdsToStages,omitempty"`
 
@@ -90,13 +99,89 @@ type versionJSON struct {
 // --- request envelopes ---
 
 type createSecretRequest struct {
-	Name               string    `json:"Name"`
-	Description        string    `json:"Description"`
-	SecretString       string    `json:"SecretString"`
-	SecretBinary       []byte    `json:"SecretBinary"`
-	Tags               []tagJSON `json:"Tags"`
-	KmsKeyID           string    `json:"KmsKeyId"`
-	ClientRequestToken string    `json:"ClientRequestToken"`
+	Name               string              `json:"Name"`
+	Description        string              `json:"Description"`
+	SecretString       string              `json:"SecretString"`
+	SecretBinary       []byte              `json:"SecretBinary"`
+	Tags               []tagJSON           `json:"Tags"`
+	KmsKeyID           string              `json:"KmsKeyId"`
+	ClientRequestToken string              `json:"ClientRequestToken"`
+	AddReplicaRegions  []replicaRegionJSON `json:"AddReplicaRegions"`
+	// ForceOverwriteReplicaSecret is accepted for parity; replicas are
+	// metadata-only, so there is never a destination secret to overwrite.
+	ForceOverwriteReplicaSecret bool `json:"ForceOverwriteReplicaSecret"`
+}
+
+// replicaRegionJSON is the ReplicaRegionType wire shape.
+type replicaRegionJSON struct {
+	Region   string `json:"Region"`
+	KmsKeyID string `json:"KmsKeyId"`
+}
+
+// replicationStatusJSON is the ReplicationStatusType wire shape.
+type replicationStatusJSON struct {
+	Region           string  `json:"Region"`
+	KmsKeyID         string  `json:"KmsKeyId,omitempty"`
+	Status           string  `json:"Status,omitempty"`
+	StatusMessage    string  `json:"StatusMessage,omitempty"`
+	LastAccessedDate float64 `json:"LastAccessedDate,omitempty"`
+}
+
+type replicateSecretToRegionsRequest struct {
+	SecretID                    string              `json:"SecretId"`
+	AddReplicaRegions           []replicaRegionJSON `json:"AddReplicaRegions"`
+	ForceOverwriteReplicaSecret bool                `json:"ForceOverwriteReplicaSecret"`
+}
+
+type removeRegionsFromReplicationRequest struct {
+	SecretID             string   `json:"SecretId"`
+	RemoveReplicaRegions []string `json:"RemoveReplicaRegions"`
+}
+
+// replicationResponse is the {ARN, ReplicationStatus} envelope of
+// ReplicateSecretToRegions and RemoveRegionsFromReplication. ReplicationStatus
+// is always emitted (an empty list once every replica is removed).
+type replicationResponse struct {
+	ARN               string                  `json:"ARN"`
+	ReplicationStatus []replicationStatusJSON `json:"ReplicationStatus"`
+}
+
+type stopReplicationToReplicaResponse struct {
+	ARN string `json:"ARN"`
+}
+
+func (r replicaRegionJSON) toDriver() secretsdriver.SecretReplicaRegion {
+	return secretsdriver.SecretReplicaRegion{Region: r.Region, KMSKeyID: r.KmsKeyID}
+}
+
+func replicaRegionsToDriver(in []replicaRegionJSON) []secretsdriver.SecretReplicaRegion {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]secretsdriver.SecretReplicaRegion, 0, len(in))
+	for _, r := range in {
+		out = append(out, r.toDriver())
+	}
+
+	return out
+}
+
+// toReplicationStatusJSON renders a secret's replica list; nil in, empty out
+// (never nil), so callers that always emit the member get "[]".
+func toReplicationStatusJSON(in []secretsdriver.SecretReplicationStatus) []replicationStatusJSON {
+	out := make([]replicationStatusJSON, 0, len(in))
+	for _, r := range in {
+		out = append(out, replicationStatusJSON{
+			Region:           r.Region,
+			KmsKeyID:         r.KMSKeyID,
+			Status:           r.Status,
+			StatusMessage:    r.StatusMessage,
+			LastAccessedDate: epochSeconds(r.LastAccessedDate),
+		})
+	}
+
+	return out
 }
 
 type secretIDRequest struct {
@@ -144,9 +229,17 @@ type secretFilter struct {
 }
 
 type listSecretsRequest struct {
-	MaxResults int32          `json:"MaxResults"`
+	// MaxResults is a pointer so an explicit out-of-range 0 is distinguishable
+	// from an absent field (which lists everything).
+	MaxResults *int32         `json:"MaxResults"`
 	NextToken  string         `json:"NextToken"`
 	Filters    []secretFilter `json:"Filters"`
+	// IncludePlannedDeletion also lists secrets scheduled for deletion.
+	IncludePlannedDeletion bool `json:"IncludePlannedDeletion"`
+	// SortBy is created-date | last-accessed-date | last-changed-date | name.
+	SortBy string `json:"SortBy"`
+	// SortOrder is asc | desc.
+	SortOrder string `json:"SortOrder"`
 }
 
 type putSecretValueRequest struct {
@@ -206,9 +299,10 @@ type updateSecretVersionStageResponse struct {
 // --- response envelopes ---
 
 type createSecretResponse struct {
-	ARN       string `json:"ARN"`
-	Name      string `json:"Name"`
-	VersionID string `json:"VersionId,omitempty"`
+	ARN               string                  `json:"ARN"`
+	Name              string                  `json:"Name"`
+	VersionID         string                  `json:"VersionId,omitempty"`
+	ReplicationStatus []replicationStatusJSON `json:"ReplicationStatus,omitempty"`
 }
 
 type deleteSecretResponse struct {
@@ -431,12 +525,14 @@ func tagsToMap(tags []tagJSON) map[string]string {
 
 func toSecretListEntry(info *secretsdriver.SecretInfo) secretListEntryJSON {
 	return secretListEntryJSON{
-		ARN:             info.ResourceID,
-		Name:            info.Name,
-		Description:     info.Description,
-		Tags:            mapToTags(info.Tags),
-		CreatedDate:     epochSeconds(info.CreatedAt),
-		LastChangedDate: epochSeconds(info.UpdatedAt),
-		KmsKeyID:        info.KMSKeyID,
+		ARN:              info.ResourceID,
+		Name:             info.Name,
+		Description:      info.Description,
+		Tags:             mapToTags(info.Tags),
+		CreatedDate:      epochSeconds(info.CreatedAt),
+		LastChangedDate:  epochSeconds(info.UpdatedAt),
+		KmsKeyID:         info.KMSKeyID,
+		LastAccessedDate: epochSeconds(info.LastAccessedDate),
+		PrimaryRegion:    info.PrimaryRegion,
 	}
 }

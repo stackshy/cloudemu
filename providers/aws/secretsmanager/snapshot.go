@@ -75,6 +75,12 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	}
 
 	for name, ss := range snap.Secrets {
+		// Snapshots taken before PrimaryRegion was tracked recover it from the
+		// secret's ARN. LastAccessedDate and ReplicationStatus ride in Info.
+		if ss.Info.PrimaryRegion == "" {
+			ss.Info.PrimaryRegion = arnRegion(ss.Info.ResourceID, m.opts.Region)
+		}
+
 		m.secrets.Set(name, &secretData{
 			info:                 ss.Info,
 			versions:             ss.Versions,

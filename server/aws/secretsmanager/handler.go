@@ -65,6 +65,18 @@ type secretPolicyManager interface {
 	DeleteResourcePolicy(ctx context.Context, name string) (*secretsdriver.SecretInfo, error)
 }
 
+// secretReplicator is the AWS-specific multi-Region replication and
+// ListSecrets-options surface the handler type-asserts for (implemented by the
+// AWS provider), keeping the portable Secrets driver minimal.
+type secretReplicator interface {
+	ListSecretsWithOptions(ctx context.Context, includePlannedDeletion bool) ([]secretsdriver.SecretInfo, error)
+	ReplicateSecretToRegions(
+		ctx context.Context, name string, regions []secretsdriver.SecretReplicaRegion, forceOverwrite bool,
+	) (*secretsdriver.SecretInfo, error)
+	RemoveRegionsFromReplication(ctx context.Context, name string, regions []string) (*secretsdriver.SecretInfo, error)
+	StopReplicationToReplica(ctx context.Context, name string) (*secretsdriver.SecretInfo, error)
+}
+
 // Handler serves Secrets Manager JSON-RPC requests against a Secrets driver.
 type Handler struct {
 	secrets secretsdriver.Secrets
@@ -75,26 +87,29 @@ type Handler struct {
 func New(s secretsdriver.Secrets) *Handler {
 	h := &Handler{secrets: s}
 	h.routes = map[string]http.HandlerFunc{
-		"CreateSecret":             h.createSecret,
-		"DeleteSecret":             h.deleteSecret,
-		"DescribeSecret":           h.describeSecret,
-		"GetResourcePolicy":        h.getResourcePolicy,
-		"PutResourcePolicy":        h.putResourcePolicy,
-		"DeleteResourcePolicy":     h.deleteResourcePolicy,
-		"ValidateResourcePolicy":   h.validateResourcePolicy,
-		"ListSecrets":              h.listSecrets,
-		"GetSecretValue":           h.getSecretValue,
-		"BatchGetSecretValue":      h.batchGetSecretValue,
-		"PutSecretValue":           h.putSecretValue,
-		"ListSecretVersionIds":     h.listSecretVersionIDs,
-		"UpdateSecret":             h.updateSecret,
-		"UpdateSecretVersionStage": h.updateSecretVersionStage,
-		"RestoreSecret":            h.restoreSecret,
-		"RotateSecret":             h.rotateSecret,
-		"CancelRotateSecret":       h.cancelRotateSecret,
-		"GetRandomPassword":        h.getRandomPassword,
-		"TagResource":              h.tagResource,
-		"UntagResource":            h.untagResource,
+		"CreateSecret":                 h.createSecret,
+		"DeleteSecret":                 h.deleteSecret,
+		"DescribeSecret":               h.describeSecret,
+		"GetResourcePolicy":            h.getResourcePolicy,
+		"PutResourcePolicy":            h.putResourcePolicy,
+		"DeleteResourcePolicy":         h.deleteResourcePolicy,
+		"ValidateResourcePolicy":       h.validateResourcePolicy,
+		"ListSecrets":                  h.listSecrets,
+		"GetSecretValue":               h.getSecretValue,
+		"BatchGetSecretValue":          h.batchGetSecretValue,
+		"PutSecretValue":               h.putSecretValue,
+		"ListSecretVersionIds":         h.listSecretVersionIDs,
+		"UpdateSecret":                 h.updateSecret,
+		"UpdateSecretVersionStage":     h.updateSecretVersionStage,
+		"RestoreSecret":                h.restoreSecret,
+		"ReplicateSecretToRegions":     h.replicateSecretToRegions,
+		"RemoveRegionsFromReplication": h.removeRegionsFromReplication,
+		"StopReplicationToReplica":     h.stopReplicationToReplica,
+		"RotateSecret":                 h.rotateSecret,
+		"CancelRotateSecret":           h.cancelRotateSecret,
+		"GetRandomPassword":            h.getRandomPassword,
+		"TagResource":                  h.tagResource,
+		"UntagResource":                h.untagResource,
 	}
 
 	return h

@@ -26,6 +26,11 @@ func (h *Handler) batchGetSecretValue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := validateFilters(req.Filters); err != nil {
+		writeValidation(w, err)
+		return
+	}
+
 	ids := req.SecretIDList
 	if len(ids) == 0 && len(req.Filters) > 0 {
 		matched, err := h.filteredSecretIDs(r, req.Filters)

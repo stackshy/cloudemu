@@ -144,17 +144,16 @@ func (m *Mock) GetSecretValueStage(ctx context.Context, name, versionID, stage s
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
 
-	sd.mu.RLock()
-	defer sd.mu.RUnlock()
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.New(errors.FailedPrecondition,
-			"secret is scheduled for deletion, so this operation is not allowed")
+		return nil, errors.New(errors.FailedPrecondition, msgMarkedForDeletion)
 	}
 
 	if versionID != "" {
 		if v, found := sd.versionByID(versionID); found {
-			return m.decryptVersion(ctx, copyVersion(v))
+			return m.retrieveVersion(ctx, sd, v)
 		}
 
 		return nil, errors.Newf(errors.NotFound, "version %q not found for secret %q", versionID, name)
@@ -175,7 +174,7 @@ func (m *Mock) GetSecretValueStage(ctx context.Context, name, versionID, stage s
 		return nil, errors.Newf(errors.NotFound, "stage %q not found for secret %q", label, name)
 	}
 
-	return m.decryptVersion(ctx, copyVersion(v))
+	return m.retrieveVersion(ctx, sd, v)
 }
 
 // SecretVersionStages returns the stage labels for each version ID, so
@@ -227,8 +226,7 @@ func (m *Mock) UpdateSecretVersionStage(
 	defer sd.mu.Unlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.New(errors.FailedPrecondition,
-			"secret is scheduled for deletion, so this operation is not allowed")
+		return nil, errors.New(errors.FailedPrecondition, msgMarkedForDeletion)
 	}
 
 	if err := sd.validateStageMove(versionStage, removeFrom, moveTo); err != nil {
@@ -361,8 +359,7 @@ func (m *Mock) RotateSecret(
 	defer sd.mu.Unlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.New(errors.FailedPrecondition,
-			"secret is scheduled for deletion, so this operation is not allowed")
+		return nil, errors.New(errors.FailedPrecondition, msgMarkedForDeletion)
 	}
 
 	// A secret that has never had a rotation Lambda configured, and whose
@@ -442,8 +439,7 @@ func (m *Mock) CancelRotateSecret(_ context.Context, name string) (*driver.Secre
 	defer sd.mu.Unlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, "", errors.New(errors.FailedPrecondition,
-			"secret is scheduled for deletion, so this operation is not allowed")
+		return nil, "", errors.New(errors.FailedPrecondition, msgMarkedForDeletion)
 	}
 
 	sd.rotationEnabled = false

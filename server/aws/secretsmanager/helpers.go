@@ -76,9 +76,10 @@ func decodePageToken(token string) (int, error) {
 
 // matchesSecretFilters reports whether a secret satisfies every ListSecrets
 // filter (filters are AND'd, values within a filter OR'd). Supported keys are
-// name, description, tag-key, tag-value, and all. Matching mirrors the real
-// service: name/tag-key/tag-value are case-sensitive prefix matches, description
-// is a case-insensitive prefix match, and all tokenizes the value into words and
+// name, description, tag-key, tag-value, primary-region, owning-service, and
+// all. Matching mirrors the real service: name/tag-key/tag-value/primary-region/
+// owning-service are case-sensitive prefix matches, description is a
+// case-insensitive prefix match, and all tokenizes the value into words and
 // searches every attribute case-insensitively.
 func matchesSecretFilters(info *secretsdriver.SecretInfo, filters []secretFilter) bool {
 	for i := range filters {
@@ -96,6 +97,16 @@ func matchesSecretFilter(info *secretsdriver.SecretInfo, f *secretFilter) bool {
 	}
 
 	for _, v := range f.Values {
+		// A value prefixed with "!" is a negation filter: it matches the secrets
+		// the rest of the value does not match.
+		if rest, negated := strings.CutPrefix(v, "!"); negated {
+			if !secretFieldMatches(info, f.Key, rest) {
+				return true
+			}
+
+			continue
+		}
+
 		if secretFieldMatches(info, f.Key, v) {
 			return true
 		}
@@ -114,11 +125,19 @@ func secretFieldMatches(info *secretsdriver.SecretInfo, key, value string) bool 
 		return anyTagHasPrefix(info.Tags, value, true)
 	case "tag-value":
 		return anyTagHasPrefix(info.Tags, value, false)
+	case "primary-region":
+		return strings.HasPrefix(info.PrimaryRegion, value)
+	case "owning-service":
+		// OwningService is set only on secrets another AWS service creates and
+		// manages; cloudemu never creates such secrets, so every secret's owning
+		// service is empty and only an empty prefix matches.
+		return value == ""
 	case "all":
 		return matchesAllWords(info, value)
 	default:
-		// Unsupported key: do not exclude on it.
-		return true
+		// Unreachable for a validated request: unknown keys are rejected with
+		// ValidationException before matching.
+		return false
 	}
 }
 
