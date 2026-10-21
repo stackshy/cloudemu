@@ -10,6 +10,9 @@ import (
 const (
 	opEq     = "="
 	opNe     = "!="
+	opLt     = "<"
+	opLe     = "<="
+	opGt     = ">"
 	kwIs     = "IS"
 	kwNot    = "NOT"
 	kwExists = "EXISTS"

@@ -7,8 +7,9 @@ import (
 )
 
 // regexAllowedSymbols are the non-alphanumeric characters a %regex% may use:
-// the documented symbol set, the operators, the escape character, and space.
-const regexAllowedSymbols = ":_#=@/;,-^$?[]{}|\\*+. "
+// the documented symbol set, the operators, and the escape character. A
+// literal space is not in the set; match one with \s or \x20.
+const regexAllowedSymbols = ":_#=@/;,-^$?[]{}|\\*+."
 
 // compileRegex validates a %...% body against the CloudWatch Logs regex
 // subset (no parentheses, no multi-byte characters, a fixed symbol set) and

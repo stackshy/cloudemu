@@ -49,11 +49,11 @@ func (n cmpNode) holds(v any) bool {
 	}
 
 	switch n.op {
-	case "<":
+	case opLt:
 		return f < n.val.num
-	case "<=":
+	case opLe:
 		return f <= n.val.num
-	case ">":
+	case opGt:
 		return f > n.val.num
 	default:
 		return f >= n.val.num
@@ -224,4 +224,25 @@ func scalarString(v any) string {
 	}
 
 	return ""
+}
+
+// jsonValue resolves a "$.path" reference against message, which need not
+// be a selector the pattern itself names.
+func jsonValue(message, ref string) (string, bool) {
+	sel, end, err := lexSelector(ref, 0)
+	if err != nil || end != len(ref) || hasWildcard(sel.steps) {
+		return "", false
+	}
+
+	doc, ok := decodeJSON(message)
+	if !ok {
+		return "", false
+	}
+
+	vals := resolve(doc, sel.steps)
+	if len(vals) != 1 || !isScalar(vals[0]) {
+		return "", false
+	}
+
+	return scalarString(vals[0]), true
 }

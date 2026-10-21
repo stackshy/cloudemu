@@ -244,9 +244,13 @@ func (m *Mock) evaluateMetricFilters(g *logGroup, events []driver.LogEvent) {
 		}
 
 		for i := range events {
-			if pattern.Match(events[i].Message) {
+			if !pattern.Match(events[i].Message) {
+				continue
+			}
+
+			if v, ok := metricFilterValue(mf.MetricValue, pattern, events[i].Message); ok {
 				matched++
-				total += metricFilterValue(mf.MetricValue)
+				total += v
 			}
 		}
 
@@ -268,20 +272,32 @@ func (m *Mock) evaluateMetricFilters(g *logGroup, events []driver.LogEvent) {
 	}
 }
 
-// metricFilterValue resolves a metric filter's metricValue to the number each
-// matching event contributes. A literal number is used directly; anything else
-// (an empty value, or a "$field" token this emulator does not extract) counts
-// as 1 per matching event, which is the common "count occurrences" filter.
-func metricFilterValue(raw string) float64 {
+// metricFilterValue resolves a metric filter's metricValue to the number one
+// matching event contributes. A literal number is used directly; a "$field"
+// reference ("$.latency", "$size", "$3") takes the value the pattern extracts
+// from the event, and an event whose referenced value is missing or not a
+// number contributes nothing. An empty value counts the event as 1.
+func metricFilterValue(raw string, pattern *filterpattern.Pattern, message string) (float64, bool) {
 	if raw == "" {
-		return 1
+		return 1, true
 	}
 
 	if v, err := strconv.ParseFloat(raw, 64); err == nil {
-		return v
+		return v, true
 	}
 
-	return 1
+	if !strings.HasPrefix(raw, "$") {
+		return 1, true
+	}
+
+	field, ok := pattern.Value(message, raw)
+	if !ok {
+		return 0, false
+	}
+
+	v, err := strconv.ParseFloat(field, 64)
+
+	return v, err == nil
 }
 
 // GetLogEvents retrieves log events matching the query.

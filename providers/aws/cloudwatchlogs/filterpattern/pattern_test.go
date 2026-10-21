@@ -53,7 +53,7 @@ func TestUnstructuredPatterns(t *testing.T) {
 		{`" "`, events},
 		{"", events},
 		{"%AUTHORIZED%", []string{err401, success}},
-		{"%^\\[ERROR 4%", []string{err400, err401, err419, err420}},
+		{"%^\\[ERROR\\s4%", []string{err400, err401, err419, err420}},
 		{"%BAD|INVALID%", []string{err400, err420}},
 		{"error", nil},
 	}
@@ -145,7 +145,12 @@ func TestInvalidPatterns(t *testing.T) {
 		`%unterminated`,
 		`"unterminated`,
 		`error:{boom}`,
-		`[ip, user]`,
+		`%shutting down%`,
+		`[ip, user`,
+		`[a, b=%x%, c=%y%, d=%z%]`,
+		`[a, b=1 || c=2]`,
+		`[a, b>abc]`,
+		`[a-b]`,
 		strings.Repeat("a", maxPatternLength+1),
 	} {
 		_, err := Parse(pattern)

@@ -1,11 +1,8 @@
 // Package filterpattern implements the CloudWatch Logs filter pattern
 // language used by FilterLogEvents, metric filters, subscription filters and
-// TestMetricFilter: unstructured terms, %regex% terms, and JSON property
-// patterns. See
+// TestMetricFilter: unstructured terms, %regex% terms, JSON property patterns,
+// and space-delimited field patterns. See
 // https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/FilterAndPatternSyntax.html.
-//
-// Space-delimited patterns ([a, b, ...]) are not supported yet and are
-// rejected rather than matched as plain text.
 package filterpattern
 
 import (
@@ -19,7 +16,8 @@ import (
 const (
 	// maxPatternLength is the longest filterPattern the API accepts.
 	maxPatternLength = 1024
-	// maxRegexPerStructuredPattern caps %regex% values in one JSON pattern.
+	// maxRegexPerStructuredPattern caps %regex% values in one JSON or
+	// space-delimited pattern.
 	maxRegexPerStructuredPattern = 2
 	// maxWildcardsPerSelector caps * selectors in one property selector.
 	maxWildcardsPerSelector = 1
@@ -38,6 +36,7 @@ type Pattern struct {
 	m        matcher
 	hasRegex bool
 	json     *jsonPattern
+	delim    *delimPattern
 }
 
 // Parse parses a filter pattern. An empty or blank pattern matches every
@@ -67,7 +66,12 @@ func Parse(raw string) (*Pattern, error) {
 
 		return &Pattern{m: jp, hasRegex: jp.regexCount > 0, json: jp}, nil
 	case strings.HasPrefix(trimmed, "["):
-		return nil, invalid("space-delimited filter patterns are not supported yet: " + trimmed)
+		dp, err := parseDelimitedPattern(trimmed)
+		if err != nil {
+			return nil, err
+		}
+
+		return &Pattern{m: dp, hasRegex: dp.regexCount > 0, delim: dp}, nil
 	default:
 		tp, err := parseTerms(trimmed)
 		if err != nil {
@@ -89,15 +93,31 @@ func (p *Pattern) HasRegex() bool {
 	return p.hasRegex
 }
 
-// ExtractedValues returns the values of the JSON properties a JSON pattern
-// names, keyed by selector (for example "$.latency"), for a message the
-// pattern matched. Other pattern forms extract nothing.
+// ExtractedValues returns the values a structured pattern pulls out of a
+// message it matched: JSON properties keyed by selector (for example
+// "$.latency"), and space-delimited fields keyed "$name" or, for unnamed
+// fields, "$N" by position. Unstructured patterns extract nothing.
 func (p *Pattern) ExtractedValues(message string) map[string]string {
-	if p.json == nil {
-		return map[string]string{}
+	switch {
+	case p.json != nil:
+		return p.json.extract(message)
+	case p.delim != nil:
+		return p.delim.extract(message)
 	}
 
-	return p.json.extract(message)
+	return map[string]string{}
+}
+
+// Value resolves a metric filter field reference ("$.latency" for a JSON
+// pattern, "$size" or "$3" for a space-delimited one) in a matched message.
+func (p *Pattern) Value(message, ref string) (string, bool) {
+	if p.json != nil {
+		return jsonValue(message, ref)
+	}
+
+	v, ok := p.ExtractedValues(message)[ref]
+
+	return v, ok
 }
 
 type matchAll struct{}
