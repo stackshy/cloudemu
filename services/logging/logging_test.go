@@ -172,7 +172,7 @@ func TestListLogStreams(t *testing.T) {
 
 func TestPutLogEvents(t *testing.T) {
 	ctx := context.Background()
-	baseTime := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+	baseTime := time.Date(2024, 12, 31, 21, 0, 0, 0, time.UTC) // 3h before the mock clock, inside the ingest window
 
 	t.Run("success", func(t *testing.T) {
 		l := newTestLogging()
@@ -194,7 +194,7 @@ func TestPutLogEvents(t *testing.T) {
 
 func TestGetLogEvents(t *testing.T) {
 	ctx := context.Background()
-	baseTime := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+	baseTime := time.Date(2024, 12, 31, 21, 0, 0, 0, time.UTC) // 3h before the mock clock, inside the ingest window
 
 	t.Run("success", func(t *testing.T) {
 		l := newTestLogging()
@@ -396,7 +396,7 @@ func TestAllOperationsRecorded(t *testing.T) {
 	ctx := context.Background()
 	rec := recorder.New()
 	l := newTestLogging(WithRecorder(rec))
-	baseTime := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+	baseTime := time.Date(2024, 12, 31, 21, 0, 0, 0, time.UTC) // 3h before the mock clock, inside the ingest window
 
 	_, _ = l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp"})
 	_, _ = l.GetLogGroup(ctx, "grp")
@@ -478,7 +478,7 @@ func TestListLogStreamsError(t *testing.T) {
 
 func TestFilterLogEventsPortable(t *testing.T) {
 	ctx := context.Background()
-	baseTime := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+	baseTime := time.Date(2024, 12, 31, 21, 0, 0, 0, time.UTC) // 3h before the mock clock, inside the ingest window
 
 	t.Run("success", func(t *testing.T) {
 		l := newTestLogging()
@@ -611,7 +611,7 @@ func TestAllOperationsMetrics(t *testing.T) {
 	ctx := context.Background()
 	mc := metrics.NewCollector()
 	l := newTestLogging(WithMetrics(mc))
-	baseTime := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+	baseTime := time.Date(2024, 12, 31, 21, 0, 0, 0, time.UTC) // 3h before the mock clock, inside the ingest window
 
 	_, _ = l.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "grp"})
 	_, _ = l.GetLogGroup(ctx, "grp")

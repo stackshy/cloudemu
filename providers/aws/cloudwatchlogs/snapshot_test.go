@@ -3,7 +3,6 @@ package cloudwatchlogs
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
@@ -23,7 +22,7 @@ func TestSnapshotRoundTripCloudWatchLogs(t *testing.T) {
 	}
 
 	if err := src.PutLogEvents(ctx, "/svc/app", "s1", []driver.LogEvent{
-		{Timestamp: time.Unix(1, 0), Message: "hello"},
+		{Timestamp: testEventTime(), Message: "hello"},
 	}); err != nil {
 		t.Fatalf("put log events: %v", err)
 	}

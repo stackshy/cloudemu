@@ -715,8 +715,8 @@ func TestSDKPutLogEventsBatchValidation(t *testing.T) {
 		LogGroupName:  aws.String("/pv/g"),
 		LogStreamName: aws.String("s1"),
 		LogEvents: []cwltypes.InputLogEvent{
-			{Timestamp: aws.Int64(base.UnixMilli()), Message: aws.String("early")},
-			{Timestamp: aws.Int64(base.Add(25 * time.Hour).UnixMilli()), Message: aws.String("too late")},
+			{Timestamp: aws.Int64(base.Add(-25 * time.Hour).UnixMilli()), Message: aws.String("early")},
+			{Timestamp: aws.Int64(base.UnixMilli()), Message: aws.String("too late")},
 		},
 	})
 	if !errors.As(err, &invalid) {

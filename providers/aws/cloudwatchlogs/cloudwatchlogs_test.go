@@ -13,8 +13,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testClockStart is the FakeClock start every provider test mock uses.
+func testClockStart() time.Time {
+	return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+}
+
+// testEventTime is a base timestamp for test events: three hours before the
+// mock clock, so offsets of up to a few hours stay inside the PutLogEvents
+// ingest window (no more than 14 days old, no more than 2 hours ahead).
+func testEventTime() time.Time {
+	return testClockStart().Add(-3 * time.Hour)
+}
+
 func newTestMock() *Mock {
-	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	fc := config.NewFakeClock(testClockStart())
 	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"))
 
 	return New(opts)
@@ -287,7 +299,7 @@ func TestListLogStreams(t *testing.T) {
 
 func TestPutLogEvents(t *testing.T) {
 	ctx := context.Background()
-	baseTime := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+	baseTime := testEventTime()
 
 	t.Run("success", func(t *testing.T) {
 		m := newTestMock()
@@ -386,8 +398,8 @@ func TestPutLogEvents(t *testing.T) {
 		setupGroupAndStream(t, m)
 
 		err := m.PutLogEvents(ctx, "test-group", "test-stream", []driver.LogEvent{
-			{Timestamp: baseTime, Message: "early"},
-			{Timestamp: baseTime.Add(25 * time.Hour), Message: "too late"},
+			{Timestamp: baseTime.Add(-25 * time.Hour), Message: "early"},
+			{Timestamp: baseTime, Message: "too late"},
 		})
 		require.Error(t, err)
 		assert.True(t, errors.IsInvalidArgument(err))
@@ -398,8 +410,8 @@ func TestPutLogEvents(t *testing.T) {
 		setupGroupAndStream(t, m)
 
 		err := m.PutLogEvents(ctx, "test-group", "test-stream", []driver.LogEvent{
-			{Timestamp: baseTime, Message: "early"},
-			{Timestamp: baseTime.Add(24 * time.Hour), Message: "late"},
+			{Timestamp: baseTime.Add(-24 * time.Hour), Message: "early"},
+			{Timestamp: baseTime, Message: "late"},
 		})
 		require.NoError(t, err)
 	})
@@ -418,7 +430,7 @@ func TestPutLogEvents(t *testing.T) {
 
 func TestGetLogEvents(t *testing.T) {
 	ctx := context.Background()
-	baseTime := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+	baseTime := testEventTime()
 
 	t.Run("all events from all streams", func(t *testing.T) {
 		m := newTestMock()
@@ -603,7 +615,7 @@ func TestGetLogEvents(t *testing.T) {
 
 func TestFilterLogEvents(t *testing.T) {
 	ctx := context.Background()
-	baseTime := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+	baseTime := testEventTime()
 
 	t.Run("filter by pattern", func(t *testing.T) {
 		m := newTestMock()

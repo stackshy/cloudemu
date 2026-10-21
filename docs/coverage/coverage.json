@@ -11559,6 +11559,34 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AWSLogging",
+        "doc": "AWSLogging is an optional interface implemented by the AWS CloudWatch Logs",
+        "operations": [
+          {
+            "name": "AssociateKmsKey",
+            "doc": "AssociateKmsKey and DisassociateKmsKey target exactly one of a log group"
+          },
+          {
+            "name": "CreateAWSLogGroup"
+          },
+          {
+            "name": "DeleteRetentionPolicy"
+          },
+          {
+            "name": "DisassociateKmsKey"
+          },
+          {
+            "name": "ListAWSLogGroups"
+          },
+          {
+            "name": "PutLogEventsWithResult"
+          },
+          {
+            "name": "PutRetentionPolicy"
+          }
+        ]
+      },
+      {
         "name": "GCPLogging",
         "doc": "GCPLogging is an optional interface implemented by the GCP logging backend for",
         "operations": [

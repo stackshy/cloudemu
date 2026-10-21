@@ -431,6 +431,9 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	p.ElastiCache.SetMonitoring(p.CloudWatch)
 	p.MemoryDB.SetMonitoring(p.CloudWatch)
 	p.CloudWatchLogs.SetMonitoring(p.CloudWatch)
+	// CloudWatch Logs -> KMS: a log group key (CreateLogGroup kmsKeyId,
+	// AssociateKmsKey) must be an existing, enabled KMS key.
+	p.CloudWatchLogs.SetKeyResolver(p.KMS)
 	p.SNS.SetMonitoring(p.CloudWatch)
 	p.ECR.SetMonitoring(p.CloudWatch)
 	p.ECS.SetMonitoring(p.CloudWatch)

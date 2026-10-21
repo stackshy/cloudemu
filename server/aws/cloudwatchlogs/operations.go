@@ -97,10 +97,18 @@ func (h *Handler) createLogGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.logs.CreateLogGroup(r.Context(), logdriver.LogGroupConfig{
-		Name: req.LogGroupName,
-		Tags: req.Tags,
-	}); err != nil {
+	cfg := logdriver.LogGroupConfig{Name: req.LogGroupName, Tags: req.Tags}
+
+	var err error
+	if ext, ok := h.logs.(logdriver.AWSLogging); ok {
+		_, err = ext.CreateAWSLogGroup(r.Context(), &cfg, logdriver.AWSLogGroupOptions{
+			KmsKeyID: req.KmsKeyID, LogGroupClass: req.LogGroupClass,
+		})
+	} else {
+		_, err = h.logs.CreateLogGroup(r.Context(), cfg)
+	}
+
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -115,13 +123,13 @@ func (h *Handler) describeLogGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	infos, err := h.logs.ListLogGroups(r.Context(), scope.Scope{})
+	infos, err := h.describableLogGroups(r)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	matched := make([]logdriver.LogGroupInfo, 0, len(infos))
+	matched := make([]logdriver.AWSLogGroup, 0, len(infos))
 
 	for i := range infos {
 		if req.LogGroupNamePrefix != "" && !strings.HasPrefix(infos[i].Name, req.LogGroupNamePrefix) {
@@ -144,6 +152,27 @@ func (h *Handler) describeLogGroups(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, resp)
+}
+
+// describableLogGroups lists every log group with its CloudWatch Logs-only
+// attributes, falling back to the portable listing (STANDARD, no key) for a
+// backend without driver.AWSLogging.
+func (h *Handler) describableLogGroups(r *http.Request) ([]logdriver.AWSLogGroup, error) {
+	if ext, ok := h.logs.(logdriver.AWSLogging); ok {
+		return ext.ListAWSLogGroups(r.Context(), logdriver.ListLogGroupsFilter{})
+	}
+
+	infos, err := h.logs.ListLogGroups(r.Context(), scope.Scope{})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]logdriver.AWSLogGroup, 0, len(infos))
+	for i := range infos {
+		out = append(out, logdriver.AWSLogGroup{LogGroupInfo: infos[i], LogGroupClass: logdriver.LogGroupClassStandard})
+	}
+
+	return out, nil
 }
 
 func (h *Handler) deleteLogGroup(w http.ResponseWriter, r *http.Request) {
@@ -281,14 +310,27 @@ func (h *Handler) putLogEvents(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	if err := h.logs.PutLogEvents(r.Context(), req.LogGroupName, req.LogStreamName, events); err != nil {
+	ext, ok := h.awsLogs(w, "PutLogEvents")
+	if !ok {
+		return
+	}
+
+	res, err := ext.PutLogEventsWithResult(r.Context(), req.LogGroupName, req.LogStreamName, events)
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	// The sequence token is deprecated and ignored by the modern SDK, but a
-	// non-empty value keeps older callers happy.
-	wire.WriteJSON(w, putLogEventsResponse{NextSequenceToken: "0"})
+	resp := putLogEventsResponse{NextSequenceToken: res.NextSequenceToken}
+	if rej := res.Rejected; rej != nil {
+		resp.RejectedLogEventsInfo = &rejectedLogEventsInfoJSON{
+			TooOldLogEventEndIndex:   rej.TooOldLogEventEndIndex,
+			ExpiredLogEventEndIndex:  rej.ExpiredLogEventEndIndex,
+			TooNewLogEventStartIndex: rej.TooNewLogEventStartIndex,
+		}
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 // getLogEventsWindow picks the [start,end) slice bounds for a GetLogEvents page

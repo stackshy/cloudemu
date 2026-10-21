@@ -18,7 +18,8 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // an exported snapshot form keyed by group name. The wired deps (opts,
 // monitoring, lambda) are not serialized.
 type logsSnapshot struct {
-	Groups map[string]*logGroupSnapshot `json:"groups,omitempty"`
+	Groups            map[string]*logGroupSnapshot `json:"groups,omitempty"`
+	QueryResultKmsKey string                       `json:"queryResultKmsKey,omitempty"`
 }
 
 // logGroupSnapshot mirrors logGroup. Its metric- and subscription-filter stores
@@ -27,6 +28,8 @@ type logsSnapshot struct {
 // has an unexported mutex.
 type logGroupSnapshot struct {
 	Info          driver.LogGroupInfo           `json:"info"`
+	KmsKeyID      string                        `json:"kmsKeyId,omitempty"`
+	LogGroupClass string                        `json:"logGroupClass,omitempty"`
 	Streams       map[string]*logStreamSnapshot `json:"streams,omitempty"`
 	MetricFilters json.RawMessage               `json:"metricFilters,omitempty"`
 	SubFilters    json.RawMessage               `json:"subFilters,omitempty"`
@@ -35,14 +38,18 @@ type logGroupSnapshot struct {
 // logStreamSnapshot mirrors logStream, promoting its fields past the unexported
 // mutex.
 type logStreamSnapshot struct {
-	Info   driver.LogStreamInfo `json:"info"`
-	Events []driver.LogEvent    `json:"events,omitempty"`
+	Info    driver.LogStreamInfo `json:"info"`
+	Events  []driver.LogEvent    `json:"events,omitempty"`
+	Uploads uint64               `json:"uploads,omitempty"`
 }
 
 // Snapshot captures every log group's state as JSON. includeAssets is unused —
 // log events are the payload and are always captured.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
-	snap := logsSnapshot{}
+	m.mu.RLock()
+	snap := logsSnapshot{QueryResultKmsKey: m.queryResultKmsKey}
+	m.mu.RUnlock()
+
 	if m.groups.Len() == 0 {
 		return json.Marshal(snap)
 	}
@@ -62,7 +69,7 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 }
 
 func snapshotGroup(g *logGroup) (*logGroupSnapshot, error) {
-	gs := &logGroupSnapshot{Info: g.info}
+	gs := &logGroupSnapshot{Info: g.info, KmsKeyID: g.kmsKeyID, LogGroupClass: g.class}
 
 	mf, err := g.metricFilters.Snapshot()
 	if err != nil {
@@ -82,7 +89,9 @@ func snapshotGroup(g *logGroup) (*logGroupSnapshot, error) {
 
 		for sName, s := range g.streams.All() {
 			s.mu.RLock()
-			gs.Streams[sName] = &logStreamSnapshot{Info: s.info, Events: append([]driver.LogEvent(nil), s.events...)}
+			gs.Streams[sName] = &logStreamSnapshot{
+				Info: s.info, Events: append([]driver.LogEvent(nil), s.events...), Uploads: s.uploads,
+			}
 			s.mu.RUnlock()
 		}
 	}
@@ -97,6 +106,10 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return fmt.Errorf("cloudwatchlogs: parse snapshot: %w", err)
 	}
+
+	m.mu.Lock()
+	m.queryResultKmsKey = snap.QueryResultKmsKey
+	m.mu.Unlock()
 
 	for name, gs := range snap.Groups {
 		g, err := restoreGroup(gs)
@@ -113,6 +126,8 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 func restoreGroup(gs *logGroupSnapshot) (*logGroup, error) {
 	g := &logGroup{
 		info:          gs.Info,
+		kmsKeyID:      gs.KmsKeyID,
+		class:         gs.LogGroupClass,
 		streams:       memstore.New[*logStream](),
 		metricFilters: memstore.New[*driver.MetricFilterInfo](),
 		subFilters:    memstore.New[*driver.SubscriptionFilterInfo](),
@@ -131,7 +146,7 @@ func restoreGroup(gs *logGroupSnapshot) (*logGroup, error) {
 	}
 
 	for sName, ss := range gs.Streams {
-		g.streams.Set(sName, &logStream{info: ss.Info, events: ss.Events})
+		g.streams.Set(sName, &logStream{info: ss.Info, events: ss.Events, uploads: ss.Uploads})
 	}
 
 	return g, nil

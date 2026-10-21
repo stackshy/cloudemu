@@ -25,6 +25,24 @@ AWS's `logging` service · portable interface `driver.Logging` · [AWS index](./
 | `PutSubscriptionFilter` |  |
 | `UpdateLogGroup` | UpdateLogGroup replaces the mutable fields (retention, tags) of an |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### AWSLogging
+
+AWSLogging is an optional interface implemented by the AWS CloudWatch Logs
+
+| Operation | Description |
+| --- | --- |
+| `AssociateKmsKey` | AssociateKmsKey and DisassociateKmsKey target exactly one of a log group |
+| `CreateAWSLogGroup` |  |
+| `DeleteRetentionPolicy` |  |
+| `DisassociateKmsKey` |  |
+| `ListAWSLogGroups` |  |
+| `PutLogEventsWithResult` |  |
+| `PutRetentionPolicy` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
@@ -17,7 +16,8 @@ import (
 func TestInvokeSurfacesLogsToCloudWatch(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
-	cwl := cloudwatchlogs.New(config.NewOptions(config.WithRegion("us-east-1")))
+	// Same clock as the Lambda mock: CloudWatch Logs drops events outside its ingest window.
+	cwl := cloudwatchlogs.New(m.opts)
 	m.SetLogSink(cwl)
 
 	_, err := m.CreateFunction(ctx, defaultFuncConfig())
@@ -42,7 +42,8 @@ func TestInvokeSurfacesLogsToCloudWatch(t *testing.T) {
 func TestInvokeSurfacesHandlerErrorLog(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
-	cwl := cloudwatchlogs.New(config.NewOptions(config.WithRegion("us-east-1")))
+	// Same clock as the Lambda mock: CloudWatch Logs drops events outside its ingest window.
+	cwl := cloudwatchlogs.New(m.opts)
 	m.SetLogSink(cwl)
 
 	_, err := m.CreateFunction(ctx, defaultFuncConfig())

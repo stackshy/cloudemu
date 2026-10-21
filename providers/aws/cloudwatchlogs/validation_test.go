@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -72,7 +71,7 @@ func TestCreateLogStreamNameRules(t *testing.T) {
 }
 
 func TestPutLogEventsBatchLimits(t *testing.T) {
-	base := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
+	base := testEventTime()
 
 	manyEvents := func(n int) []driver.LogEvent {
 		out := make([]driver.LogEvent, n)
