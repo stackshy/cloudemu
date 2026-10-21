@@ -21,8 +21,17 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // mutexes, the wired SQS/Lambda/SNS/StepFunctions targets, the monitoring
 // backend, and *config.Options are intentionally not captured.
 type ebSnapshot struct {
-	Buses map[string]*busSnapshot      `json:"buses,omitempty"`
-	Tags  map[string]map[string]string `json:"tags,omitempty"`
+	Buses    map[string]*busSnapshot      `json:"buses,omitempty"`
+	Tags     map[string]map[string]string `json:"tags,omitempty"`
+	Archives map[string]*archiveSnapshot  `json:"archives,omitempty"`
+	Replays  json.RawMessage              `json:"replays,omitempty"`
+}
+
+// archiveSnapshot mirrors archiveData, promoting its unexported fields.
+type archiveSnapshot struct {
+	Info    driver.Archive  `json:"info"`
+	BusName string          `json:"busName"`
+	Events  []archivedEvent `json:"events,omitempty"`
 }
 
 // busSnapshot mirrors busData, promoting its nested rule store, its buffered
@@ -59,6 +68,16 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	}
 
 	snap.Tags = m.snapshotTags()
+	snap.Archives = m.snapshotArchives()
+
+	if m.replays.Len() > 0 {
+		replays, err := m.replays.Snapshot()
+		if err != nil {
+			return nil, fmt.Errorf("eventbridge: snapshot replays: %w", err)
+		}
+
+		snap.Replays = replays
+	}
 
 	return json.Marshal(snap)
 }
@@ -118,7 +137,7 @@ func (m *Mock) snapshotTags() map[string]map[string]string {
 }
 
 // Restore rebuilds every event bus under its original name (rules under their
-// names, targets under their ids) plus the per-ARN tag store.
+// names, targets under their ids), the per-ARN tag store, archives and replays.
 func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	var snap ebSnapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
@@ -136,7 +155,41 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 
 	m.restoreTags(snap.Tags)
 
+	for name, as := range snap.Archives {
+		m.archives.Set(name, &archiveData{
+			info:    as.Info,
+			busName: as.BusName,
+			events:  append([]archivedEvent(nil), as.Events...),
+		})
+	}
+
+	if len(snap.Replays) > 0 {
+		if err := m.replays.LoadSnapshot(snap.Replays); err != nil {
+			return fmt.Errorf("eventbridge: restore replays: %w", err)
+		}
+	}
+
 	return nil
+}
+
+func (m *Mock) snapshotArchives() map[string]*archiveSnapshot {
+	if m.archives.Len() == 0 {
+		return nil
+	}
+
+	out := make(map[string]*archiveSnapshot, m.archives.Len())
+
+	for name, ad := range m.archives.All() {
+		ad.mu.RLock()
+		out[name] = &archiveSnapshot{
+			Info:    ad.info,
+			BusName: ad.busName,
+			Events:  append([]archivedEvent(nil), ad.events...),
+		}
+		ad.mu.RUnlock()
+	}
+
+	return out
 }
 
 func restoreBus(bs *busSnapshot) (*busData, error) {

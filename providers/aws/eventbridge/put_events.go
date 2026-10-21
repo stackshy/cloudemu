@@ -190,6 +190,7 @@ func (m *Mock) publishEvent(ctx context.Context, event *driver.Event, index int)
 	}
 
 	m.storeEvent(bd, event)
+	m.captureToArchives(busName, event)
 	matched := m.MatchedRules(event)
 	m.deliverToTargets(ctx, matched, event)
 
