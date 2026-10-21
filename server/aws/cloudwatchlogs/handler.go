@@ -17,7 +17,7 @@
 //	PutMetricFilter     DescribeMetricFilters DeleteMetricFilter
 //	PutSubscriptionFilter DescribeSubscriptionFilters DeleteSubscriptionFilter
 //	PutRetentionPolicy  DeleteRetentionPolicy ListLogGroups
-//	AssociateKmsKey     DisassociateKmsKey
+//	AssociateKmsKey     DisassociateKmsKey  TestMetricFilter
 //	TagResource / UntagResource / ListTagsForResource (and the legacy *LogGroup forms)
 //
 // CloudWatch Logs-only operations go through the optional driver.AWSLogging
@@ -97,6 +97,8 @@ func (h *Handler) dispatchManagement(w http.ResponseWriter, r *http.Request, op 
 		h.describeMetricFilters(w, r)
 	case "DeleteMetricFilter":
 		h.deleteMetricFilter(w, r)
+	case "TestMetricFilter":
+		h.testMetricFilter(w, r)
 	case "PutSubscriptionFilter":
 		h.putSubscriptionFilter(w, r)
 	case "DescribeSubscriptionFilters":

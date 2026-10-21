@@ -42,6 +42,7 @@ AWSLogging is an optional interface implemented by the AWS CloudWatch Logs
 | `ListAWSLogGroups` |  |
 | `PutLogEventsWithResult` |  |
 | `PutRetentionPolicy` |  |
+| `TestMetricFilter` | TestMetricFilter runs a filter pattern over sample log messages. |
 
 ## Not in scope
 

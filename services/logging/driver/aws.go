@@ -56,6 +56,14 @@ type PutLogEventsResult struct {
 	Rejected *RejectedLogEventsInfo
 }
 
+// MetricFilterMatch is one TestMetricFilter result: a sample message the
+// pattern matched, its 0-based position, and the values the pattern extracts.
+type MetricFilterMatch struct {
+	EventNumber     int64
+	EventMessage    string
+	ExtractedValues map[string]string
+}
+
 // AWSLogging is an optional interface implemented by the AWS CloudWatch Logs
 // backend for operations with no cross-provider equivalent. The CloudWatch
 // Logs wire handler type-asserts for it; Azure, GCP and OCI backends do not
@@ -74,4 +82,7 @@ type AWSLogging interface {
 	// query-result ARN).
 	AssociateKmsKey(ctx context.Context, logGroup, resourceIdentifier, kmsKeyID string) error
 	DisassociateKmsKey(ctx context.Context, logGroup, resourceIdentifier string) error
+
+	// TestMetricFilter runs a filter pattern over sample log messages.
+	TestMetricFilter(ctx context.Context, filterPattern string, logEventMessages []string) ([]MetricFilterMatch, error)
 }

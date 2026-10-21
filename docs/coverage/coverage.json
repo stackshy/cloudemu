@@ -11583,6 +11583,10 @@
           },
           {
             "name": "PutRetentionPolicy"
+          },
+          {
+            "name": "TestMetricFilter",
+            "doc": "TestMetricFilter runs a filter pattern over sample log messages."
           }
         ]
       },

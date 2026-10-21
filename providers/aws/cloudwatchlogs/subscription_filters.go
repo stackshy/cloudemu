@@ -11,6 +11,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs/filterpattern"
 	"github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
 
@@ -34,6 +35,10 @@ func (m *Mock) PutSubscriptionFilter(_ context.Context, cfg *driver.Subscription
 
 	if cfg.DestinationARN == "" {
 		return errors.New(errors.InvalidArgument, "destinationArn is required")
+	}
+
+	if err := validateFilterPattern(g, subscriptionFilterKind, cfg.Name, cfg.FilterPattern); err != nil {
+		return err
 	}
 
 	// A new filter (not an update of an existing name) must fit within the
@@ -138,18 +143,18 @@ func (m *Mock) deliverSubscription(
 }
 
 // matchSubscriptionEvents returns the events whose message satisfies the filter
-// pattern. An empty pattern matches every event; otherwise substring matching is
-// used (the same simplification the metric-filter path applies — the richer
-// CloudWatch Logs filter grammar is tracked separately).
-func matchSubscriptionEvents(pattern string, events []driver.LogEvent) []driver.LogEvent {
-	if pattern == "" {
-		return events
+// pattern. A pattern that no longer parses (restored from an older snapshot)
+// matches nothing; patterns are validated when the filter is put.
+func matchSubscriptionEvents(raw string, events []driver.LogEvent) []driver.LogEvent {
+	pattern, err := filterpattern.Parse(raw)
+	if err != nil {
+		return nil
 	}
 
 	matched := make([]driver.LogEvent, 0, len(events))
 
 	for i := range events {
-		if strings.Contains(events[i].Message, pattern) {
+		if pattern.Match(events[i].Message) {
 			matched = append(matched, events[i])
 		}
 	}

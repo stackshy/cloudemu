@@ -13,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs/filterpattern"
 	"github.com/stackshy/cloudemu/v2/services/logging/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -222,14 +223,8 @@ func (m *Mock) PutLogEvents(ctx context.Context, groupName, streamName string, e
 // For each metric filter on the group, every event whose message matches the
 // filter pattern contributes the filter's metric value; the total is published
 // to the filter's configured namespace/metric, mirroring how CloudWatch Logs
-// extracts custom metrics from ingested events.
-//
-// Pattern matching only supports plain-substring "count occurrences of a
-// term" matching (strings.Contains). Real CloudWatch Logs filter pattern
-// syntax — quoted phrases, JSON-field patterns (e.g. { $.level = "ERROR" }),
-// ?OR-style alternation, and -exclusion terms — is not parsed, so a more
-// elaborate real filter pattern will not behave like real CloudWatch Logs
-// here.
+// extracts custom metrics from ingested events. Patterns use the CloudWatch
+// Logs filter pattern language (see the filterpattern package).
 func (m *Mock) evaluateMetricFilters(g *logGroup, events []driver.LogEvent) {
 	if m.monitoring == nil {
 		return
@@ -241,8 +236,15 @@ func (m *Mock) evaluateMetricFilters(g *logGroup, events []driver.LogEvent) {
 			total   float64
 		)
 
+		// Patterns are validated when the filter is put; one that no longer
+		// parses (restored from an older snapshot) matches nothing.
+		pattern, err := filterpattern.Parse(mf.FilterPattern)
+		if err != nil {
+			continue
+		}
+
 		for i := range events {
-			if mf.FilterPattern == "" || strings.Contains(events[i].Message, mf.FilterPattern) {
+			if pattern.Match(events[i].Message) {
 				matched++
 				total += metricFilterValue(mf.MetricValue)
 			}
@@ -376,6 +378,11 @@ func (m *Mock) FilterLogEvents(
 		)
 	}
 
+	pattern, err := filterpattern.Parse(input.FilterPattern)
+	if err != nil {
+		return nil, err
+	}
+
 	m.purgeExpired(input.LogGroup, g)
 
 	limit := input.Limit
@@ -386,10 +393,10 @@ func (m *Mock) FilterLogEvents(
 	var results []driver.FilteredLogEvent
 
 	if input.LogStream != "" {
-		results = m.filterStreamEvents(g, input.LogStream, input)
+		results = m.filterStreamEvents(g, input.LogStream, input, pattern)
 	} else {
 		for name, s := range g.streams.All() {
-			results = append(results, m.matchEvents(s, name, input)...)
+			results = append(results, m.matchEvents(s, name, input, pattern)...)
 		}
 
 		// CloudWatch Logs interleaves matches across streams in ascending
@@ -422,19 +429,21 @@ func (m *Mock) filterStreamEvents(
 	g *logGroup,
 	streamName string,
 	input *driver.FilterLogEventsInput,
+	pattern *filterpattern.Pattern,
 ) []driver.FilteredLogEvent {
 	s, ok := g.streams.Get(streamName)
 	if !ok {
 		return nil
 	}
 
-	return m.matchEvents(s, streamName, input)
+	return m.matchEvents(s, streamName, input, pattern)
 }
 
 func (*Mock) matchEvents(
 	s *logStream,
 	streamName string,
 	input *driver.FilterLogEventsInput,
+	pattern *filterpattern.Pattern,
 ) []driver.FilteredLogEvent {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -450,8 +459,7 @@ func (*Mock) matchEvents(
 			continue
 		}
 
-		if input.FilterPattern != "" &&
-			!strings.Contains(e.Message, input.FilterPattern) {
+		if !pattern.Match(e.Message) {
 			continue
 		}
 
@@ -482,6 +490,10 @@ func (m *Mock) PutMetricFilter(
 		return errors.New(
 			errors.InvalidArgument, "metric filter name is required",
 		)
+	}
+
+	if err := validateFilterPattern(g, metricFilterKind, cfg.Name, cfg.FilterPattern); err != nil {
+		return err
 	}
 
 	info := &driver.MetricFilterInfo{
