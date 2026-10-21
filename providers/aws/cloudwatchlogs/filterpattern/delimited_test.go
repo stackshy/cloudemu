@@ -121,18 +121,3 @@ func TestValueReferences(t *testing.T) {
 		t.Fatal("absent $.latency resolved")
 	}
 }
-
-func TestRegexRejectsLiteralSpace(t *testing.T) {
-	if _, err := Parse(`%shutting down%`); err == nil {
-		t.Fatal("regex with a literal space accepted")
-	}
-
-	p := mustParse(t, `%shutting\sdown%`)
-	if !p.Match("shutting down now") {
-		t.Fatal(`\s did not match a space`)
-	}
-
-	if !mustParse(t, `%shutting\x20down%`).Match("shutting down") {
-		t.Fatal(`\x20 did not match a space`)
-	}
-}

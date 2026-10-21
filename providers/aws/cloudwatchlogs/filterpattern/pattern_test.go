@@ -145,7 +145,6 @@ func TestInvalidPatterns(t *testing.T) {
 		`%unterminated`,
 		`"unterminated`,
 		`error:{boom}`,
-		`%shutting down%`,
 		`[ip, user`,
 		`[a, b=%x%, c=%y%, d=%z%]`,
 		`[a, b=1 || c=2]`,
@@ -157,6 +156,16 @@ func TestInvalidPatterns(t *testing.T) {
 		if err == nil || !errors.IsInvalidArgument(err) {
 			t.Errorf("Parse(%.40q) = %v, want InvalidArgument", pattern, err)
 		}
+	}
+}
+
+// TestRegexAllowsLiteralSpace follows the syntax page's own example, which
+// has a space inside %...%.
+func TestRegexAllowsLiteralSpace(t *testing.T) {
+	p := mustParse(t, `%^starting|^initializing|^shutting down%`)
+
+	if !p.Match("shutting down") || !p.Match("starting up") || p.Match("skipping initializing") {
+		t.Fatal("regex with a literal space did not match like the documented example")
 	}
 }
 
