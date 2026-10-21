@@ -431,6 +431,10 @@ func (m *Mock) setRuleState(eventBus, ruleName, state string) error {
 
 // PutTargets adds targets to a rule.
 func (m *Mock) PutTargets(_ context.Context, eventBus, ruleName string, targets []driver.Target) error {
+	if err := validateTargetInputs(targets); err != nil {
+		return err
+	}
+
 	busName := eventBus
 	if busName == "" {
 		busName = defaultBusName
@@ -501,47 +505,6 @@ func (m *Mock) ListTargets(_ context.Context, eventBus, ruleName string) ([]driv
 	}
 
 	return targetsFromStore(rd.targets), nil
-}
-
-// PutEvents publishes events to the event bus.
-func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.PublishResult, error) {
-	result := &driver.PublishResult{
-		EventIDs: make([]string, 0, len(events)),
-	}
-
-	for i := range events {
-		eventID := generateEventID(&events[i], m.opts.Clock.Now(), i)
-		events[i].ID = eventID
-
-		if events[i].Time.IsZero() {
-			events[i].Time = m.opts.Clock.Now()
-		}
-
-		busName := events[i].EventBus
-		if busName == "" {
-			busName = defaultBusName
-		}
-
-		bd, ok := m.buses.Get(busName)
-		if !ok {
-			result.FailCount++
-
-			continue
-		}
-
-		m.storeEvent(bd, &events[i])
-		matched := m.MatchedRules(&events[i])
-		m.deliverToTargets(ctx, matched, &events[i])
-
-		dims := map[string]string{"EventBusName": busName}
-		m.emitMetric(ctx, "PutEventsRequestCount", 1, dims)
-		m.emitMetric(ctx, "MatchedEvents", float64(len(matched)), dims)
-
-		result.SuccessCount++
-		result.EventIDs = append(result.EventIDs, eventID)
-	}
-
-	return result, nil
 }
 
 // PublishServiceEvent puts a native AWS service lifecycle event (EC2 instance
@@ -623,7 +586,7 @@ func (m *Mock) deliverToTarget(
 		return
 	}
 
-	dims := map[string]string{"RuleName": rule.Name, "EventBusName": busName}
+	dims := map[string]string{"RuleName": rule.Name, busDimension: busName}
 	m.emitMetric(ctx, "FailedInvocations", 1, dims)
 
 	dlqARN := deadLetterARN(t.DeadLetterConfig)

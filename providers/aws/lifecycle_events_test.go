@@ -848,7 +848,11 @@ func TestLifecycleEventLoopIsBounded(t *testing.T) {
 		t.Fatalf("PutRule: %v", err)
 	}
 
-	if err := p.EventBridge.PutTargets(ctx, "", "restart", []ebdriver.Target{{ID: "sm", ARN: smArn}}); err != nil {
+	// A constant Input keeps each execution's input small. With the default
+	// envelope input, every hop nests the previous event inside the next one,
+	// so the event grows until PutEvents rejects it at the 1 MB request limit
+	// before the recursion guard is reached.
+	if err := p.EventBridge.PutTargets(ctx, "", "restart", []ebdriver.Target{{ID: "sm", ARN: smArn, Input: "{}"}}); err != nil {
 		t.Fatalf("PutTargets: %v", err)
 	}
 

@@ -4,13 +4,39 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
+
+// validateTargetInputs rejects a PutTargets request in which any target sets
+// more than one of Input, InputPath and InputTransformer. EventBridge treats the
+// three as mutually exclusive and fails the whole request, storing no target.
+func validateTargetInputs(targets []driver.Target) error {
+	for i := range targets {
+		t := &targets[i]
+
+		set := 0
+
+		for _, v := range []string{t.Input, t.InputPath, t.InputTransformer} {
+			if v != "" {
+				set++
+			}
+		}
+
+		if set > 1 {
+			return errors.Newf(errors.InvalidArgument,
+				"Only one of Input, InputPath, or InputTransformer must be provided for target %s.", t.ID)
+		}
+	}
+
+	return nil
+}
 
 // targetBody computes the payload EventBridge delivers to a single target given
 // the rendered event envelope. Precedence mirrors real EventBridge, where a
 // target carries at most one of these: InputTransformer > Input > InputPath >
-// the raw envelope.
+// the raw envelope. PutTargets rejects a target with more than one of them, so
+// the order only matters for targets restored from older state.
 func targetBody(t *driver.Target, envelope []byte, reserved map[string]json.RawMessage) string {
 	if t.InputTransformer != "" {
 		if body, ok := applyInputTransformer(t.InputTransformer, envelope, reserved); ok {

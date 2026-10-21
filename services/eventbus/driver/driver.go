@@ -156,6 +156,15 @@ type PublishResult struct {
 	EventIDs     []string
 }
 
+// PutEventsEntryResult is the outcome of one entry in an EventBridge PutEvents
+// call, aligned by index with the request entries. A published entry carries
+// EventID; a rejected entry carries ErrorCode and ErrorMessage instead.
+type PutEventsEntryResult struct {
+	EventID      string
+	ErrorCode    string
+	ErrorMessage string
+}
+
 // EventBus is the interface that event bus provider implementations must satisfy.
 type EventBus interface {
 	// Bus management

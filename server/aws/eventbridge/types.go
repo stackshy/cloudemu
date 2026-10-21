@@ -295,19 +295,6 @@ func paginateByCursor[T any](items []T, nextToken string, limit int, keyOf func(
 	return items, ""
 }
 
-// isValidDetail reports whether a PutEvents entry's Detail is acceptable:
-// empty (defaulted downstream) or a well-formed JSON object. Real EventBridge
-// fails any other Detail with ErrorCode=MalformedDetail.
-func isValidDetail(detail string) bool {
-	if detail == "" {
-		return true
-	}
-
-	var obj map[string]json.RawMessage
-
-	return json.Unmarshal([]byte(detail), &obj) == nil
-}
-
 // entryTime converts a PutEvents entry's optional wire-form timestamp (Unix
 // epoch seconds) to a time.Time. A nil entry (the caller omitted Time) yields
 // the zero time, which the driver defaults to the PutEvents call's own time,
