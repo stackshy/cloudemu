@@ -11577,7 +11577,20 @@
             "doc": "DescribeAWSMetricFilters lists metric filters, sorted by filter name."
           },
           {
+            "name": "DescribeQueries"
+          },
+          {
             "name": "DisassociateKmsKey"
+          },
+          {
+            "name": "GetLogGroupFields",
+            "doc": "GetLogGroupFields samples the 8 minutes either side of at, or the last"
+          },
+          {
+            "name": "GetLogRecord"
+          },
+          {
+            "name": "GetQueryResults"
           },
           {
             "name": "ListAWSLogGroups"
@@ -11587,6 +11600,13 @@
           },
           {
             "name": "PutRetentionPolicy"
+          },
+          {
+            "name": "StartQuery",
+            "doc": "Logs Insights. A query is Running until its first GetQueryResults,"
+          },
+          {
+            "name": "StopQuery"
           },
           {
             "name": "TestMetricFilter",

@@ -1,6 +1,9 @@
 package driver
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Log group classes CloudWatch Logs accepts on CreateLogGroup. A group's class
 // is fixed at creation; no API changes it afterwards.
@@ -74,6 +77,81 @@ type DescribeMetricFiltersInput struct {
 	MetricNamespace  string
 }
 
+// Logs Insights query statuses.
+const (
+	QueryStatusRunning   = "Running"
+	QueryStatusComplete  = "Complete"
+	QueryStatusCancelled = "Cancelled" //nolint:misspell // the API's status value is spelled this way.
+	QueryStatusTimeout   = "Timeout"
+)
+
+// StartQueryInput is a Logs Insights StartQuery request. Exactly one of
+// LogGroupName, LogGroupNames or LogGroupIdentifiers (names or ARNs) is set.
+type StartQueryInput struct {
+	LogGroupName        string
+	LogGroupNames       []string
+	LogGroupIdentifiers []string
+	StartTime, EndTime  time.Time
+	QueryString         string
+	QueryLanguage       string
+	// Limit caps the rows returned; zero means the default.
+	Limit int
+}
+
+// QueryResultField is one field/value pair of a query result row.
+type QueryResultField struct{ Field, Value string }
+
+// QueryStatistics are a query's scan and match counts.
+type QueryStatistics struct {
+	RecordsMatched   float64
+	RecordsScanned   float64
+	BytesScanned     float64
+	LogGroupsScanned float64
+}
+
+// QueryResults is a GetQueryResults response.
+type QueryResults struct {
+	Status        string
+	QueryLanguage string
+	EncryptionKey string
+	Results       [][]QueryResultField
+	Statistics    QueryStatistics
+}
+
+// QueryInfo describes a query for DescribeQueries.
+type QueryInfo struct {
+	QueryID       string
+	QueryString   string
+	QueryLanguage string
+	Status        string
+	LogGroupName  string
+	CreateTime    time.Time
+	// QueryDuration is how long the query ran, in milliseconds.
+	QueryDuration int64
+	BytesScanned  float64
+}
+
+// DescribeQueriesInput narrows DescribeQueries; empty fields match all.
+type DescribeQueriesInput struct {
+	LogGroupName, Status, QueryLanguage string
+}
+
+// LogGroupField is a field GetLogGroupFields found and the share of events
+// (0-100) that carry it.
+type LogGroupField struct {
+	Name    string
+	Percent int
+}
+
+// MalformedQueryError is a query string that does not compile. Start and End
+// are the character offsets of the offending text.
+type MalformedQueryError struct {
+	Message    string
+	Start, End int
+}
+
+func (e *MalformedQueryError) Error() string { return e.Message }
+
 // AWSLogging is an optional interface implemented by the AWS CloudWatch Logs
 // backend for operations with no cross-provider equivalent. The CloudWatch
 // Logs wire handler type-asserts for it; Azure, GCP and OCI backends do not
@@ -95,6 +173,18 @@ type AWSLogging interface {
 
 	// DescribeAWSMetricFilters lists metric filters, sorted by filter name.
 	DescribeAWSMetricFilters(ctx context.Context, input DescribeMetricFiltersInput) ([]MetricFilterInfo, error)
+
+	// Logs Insights. A query is Running until its first GetQueryResults,
+	// which runs it. StartQuery returns a *MalformedQueryError for a query
+	// string that does not compile.
+	StartQuery(ctx context.Context, input *StartQueryInput) (string, error)
+	GetQueryResults(ctx context.Context, queryID string) (*QueryResults, error)
+	StopQuery(ctx context.Context, queryID string) error
+	DescribeQueries(ctx context.Context, input DescribeQueriesInput) ([]QueryInfo, error)
+	GetLogRecord(ctx context.Context, logRecordPointer string) (map[string]string, error)
+	// GetLogGroupFields samples the 8 minutes either side of at, or the last
+	// 15 minutes when at is zero.
+	GetLogGroupFields(ctx context.Context, logGroup string, at time.Time) ([]LogGroupField, error)
 
 	// TestMetricFilter runs a filter pattern over sample log messages.
 	TestMetricFilter(ctx context.Context, filterPattern string, logEventMessages []string) ([]MetricFilterMatch, error)

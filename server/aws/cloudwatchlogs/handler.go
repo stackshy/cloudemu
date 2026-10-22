@@ -18,6 +18,7 @@
 //	PutSubscriptionFilter DescribeSubscriptionFilters DeleteSubscriptionFilter
 //	PutRetentionPolicy  DeleteRetentionPolicy ListLogGroups
 //	AssociateKmsKey     DisassociateKmsKey  TestMetricFilter
+//	StartQuery GetQueryResults StopQuery DescribeQueries GetLogRecord GetLogGroupFields
 //	TagResource / UntagResource / ListTagsForResource (and the legacy *LogGroup forms)
 //
 // CloudWatch Logs-only operations go through the optional driver.AWSLogging
@@ -124,6 +125,27 @@ func (h *Handler) dispatchGroupSettings(w http.ResponseWriter, r *http.Request, 
 		h.associateKmsKey(w, r)
 	case "DisassociateKmsKey":
 		h.disassociateKmsKey(w, r)
+	default:
+		h.dispatchInsights(w, r, op)
+	}
+}
+
+// dispatchInsights handles the Logs Insights operations, delegating tagging
+// to dispatchTags.
+func (h *Handler) dispatchInsights(w http.ResponseWriter, r *http.Request, op string) {
+	switch op {
+	case "StartQuery":
+		h.startQuery(w, r)
+	case "GetQueryResults":
+		h.getQueryResults(w, r)
+	case "StopQuery":
+		h.stopQuery(w, r)
+	case "DescribeQueries":
+		h.describeQueries(w, r)
+	case "GetLogRecord":
+		h.getLogRecord(w, r)
+	case "GetLogGroupFields":
+		h.getLogGroupFields(w, r)
 	default:
 		h.dispatchTags(w, r, op)
 	}

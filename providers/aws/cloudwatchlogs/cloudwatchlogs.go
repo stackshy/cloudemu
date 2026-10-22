@@ -59,6 +59,7 @@ type Mock struct {
 	monitoring mondriver.Monitoring
 	lambda     LambdaInvoker
 	keys       KeyResolver
+	queries    *memstore.Store[queryRecord]
 
 	// queryResultKmsKey is the account-wide key associated with Logs Insights
 	// query results (AssociateKmsKey on the query-result resource).
@@ -95,6 +96,7 @@ func (m *Mock) emitMetric(metricName string, value float64, unit string, dims ma
 func New(opts *config.Options) *Mock {
 	return &Mock{
 		groups:  memstore.New[*logGroup](),
+		queries: memstore.New[queryRecord](),
 		opts:    opts,
 		periods: map[string]filterPeriod{},
 	}

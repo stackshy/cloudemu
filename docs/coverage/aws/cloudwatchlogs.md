@@ -39,10 +39,16 @@ AWSLogging is an optional interface implemented by the AWS CloudWatch Logs
 | `CreateAWSLogGroup` |  |
 | `DeleteRetentionPolicy` |  |
 | `DescribeAWSMetricFilters` | DescribeAWSMetricFilters lists metric filters, sorted by filter name. |
+| `DescribeQueries` |  |
 | `DisassociateKmsKey` |  |
+| `GetLogGroupFields` | GetLogGroupFields samples the 8 minutes either side of at, or the last |
+| `GetLogRecord` |  |
+| `GetQueryResults` |  |
 | `ListAWSLogGroups` |  |
 | `PutLogEventsWithResult` |  |
 | `PutRetentionPolicy` |  |
+| `StartQuery` | Logs Insights. A query is Running until its first GetQueryResults, |
+| `StopQuery` |  |
 | `TestMetricFilter` | TestMetricFilter runs a filter pattern over sample log messages. |
 
 ## Not in scope

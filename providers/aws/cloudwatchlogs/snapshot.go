@@ -22,6 +22,7 @@ type logsSnapshot struct {
 	Groups            map[string]*logGroupSnapshot `json:"groups,omitempty"`
 	QueryResultKmsKey string                       `json:"queryResultKmsKey,omitempty"`
 	FilterPeriods     map[string]filterPeriod      `json:"filterPeriods,omitempty"`
+	Queries           json.RawMessage              `json:"queries,omitempty"`
 }
 
 // logGroupSnapshot mirrors logGroup. Its metric- and subscription-filter stores
@@ -51,6 +52,13 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()
 	snap := logsSnapshot{QueryResultKmsKey: m.queryResultKmsKey, FilterPeriods: maps.Clone(m.periods)}
 	m.mu.RUnlock()
+
+	queries, err := m.queries.Snapshot()
+	if err != nil {
+		return nil, fmt.Errorf("cloudwatchlogs: snapshot queries: %w", err)
+	}
+
+	snap.Queries = queries
 
 	if m.groups.Len() == 0 {
 		return json.Marshal(snap)
@@ -115,6 +123,12 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	m.periods = map[string]filterPeriod{}
 	maps.Copy(m.periods, snap.FilterPeriods)
 	m.mu.Unlock()
+
+	if len(snap.Queries) > 0 {
+		if err := m.queries.LoadSnapshot(snap.Queries); err != nil {
+			return fmt.Errorf("cloudwatchlogs: restore queries: %w", err)
+		}
+	}
 
 	for name, gs := range snap.Groups {
 		g, err := restoreGroup(gs)
