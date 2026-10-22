@@ -24,7 +24,10 @@ func newEBAndSQS(t *testing.T) (*awseb.Client, *awssqs.Client) {
 	t.Helper()
 
 	cloud := cloudemu.NewAWS()
-	srv := awsserver.New(awsserver.Drivers{EventBridge: cloud.EventBridge, SQS: cloud.SQS})
+	srv := awsserver.New(awsserver.Drivers{
+		EventBridge: cloud.EventBridge, SQS: cloud.SQS,
+		AccountID: "123456789012", Region: "us-east-1",
+	})
 
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)

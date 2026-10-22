@@ -123,6 +123,22 @@ func TestStartReplayDeliversToFilteredRules(t *testing.T) {
 	assert.Len(t, history, 2, "replayed events are not added to the bus history")
 }
 
+func TestStartReplayFilterMatchesFullRuleARN(t *testing.T) {
+	m, sqs, a, start := replayFixture(t)
+	ctx := context.Background()
+
+	// Same bus and rule name as rule ra, but in another account and region.
+	others := []string{
+		"arn:aws:events:us-east-1:999999999999:rule/b1/ra",
+		"arn:aws:events:eu-west-1:123456789012:rule/b1/ra",
+	}
+
+	_, err := m.StartReplay(ctx, replayConfig("rp", a, start, others...))
+	require.NoError(t, err)
+	assert.Empty(t, sqs.got(queueA), "a FilterArn for another account or region must not select the local rule")
+	assert.Empty(t, sqs.got(queueB))
+}
+
 func TestStartReplayWithoutFiltersUsesAllRules(t *testing.T) {
 	m, sqs, a, start := replayFixture(t)
 

@@ -148,7 +148,7 @@ func (m *Mock) runReplay(ctx context.Context, replay *driver.Replay, ad *archive
 	filter := make(map[string]bool, len(replay.Destination.FilterARNs))
 
 	for _, arn := range replay.Destination.FilterARNs {
-		filter[ruleKeyFromARN(arn)] = true
+		filter[arn] = true
 	}
 
 	var last driver.Event
@@ -181,7 +181,9 @@ func (m *Mock) runReplay(ctx context.Context, replay *driver.Replay, ad *archive
 }
 
 // replayEvent delivers one archived event to the matching rules of its bus that
-// the replay's filter allows, with the replay name added to the envelope.
+// the replay's filter allows, with the replay name added to the envelope. A
+// FilterArns entry must be the rule's full ARN, so one naming the same bus and
+// rule in another account or region selects nothing.
 func (m *Mock) replayEvent(ctx context.Context, event *driver.Event, replayName string, filter map[string]bool) {
 	matched := m.MatchedRules(event)
 
@@ -189,7 +191,7 @@ func (m *Mock) replayEvent(ctx context.Context, event *driver.Event, replayName 
 		kept := matched[:0]
 
 		for i := range matched {
-			if filter[ruleKey(matched[i].EventBus, matched[i].Name)] {
+			if filter[m.ruleARN(matched[i].EventBus, matched[i].Name)] {
 				kept = append(kept, matched[i])
 			}
 		}
@@ -198,30 +200,6 @@ func (m *Mock) replayEvent(ctx context.Context, event *driver.Event, replayName 
 	}
 
 	m.deliverEnvelope(ctx, matched, event, m.replayEnvelope(event, replayName))
-}
-
-// ruleKey identifies a rule by its bus and name, the way its ARN does: the
-// default bus is omitted ("rule/<name>"), a custom bus is not
-// ("rule/<bus>/<name>").
-func ruleKey(bus, name string) string {
-	if bus == "" || bus == defaultBusName {
-		return name
-	}
-
-	return bus + "/" + name
-}
-
-// ruleKeyFromARN returns the ruleKey a rule ARN refers to. The account and
-// region segments are not compared, so a FilterArns entry matches the rule it
-// names however the caller spelled those.
-func ruleKeyFromARN(arn string) string {
-	const infix = ":rule/"
-
-	if idx := strings.Index(arn, infix); idx != -1 {
-		return arn[idx+len(infix):]
-	}
-
-	return arn
 }
 
 // setReplayState moves a replay from one state to another, doing nothing when
