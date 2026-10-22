@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awseb "github.com/aws/aws-sdk-go-v2/service/eventbridge"
@@ -86,12 +87,23 @@ func TestSDKAPIDestinationTargetDelivers(t *testing.T) {
 		t.Fatalf("PutEvents: %v", err)
 	}
 
+	// Delivery runs in the background after PutEvents returns.
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		mu.Lock()
+		called := got != nil
+		mu.Unlock()
+
+		if called {
+			break
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatal("the API destination endpoint was not called")
+		}
+	}
+
 	mu.Lock()
 	defer mu.Unlock()
-
-	if got == nil {
-		t.Fatal("the API destination endpoint was not called")
-	}
 
 	if got.URL.Path != "/orders/o-1" || got.URL.Query().Get("q") != "1" || got.Header.Get("x-api-key") != "s3cr3t" {
 		t.Fatalf("request = %s %s headers %v", got.Method, got.URL, got.Header)

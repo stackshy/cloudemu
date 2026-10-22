@@ -111,7 +111,9 @@ type Mock struct {
 	httpClient HTTPDoer
 	tokens     tokenCache
 	limiter    rateLimiter
-	replays    *memstore.Store[driver.Replay]
+	// apiDestSlots bounds how many API destination deliveries run at once.
+	apiDestSlots chan struct{}
+	replays      *memstore.Store[driver.Replay]
 	// activeReplays counts replays currently delivering, bounded by
 	// maxActiveReplays.
 	activeReplays atomic.Int32
@@ -167,6 +169,7 @@ func New(opts *config.Options) *Mock {
 		connections:     memstore.New[connectionData](),
 		apiDestinations: memstore.New[driver.APIDestination](),
 		httpClient:      defaultHTTPClient(),
+		apiDestSlots:    make(chan struct{}, maxAPIDestinationDeliveries),
 	}
 
 	// Create the default event bus automatically.
@@ -610,14 +613,38 @@ func (m *Mock) deliverEnvelope(ctx context.Context, matched []driver.Rule, event
 
 // deliverToTarget dispatches one target and, on failure, routes the original
 // event to the target's dead-letter queue when one is configured.
+//
+// An API destination target is called over HTTP in the background (see
+// goDeliverAPIDestination), so a slow or rate-limited endpoint never holds up
+// the PutEvents caller. Every other target is dispatched in line.
 func (m *Mock) deliverToTarget(
 	ctx context.Context, rule *driver.Rule, t *driver.Target, busName string, envelope []byte, reserved map[string]json.RawMessage,
 ) {
-	if m.dispatchTarget(ctx, t, targetBody(t, envelope, reserved)) {
+	body := targetBody(t, envelope, reserved)
+
+	if isAPIDestination(t.ARN) {
+		target, ruleName := *t, rule.Name
+
+		m.goDeliverAPIDestination(func() {
+			if !m.dispatchAPIDestination(ctx, &target, body) {
+				m.deadLetter(ctx, ruleName, &target, busName, envelope)
+			}
+		})
+
 		return
 	}
 
-	dims := map[string]string{"RuleName": rule.Name, busDimension: busName}
+	if m.dispatchTarget(ctx, t.ARN, body) {
+		return
+	}
+
+	m.deadLetter(ctx, rule.Name, t, busName, envelope)
+}
+
+// deadLetter records a failed delivery and sends the original event to the
+// target's dead-letter queue when one is configured.
+func (m *Mock) deadLetter(ctx context.Context, ruleName string, t *driver.Target, busName string, envelope []byte) {
+	dims := map[string]string{"RuleName": ruleName, busDimension: busName}
 	m.emitMetric(ctx, "FailedInvocations", 1, dims)
 
 	dlqARN := deadLetterARN(t.DeadLetterConfig)
@@ -639,12 +666,8 @@ func (m *Mock) deliverToTarget(
 // (matching EventBridge accepting the target but this emulator not modeling
 // that sink, an emulator limitation, not a real delivery failure eligible for
 // the target's DLQ).
-func (m *Mock) dispatchTarget(ctx context.Context, t *driver.Target, body string) bool {
-	arn := t.ARN
-
+func (m *Mock) dispatchTarget(ctx context.Context, arn, body string) bool {
 	switch {
-	case strings.Contains(arn, ":api-destination/"):
-		return m.dispatchAPIDestination(ctx, t, body)
 	case strings.Contains(arn, ":sqs:"):
 		if m.sqs == nil {
 			return true

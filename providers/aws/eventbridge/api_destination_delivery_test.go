@@ -104,11 +104,21 @@ func newDeliveryFixture(t *testing.T, auth *driver.ConnectionConfig, endpoint, m
 	return &deliveryFixture{m: m, sqs: sqs}
 }
 
+// put puts one event and waits for its background delivery to finish.
 func (f *deliveryFixture) put(t *testing.T, detail string) {
 	t.Helper()
 
 	_, err := f.m.PutEvents(context.Background(), []driver.Event{{Source: "app", DetailType: "OrderCreated", Detail: detail}})
 	require.NoError(t, err)
+
+	f.settle(t)
+}
+
+// settle waits until no API destination delivery holds a slot.
+func (f *deliveryFixture) settle(t *testing.T) {
+	t.Helper()
+
+	require.Eventually(t, func() bool { return len(f.m.apiDestSlots) == 0 }, 10*time.Second, 5*time.Millisecond)
 }
 
 func apiKeyConnection() *driver.ConnectionConfig {
@@ -146,6 +156,8 @@ func TestAPIDestinationDeliversWithAPIKey(t *testing.T) {
 	assert.Equal(t, "t", r.header.Get("x-target"))
 	assert.Equal(t, "Amazon/EventBridge/ApiDestinations", r.header.Get("User-Agent"), "User-Agent cannot be overridden")
 	assert.Equal(t, "application/json; charset=utf-8", r.header.Get("Content-Type"))
+	assert.Equal(t, "gzip,deflate", r.header.Get("Accept-Encoding"))
+	assert.Equal(t, "close", r.header.Get("Connection"))
 	assert.Equal(t, []string{"from-connection"}, r.query["shared"], "connection query parameters win")
 	assert.Equal(t, []string{"target"}, r.query["only"])
 
@@ -358,11 +370,13 @@ func TestAPIDestinationConcurrentDelivery(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			f.put(t, `{}`)
+			_, err := f.m.PutEvents(context.Background(), []driver.Event{{Source: "app", DetailType: "OrderCreated", Detail: `{}`}})
+			assert.NoError(t, err)
 		}()
 	}
 
 	wg.Wait()
+	f.settle(t)
 
 	assert.Len(t, e.requests(), 6)
 }
@@ -396,4 +410,46 @@ func TestAPIDestinationRateLimitDelaysCalls(t *testing.T) {
 
 	assert.Len(t, e.requests(), 2)
 	assert.GreaterOrEqual(t, time.Since(start), 900*time.Millisecond, "the second call waits for the next one-second window")
+}
+
+// TestAPIDestinationDeliveryDoesNotBlockPutEvents checks PutEvents returns at
+// once while a slow endpoint is still answering, and the endpoint still gets
+// the event.
+func TestAPIDestinationDeliveryDoesNotBlockPutEvents(t *testing.T) {
+	var calls atomic.Int32
+
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(2 * time.Second)
+		calls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(slow.Close)
+
+	f := newDeliveryFixture(t, apiKeyConnection(), slow.URL, "POST", driver.Target{})
+
+	start := time.Now()
+	_, err := f.m.PutEvents(context.Background(), []driver.Event{{Source: "app", DetailType: "OrderCreated", Detail: `{}`}})
+	require.NoError(t, err)
+	assert.Less(t, time.Since(start), 200*time.Millisecond, "PutEvents does not wait for the endpoint")
+
+	require.Eventually(t, func() bool { return calls.Load() == 1 }, 10*time.Second, 10*time.Millisecond)
+	f.settle(t)
+}
+
+func TestRetryDelayCapsRetryAfter(t *testing.T) {
+	assert.Equal(t, retryBaseDelay, retryDelay(0, 0))
+	assert.Equal(t, retryMaxDelay, retryDelay(10, 0), "the backoff is capped")
+	assert.Equal(t, 3*time.Second, retryDelay(0, 3*time.Second), "a longer Retry-After wins")
+	assert.Equal(t, maxRetryAfter, retryDelay(0, 30*time.Second), "Retry-After is capped")
+}
+
+func TestRetryLimitsCapTheRetryWindow(t *testing.T) {
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	retries, deadline := retryLimits("", start)
+	assert.Equal(t, defaultAPIDestinationRetries, retries)
+	assert.Equal(t, start.Add(maxRetryWindow), deadline, "the 24-hour default is capped")
+
+	_, deadline = retryLimits(`{"MaximumEventAgeInSeconds":10}`, start)
+	assert.Equal(t, start.Add(10*time.Second), deadline, "a shorter event age is kept")
 }

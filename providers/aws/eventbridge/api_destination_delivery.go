@@ -22,10 +22,19 @@ const (
 
 	// defaultAPIDestinationRetries is how many times a failed API destination
 	// call is retried when the target's RetryPolicy does not say. Real
-	// EventBridge defaults to 185 attempts spread over 24 hours; delivery here
-	// is synchronous, so the emulator uses a small default and honors an
-	// explicit MaximumRetryAttempts as given.
+	// EventBridge defaults to 185 attempts spread over 24 hours; the emulator
+	// uses a small default and honors an explicit MaximumRetryAttempts as given.
 	defaultAPIDestinationRetries = 2
+
+	// maxRetryAfter caps how long an endpoint's Retry-After can delay the next
+	// attempt, and maxRetryWindow caps how long one delivery keeps retrying, so
+	// a background delivery always ends in bounded time.
+	maxRetryAfter  = 5 * time.Second
+	maxRetryWindow = 30 * time.Second
+
+	// maxAPIDestinationDeliveries is how many API destination deliveries may
+	// be in flight at once per provider. Deliveries past it wait for a slot.
+	maxAPIDestinationDeliveries = 64
 
 	// defaultMaxEventAge is how long EventBridge keeps retrying an event when
 	// the RetryPolicy does not set MaximumEventAgeInSeconds.
@@ -40,6 +49,8 @@ const (
 
 	apiDestinationUserAgent = "Amazon/EventBridge/ApiDestinations"
 	apiDestinationRange     = "bytes=0-1048575"
+	apiDestinationEncoding  = "gzip,deflate"
+	apiDestinationConn      = "close"
 	defaultContentType      = "application/json; charset=utf-8"
 )
 
@@ -103,7 +114,8 @@ func parseHTTPParameters(raw string) targetHTTPParameters {
 }
 
 // retryLimits returns how many retries a failed call gets and the wall-clock
-// time after which no further retry is made.
+// time after which no further retry is made: the RetryPolicy's event age, but
+// never more than maxRetryWindow from start.
 func retryLimits(raw string, start time.Time) (retries int, deadline time.Time) {
 	var p retryPolicy
 	if raw != "" {
@@ -115,12 +127,12 @@ func retryLimits(raw string, start time.Time) (retries int, deadline time.Time) 
 		retries = *p.MaximumRetryAttempts
 	}
 
-	deadline = start.Add(defaultMaxEventAge)
+	age := defaultMaxEventAge
 	if p.MaximumEventAgeInSeconds != nil {
-		deadline = start.Add(time.Duration(*p.MaximumEventAgeInSeconds) * time.Second)
+		age = time.Duration(*p.MaximumEventAgeInSeconds) * time.Second
 	}
 
-	return retries, deadline
+	return retries, start.Add(min(age, maxRetryWindow))
 }
 
 // destinationCall is everything one API destination request is built from: a
@@ -155,6 +167,36 @@ func (m *Mock) resolveDestinationCall(t *driver.Target, body string) (*destinati
 	return &destinationCall{dest: dest, conn: cd.Info, params: parseHTTPParameters(t.HTTPParameters), body: body}, true
 }
 
+func isAPIDestination(arn string) bool {
+	return strings.Contains(arn, ":api-destination/")
+}
+
+// goDeliverAPIDestination runs one API destination delivery in the background,
+// as EventBridge delivers after PutEvents has returned. It takes a delivery
+// slot when one is free; otherwise a goroutine waits for one, so the caller
+// never blocks. Rate-limit waits, retries and the dead-letter send all happen
+// in that goroutine, with no lock held. The provider has no shutdown hook, so a
+// delivery still running when the process exits is dropped; each one ends
+// within maxRetryWindow plus one request timeout.
+func (m *Mock) goDeliverAPIDestination(deliver func()) {
+	run := func() {
+		defer func() { <-m.apiDestSlots }()
+
+		deliver()
+	}
+
+	select {
+	case m.apiDestSlots <- struct{}{}:
+		go run()
+	default:
+		go func() {
+			m.apiDestSlots <- struct{}{}
+
+			run()
+		}()
+	}
+}
+
 // dispatchAPIDestination calls the HTTP endpoint of an API destination target,
 // retrying per the target's RetryPolicy on the status codes EventBridge retries
 // (401, 407, 409, 429 and 5xx) and on timeouts. It reports whether the call
@@ -177,11 +219,12 @@ func (m *Mock) dispatchAPIDestination(ctx context.Context, t *driver.Target, bod
 			return false
 		}
 
-		time.Sleep(retryDelay(attempt, retryAfter))
-
-		if time.Now().After(deadline) {
+		delay := retryDelay(attempt, retryAfter)
+		if time.Now().Add(delay).After(deadline) {
 			return false
 		}
+
+		time.Sleep(delay)
 	}
 }
 
@@ -229,18 +272,16 @@ func retryable(status int, err error) bool {
 	}
 }
 
-// retryDelay is the wait before retry number attempt+1: an exponential backoff,
-// or the endpoint's Retry-After when that is longer (EventBridge picks the more
-// conservative of the two), capped so synchronous delivery stays responsive.
+// retryDelay is the wait before retry number attempt+1: an exponential backoff
+// capped at retryMaxDelay, or the endpoint's Retry-After (capped at
+// maxRetryAfter) when that is longer, as EventBridge picks the more
+// conservative of the two.
 func retryDelay(attempt int, retryAfter time.Duration) time.Duration {
 	const maxShift = 5
 
-	d := retryBaseDelay << min(attempt, maxShift)
-	if retryAfter > d {
-		d = retryAfter
-	}
+	backoff := min(retryBaseDelay<<min(attempt, maxShift), retryMaxDelay)
 
-	return min(d, retryMaxDelay)
+	return max(backoff, min(retryAfter, maxRetryAfter))
 }
 
 // sendToDestination makes one request and returns its status and Retry-After
@@ -339,7 +380,8 @@ func fillPathParameters(endpoint string, values []string) string {
 }
 
 // applyHeaders sets the target's headers, then the connection's (which win on
-// a clash), drops the headers EventBridge removes, and adds EventBridge's own.
+// a clash), drops the headers EventBridge removes, and adds EventBridge's own
+// fixed User-Agent, Range, Accept-Encoding and Connection headers.
 func applyHeaders(h http.Header, target map[string]string, inv *driver.ConnectionHTTPParameters) {
 	removed := removedHeaders()
 
@@ -365,6 +407,8 @@ func applyHeaders(h http.Header, target map[string]string, inv *driver.Connectio
 
 	h.Set("User-Agent", apiDestinationUserAgent)
 	h.Set("Range", apiDestinationRange)
+	h.Set("Accept-Encoding", apiDestinationEncoding)
+	h.Set("Connection", apiDestinationConn)
 }
 
 // mergeBodyParameters adds the connection's body parameters to a JSON object

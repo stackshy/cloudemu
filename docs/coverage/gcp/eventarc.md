@@ -26,4 +26,5 @@ GCP's `eventbus` service · portable interface `driver.EventBus` · [GCP index](
 
 ## Not in scope
 
-_Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
+- AWS: API destination targets are called in the background after `PutEvents` returns, at most 64 deliveries at a time per emulator. A failed call is retried 2 times by default (AWS retries up to 185 times over 24 hours); an explicit `RetryPolicy.MaximumRetryAttempts` is honored. A `Retry-After` from the endpoint delays the next attempt by at most 5 seconds, and one delivery stops retrying after 30 seconds, whatever `MaximumEventAgeInSeconds` says. Then the event goes to the target's dead-letter queue.
+- AWS: in-flight API destination deliveries, their retry state and cached OAuth tokens are not persisted in snapshots, and a delivery still running when the emulator stops is dropped.
