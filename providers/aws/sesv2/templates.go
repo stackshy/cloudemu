@@ -22,6 +22,10 @@ func (m *Mock) CreateEmailTemplate(_ context.Context, in driver.TemplateInput) e
 		return cerrors.New(cerrors.InvalidArgument, "TemplateName is required")
 	}
 
+	if err := validTemplateContent(in.Content); err != nil {
+		return err
+	}
+
 	tpl := driver.Template{
 		Name:      in.Name,
 		Content:   in.Content,
@@ -31,6 +35,16 @@ func (m *Mock) CreateEmailTemplate(_ context.Context, in driver.TemplateInput) e
 
 	if !m.templates.SetIfAbsent(in.Name, &templateData{tpl: tpl}) {
 		return cerrors.Newf(cerrors.AlreadyExists, "email template %q already exists", in.Name)
+	}
+
+	return nil
+}
+
+// validTemplateContent requires a subject, HTML part or text part.
+func validTemplateContent(c driver.TemplateContent) error {
+	if c.Subject == "" && c.HTML == "" && c.Text == "" {
+		return cerrors.New(cerrors.InvalidArgument,
+			"TemplateContent must contain at least one of Subject, Html or Text")
 	}
 
 	return nil
@@ -53,6 +67,10 @@ func (m *Mock) GetEmailTemplate(_ context.Context, name string) (*driver.Templat
 
 // UpdateEmailTemplate replaces the content of an existing template.
 func (m *Mock) UpdateEmailTemplate(_ context.Context, in driver.TemplateInput) error {
+	if err := validTemplateContent(in.Content); err != nil {
+		return err
+	}
+
 	d, err := m.getTemplate(in.Name)
 	if err != nil {
 		return err
