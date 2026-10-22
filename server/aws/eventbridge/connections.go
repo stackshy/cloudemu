@@ -189,8 +189,14 @@ func toHTTPParams(p *ebdriver.ConnectionHTTPParameters) *httpParamsJSON {
 
 	conv := func(list []ebdriver.HTTPParameter) []httpParamJSON {
 		out := make([]httpParamJSON, 0, len(list))
+
 		for _, e := range list {
-			out = append(out, httpParamJSON{Key: e.Key, Value: e.Value, IsValueSecret: e.IsValueSecret})
+			item := httpParamJSON{Key: e.Key, Value: e.Value, IsValueSecret: e.IsValueSecret}
+			if e.IsValueSecret {
+				item.Value = ""
+			}
+
+			out = append(out, item)
 		}
 
 		return out
@@ -233,15 +239,18 @@ func fromAuthParams(a *authParamsJSON) *ebdriver.ConnectionAuthParameters {
 	return out
 }
 
+// toAuthParams renders a connection's AuthParameters for a response. It never
+// copies a password, API key value or OAuth client secret, whatever the
+// provider hands it, so no response can carry a credential.
 func toAuthParams(a *ebdriver.ConnectionAuthParameters) *authParamsJSON {
 	out := &authParamsJSON{InvocationHTTPParameters: toHTTPParams(a.InvocationHTTPParameters)}
 
 	if b := a.Basic; b != nil {
-		out.BasicAuthParameters = &basicAuthJSON{Username: b.Username, Password: b.Password}
+		out.BasicAuthParameters = &basicAuthJSON{Username: b.Username}
 	}
 
 	if k := a.APIKey; k != nil {
-		out.APIKeyAuthParameters = &apiKeyAuthJSON{APIKeyName: k.APIKeyName, APIKeyValue: k.APIKeyValue}
+		out.APIKeyAuthParameters = &apiKeyAuthJSON{APIKeyName: k.APIKeyName}
 	}
 
 	if o := a.OAuth; o != nil {
@@ -252,7 +261,7 @@ func toAuthParams(a *ebdriver.ConnectionAuthParameters) *authParamsJSON {
 		}
 
 		if c := o.ClientParameters; c != nil {
-			out.OAuthParameters.ClientParameters = &oauthClientJSON{ClientID: c.ClientID, ClientSecret: c.ClientSecret}
+			out.OAuthParameters.ClientParameters = &oauthClientJSON{ClientID: c.ClientID}
 		}
 	}
 

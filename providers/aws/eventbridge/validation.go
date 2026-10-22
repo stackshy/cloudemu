@@ -62,13 +62,47 @@ func (v *violations) enum(value, field string, allowed []string) {
 	v.add(value, field, "Member must satisfy enum value set: ["+strings.Join(allowed, ", ")+"]")
 }
 
+// addSensitive records a failure on a member the API model marks sensitive
+// (passwords, API key values, client secrets, HTTP parameter values). The value
+// is left out of the message, as AWS does, so a credential never reaches an
+// error response or log.
+func (v *violations) addSensitive(field, constraint string) {
+	*v = append(*v, fmt.Sprintf("Value at '%s' failed to satisfy constraint: %s", field, constraint))
+}
+
 // required checks that value is set and at most maxLen bytes long.
 func (v *violations) required(value, field string, maxLen int) {
+	if c := lengthConstraint(value, maxLen); c != "" {
+		v.add(value, field, c)
+	}
+}
+
+// requiredSensitive is required for a sensitive member: the value is never
+// echoed in the message.
+func (v *violations) requiredSensitive(value, field string, maxLen int) {
+	if c := lengthConstraint(value, maxLen); c != "" {
+		v.addSensitive(field, c)
+	}
+}
+
+// maxLenSensitive checks that a sensitive, optional value is at most maxLen
+// bytes long without echoing it.
+func (v *violations) maxLenSensitive(value, field string, maxLen int) {
+	if len(value) > maxLen {
+		v.addSensitive(field, fmt.Sprintf("Member must have length less than or equal to %d", maxLen))
+	}
+}
+
+// lengthConstraint returns the constraint a required value of at most maxLen
+// bytes breaks, or "" when it is within bounds.
+func lengthConstraint(value string, maxLen int) string {
 	switch {
 	case value == "":
-		v.add(value, field, "Member must have length greater than or equal to 1")
+		return "Member must have length greater than or equal to 1"
 	case len(value) > maxLen:
-		v.add(value, field, fmt.Sprintf("Member must have length less than or equal to %d", maxLen))
+		return fmt.Sprintf("Member must have length less than or equal to %d", maxLen)
+	default:
+		return ""
 	}
 }
 

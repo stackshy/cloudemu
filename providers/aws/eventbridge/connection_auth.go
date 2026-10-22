@@ -93,12 +93,12 @@ func validateAuthParameters(authType string, ap *driver.ConnectionAuthParameters
 func authFieldViolations(v *violations, ap *driver.ConnectionAuthParameters) {
 	if b := ap.Basic; b != nil {
 		v.required(b.Username, "authParameters.basicAuthParameters.username", maxAuthValueLen)
-		v.required(b.Password, "authParameters.basicAuthParameters.password", maxAuthValueLen)
+		v.requiredSensitive(b.Password, "authParameters.basicAuthParameters.password", maxAuthValueLen)
 	}
 
 	if k := ap.APIKey; k != nil {
 		v.required(k.APIKeyName, "authParameters.apiKeyAuthParameters.apiKeyName", maxAuthValueLen)
-		v.required(k.APIKeyValue, "authParameters.apiKeyAuthParameters.apiKeyValue", maxAuthValueLen)
+		v.requiredSensitive(k.APIKeyValue, "authParameters.apiKeyAuthParameters.apiKeyValue", maxAuthValueLen)
 	}
 
 	if o := ap.OAuth; o != nil {
@@ -109,7 +109,8 @@ func authFieldViolations(v *violations, ap *driver.ConnectionAuthParameters) {
 			v.add("null", "authParameters.oAuthParameters.clientParameters", "Member must not be null")
 		} else {
 			v.required(o.ClientParameters.ClientID, "authParameters.oAuthParameters.clientParameters.clientID", maxAuthValueLen)
-			v.required(o.ClientParameters.ClientSecret, "authParameters.oAuthParameters.clientParameters.clientSecret", maxAuthValueLen)
+			v.requiredSensitive(o.ClientParameters.ClientSecret, "authParameters.oAuthParameters.clientParameters.clientSecret",
+				maxAuthValueLen)
 		}
 
 		httpParamViolations(v, o.OAuthHTTPParameters, "authParameters.oAuthParameters.oAuthHttpParameters")
@@ -121,16 +122,39 @@ func httpParamViolations(v *violations, p *driver.ConnectionHTTPParameters, fiel
 		return
 	}
 
-	lists := map[string]int{
-		"headerParameters":      len(p.HeaderParameters),
-		"queryStringParameters": len(p.QueryStringParameters),
-		"bodyParameters":        len(p.BodyParameters),
+	lists := []struct {
+		name   string
+		params []driver.HTTPParameter
+		limit  bool // header and query string keys and values are capped at 512 bytes
+	}{
+		{"headerParameters", p.HeaderParameters, true},
+		{"queryStringParameters", p.QueryStringParameters, true},
+		{"bodyParameters", p.BodyParameters, false},
 	}
 
-	for name, n := range lists {
-		if n > maxHTTPParameters {
-			v.add(fmt.Sprint(n), field+"."+name, fmt.Sprintf("Member must have length less than or equal to %d", maxHTTPParameters))
+	for _, l := range lists {
+		if n := len(l.params); n > maxHTTPParameters {
+			v.add(fmt.Sprint(n), field+"."+l.name, fmt.Sprintf("Member must have length less than or equal to %d", maxHTTPParameters))
 		}
+
+		if l.limit {
+			httpParamValueViolations(v, l.params, field+"."+l.name)
+		}
+	}
+}
+
+// httpParamValueViolations checks each parameter's key and value length. The
+// API model marks every parameter value sensitive, so a value is never echoed,
+// whether or not IsValueSecret is set.
+func httpParamValueViolations(v *violations, params []driver.HTTPParameter, field string) {
+	for i := range params {
+		member := fmt.Sprintf("%s.%d", field, i+1)
+
+		if len(params[i].Key) > maxAuthValueLen {
+			v.add(params[i].Key, member+".member.key", fmt.Sprintf("Member must have length less than or equal to %d", maxAuthValueLen))
+		}
+
+		v.maxLenSensitive(params[i].Value, member+".member.value", maxAuthValueLen)
 	}
 }
 

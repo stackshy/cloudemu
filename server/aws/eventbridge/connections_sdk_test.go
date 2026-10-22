@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -135,6 +136,30 @@ func TestSDKConnectionAndAPIDestinationLifecycle(t *testing.T) {
 	var notFound *ebtypes.ResourceNotFoundException
 	if !errors.As(err, &notFound) {
 		t.Fatalf("DescribeConnection after delete = %v, want ResourceNotFoundException", err)
+	}
+}
+
+// TestSDKConnectionErrorDoesNotLeakSecret sends an over-long API key value and
+// checks the ValidationException names the member without echoing the value.
+func TestSDKConnectionErrorDoesNotLeakSecret(t *testing.T) {
+	eb, _ := newEBAndSecrets(t)
+	secret := strings.Repeat("TOPSECRET", 60)
+
+	_, err := eb.CreateConnection(context.Background(), &awseb.CreateConnectionInput{
+		Name:              aws.String("c1"),
+		AuthorizationType: ebtypes.ConnectionAuthorizationTypeApiKey,
+		AuthParameters: &ebtypes.CreateConnectionAuthRequestParameters{
+			ApiKeyAuthParameters: &ebtypes.CreateConnectionApiKeyAuthRequestParameters{
+				ApiKeyName: aws.String("x-api-key"), ApiKeyValue: aws.String(secret),
+			},
+		},
+	})
+	requireAPIError(t, err, "ValidationException",
+		"1 validation error detected: Value at 'authParameters.apiKeyAuthParameters.apiKeyValue' failed to satisfy constraint: "+
+			"Member must have length less than or equal to 512")
+
+	if strings.Contains(err.Error(), "TOPSECRET") {
+		t.Fatalf("error leaks the API key value: %v", err)
 	}
 }
 
