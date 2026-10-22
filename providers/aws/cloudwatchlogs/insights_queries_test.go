@@ -156,7 +156,7 @@ func TestInsightsStartQueryValidation(t *testing.T) {
 	require.NoError(t, err, "a log group ARN identifies the group")
 
 	in = base()
-	in.QueryString = "fields @message | stats count(*)"
+	in.QueryString = "fields @message | pattern @message"
 	_, err = m.StartQuery(ctx, in)
 
 	var mq *driver.MalformedQueryError

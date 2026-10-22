@@ -1,7 +1,7 @@
 // Package insights implements the core of the CloudWatch Logs Insights query
-// language: the fields, filter (where), sort, limit and display commands, the
-// expression grammar they share, and the system and auto-discovered JSON
-// fields of a log event. See
+// language: the fields, filter (where), stats, parse, sort, limit, dedup and
+// display commands, the expression grammar they share, and the system and
+// auto-discovered JSON fields of a log event. See
 // https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CWL_QuerySyntax.html.
 package insights
 
@@ -42,6 +42,8 @@ const (
 	kwAs      = "as"
 	cmdFilter = "filter"
 	cmdWhere  = "where"
+	cmdSort   = "sort"
+	cmdLimit  = "limit"
 
 	opEq       = "="
 	opNe       = "!="
@@ -163,7 +165,7 @@ func regexAllowed(prev []token) bool {
 
 	switch p.kind {
 	case tIdent:
-		return regexKeywords[strings.ToLower(p.text)]
+		return regexKeywords[strings.ToLower(p.text)] || parseOperand(prev)
 	case tOp, tComma, tLParen, tLBracket, tPipe:
 		return true
 	case tNumber, tString, tRegex, tRParen, tRBracket:
@@ -171,6 +173,24 @@ func regexAllowed(prev []token) bool {
 	}
 
 	return false
+}
+
+// parseOperand reports whether the next token is parse's pattern: it comes
+// right after the parse command name or after the field that follows it.
+func parseOperand(prev []token) bool {
+	last := len(prev) - 1
+
+	return commandHead(prev, last, cmdParse) || commandHead(prev, last-1, cmdParse)
+}
+
+// commandHead reports whether prev[i] is the named command at the start of
+// a command.
+func commandHead(prev []token, i int, name string) bool {
+	if i < 0 || prev[i].kind != tIdent || !strings.EqualFold(prev[i].text, name) {
+		return false
+	}
+
+	return i == 0 || prev[i-1].kind == tPipe
 }
 
 func lexString(q string, i int) (token, int, error) {

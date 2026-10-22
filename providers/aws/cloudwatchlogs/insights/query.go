@@ -123,7 +123,22 @@ type Query struct {
 	cmds    []command
 	shown   []string
 	display []string
+
+	// Parse-time state for the command ordering rules.
+	statsCount  int
+	sortOrLimit bool
+	dedup       bool
+	// available is the fields a command may reference after a stats
+	// command: that stats command's output and fields defined since. It is
+	// nil before the first stats command, when any field may be referenced.
+	available map[string]bool
 }
+
+// matchPoint is a command that ends the matching part of a query: the
+// records reaching it are what recordsMatched counts.
+type matchPoint interface{ marksMatched() }
+
+func (limitCmd) marksMatched() {}
 
 // Result is the output of running a query.
 type Result struct {
@@ -154,22 +169,28 @@ func (q *Query) Run(recs []Record, limit int) Result {
 			}
 		}
 
-		rows = append(rows, append(row, Field{Name: FieldPtr, Value: toStr(r[FieldPtr])}))
+		// Aggregated stats rows have no @ptr.
+		if ptr, ok := r[FieldPtr]; ok {
+			row = append(row, Field{Name: FieldPtr, Value: toStr(ptr)})
+		}
+
+		rows = append(rows, row)
 	}
 
 	return Result{Rows: rows, Matched: matched}
 }
 
 // pipeline applies the commands in order, newest record first unless a sort
-// says otherwise. matched counts the records left when the first limit
-// command applies (or at the end), which is what recordsMatched reports.
+// says otherwise. matched counts the records left when the first limit,
+// stats or dedup command applies (or at the end), which is what
+// recordsMatched reports.
 func (q *Query) pipeline(recs []Record) (out []Record, matched int) {
 	sortCmd{keys: []sortKey{{field: FieldTimestamp, desc: true}}}.apply(recs)
 
 	matched = -1
 
 	for _, c := range q.cmds {
-		if _, isLimit := c.(limitCmd); isLimit && matched < 0 {
+		if _, ends := c.(matchPoint); ends && matched < 0 {
 			matched = len(recs)
 		}
 
@@ -211,7 +232,7 @@ func Parse(query string) (*Query, error) {
 			return nil, compileErr(len(query), len(query), "empty command")
 		}
 
-		if err := q.addCommand(part, len(query)); err != nil {
+		if err := q.addCommand(part, query); err != nil {
 			return nil, err
 		}
 	}
@@ -238,31 +259,85 @@ func splitPipes(toks []token) [][]token {
 	return parts
 }
 
-func (q *Query) addCommand(part []token, end int) error {
-	head := part[0]
-	p := &exprParser{toks: part[1:], end: end}
+// commandParsers parse each command's arguments after its name.
+//
+//nolint:gochecknoglobals // fixed command table.
+var commandParsers = map[string]func(q *Query, p *exprParser, head *token) error{
+	"fields":  func(q *Query, p *exprParser, _ *token) error { return q.addFields(p) },
+	cmdFilter: func(q *Query, p *exprParser, _ *token) error { return q.addFilter(p) },
+	cmdWhere:  func(q *Query, p *exprParser, _ *token) error { return q.addFilter(p) },
+	cmdSort:   func(q *Query, p *exprParser, _ *token) error { return q.addSort(p) },
+	cmdLimit:  func(q *Query, p *exprParser, _ *token) error { return q.addLimit(p) },
+	"display": func(q *Query, p *exprParser, _ *token) error { return q.addDisplay(p) },
+	"stats":   (*Query).addStats,
+	cmdParse:  func(q *Query, p *exprParser, _ *token) error { return q.addParse(p) },
+	"dedup":   func(q *Query, p *exprParser, _ *token) error { return q.addDedup(p) },
+}
 
-	switch strings.ToLower(head.text) {
-	case "fields":
-		return q.addFields(p)
-	case cmdFilter, cmdWhere:
-		x, err := p.parseOr()
-		if err != nil {
-			return err
-		}
+func (q *Query) addCommand(part []token, src string) error {
+	head := &part[0]
+	name := strings.ToLower(head.text)
+	p := &exprParser{toks: part[1:], end: len(src), src: src}
 
-		q.cmds = append(q.cmds, filterCmd{x: x})
-
-		return p.done()
-	case "sort":
-		return q.addSort(p)
-	case "limit":
-		return q.addLimit(p)
-	case "display":
-		return q.addDisplay(p)
+	add, ok := commandParsers[name]
+	if !ok {
+		return compileErr(head.start, head.end, "unsupported or unknown command '"+head.text+"'")
 	}
 
-	return compileErr(head.start, head.end, "unsupported or unknown command '"+head.text+"'")
+	if q.dedup && name != cmdLimit {
+		return compileErr(head.start, head.end, "only limit can follow dedup")
+	}
+
+	if name == cmdSort || name == cmdLimit {
+		q.sortOrLimit = true
+	}
+
+	// References are checked against the fields available before this
+	// command, which a stats command replaces.
+	available := q.available
+
+	if err := add(q, p, head); err != nil {
+		return err
+	}
+
+	if err := checkRefs(p.refs, available); err != nil {
+		return err
+	}
+
+	if q.available != nil {
+		for _, name := range p.defines {
+			q.available[name] = true
+		}
+	}
+
+	return nil
+}
+
+// checkRefs rejects references to fields the preceding stats command did
+// not define.
+func checkRefs(refs []token, available map[string]bool) error {
+	if available == nil {
+		return nil
+	}
+
+	for _, t := range refs {
+		if !available[t.text] {
+			return compileErr(t.start, t.end, "field '"+t.text+"' is not defined by the preceding stats command")
+		}
+	}
+
+	return nil
+}
+
+func (q *Query) addFilter(p *exprParser) error {
+	x, err := p.parseOr()
+	if err != nil {
+		return err
+	}
+
+	q.cmds = append(q.cmds, filterCmd{x: x})
+
+	return p.done()
 }
 
 func (p *exprParser) done() error {
@@ -277,28 +352,12 @@ func (q *Query) addFields(p *exprParser) error {
 	var items []fieldItem
 
 	for {
-		startTok := p.peek()
-
-		x, err := p.parseOr()
+		it, err := p.parseNamedItem()
 		if err != nil {
 			return err
 		}
 
-		name := exprName(x, startTok, p)
-
-		if p.atKeyword(kwAs) {
-			p.pos++
-
-			t := p.peek()
-			if t == nil || t.kind != tIdent {
-				return p.errHere("field name expected after as")
-			}
-
-			name = t.text
-			p.pos++
-		}
-
-		items = append(items, fieldItem{name: name, x: x})
+		items = append(items, it)
 
 		if !p.comma() {
 			break
@@ -311,27 +370,52 @@ func (q *Query) addFields(p *exprParser) error {
 		if !contains(q.shown, it.name) {
 			q.shown = append(q.shown, it.name)
 		}
+
+		p.defines = append(p.defines, it.name)
 	}
 
 	return p.done()
 }
 
-// exprName names an unaliased fields expression: a field keeps its own name,
-// anything else is named by its source tokens.
+// parseNamedItem parses `expr [as name]`. Without an alias a field keeps
+// its own name and any other expression is named by its source text.
+func (p *exprParser) parseNamedItem() (fieldItem, error) {
+	startTok := p.peek()
+
+	x, err := p.parseOr()
+	if err != nil {
+		return fieldItem{}, err
+	}
+
+	name := exprName(x, startTok, p)
+
+	if p.atKeyword(kwAs) {
+		p.pos++
+
+		t := p.peek()
+		if t == nil || t.kind != tIdent {
+			return fieldItem{}, p.errHere("field name expected after as")
+		}
+
+		name = t.text
+		p.pos++
+	}
+
+	return fieldItem{name: name, x: x}, nil
+}
+
+// exprName names an unaliased expression: a field keeps its own name,
+// anything else is named by its source text.
 func exprName(x expr, start *token, p *exprParser) string {
 	if f, ok := x.(fieldRef); ok {
 		return f.name
 	}
 
-	var parts []string
-
-	for _, t := range p.toks {
-		if start != nil && t.start >= start.start && (p.pos >= len(p.toks) || t.start < p.toks[p.pos].start) {
-			parts = append(parts, t.text)
-		}
+	if start == nil || p.pos == 0 {
+		return ""
 	}
 
-	return strings.Join(parts, "")
+	return p.src[start.start:p.toks[p.pos-1].end]
 }
 
 func (p *exprParser) comma() bool {
@@ -353,6 +437,7 @@ func (q *Query) addSort(p *exprParser) error {
 		}
 
 		p.pos++
+		p.refs = append(p.refs, *t)
 
 		k := sortKey{field: t.text, desc: true}
 
@@ -401,6 +486,7 @@ func (q *Query) addDisplay(p *exprParser) error {
 		}
 
 		names = append(names, t.text)
+		p.refs = append(p.refs, *t)
 		p.pos++
 
 		if !p.comma() {

@@ -126,7 +126,6 @@ func TestCompileErrors(t *testing.T) {
 		"fields",
 		"filter latency >",
 		"filter level = 'x",
-		"stats count(*) by level",
 		"pattern @message",
 		"fields level |",
 		"filter nosuch(level)",

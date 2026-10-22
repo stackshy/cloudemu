@@ -12,6 +12,15 @@ type exprParser struct {
 	pos  int
 	// end is the query offset just past the command, for errors at its end.
 	end int
+	// src is the whole query, for naming expressions by their text.
+	src string
+	// aggs collects a stats command's aggregation calls; nil elsewhere,
+	// where aggregation functions are not allowed.
+	aggs *[]*aggCall
+	// refs are the field names the command references, and defines the
+	// fields it creates.
+	refs    []token
+	defines []string
 }
 
 func (p *exprParser) peek() *token {
@@ -300,12 +309,16 @@ func (p *exprParser) parseIdent(t *token) (expr, error) {
 	}
 
 	if next := p.peek(); next == nil || next.kind != tLParen {
+		p.refs = append(p.refs, *t)
+
 		return fieldRef{name: t.text}, nil
 	}
 
-	spec, ok := functions[strings.ToLower(t.text)]
+	name := strings.ToLower(t.text)
+
+	spec, ok := functions[name]
 	if !ok {
-		return nil, compileErr(t.start, t.end, "unknown function '"+t.text+"'")
+		return p.parseSpecialCall(t, name)
 	}
 
 	p.pos++
@@ -320,6 +333,28 @@ func (p *exprParser) parseIdent(t *token) (expr, error) {
 	}
 
 	return callExpr{spec: spec, args: args}, nil
+}
+
+// parseSpecialCall parses the calls that are not plain functions: the
+// date functions, which take a period literal, and inside stats the
+// aggregations.
+func (p *exprParser) parseSpecialCall(t *token, name string) (expr, error) {
+	agg, isAgg := aggregations[name]
+
+	switch {
+	case isDateFunc(name):
+		p.pos++
+
+		return p.parseDateFunc(t)
+	case isAgg && p.aggs != nil:
+		p.pos++
+
+		return p.parseAgg(t, agg)
+	case isAgg:
+		return nil, compileErr(t.start, t.end, "aggregation function '"+t.text+"' is only allowed in stats")
+	}
+
+	return nil, compileErr(t.start, t.end, "unknown function '"+t.text+"'")
 }
 
 func (p *exprParser) parseArgs() ([]expr, error) {
