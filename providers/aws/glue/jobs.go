@@ -35,6 +35,10 @@ func (m *Mock) CreateJob(ctx context.Context, j driver.Job) (string, error) {
 		return "", invalidInput("job name %q is invalid", j.Name)
 	}
 
+	if j.Role == "" {
+		return "", invalidInput("Role is required")
+	}
+
 	// Apply AWS Glue create-time defaults when unset.
 	if j.Timeout == 0 {
 		j.Timeout = defaultJobTimeoutMinutes
