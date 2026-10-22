@@ -3,6 +3,7 @@ package memorydb
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -278,6 +279,43 @@ func TestCreateACLDedupesUsers(t *testing.T) {
 
 	if len(acl.UserNames) != 1 {
 		t.Fatalf("ACL user names not deduped: %v", acl.UserNames)
+	}
+}
+
+func TestUserPasswordLength(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	short := strings.Repeat("a", 15)
+	long := strings.Repeat("a", 129)
+
+	for _, pw := range []string{short, long} {
+		_, err := m.CreateUser(ctx, mdbdriver.CreateUserConfig{
+			Name: "bad", AccessString: "on ~* +@all", AuthenticationType: "password", Passwords: []string{pw},
+		})
+		if !cerrors.IsInvalidArgument(err) {
+			t.Fatalf("CreateUser with %d-char password: want InvalidArgument, got %v", len(pw), err)
+		}
+	}
+
+	_, err := m.CreateUser(ctx, mdbdriver.CreateUserConfig{
+		Name: "u1", AccessString: "on ~* +@all", AuthenticationType: "password",
+		Passwords: []string{strings.Repeat("a", 16), strings.Repeat("b", 128)},
+	})
+	requireNoError(t, err)
+
+	_, err = m.UpdateUser(ctx, mdbdriver.UpdateUserConfig{
+		Name: "u1", AuthenticationType: "password", Passwords: []string{short},
+	})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("UpdateUser with short password: want InvalidArgument, got %v", err)
+	}
+
+	users, err := m.DescribeUsers(ctx, []string{"u1"})
+	requireNoError(t, err)
+
+	if got := users[0].Authentication.PasswordCount; got != 2 {
+		t.Fatalf("rejected update changed PasswordCount to %d", got)
 	}
 }
 
