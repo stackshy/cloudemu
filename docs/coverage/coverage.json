@@ -11573,6 +11573,10 @@
             "name": "DeleteRetentionPolicy"
           },
           {
+            "name": "DescribeAWSMetricFilters",
+            "doc": "DescribeAWSMetricFilters lists metric filters, sorted by filter name."
+          },
+          {
             "name": "DisassociateKmsKey"
           },
           {

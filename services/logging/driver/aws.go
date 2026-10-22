@@ -64,6 +64,16 @@ type MetricFilterMatch struct {
 	ExtractedValues map[string]string
 }
 
+// DescribeMetricFiltersInput narrows DescribeAWSMetricFilters. LogGroup is
+// optional (empty lists every log group); FilterNamePrefix only applies with
+// a LogGroup; MetricName and MetricNamespace must be given together.
+type DescribeMetricFiltersInput struct {
+	LogGroup         string
+	FilterNamePrefix string
+	MetricName       string
+	MetricNamespace  string
+}
+
 // AWSLogging is an optional interface implemented by the AWS CloudWatch Logs
 // backend for operations with no cross-provider equivalent. The CloudWatch
 // Logs wire handler type-asserts for it; Azure, GCP and OCI backends do not
@@ -82,6 +92,9 @@ type AWSLogging interface {
 	// query-result ARN).
 	AssociateKmsKey(ctx context.Context, logGroup, resourceIdentifier, kmsKeyID string) error
 	DisassociateKmsKey(ctx context.Context, logGroup, resourceIdentifier string) error
+
+	// DescribeAWSMetricFilters lists metric filters, sorted by filter name.
+	DescribeAWSMetricFilters(ctx context.Context, input DescribeMetricFiltersInput) ([]MetricFilterInfo, error)
 
 	// TestMetricFilter runs a filter pattern over sample log messages.
 	TestMetricFilter(ctx context.Context, filterPattern string, logEventMessages []string) ([]MetricFilterMatch, error)

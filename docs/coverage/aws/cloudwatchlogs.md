@@ -38,6 +38,7 @@ AWSLogging is an optional interface implemented by the AWS CloudWatch Logs
 | `AssociateKmsKey` | AssociateKmsKey and DisassociateKmsKey target exactly one of a log group |
 | `CreateAWSLogGroup` |  |
 | `DeleteRetentionPolicy` |  |
+| `DescribeAWSMetricFilters` | DescribeAWSMetricFilters lists metric filters, sorted by filter name. |
 | `DisassociateKmsKey` |  |
 | `ListAWSLogGroups` |  |
 | `PutLogEventsWithResult` |  |

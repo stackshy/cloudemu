@@ -520,10 +520,12 @@ func TestPutMetricFilterPortable(t *testing.T) {
 		require.NoError(t, err)
 
 		err = l.PutMetricFilter(ctx, &driver.MetricFilterConfig{
-			Name:          "mf",
-			LogGroup:      "grp",
-			FilterPattern: "ERROR",
-			MetricName:    "ErrorCount",
+			Name:            "mf",
+			LogGroup:        "grp",
+			FilterPattern:   "ERROR",
+			MetricName:      "ErrorCount",
+			MetricNamespace: "App",
+			MetricValue:     "1",
 		})
 		require.NoError(t, err)
 	})
@@ -549,10 +551,12 @@ func TestDeleteMetricFilterPortable(t *testing.T) {
 		require.NoError(t, err)
 
 		err = l.PutMetricFilter(ctx, &driver.MetricFilterConfig{
-			Name:          "mf",
-			LogGroup:      "grp",
-			FilterPattern: "ERROR",
-			MetricName:    "ErrorCount",
+			Name:            "mf",
+			LogGroup:        "grp",
+			FilterPattern:   "ERROR",
+			MetricName:      "ErrorCount",
+			MetricNamespace: "App",
+			MetricValue:     "1",
 		})
 		require.NoError(t, err)
 
@@ -578,18 +582,22 @@ func TestDescribeMetricFiltersPortable(t *testing.T) {
 		require.NoError(t, err)
 
 		err = l.PutMetricFilter(ctx, &driver.MetricFilterConfig{
-			Name:          "mf1",
-			LogGroup:      "grp",
-			FilterPattern: "ERROR",
-			MetricName:    "ErrorCount",
+			Name:            "mf1",
+			LogGroup:        "grp",
+			FilterPattern:   "ERROR",
+			MetricName:      "ErrorCount",
+			MetricNamespace: "App",
+			MetricValue:     "1",
 		})
 		require.NoError(t, err)
 
 		err = l.PutMetricFilter(ctx, &driver.MetricFilterConfig{
-			Name:          "mf2",
-			LogGroup:      "grp",
-			FilterPattern: "WARN",
-			MetricName:    "WarnCount",
+			Name:            "mf2",
+			LogGroup:        "grp",
+			FilterPattern:   "WARN",
+			MetricName:      "WarnCount",
+			MetricNamespace: "App",
+			MetricValue:     "1",
 		})
 		require.NoError(t, err)
 

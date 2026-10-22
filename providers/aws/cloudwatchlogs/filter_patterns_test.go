@@ -102,7 +102,7 @@ func TestPutFilterValidatesPattern(t *testing.T) {
 	m := newWindowMock(t, 0)
 
 	err := m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
-		Name: "bad", LogGroup: "g", FilterPattern: "{ $.a EXISTS }", MetricName: "M", MetricNamespace: "N",
+		Name: "bad", LogGroup: "g", FilterPattern: "{ $.a EXISTS }", MetricName: "M", MetricNamespace: "N", MetricValue: "1",
 	})
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalidArgument(err))
@@ -120,7 +120,7 @@ func TestRegexFilterQuotaPerGroup(t *testing.T) {
 
 	for i := range 4 {
 		require.NoError(t, m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
-			Name: fmt.Sprintf("mf%d", i), LogGroup: "g", FilterPattern: "%ERR%", MetricName: "M", MetricNamespace: "N",
+			Name: fmt.Sprintf("mf%d", i), LogGroup: "g", FilterPattern: "%ERR%", MetricName: "M", MetricNamespace: "N", MetricValue: "1",
 		}))
 	}
 
@@ -130,17 +130,17 @@ func TestRegexFilterQuotaPerGroup(t *testing.T) {
 
 	// A sixth regex pattern, from either kind of filter, is over the quota.
 	err := m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
-		Name: "mf9", LogGroup: "g", FilterPattern: "%WARN%", MetricName: "M", MetricNamespace: "N",
+		Name: "mf9", LogGroup: "g", FilterPattern: "%WARN%", MetricName: "M", MetricNamespace: "N", MetricValue: "1",
 	})
 	require.Error(t, err)
 	assert.Equal(t, errors.ResourceExhausted, errors.GetCode(err))
 
 	// Replacing an existing regex filter, or adding a plain one, is fine.
 	require.NoError(t, m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
-		Name: "mf0", LogGroup: "g", FilterPattern: "%WARN%", MetricName: "M", MetricNamespace: "N",
+		Name: "mf0", LogGroup: "g", FilterPattern: "%WARN%", MetricName: "M", MetricNamespace: "N", MetricValue: "1",
 	}))
 	require.NoError(t, m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
-		Name: "plain", LogGroup: "g", FilterPattern: "WARN", MetricName: "M", MetricNamespace: "N",
+		Name: "plain", LogGroup: "g", FilterPattern: "WARN", MetricName: "M", MetricNamespace: "N", MetricValue: "1",
 	}))
 }
 
@@ -177,7 +177,7 @@ func TestMetricFilterUsesPatternLanguage(t *testing.T) {
 	m.SetMonitoring(mon)
 
 	require.NoError(t, m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
-		Name: "errs", LogGroup: "g", FilterPattern: "?ERROR ?FATAL", MetricName: "Errors", MetricNamespace: "App",
+		Name: "errs", LogGroup: "g", FilterPattern: "?ERROR ?FATAL", MetricName: "Errors", MetricNamespace: "App", MetricValue: "1",
 	}))
 
 	putMessages(t, m, "ERROR a", "FATAL b", "INFO c")

@@ -806,10 +806,12 @@ func TestDeleteMetricFilter(t *testing.T) {
 		require.NoError(t, err)
 
 		err = m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
-			Name:          "del-filter",
-			LogGroup:      "grp",
-			FilterPattern: "ERROR",
-			MetricName:    "ErrorCount",
+			Name:            "del-filter",
+			LogGroup:        "grp",
+			FilterPattern:   "ERROR",
+			MetricName:      "ErrorCount",
+			MetricNamespace: "App",
+			MetricValue:     "1",
 		})
 		require.NoError(t, err)
 
@@ -850,18 +852,22 @@ func TestDescribeMetricFilters(t *testing.T) {
 		require.NoError(t, err)
 
 		err = m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
-			Name:          "filter-1",
-			LogGroup:      "grp",
-			FilterPattern: "ERROR",
-			MetricName:    "ErrorCount",
+			Name:            "filter-1",
+			LogGroup:        "grp",
+			FilterPattern:   "ERROR",
+			MetricName:      "ErrorCount",
+			MetricNamespace: "App",
+			MetricValue:     "1",
 		})
 		require.NoError(t, err)
 
 		err = m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
-			Name:          "filter-2",
-			LogGroup:      "grp",
-			FilterPattern: "WARN",
-			MetricName:    "WarnCount",
+			Name:            "filter-2",
+			LogGroup:        "grp",
+			FilterPattern:   "WARN",
+			MetricName:      "WarnCount",
+			MetricNamespace: "App",
+			MetricValue:     "1",
 		})
 		require.NoError(t, err)
 

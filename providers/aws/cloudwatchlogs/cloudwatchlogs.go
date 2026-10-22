@@ -5,7 +5,6 @@ import (
 	"context"
 	"maps"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -219,87 +218,6 @@ func (m *Mock) PutLogEvents(ctx context.Context, groupName, streamName string, e
 	return err
 }
 
-// evaluateMetricFilters turns matching log events into CloudWatch metric data.
-// For each metric filter on the group, every event whose message matches the
-// filter pattern contributes the filter's metric value; the total is published
-// to the filter's configured namespace/metric, mirroring how CloudWatch Logs
-// extracts custom metrics from ingested events. Patterns use the CloudWatch
-// Logs filter pattern language (see the filterpattern package).
-func (m *Mock) evaluateMetricFilters(g *logGroup, events []driver.LogEvent) {
-	if m.monitoring == nil {
-		return
-	}
-
-	for _, mf := range g.metricFilters.All() {
-		var (
-			matched int
-			total   float64
-		)
-
-		// Patterns are validated when the filter is put; one that no longer
-		// parses (restored from an older snapshot) matches nothing.
-		pattern, err := filterpattern.Parse(mf.FilterPattern)
-		if err != nil {
-			continue
-		}
-
-		for i := range events {
-			if !pattern.Match(events[i].Message) {
-				continue
-			}
-
-			if v, ok := metricFilterValue(mf.MetricValue, pattern, events[i].Message); ok {
-				matched++
-				total += v
-			}
-		}
-
-		if matched == 0 {
-			continue
-		}
-
-		namespace := mf.MetricNamespace
-		if namespace == "" {
-			namespace = "LogMetrics"
-		}
-
-		_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{{
-			Namespace:  namespace,
-			MetricName: mf.MetricName,
-			Value:      total,
-			Timestamp:  m.opts.Clock.Now(),
-		}})
-	}
-}
-
-// metricFilterValue resolves a metric filter's metricValue to the number one
-// matching event contributes. A literal number is used directly; a "$field"
-// reference ("$.latency", "$size", "$3") takes the value the pattern extracts
-// from the event, and an event whose referenced value is missing or not a
-// number contributes nothing. An empty value counts the event as 1.
-func metricFilterValue(raw string, pattern *filterpattern.Pattern, message string) (float64, bool) {
-	if raw == "" {
-		return 1, true
-	}
-
-	if v, err := strconv.ParseFloat(raw, 64); err == nil {
-		return v, true
-	}
-
-	if !strings.HasPrefix(raw, "$") {
-		return 1, true
-	}
-
-	field, ok := pattern.Value(message, raw)
-	if !ok {
-		return 0, false
-	}
-
-	v, err := strconv.ParseFloat(field, 64)
-
-	return v, err == nil
-}
-
 // GetLogEvents retrieves log events matching the query.
 func (m *Mock) GetLogEvents(_ context.Context, input *driver.LogQueryInput) ([]driver.LogEvent, error) {
 	g, ok := m.groups.Get(input.LogGroup)
@@ -490,46 +408,6 @@ func (*Mock) matchEvents(
 	return results
 }
 
-// PutMetricFilter creates or updates a metric filter for a log group.
-func (m *Mock) PutMetricFilter(
-	_ context.Context,
-	cfg *driver.MetricFilterConfig,
-) error {
-	g, ok := m.groups.Get(cfg.LogGroup)
-	if !ok {
-		return errors.Newf(
-			errors.NotFound, "log group %q not found", cfg.LogGroup,
-		)
-	}
-
-	if cfg.Name == "" {
-		return errors.New(
-			errors.InvalidArgument, "metric filter name is required",
-		)
-	}
-
-	if err := validateFilterPattern(g, metricFilterKind, cfg.Name, cfg.FilterPattern); err != nil {
-		return err
-	}
-
-	info := &driver.MetricFilterInfo{
-		Name:            cfg.Name,
-		LogGroup:        cfg.LogGroup,
-		FilterPattern:   cfg.FilterPattern,
-		MetricName:      cfg.MetricName,
-		MetricNamespace: cfg.MetricNamespace,
-		MetricValue:     cfg.MetricValue,
-		DefaultValue:    cfg.DefaultValue,
-		Unit:            cfg.Unit,
-		Dimensions:      maps.Clone(cfg.Dimensions),
-		CreatedAt:       m.opts.Clock.Now().UTC(),
-	}
-
-	g.metricFilters.Set(cfg.Name, info)
-
-	return nil
-}
-
 // DeleteMetricFilter deletes a metric filter from a log group.
 func (m *Mock) DeleteMetricFilter(
 	_ context.Context,
@@ -551,28 +429,6 @@ func (m *Mock) DeleteMetricFilter(
 	}
 
 	return nil
-}
-
-// DescribeMetricFilters lists all metric filters for a log group.
-func (m *Mock) DescribeMetricFilters(
-	_ context.Context,
-	logGroup string,
-) ([]driver.MetricFilterInfo, error) {
-	g, ok := m.groups.Get(logGroup)
-	if !ok {
-		return nil, errors.Newf(
-			errors.NotFound, "log group %q not found", logGroup,
-		)
-	}
-
-	all := g.metricFilters.All()
-	results := make([]driver.MetricFilterInfo, 0, len(all))
-
-	for _, mf := range all {
-		results = append(results, *mf)
-	}
-
-	return results, nil
 }
 
 // UpdateLogGroup replaces the mutable fields of an existing log group —

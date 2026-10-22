@@ -249,6 +249,27 @@ func (p *delimPattern) extract(message string) map[string]string {
 
 func positional(i int) string { return "$" + strconv.Itoa(i+1) }
 
+// validRef reports whether "$name" names one of the pattern's fields, or
+// "$N" is a field position.
+func (p *delimPattern) validRef(ref string) bool {
+	name, ok := strings.CutPrefix(ref, "$")
+	if !ok || name == "" {
+		return false
+	}
+
+	if n, err := strconv.Atoi(name); err == nil {
+		return n >= 1
+	}
+
+	for _, f := range p.fields {
+		if f.name == name {
+			return true
+		}
+	}
+
+	return false
+}
+
 // tokenizeMessage splits a log event into space-delimited fields. Text in
 // double quotes or square brackets is one field, without its delimiters.
 func tokenizeMessage(message string) []string {

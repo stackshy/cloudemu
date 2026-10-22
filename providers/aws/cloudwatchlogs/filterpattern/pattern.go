@@ -108,6 +108,28 @@ func (p *Pattern) ExtractedValues(message string) map[string]string {
 	return map[string]string{}
 }
 
+// HasFields reports whether the pattern selects fields (a JSON or
+// space-delimited pattern), which metric filter dimensions require.
+func (p *Pattern) HasFields() bool {
+	return p.json != nil || p.delim != nil
+}
+
+// ValidRef reports whether ref is a field reference the pattern can resolve:
+// a "$.path" selector without wildcards for a JSON pattern, or "$name" (a
+// named field) or "$N" (a 1-based position) for a space-delimited one.
+func (p *Pattern) ValidRef(ref string) bool {
+	switch {
+	case p.json != nil:
+		sel, end, err := lexSelector(ref, 0)
+
+		return err == nil && end == len(ref) && strings.HasPrefix(ref, "$.") && !hasWildcard(sel.steps)
+	case p.delim != nil:
+		return p.delim.validRef(ref)
+	}
+
+	return false
+}
+
 // Value resolves a metric filter field reference ("$.latency" for a JSON
 // pattern, "$size" or "$3" for a space-delimited one) in a matched message.
 func (p *Pattern) Value(message, ref string) (string, bool) {
