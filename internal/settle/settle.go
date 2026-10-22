@@ -70,6 +70,8 @@ const (
 
 	DefaultLatticeSettle = 2 * time.Second // VPC Lattice resource CREATE_IN_PROGRESS->ACTIVE
 
+	DefaultEventBridgeEndpointSettle = 2 * time.Second // EventBridge global endpoint CREATING/UPDATING->ACTIVE
+
 	DefaultBedrockFlowExecutionSettle = 2 * time.Second // Bedrock flow execution Running->Succeeded
 
 	DefaultBedrockIngestionSettle = 2 * time.Second // Bedrock KB ingestion job IN_PROGRESS->COMPLETE

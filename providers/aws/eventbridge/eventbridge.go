@@ -19,6 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -101,6 +102,9 @@ type Mock struct {
 
 	connections     *memstore.Store[connectionData]
 	apiDestinations *memstore.Store[driver.APIDestination]
+	endpoints       *memstore.Store[driver.Endpoint]
+	// endpointSettle holds each global endpoint's CREATING/UPDATING window.
+	endpointSettle *settle.Set
 	// secrets holds each connection's credentials; nil leaves SecretArn a bare
 	// identifier.
 	secrets ConnectionSecretStore
@@ -168,6 +172,8 @@ func New(opts *config.Options) *Mock {
 
 		connections:     memstore.New[connectionData](),
 		apiDestinations: memstore.New[driver.APIDestination](),
+		endpoints:       memstore.New[driver.Endpoint](),
+		endpointSettle:  settle.NewSet(),
 		httpClient:      defaultHTTPClient(),
 		apiDestSlots:    make(chan struct{}, maxAPIDestinationDeliveries),
 	}

@@ -28,6 +28,7 @@ type ebSnapshot struct {
 
 	Connections     json.RawMessage `json:"connections,omitempty"`
 	APIDestinations json.RawMessage `json:"apiDestinations,omitempty"`
+	Endpoints       json.RawMessage `json:"endpoints,omitempty"`
 }
 
 // archiveSnapshot mirrors archiveData, promoting its unexported fields.
@@ -182,6 +183,7 @@ func (m *Mock) valueStores(snap *ebSnapshot) []snapshottedStore {
 			"api destinations", m.apiDestinations.Len, m.apiDestinations.Snapshot,
 			m.apiDestinations.LoadSnapshot, &snap.APIDestinations,
 		},
+		{"endpoints", m.endpoints.Len, m.endpoints.Snapshot, m.endpoints.LoadSnapshot, &snap.Endpoints},
 	}
 }
 

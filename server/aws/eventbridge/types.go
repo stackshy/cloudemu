@@ -103,6 +103,8 @@ type putEventsEntry struct {
 
 type putEventsRequest struct {
 	Entries []putEventsEntry `json:"Entries"`
+	// EndpointID names the global endpoint the request was sent through.
+	EndpointID string `json:"EndpointId"`
 }
 
 type testEventPatternRequest struct {

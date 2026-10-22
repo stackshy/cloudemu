@@ -93,10 +93,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveExtendedOp serves the operations outside the main switch (archives,
-// replays, connections and API destinations) and answers
+// replays, connections, API destinations and global endpoints) and answers
 // UnknownOperationException for anything else.
 func (h *Handler) serveExtendedOp(w http.ResponseWriter, r *http.Request, op string) {
-	if h.serveArchiveOp(w, r, op) || h.serveConnectionOp(w, r, op) {
+	if h.serveArchiveOp(w, r, op) || h.serveConnectionOp(w, r, op) || h.serveEndpointOp(w, r, op) {
 		return
 	}
 

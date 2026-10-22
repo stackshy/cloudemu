@@ -114,6 +114,28 @@ func (v *violations) pattern(value, field string, re *regexp.Regexp, patternText
 	}
 }
 
+// present records a required member the request left out, reporting whether
+// value is set.
+func (v *violations) present(value, field string) bool {
+	if value != "" {
+		return true
+	}
+
+	*v = append(*v, fmt.Sprintf("Value null at '%s' failed to satisfy constraint: Member must not be null", field))
+
+	return false
+}
+
+// lengthBetween checks that a set value is minLen to maxLen bytes long.
+func (v *violations) lengthBetween(value, field string, minLen, maxLen int) {
+	switch {
+	case len(value) < minLen:
+		v.add(value, field, fmt.Sprintf("Member must have length greater than or equal to %d", minLen))
+	case len(value) > maxLen:
+		v.add(value, field, fmt.Sprintf("Member must have length less than or equal to %d", maxLen))
+	}
+}
+
 func (v *violations) eventsARN(value, field string) {
 	if !eventsARNRE.MatchString(value) {
 		v.add(value, field, "Member must satisfy regular expression pattern: "+eventsARNPattern)
