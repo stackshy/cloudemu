@@ -72,8 +72,24 @@ func (q *Query) addParse(p *exprParser) error {
 	cmd.field = field
 	q.cmds = append(q.cmds, cmd)
 	p.defines = append(p.defines, cmd.names...)
+	q.addParsedColumns(cmd.names)
 
 	return p.done()
+}
+
+// addParsedColumns shows the extracted fields by default. After a stats
+// command they join its output columns.
+func (q *Query) addParsedColumns(names []string) {
+	cols := &q.parsed
+	if q.available != nil {
+		cols = &q.shown
+	}
+
+	for _, name := range names {
+		if name != "" && !contains(*cols, name) {
+			*cols = append(*cols, name)
+		}
+	}
 }
 
 // parseSourceField reads parse's optional field, @message by default.

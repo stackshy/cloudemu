@@ -123,6 +123,9 @@ type Query struct {
 	cmds    []command
 	shown   []string
 	display []string
+	// parsed is the fields parse extracted before any stats command, shown
+	// after the defaults when no fields command sets the columns.
+	parsed []string
 
 	// Parse-time state for the command ordering rules.
 	statsCount  int
@@ -205,7 +208,8 @@ func (q *Query) pipeline(recs []Record) (out []Record, matched int) {
 }
 
 // columns are the displayed fields: the last display command, else every
-// fields command's fields, else @timestamp and @message.
+// fields command's fields (or the stats output), else @timestamp and
+// @message followed by the fields parse extracted.
 func (q *Query) columns() []string {
 	switch {
 	case len(q.display) > 0:
@@ -214,7 +218,7 @@ func (q *Query) columns() []string {
 		return q.shown
 	}
 
-	return []string{FieldTimestamp, FieldMessage}
+	return append([]string{FieldTimestamp, FieldMessage}, q.parsed...)
 }
 
 // Parse parses a Logs Insights query. A query that does not parse returns a

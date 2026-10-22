@@ -91,3 +91,65 @@ func TestParseKeepsDivision(t *testing.T) {
 		t.Fatalf("half = %s", got)
 	}
 }
+
+func fieldNames(row []Field) string {
+	names := make([]string, 0, len(row))
+	for _, f := range row {
+		names = append(names, f.Name)
+	}
+
+	return strings.Join(names, ",")
+}
+
+func TestParseDefaultColumns(t *testing.T) {
+	tests := []struct {
+		q    string
+		want []string
+	}{
+		{`parse "user=* action=* " as u, a | sort @timestamp asc`, []string{
+			"@timestamp,@message,u,a,@ptr", "@timestamp,@message,u,a,@ptr", "@timestamp,@message,@ptr",
+		}},
+		{`parse @message /user=(?<who>\w+) action=(?<what>\w+)/ | sort @timestamp asc`, []string{
+			"@timestamp,@message,who,what,@ptr", "@timestamp,@message,who,what,@ptr", "@timestamp,@message,@ptr",
+		}},
+		{`parse "user=* " as u | parse u "*l*" as head, tail | filter u = "alice"`, []string{"@timestamp,@message,u,head,tail,@ptr"}},
+		{`parse "user=* action=* " as u, a | filter ispresent(u) | fields a`, []string{"a,@ptr", "a,@ptr"}},
+		{`parse "user=* action=* " as u, a | filter ispresent(u) | display u`, []string{"u,@ptr", "u,@ptr"}},
+		{`parse "user=* " as u | filter ispresent(u) | stats count(*) as n by u | sort u asc`, []string{"u,n", "u,n"}},
+		{`stats count(*) as n by @logStream | parse @logStream "*/*" as env, svc`, []string{"@logStream,n,env,svc"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.q, func(t *testing.T) {
+			res := runOn(t, tc.q, accessRecords())
+			if len(res.Rows) != len(tc.want) {
+				t.Fatalf("got %d rows, want %d", len(res.Rows), len(tc.want))
+			}
+
+			for i, row := range res.Rows {
+				if got := fieldNames(row); got != tc.want[i] {
+					t.Fatalf("row %d columns = %s, want %s", i, got, tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestDedupAfterParseShowsParsedFields(t *testing.T) {
+	recs := eventsAt("s", []string{
+		"user=alice action=login x=1",
+		"user=bob action=logout x=2",
+		"user=alice action=login x=3",
+	}, []time.Duration{0, time.Second, 2 * time.Second})
+
+	res := runOn(t, `parse @message "user=* action=* x=*" as u, a, x | dedup u, a`, recs)
+	if got := strings.Join(col(res.Rows, "x"), "|"); got != "3|2" {
+		t.Fatalf("x = %q, want 3|2", got)
+	}
+
+	for _, row := range res.Rows {
+		if got := fieldNames(row); got != "@timestamp,@message,u,a,x,@ptr" {
+			t.Fatalf("columns = %s", got)
+		}
+	}
+}
