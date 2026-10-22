@@ -104,7 +104,14 @@ type Mock struct {
 	// secrets holds each connection's credentials; nil leaves SecretArn a bare
 	// identifier.
 	secrets ConnectionSecretStore
-	replays *memstore.Store[driver.Replay]
+
+	// httpClient calls API destination targets; tokens caches each OAuth
+	// connection's access token and limiter enforces each destination's
+	// invocation rate. None of them is held locked during a call.
+	httpClient HTTPDoer
+	tokens     tokenCache
+	limiter    rateLimiter
+	replays    *memstore.Store[driver.Replay]
 	// activeReplays counts replays currently delivering, bounded by
 	// maxActiveReplays.
 	activeReplays atomic.Int32
@@ -159,6 +166,7 @@ func New(opts *config.Options) *Mock {
 
 		connections:     memstore.New[connectionData](),
 		apiDestinations: memstore.New[driver.APIDestination](),
+		httpClient:      defaultHTTPClient(),
 	}
 
 	// Create the default event bus automatically.
@@ -330,8 +338,8 @@ func (m *Mock) PutRule(_ context.Context, cfg *driver.RuleConfig) (*driver.Rule,
 		targets: memstore.New[driver.Target](),
 	}
 
-	for _, t := range rule.Targets {
-		rd.targets.Set(t.ID, t)
+	for i := range rule.Targets {
+		rd.targets.Set(rule.Targets[i].ID, rule.Targets[i])
 	}
 
 	bd.rules.Set(cfg.Name, rd)
@@ -468,8 +476,8 @@ func (m *Mock) PutTargets(_ context.Context, eventBus, ruleName string, targets 
 		return errors.Newf(errors.NotFound, "rule %q not found on event bus %q", ruleName, busName)
 	}
 
-	for _, t := range targets {
-		rd.targets.Set(t.ID, t)
+	for i := range targets {
+		rd.targets.Set(targets[i].ID, targets[i])
 	}
 
 	rd.rule.Targets = targetsFromStore(rd.targets)
@@ -605,7 +613,7 @@ func (m *Mock) deliverEnvelope(ctx context.Context, matched []driver.Rule, event
 func (m *Mock) deliverToTarget(
 	ctx context.Context, rule *driver.Rule, t *driver.Target, busName string, envelope []byte, reserved map[string]json.RawMessage,
 ) {
-	if m.dispatchTarget(ctx, t.ARN, targetBody(t, envelope, reserved)) {
+	if m.dispatchTarget(ctx, t, targetBody(t, envelope, reserved)) {
 		return
 	}
 
@@ -631,8 +639,12 @@ func (m *Mock) deliverToTarget(
 // (matching EventBridge accepting the target but this emulator not modeling
 // that sink, an emulator limitation, not a real delivery failure eligible for
 // the target's DLQ).
-func (m *Mock) dispatchTarget(ctx context.Context, arn, body string) bool {
+func (m *Mock) dispatchTarget(ctx context.Context, t *driver.Target, body string) bool {
+	arn := t.ARN
+
 	switch {
+	case strings.Contains(arn, ":api-destination/"):
+		return m.dispatchAPIDestination(ctx, t, body)
 	case strings.Contains(arn, ":sqs:"):
 		if m.sqs == nil {
 			return true
@@ -851,8 +863,8 @@ func targetsFromStore(store *memstore.Store[driver.Target]) []driver.Target {
 	all := store.All()
 
 	targets := make([]driver.Target, 0, len(all))
-	for _, t := range all {
-		targets = append(targets, t)
+	for id := range all {
+		targets = append(targets, all[id])
 	}
 
 	return targets

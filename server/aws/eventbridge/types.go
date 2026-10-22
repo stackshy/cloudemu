@@ -67,6 +67,7 @@ type targetJSON struct {
 	InputTransformer json.RawMessage `json:"InputTransformer,omitempty"`
 	DeadLetterConfig json.RawMessage `json:"DeadLetterConfig,omitempty"`
 	RetryPolicy      json.RawMessage `json:"RetryPolicy,omitempty"`
+	HTTPParameters   json.RawMessage `json:"HttpParameters,omitempty"`
 }
 
 type putTargetsRequest struct {
@@ -328,6 +329,10 @@ func toTargetJSON(t *ebdriver.Target) targetJSON {
 		out.RetryPolicy = json.RawMessage(t.RetryPolicy)
 	}
 
+	if t.HTTPParameters != "" {
+		out.HTTPParameters = json.RawMessage(t.HTTPParameters)
+	}
+
 	return out
 }
 
@@ -341,5 +346,6 @@ func fromTargetJSON(t *targetJSON) ebdriver.Target {
 		InputTransformer: string(t.InputTransformer),
 		DeadLetterConfig: string(t.DeadLetterConfig),
 		RetryPolicy:      string(t.RetryPolicy),
+		HTTPParameters:   string(t.HTTPParameters),
 	}
 }

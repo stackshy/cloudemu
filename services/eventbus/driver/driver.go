@@ -120,6 +120,10 @@ type Target struct {
 	InputTransformer string // raw JSON InputTransformer block
 	DeadLetterConfig string // raw JSON DeadLetterConfig block
 	RetryPolicy      string // raw JSON RetryPolicy block
+	// HTTPParameters is the raw JSON HttpParameters block (path parameter
+	// values, headers and query string) for API destination and API Gateway
+	// targets. Empty for other targets.
+	HTTPParameters string
 }
 
 // Event represents an event to publish.
