@@ -25,6 +25,9 @@ type ebSnapshot struct {
 	Tags     map[string]map[string]string `json:"tags,omitempty"`
 	Archives map[string]*archiveSnapshot  `json:"archives,omitempty"`
 	Replays  json.RawMessage              `json:"replays,omitempty"`
+
+	Connections     json.RawMessage `json:"connections,omitempty"`
+	APIDestinations json.RawMessage `json:"apiDestinations,omitempty"`
 }
 
 // archiveSnapshot mirrors archiveData, promoting its unexported fields.
@@ -70,13 +73,8 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap.Tags = m.snapshotTags()
 	snap.Archives = m.snapshotArchives()
 
-	if m.replays.Len() > 0 {
-		replays, err := m.replays.Snapshot()
-		if err != nil {
-			return nil, fmt.Errorf("eventbridge: snapshot replays: %w", err)
-		}
-
-		snap.Replays = replays
+	if err := m.snapshotStores(&snap); err != nil {
+		return nil, err
 	}
 
 	return json.Marshal(snap)
@@ -163,9 +161,55 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		})
 	}
 
-	if len(snap.Replays) > 0 {
-		if err := m.replays.LoadSnapshot(snap.Replays); err != nil {
-			return fmt.Errorf("eventbridge: restore replays: %w", err)
+	return m.restoreStores(&snap)
+}
+
+// snapshottedStore pairs a value-typed store with the snapshot field it is
+// saved in.
+type snapshottedStore struct {
+	name  string
+	len   func() int
+	save  func() ([]byte, error)
+	load  func([]byte) error
+	field *json.RawMessage
+}
+
+func (m *Mock) valueStores(snap *ebSnapshot) []snapshottedStore {
+	return []snapshottedStore{
+		{"replays", m.replays.Len, m.replays.Snapshot, m.replays.LoadSnapshot, &snap.Replays},
+		{"connections", m.connections.Len, m.connections.Snapshot, m.connections.LoadSnapshot, &snap.Connections},
+		{
+			"api destinations", m.apiDestinations.Len, m.apiDestinations.Snapshot,
+			m.apiDestinations.LoadSnapshot, &snap.APIDestinations,
+		},
+	}
+}
+
+func (m *Mock) snapshotStores(snap *ebSnapshot) error {
+	for _, s := range m.valueStores(snap) {
+		if s.len() == 0 {
+			continue
+		}
+
+		data, err := s.save()
+		if err != nil {
+			return fmt.Errorf("eventbridge: snapshot %s: %w", s.name, err)
+		}
+
+		*s.field = data
+	}
+
+	return nil
+}
+
+func (m *Mock) restoreStores(snap *ebSnapshot) error {
+	for _, s := range m.valueStores(snap) {
+		if len(*s.field) == 0 {
+			continue
+		}
+
+		if err := s.load(*s.field); err != nil {
+			return fmt.Errorf("eventbridge: restore %s: %w", s.name, err)
 		}
 	}
 

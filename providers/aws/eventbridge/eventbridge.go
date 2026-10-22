@@ -98,7 +98,13 @@ type Mock struct {
 	tagsByARN  tagStore
 
 	archives *memstore.Store[*archiveData]
-	replays  *memstore.Store[driver.Replay]
+
+	connections     *memstore.Store[connectionData]
+	apiDestinations *memstore.Store[driver.APIDestination]
+	// secrets holds each connection's credentials; nil leaves SecretArn a bare
+	// identifier.
+	secrets ConnectionSecretStore
+	replays *memstore.Store[driver.Replay]
 	// activeReplays counts replays currently delivering, bounded by
 	// maxActiveReplays.
 	activeReplays atomic.Int32
@@ -150,6 +156,9 @@ func New(opts *config.Options) *Mock {
 		opts:     opts,
 		archives: memstore.New[*archiveData](),
 		replays:  memstore.New[driver.Replay](),
+
+		connections:     memstore.New[connectionData](),
+		apiDestinations: memstore.New[driver.APIDestination](),
 	}
 
 	// Create the default event bus automatically.

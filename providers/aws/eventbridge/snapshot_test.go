@@ -70,6 +70,43 @@ func TestSnapshotEmpty(t *testing.T) {
 	assert.True(t, bytes.Equal(data, data2))
 }
 
+// TestSnapshotConnectionsAndAPIDestinations proves connections (with their
+// credentials and secret ARN) and API destinations survive a snapshot and
+// restore.
+func TestSnapshotConnectionsAndAPIDestinations(t *testing.T) {
+	ctx := context.Background()
+
+	src, _ := newConnectionMock(t)
+
+	c, err := src.CreateConnection(ctx, basicConnection("c1"))
+	require.NoError(t, err)
+
+	_, err = src.CreateAPIDestination(ctx, destinationConfig("d1", c.ARN))
+	require.NoError(t, err)
+
+	data, err := src.Snapshot(ctx, true)
+	require.NoError(t, err)
+
+	dst, _ := newTestMock()
+	require.NoError(t, dst.Restore(ctx, data))
+
+	data2, err := dst.Snapshot(ctx, true)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(data), string(data2))
+
+	got, err := dst.DescribeConnection(ctx, "c1")
+	require.NoError(t, err)
+	assert.Equal(t, c.SecretARN, got.SecretARN)
+
+	stored, ok := dst.connections.Get("c1")
+	require.True(t, ok)
+	assert.Equal(t, "pass", stored.Info.AuthParameters.Basic.Password, "credentials survive a restore")
+
+	d, err := dst.DescribeAPIDestination(ctx, "d1")
+	require.NoError(t, err)
+	assert.Equal(t, "ACTIVE", d.State)
+}
+
 // TestSnapshotArchivesAndReplays proves archives (with their archived events)
 // and replays survive a snapshot and restore.
 func TestSnapshotArchivesAndReplays(t *testing.T) {

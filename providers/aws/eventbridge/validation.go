@@ -62,6 +62,24 @@ func (v *violations) enum(value, field string, allowed []string) {
 	v.add(value, field, "Member must satisfy enum value set: ["+strings.Join(allowed, ", ")+"]")
 }
 
+// required checks that value is set and at most maxLen bytes long.
+func (v *violations) required(value, field string, maxLen int) {
+	switch {
+	case value == "":
+		v.add(value, field, "Member must have length greater than or equal to 1")
+	case len(value) > maxLen:
+		v.add(value, field, fmt.Sprintf("Member must have length less than or equal to %d", maxLen))
+	}
+}
+
+// pattern checks value against re, quoting patternText (the pattern as the AWS
+// API model spells it) in the message.
+func (v *violations) pattern(value, field string, re *regexp.Regexp, patternText string) {
+	if !re.MatchString(value) {
+		v.add(value, field, "Member must satisfy regular expression pattern: "+patternText)
+	}
+}
+
 func (v *violations) eventsARN(value, field string) {
 	if !eventsARNRE.MatchString(value) {
 		v.add(value, field, "Member must satisfy regular expression pattern: "+eventsARNPattern)
@@ -92,6 +110,15 @@ func busNameFromARN(arn string) string {
 
 	return arn[idx+len(infix):]
 }
+
+// Values shared by more than one EventBridge enum.
+const (
+	stateCreating = "CREATING"
+	stateUpdating = "UPDATING"
+	httpGET       = "GET"
+	httpPOST      = "POST"
+	httpPUT       = "PUT"
+)
 
 // countSet reports how many of the given strings are non-empty.
 func countSet(values ...string) int {

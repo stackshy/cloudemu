@@ -139,25 +139,28 @@ func toArchiveState(a *ebdriver.Archive) archiveStateResponse {
 	}
 }
 
-// listFilterRequest is the request shape ListArchives and ListReplays share.
+// listFilterRequest is the request shape the archive, replay, connection and
+// API destination list operations share; each reads the filters it accepts.
 type listFilterRequest struct {
-	NamePrefix     string `json:"NamePrefix"`
-	EventSourceArn string `json:"EventSourceArn"`
-	State          string `json:"State"`
-	Limit          int    `json:"Limit"`
-	NextToken      string `json:"NextToken"`
+	NamePrefix      string `json:"NamePrefix"`
+	EventSourceArn  string `json:"EventSourceArn"`
+	State           string `json:"State"`
+	ConnectionState string `json:"ConnectionState"`
+	ConnectionArn   string `json:"ConnectionArn"`
+	Limit           int    `json:"Limit"`
+	NextToken       string `json:"NextToken"`
 }
 
 // listOp builds the handler of a list operation: decode the shared filter
 // request, fetch the items, convert them to their wire form, and write one page
 // using EventBridge's cursor pagination.
-func listOp[T, J any](
-	fetch func(ctx context.Context, mgr archiveManager, req *listFilterRequest) ([]T, error),
+func listOp[M, T, J any](
+	fetch func(ctx context.Context, mgr M, req *listFilterRequest) ([]T, error),
 	conv func(*T) J,
 	key func(J) string,
 	wrap func(page []J, next string) any,
-) archiveOp {
-	return func(mgr archiveManager, w http.ResponseWriter, r *http.Request) {
+) func(mgr M, w http.ResponseWriter, r *http.Request) {
+	return func(mgr M, w http.ResponseWriter, r *http.Request) {
 		var req listFilterRequest
 		if !wire.DecodeJSON(w, r, &req) {
 			return

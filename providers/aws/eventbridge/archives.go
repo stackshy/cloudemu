@@ -26,7 +26,7 @@ const (
 
 // archiveStates is the ArchiveState enum, in the order EventBridge lists it.
 func archiveStates() []string {
-	return []string{"ENABLED", "DISABLED", "CREATING", "UPDATING", "CREATE_FAILED", "UPDATE_FAILED"}
+	return []string{archiveStateEnabled, "DISABLED", stateCreating, stateUpdating, "CREATE_FAILED", "UPDATE_FAILED"}
 }
 
 // archivedEvent is one event held by an archive, with the time it was archived

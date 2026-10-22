@@ -546,6 +546,9 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 // mocks. It is split out of New so the factory stays within the function-length
 // budget; the wiring-parity test scans this helper as if it were New().
 func wirePostBuildServices(o *config.Options, p *Provider) {
+	// EventBridge connections keep their credentials in a real Secrets Manager
+	// secret (events!connection/<name>/<id>), as AWS does.
+	p.EventBridge.SetConnectionSecretStore(p.SecretsManager)
 	// S3 event notifications deliver to their configured targets: SQS queues,
 	// SNS topics, and Lambda functions.
 	p.S3.SetSQSDeliverer(p.SQS)
