@@ -70,16 +70,20 @@ func (m *Mock) StartQuery(_ context.Context, in *driver.StartQueryInput) (string
 		return "", malformed(err)
 	}
 
-	if m.runningQueries() >= maxConcurrentInsightsQueries {
-		return "", cerrors.Newf(cerrors.ResourceExhausted,
-			"the account already has the maximum of %d concurrent queries", maxConcurrentInsightsQueries)
-	}
-
 	rec := queryRecord{
 		ID: idgen.UUID(), QueryString: in.QueryString, QueryLanguage: queryLanguageCWLI,
 		LogGroups: groups, Start: in.StartTime, End: in.EndTime, Limit: in.Limit,
 		Status: driver.QueryStatusRunning, CreatedAt: m.opts.Clock.Now(),
 	}
+
+	m.admitMu.Lock()
+	defer m.admitMu.Unlock()
+
+	if m.runningQueries() >= maxConcurrentInsightsQueries {
+		return "", cerrors.Newf(cerrors.ResourceExhausted,
+			"the account already has the maximum of %d concurrent queries", maxConcurrentInsightsQueries)
+	}
+
 	m.queries.Set(rec.ID, rec)
 
 	return rec.ID, nil
@@ -348,7 +352,10 @@ func encodePtr(group, stream string, t eventTimes, ordinal int) string {
 const ptrParts = 5
 
 // GetLogRecord returns every field of the log event a query result's @ptr
-// points to. Times are epoch milliseconds.
+// points to. Times are epoch milliseconds, the unit of the event's timestamp
+// and ingestionTime. The API reference's sample shows a 10-digit @timestamp,
+// but that sample is hand-written (pointer "123456789", invalid JSON); the
+// SDKs carry no fixture and LocalStack does not implement GetLogRecord.
 func (m *Mock) GetLogRecord(_ context.Context, ptr string) (map[string]string, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(ptr)
 	parts := strings.Split(string(raw), ptrSep)

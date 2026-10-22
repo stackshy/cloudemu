@@ -124,8 +124,13 @@ func substr(a []any) any {
 
 	r := []rune(toStr(a[0]))
 
-	start, ok := toNum(a[1])
-	if !ok || int(start) > len(r) || start < 0 {
+	f, ok := toNum(a[1])
+	if !ok {
+		return nil
+	}
+
+	start, ok := clampIndex(f, len(r))
+	if !ok || f < 0 || f > float64(len(r)) {
 		return nil
 	}
 
@@ -134,12 +139,38 @@ func substr(a []any) any {
 	const lengthArg = 2
 
 	if len(a) > lengthArg {
-		if n, nok := toNum(a[lengthArg]); nok && int(start)+int(n) < end {
-			end = int(start) + int(n)
+		n, nok := toNum(a[lengthArg])
+		if !nok {
+			return string(r[start:])
 		}
+
+		count, cok := clampIndex(n, len(r)-start)
+		if !cok {
+			return nil
+		}
+
+		end = start + count
 	}
 
-	return string(r[int(start):end])
+	return string(r[start:end])
+}
+
+// clampIndex converts f to an int in [0, maxIdx], truncating toward zero.
+// It reports false for NaN and ±Inf, whose int conversion is
+// implementation-defined (int(NaN) is MinInt64 on amd64).
+func clampIndex(f float64, maxIdx int) (int, bool) {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+
+	switch {
+	case f <= 0:
+		return 0, true
+	case f >= float64(maxIdx):
+		return maxIdx, true
+	default:
+		return int(f), true
+	}
 }
 
 // extreme returns greatest (sign 1) or least (sign -1) of numeric arguments.

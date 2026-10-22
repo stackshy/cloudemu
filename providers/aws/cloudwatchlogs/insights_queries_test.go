@@ -3,6 +3,7 @@ package cloudwatchlogs
 import (
 	"context"
 	stderrors "errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -177,6 +178,52 @@ func TestInsightsConcurrentQueryLimit(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Equal(t, errors.ResourceExhausted, errors.GetCode(err))
+}
+
+func TestInsightsConcurrentQueryLimitParallel(t *testing.T) {
+	const callers = 150
+
+	m := newInsightsMock(t)
+	now := m.opts.Clock.Now()
+
+	var (
+		wg               sync.WaitGroup
+		mu               sync.Mutex
+		started, limited int
+		start            = make(chan struct{})
+	)
+
+	for range callers {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			<-start
+
+			_, err := m.StartQuery(context.Background(), &driver.StartQueryInput{
+				LogGroupName: "g", StartTime: now.Add(-time.Hour), EndTime: now, QueryString: "fields @message",
+			})
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			switch {
+			case err == nil:
+				started++
+			case errors.GetCode(err) == errors.ResourceExhausted:
+				limited++
+			default:
+				t.Errorf("unexpected error: %v", err)
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	assert.Equal(t, maxConcurrentInsightsQueries, started)
+	assert.Equal(t, callers-maxConcurrentInsightsQueries, limited)
+	assert.Equal(t, maxConcurrentInsightsQueries, m.runningQueries())
 }
 
 func TestInsightsTimeRangeAndSnapshot(t *testing.T) {

@@ -68,6 +68,9 @@ type Mock struct {
 	// keyed by filterPeriodKey.
 	periods map[string]filterPeriod
 	mu      sync.RWMutex
+	// admitMu makes StartQuery's concurrent-query count and its insert one
+	// step. Settling only moves queries out of Running, so it needs no lock.
+	admitMu sync.Mutex
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
