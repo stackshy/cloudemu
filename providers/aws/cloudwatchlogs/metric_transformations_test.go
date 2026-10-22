@@ -36,6 +36,9 @@ func TestPutMetricFilterValidation(t *testing.T) {
 		{"unknown field value", func(c *driver.MetricFilterConfig) {
 			c.FilterPattern, c.MetricValue = "[ip, size]", "$bytes"
 		}, errors.InvalidArgument},
+		{"position past the pattern's fields", func(c *driver.MetricFilterConfig) {
+			c.FilterPattern, c.MetricValue = "[ip, user, size]", "$4"
+		}, errors.InvalidArgument},
 		{"bad unit", func(c *driver.MetricFilterConfig) { c.Unit = "Apples" }, errors.InvalidArgument},
 		{"dimensions on unstructured pattern", func(c *driver.MetricFilterConfig) {
 			c.Dimensions = map[string]string{"Level": "$.level"}
@@ -131,7 +134,8 @@ func TestMetricFilterDimensionsAndUnit(t *testing.T) {
 
 	putMessages(t, m,
 		`{"service":"api","latency":10}`,
-		`{"service":"api","latency":5}`,
+		`{"service":"api","latency":20}`,
+		`{"service":"api","latency":30}`,
 		`{"service":"web","latency":7}`,
 		`{"latency":3}`,
 	)
@@ -139,10 +143,11 @@ func TestMetricFilterDimensionsAndUnit(t *testing.T) {
 	data := mon.inNamespace("App")
 	require.Len(t, data, 2, "the event without a service dimension is dropped")
 
+	// Each match is its own observation: three samples, not one summed value.
 	assert.Equal(t, map[string]string{"Service": "api"}, data[0].Dimensions)
-	assert.InDelta(t, 15.0, data[0].Value, 0)
+	assert.Equal(t, &mondriver.StatisticSet{SampleCount: 3, Sum: 60, Minimum: 10, Maximum: 30}, data[0].StatisticValues)
 	assert.Equal(t, map[string]string{"Service": "web"}, data[1].Dimensions)
-	assert.InDelta(t, 7.0, data[1].Value, 0)
+	assert.Equal(t, &mondriver.StatisticSet{SampleCount: 1, Sum: 7, Minimum: 7, Maximum: 7}, data[1].StatisticValues)
 
 	for _, d := range data {
 		assert.Equal(t, "Milliseconds", d.Unit)
@@ -150,9 +155,9 @@ func TestMetricFilterDimensionsAndUnit(t *testing.T) {
 	}
 }
 
-// TestMetricFilterDefaultValue emits the default value for a batch with no
-// match, and nothing else for a batch that matches.
-func TestMetricFilterDefaultValue(t *testing.T) {
+// TestMetricFilterDefaultValuePerPeriod publishes the default value at most
+// once per one-minute period, and never for a period that had a match.
+func TestMetricFilterDefaultValuePerPeriod(t *testing.T) {
 	ctx := context.Background()
 	m := newWindowMock(t, 0)
 	mon := &recordingMonitoring{}
@@ -163,18 +168,37 @@ func TestMetricFilterDefaultValue(t *testing.T) {
 	cfg.DefaultValue = &def
 	require.NoError(t, m.PutMetricFilter(ctx, cfg))
 
-	putMessages(t, m, "INFO ok", "INFO fine")
+	// Minute 1: no match, then no match again: one default only.
+	putMessages(t, m, "INFO ok")
+	putMessages(t, m, "INFO fine")
 
 	data := mon.inNamespace("App")
 	require.Len(t, data, 1)
 	assert.InDelta(t, 0.0, data[0].Value, 0)
+	assert.Nil(t, data[0].StatisticValues)
 	assert.Equal(t, "None", data[0].Unit)
 
-	putMessages(t, m, "ERROR a", "INFO b")
+	// Minute 2: a match, then a non-matching batch: no default for the period.
+	advanceClock(t, m, metricPeriod)
+	putMessages(t, m, "ERROR a")
+	putMessages(t, m, "INFO b")
 
 	data = mon.inNamespace("App")
 	require.Len(t, data, 2)
-	assert.InDelta(t, 1.0, data[1].Value, 0)
+	assert.InDelta(t, 1.0, data[1].StatisticValues.Sum, 0)
+
+	// Minute 3: only non-matching logs, so the default is published again,
+	// and it survives a snapshot round trip without repeating.
+	advanceClock(t, m, metricPeriod)
+	putMessages(t, m, "INFO c")
+	require.Len(t, mon.inNamespace("App"), 3)
+
+	raw, err := m.Snapshot(ctx, true)
+	require.NoError(t, err)
+	require.NoError(t, m.Restore(ctx, raw))
+
+	putMessages(t, m, "INFO d")
+	assert.Len(t, mon.inNamespace("App"), 3)
 }
 
 func TestDescribeAWSMetricFilters(t *testing.T) {

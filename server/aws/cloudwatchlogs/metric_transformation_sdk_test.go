@@ -115,6 +115,21 @@ func TestSDKMetricTransformationDimensionsUnitDefault(t *testing.T) {
 		t.Fatalf("Latency{Service=api} = %v %s, want 15 Milliseconds", sum, unit)
 	}
 
+	// Each matching event is its own sample, not one summed value.
+	all, err := cw.GetMetricStatistics(ctx, &cloudwatch.GetMetricStatisticsInput{
+		Namespace: aws.String("E2E/App"), MetricName: aws.String("Latency"), Dimensions: []cwtypes.Dimension{api},
+		StartTime: aws.Time(now.Add(-time.Hour)), EndTime: aws.Time(now.Add(time.Hour)), Period: aws.Int32(7200),
+		Statistics: []cwtypes.Statistic{cwtypes.StatisticSampleCount, cwtypes.StatisticMinimum, cwtypes.StatisticMaximum},
+	})
+	if err != nil || len(all.Datapoints) != 1 {
+		t.Fatalf("Latency{api} statistics = %+v, %v", all, err)
+	}
+
+	if dp := all.Datapoints[0]; aws.ToFloat64(dp.SampleCount) != 2 || aws.ToFloat64(dp.Minimum) != 5 || aws.ToFloat64(dp.Maximum) != 10 {
+		t.Fatalf("Latency{api} SampleCount/Min/Max = %v/%v/%v, want 2/5/10",
+			aws.ToFloat64(dp.SampleCount), aws.ToFloat64(dp.Minimum), aws.ToFloat64(dp.Maximum))
+	}
+
 	web := cwtypes.Dimension{Name: aws.String("Service"), Value: aws.String("web")}
 	if sum, _ := metricSum(t, cw, "Latency", web); sum != 7 {
 		t.Fatalf("Latency{Service=web} = %v, want 7", sum)

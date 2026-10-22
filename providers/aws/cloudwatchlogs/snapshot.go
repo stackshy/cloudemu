@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
@@ -20,6 +21,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 type logsSnapshot struct {
 	Groups            map[string]*logGroupSnapshot `json:"groups,omitempty"`
 	QueryResultKmsKey string                       `json:"queryResultKmsKey,omitempty"`
+	FilterPeriods     map[string]filterPeriod      `json:"filterPeriods,omitempty"`
 }
 
 // logGroupSnapshot mirrors logGroup. Its metric- and subscription-filter stores
@@ -47,7 +49,7 @@ type logStreamSnapshot struct {
 // log events are the payload and are always captured.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()
-	snap := logsSnapshot{QueryResultKmsKey: m.queryResultKmsKey}
+	snap := logsSnapshot{QueryResultKmsKey: m.queryResultKmsKey, FilterPeriods: maps.Clone(m.periods)}
 	m.mu.RUnlock()
 
 	if m.groups.Len() == 0 {
@@ -109,6 +111,9 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 
 	m.mu.Lock()
 	m.queryResultKmsKey = snap.QueryResultKmsKey
+
+	m.periods = map[string]filterPeriod{}
+	maps.Copy(m.periods, snap.FilterPeriods)
 	m.mu.Unlock()
 
 	for name, gs := range snap.Groups {

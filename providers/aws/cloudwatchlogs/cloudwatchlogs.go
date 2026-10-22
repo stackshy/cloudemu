@@ -63,7 +63,10 @@ type Mock struct {
 	// queryResultKmsKey is the account-wide key associated with Logs Insights
 	// query results (AssociateKmsKey on the query-result resource).
 	queryResultKmsKey string
-	mu                sync.RWMutex
+	// periods holds each metric filter's per-period default-value state,
+	// keyed by filterPeriodKey.
+	periods map[string]filterPeriod
+	mu      sync.RWMutex
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -91,8 +94,9 @@ func (m *Mock) emitMetric(metricName string, value float64, unit string, dims ma
 // New creates a new CloudWatch Logs mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		groups: memstore.New[*logGroup](),
-		opts:   opts,
+		groups:  memstore.New[*logGroup](),
+		opts:    opts,
+		periods: map[string]filterPeriod{},
 	}
 }
 

@@ -231,6 +231,20 @@ func (m *Mock) DescribeMetricFilters(ctx context.Context, logGroup string) ([]dr
 	return out, err
 }
 
+// metricPeriod is the CloudWatch period metric filters report in. A default
+// value stands for "logs arrived in this period and none matched".
+const metricPeriod = time.Minute
+
+// filterPeriod records, per metric filter, the last period that saw a match
+// and the last period a default value was published for, so a default is
+// published at most once per period and never for a period with a match.
+type filterPeriod struct {
+	Matched   time.Time `json:"matched,omitzero"`
+	Defaulted time.Time `json:"defaulted,omitzero"`
+}
+
+func filterPeriodKey(group, filter string) string { return group + "\x00" + filter }
+
 // evaluateMetricFilters turns the events of one PutLogEvents batch into
 // CloudWatch metric data, one PutMetricData call per metric filter.
 func (m *Mock) evaluateMetricFilters(g *logGroup, events []driver.LogEvent) {
@@ -241,27 +255,67 @@ func (m *Mock) evaluateMetricFilters(g *logGroup, events []driver.LogEvent) {
 	now := m.opts.Clock.Now()
 
 	for _, mf := range g.metricFilters.SortedValues() {
-		if data := metricFilterData(mf, events, now); len(data) > 0 {
+		data, matched := metricFilterData(mf, events, now)
+
+		if m.trackPeriod(filterPeriodKey(g.info.Name, mf.Name), now, matched, mf.DefaultValue != nil) {
+			data = []mondriver.MetricDatum{*newMetricDatum(mf, *mf.DefaultValue, nil, now)}
+		}
+
+		if len(data) > 0 {
 			_ = m.monitoring.PutMetricData(context.Background(), data)
 		}
 	}
 }
 
-// metricFilterData sums the metric value of every matching event, one datum
-// per distinct set of dimension values, with the filter's unit. When no event
-// in the batch matches, a filter with a default value emits that instead.
-// A matching event whose metric value or dimension fields cannot be resolved
-// contributes nothing.
-func metricFilterData(mf *driver.MetricFilterInfo, events []driver.LogEvent, now time.Time) []mondriver.MetricDatum {
+// trackPeriod records a batch's outcome for one filter and reports whether
+// its default value should be published: only for a batch with no match,
+// when the current period has neither a match nor an earlier default.
+//
+// A default published early in a period is not withdrawn if a match arrives
+// later in the same period; AWS aggregates the whole period before deciding,
+// which a synchronous emulator cannot do without delaying every datapoint.
+func (m *Mock) trackPeriod(key string, now time.Time, matched, hasDefault bool) bool {
+	period := now.Truncate(metricPeriod)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	st := m.periods[key]
+
+	if matched {
+		st.Matched = period
+		m.periods[key] = st
+
+		return false
+	}
+
+	if !hasDefault || st.Matched.Equal(period) || st.Defaulted.Equal(period) {
+		return false
+	}
+
+	st.Defaulted = period
+	m.periods[key] = st
+
+	return true
+}
+
+// metricFilterData aggregates the matching events of one batch into one
+// datum per distinct set of dimension values, as a statistic set (sample
+// count, sum, minimum, maximum), so each match counts as its own observation
+// the way AWS publishes the metric value each time a matching log is found.
+// It also reports whether any event matched. A matching event whose metric
+// value or dimension fields cannot be resolved contributes nothing.
+func metricFilterData(
+	mf *driver.MetricFilterInfo, events []driver.LogEvent, now time.Time,
+) (data []mondriver.MetricDatum, matched bool) {
 	// Patterns are validated when the filter is put; one that no longer
 	// parses (restored from an older snapshot) emits nothing.
 	pattern, err := filterpattern.Parse(mf.FilterPattern)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 
-	sums := map[string]*mondriver.MetricDatum{}
-	matched := false
+	sets := map[string]*mondriver.MetricDatum{}
 
 	for i := range events {
 		msg := events[i].Message
@@ -282,24 +336,29 @@ func metricFilterData(mf *driver.MetricFilterInfo, events []driver.LogEvent, now
 		}
 
 		key := dimensionKey(dims)
-		if d, seen := sums[key]; seen {
-			d.Value += v
+		if d, seen := sets[key]; seen {
+			addObservation(d.StatisticValues, v)
 			continue
 		}
 
-		sums[key] = newMetricDatum(mf, v, dims, now)
+		d := newMetricDatum(mf, 0, dims, now)
+		d.StatisticValues = &mondriver.StatisticSet{SampleCount: 1, Sum: v, Minimum: v, Maximum: v}
+		sets[key] = d
 	}
 
-	if !matched && mf.DefaultValue != nil {
-		return []mondriver.MetricDatum{*newMetricDatum(mf, *mf.DefaultValue, nil, now)}
+	data = make([]mondriver.MetricDatum, 0, len(sets))
+	for _, k := range slices.Sorted(maps.Keys(sets)) {
+		data = append(data, *sets[k])
 	}
 
-	out := make([]mondriver.MetricDatum, 0, len(sums))
-	for _, k := range slices.Sorted(maps.Keys(sums)) {
-		out = append(out, *sums[k])
-	}
+	return data, matched
+}
 
-	return out
+func addObservation(s *mondriver.StatisticSet, v float64) {
+	s.SampleCount++
+	s.Sum += v
+	s.Minimum = min(s.Minimum, v)
+	s.Maximum = max(s.Maximum, v)
 }
 
 func newMetricDatum(mf *driver.MetricFilterInfo, v float64, dims map[string]string, now time.Time) *mondriver.MetricDatum {

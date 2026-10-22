@@ -40,7 +40,11 @@ func (r *recordingMonitoring) valueOf(namespace, name string) float64 {
 
 	for _, d := range r.data {
 		if d.Namespace == namespace && d.MetricName == name {
-			total += d.Value
+			if d.StatisticValues != nil {
+				total += d.StatisticValues.Sum
+			} else {
+				total += d.Value
+			}
 		}
 	}
 
