@@ -624,10 +624,13 @@ func (m *Mock) deliverToTarget(
 
 	if isAPIDestination(t.ARN) {
 		target, ruleName := *t, rule.Name
+		// The delivery outlives the PutEvents request, whose context the HTTP
+		// server cancels once the handler returns.
+		bgCtx := context.WithoutCancel(ctx)
 
 		m.goDeliverAPIDestination(func() {
-			if !m.dispatchAPIDestination(ctx, &target, body) {
-				m.deadLetter(ctx, ruleName, &target, busName, envelope)
+			if !m.dispatchAPIDestination(bgCtx, &target, body) {
+				m.deadLetter(bgCtx, ruleName, &target, busName, envelope)
 			}
 		})
 
