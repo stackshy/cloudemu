@@ -84,6 +84,48 @@ func TestVectorKnowledgeBaseNeedsStorage(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestStorageTypeNeedsItsConfiguration(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	kb := newVectorKB(t, m, nil)
+
+	vector := json.RawMessage(`{"type":"VECTOR"}`)
+	null := func(field string) string {
+		return "1 validation error detected: Value null at '" + field +
+			"' failed to satisfy constraint: Member must not be null"
+	}
+
+	for typ, member := range storageTypeMembers() {
+		cfg := driver.KnowledgeBaseConfig{
+			Name: "kb", RoleArn: "role", KnowledgeBaseConfiguration: vector,
+			StorageConfiguration: json.RawMessage(`{"type":"` + typ + `"}`),
+		}
+
+		_, err := m.CreateKnowledgeBase(ctx, cfg)
+		requireValidation(t, err, null("storageConfiguration."+member))
+
+		_, err = m.UpdateKnowledgeBase(ctx, kb.ID, cfg)
+		requireValidation(t, err, null("storageConfiguration."+member))
+
+		cfg.StorageConfiguration = json.RawMessage(`{"type":"` + typ + `","` + member + `":{}}`)
+		_, err = m.CreateKnowledgeBase(ctx, cfg)
+		require.NoError(t, err, typ)
+	}
+
+	// The block for a different store does not satisfy the type.
+	_, err := m.CreateKnowledgeBase(ctx, driver.KnowledgeBaseConfig{
+		Name: "kb", RoleArn: "role", KnowledgeBaseConfiguration: vector,
+		StorageConfiguration: json.RawMessage(`{"type":"PINECONE","rdsConfiguration":{}}`),
+	})
+	requireValidation(t, err, null("storageConfiguration.pineconeConfiguration"))
+
+	_, err = m.CreateKnowledgeBase(ctx, driver.KnowledgeBaseConfig{
+		Name: "kb", RoleArn: "role", KnowledgeBaseConfiguration: vector,
+		StorageConfiguration: json.RawMessage(`{"pineconeConfiguration":{}}`),
+	})
+	requireValidation(t, err, null("storageConfiguration.type"))
+}
+
 func TestListPagination(t *testing.T) {
 	m := newMock()
 	ctx := context.Background()

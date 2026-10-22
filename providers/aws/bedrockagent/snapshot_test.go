@@ -23,7 +23,7 @@ func TestSnapshotRoundTripBedrockAgent(t *testing.T) {
 		Name:                       "kb1",
 		RoleArn:                    "arn:aws:iam::000000000000:role/kb",
 		KnowledgeBaseConfiguration: []byte(`{"type":"VECTOR"}`),
-		StorageConfiguration:       []byte(`{"type":"OPENSEARCH_SERVERLESS"}`),
+		StorageConfiguration:       []byte(`{"type":"OPENSEARCH_SERVERLESS","opensearchServerlessConfiguration":{}}`),
 		Tags:                       map[string]string{"env": "test"},
 	})
 	require.NoError(t, err)
