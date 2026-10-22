@@ -261,6 +261,10 @@ func (m *Mock) DescribeCertificate(_ context.Context, arn string) (*driver.Certi
 // Following real ACM, the default (empty KeyTypes) returns only RSA_2048
 // certificates; other key types appear only when explicitly requested.
 func (m *Mock) ListCertificates(_ context.Context, filter driver.ListFilter) ([]driver.Certificate, error) {
+	if err := validStatuses(filter.Statuses); err != nil {
+		return nil, err
+	}
+
 	all := m.certs.All()
 	out := make([]driver.Certificate, 0, len(all))
 
@@ -282,6 +286,30 @@ func (m *Mock) ListCertificates(_ context.Context, filter driver.ListFilter) ([]
 	}
 
 	return out, nil
+}
+
+// certificateStatuses lists the CertificateStatus enum in AWS's order.
+func certificateStatuses() []string {
+	return []string{
+		driver.StatusPendingValidation, driver.StatusIssued, driver.StatusInactive, driver.StatusExpired,
+		driver.StatusValidationTimeout, driver.StatusRevoked, driver.StatusFailed,
+	}
+}
+
+// validStatuses rejects a CertificateStatuses filter value outside the enum.
+func validStatuses(statuses []string) error {
+	allowed := certificateStatuses()
+
+	for _, s := range statuses {
+		if !contains(allowed, s) {
+			return errors.Newf(errors.InvalidArgument,
+				"1 validation error detected: Value '[%s]' at 'certificateStatuses' failed to satisfy constraint: "+
+					"Member must satisfy constraint: [Member must satisfy enum value set: [%s]]",
+				strings.Join(statuses, ", "), strings.Join(allowed, ", "))
+		}
+	}
+
+	return nil
 }
 
 func statusMatches(status string, want []string) bool {
