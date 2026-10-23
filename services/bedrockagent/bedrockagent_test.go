@@ -79,7 +79,7 @@ func TestServiceKnowledgeBaseLifecycle(t *testing.T) {
 		Name:                       "svc-kb",
 		RoleArn:                    "arn:aws:iam::123456789012:role/r",
 		KnowledgeBaseConfiguration: []byte(`{"type":"VECTOR"}`),
-		StorageConfiguration:       []byte(`{"type":"OPENSEARCH_SERVERLESS"}`),
+		StorageConfiguration:       []byte(`{"type":"OPENSEARCH_SERVERLESS","opensearchServerlessConfiguration":{}}`),
 	})
 	if err != nil {
 		t.Fatalf("CreateKnowledgeBase: %v", err)
@@ -149,7 +149,7 @@ func TestServiceTagging(t *testing.T) {
 func baseCalls(ctx context.Context, svc *BedrockAgent, ids map[string]string) map[string]error {
 	kbCfg := driver.KnowledgeBaseConfig{
 		Name: "kb", RoleArn: "arn:aws:iam::123456789012:role/r", KnowledgeBaseConfiguration: []byte(`{"type":"VECTOR"}`),
-		StorageConfiguration: []byte(`{"type":"OPENSEARCH_SERVERLESS"}`),
+		StorageConfiguration: []byte(`{"type":"OPENSEARCH_SERVERLESS","opensearchServerlessConfiguration":{}}`),
 	}
 	dsCfg := driver.DataSourceConfig{KnowledgeBaseID: ids["kb"], Name: "ds2", DataSourceConfiguration: []byte(`{"type":"S3"}`)}
 	out := map[string]error{}
@@ -201,7 +201,7 @@ func seed(t *testing.T, svc *BedrockAgent) map[string]string {
 
 	kb, err := svc.CreateKnowledgeBase(ctx, driver.KnowledgeBaseConfig{
 		Name: "kb", RoleArn: "arn:aws:iam::123456789012:role/r", KnowledgeBaseConfiguration: []byte(`{"type":"VECTOR"}`),
-		StorageConfiguration: []byte(`{"type":"OPENSEARCH_SERVERLESS"}`),
+		StorageConfiguration: []byte(`{"type":"OPENSEARCH_SERVERLESS","opensearchServerlessConfiguration":{}}`),
 	})
 	if err != nil {
 		t.Fatalf("CreateKnowledgeBase: %v", err)

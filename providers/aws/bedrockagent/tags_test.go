@@ -24,7 +24,7 @@ func newVectorKB(t *testing.T, m *Mock, tags map[string]string) *driver.Knowledg
 		Name:                       "kb",
 		RoleArn:                    "role",
 		KnowledgeBaseConfiguration: json.RawMessage(`{"type":"VECTOR"}`),
-		StorageConfiguration:       json.RawMessage(`{"type":"OPENSEARCH_SERVERLESS"}`),
+		StorageConfiguration:       json.RawMessage(`{"type":"OPENSEARCH_SERVERLESS","opensearchServerlessConfiguration":{}}`),
 		Tags:                       tags,
 	})
 	require.NoError(t, err)

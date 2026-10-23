@@ -90,7 +90,52 @@ func validateKnowledgeBase(cfg driver.KnowledgeBaseConfig) error {
 			"storageConfiguration is required for a knowledge base of type VECTOR")
 	}
 
-	return nil
+	if isNull(cfg.StorageConfiguration) {
+		return nil
+	}
+
+	return validateStorageConfiguration(cfg.StorageConfiguration)
+}
+
+// storageTypeMembers maps each storageConfiguration type to the member that
+// must carry its settings.
+func storageTypeMembers() map[string]string {
+	return map[string]string{
+		"OPENSEARCH_SERVERLESS":      "opensearchServerlessConfiguration",
+		"OPENSEARCH_MANAGED_CLUSTER": "opensearchManagedClusterConfiguration",
+		"PINECONE":                   "pineconeConfiguration",
+		"REDIS_ENTERPRISE_CLOUD":     "redisEnterpriseCloudConfiguration",
+		"RDS":                        "rdsConfiguration",
+		"MONGO_DB_ATLAS":             "mongoDbAtlasConfiguration",
+		"NEPTUNE_ANALYTICS":          "neptuneAnalyticsConfiguration",
+		"S3_VECTORS":                 "s3VectorsConfiguration",
+	}
+}
+
+// validateStorageConfiguration checks that the storage type comes with its
+// matching configuration member.
+func validateStorageConfiguration(raw json.RawMessage) error {
+	var sc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &sc); err != nil {
+		return errors.New(errors.InvalidArgument, "storageConfiguration is not a valid object")
+	}
+
+	var typ string
+	if t, ok := sc["type"]; ok && !isNull(t) {
+		if err := json.Unmarshal(t, &typ); err != nil {
+			return errors.New(errors.InvalidArgument, "storageConfiguration.type is not a string")
+		}
+	}
+
+	var v violations
+
+	v.required("storageConfiguration.type", typ == "")
+
+	if member, ok := storageTypeMembers()[typ]; ok {
+		v.required("storageConfiguration."+member, isNull(sc[member]))
+	}
+
+	return v.err()
 }
 
 // paginate slices one page of items (already in a stable order) per the

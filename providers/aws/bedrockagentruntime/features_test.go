@@ -29,7 +29,7 @@ func (l *linked) kb(t *testing.T, docs map[string]string) (kbID, dsID string) {
 	kb, err := l.cp.CreateKnowledgeBase(ctx, badriver.KnowledgeBaseConfig{
 		Name: "kb", RoleArn: "arn:aws:iam::123456789012:role/r",
 		KnowledgeBaseConfiguration: json.RawMessage(`{"type":"VECTOR"}`),
-		StorageConfiguration:       json.RawMessage(`{"type":"PINECONE"}`),
+		StorageConfiguration:       json.RawMessage(`{"type":"PINECONE","pineconeConfiguration":{}}`),
 	})
 	require.NoError(t, err)
 
