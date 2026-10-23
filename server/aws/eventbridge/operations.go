@@ -35,9 +35,10 @@ func (h *Handler) createEventBus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	info, err := h.bus.CreateEventBus(r.Context(), ebdriver.EventBusConfig{
-		Name:        req.Name,
-		Tags:        tagsToMap(req.Tags),
-		Description: req.Description,
+		Name:            req.Name,
+		Tags:            tagsToMap(req.Tags),
+		Description:     req.Description,
+		EventSourceName: req.EventSourceName,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -339,6 +340,12 @@ func (h *Handler) putEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	writeEntryResults(w, results)
+}
+
+// writeEntryResults answers a PutEvents or PutPartnerEvents call with each
+// entry's outcome and the count of failed entries.
+func writeEntryResults(w http.ResponseWriter, results []ebdriver.PutEventsEntryResult) {
 	resp := putEventsResponse{Entries: make([]putEventsResultEntry, len(results))}
 	for i, res := range results {
 		resp.Entries[i] = putEventsResultEntry{EventID: res.EventID, ErrorCode: res.ErrorCode, ErrorMessage: res.ErrorMessage}

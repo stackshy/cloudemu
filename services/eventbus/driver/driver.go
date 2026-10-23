@@ -82,6 +82,10 @@ type EventBusConfig struct {
 	// Description is the caller-supplied free-text description of the event
 	// bus (EventBridge CreateEventBus's Description). Empty for Azure and GCP.
 	Description string
+	// EventSourceName is the partner event source a partner event bus is
+	// matched to (EventBridge CreateEventBus's EventSourceName). Empty for a
+	// custom event bus, and for Azure and GCP.
+	EventSourceName string
 }
 
 // Rule defines an event routing rule with filtering.

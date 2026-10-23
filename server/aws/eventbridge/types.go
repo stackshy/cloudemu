@@ -21,9 +21,10 @@ type tagJSON struct {
 // --- request envelopes ---
 
 type createEventBusRequest struct {
-	Name        string    `json:"Name"`
-	Description string    `json:"Description"`
-	Tags        []tagJSON `json:"Tags"`
+	Name            string    `json:"Name"`
+	EventSourceName string    `json:"EventSourceName"`
+	Description     string    `json:"Description"`
+	Tags            []tagJSON `json:"Tags"`
 }
 
 type nameRequest struct {

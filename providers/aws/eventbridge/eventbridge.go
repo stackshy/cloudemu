@@ -103,6 +103,7 @@ type Mock struct {
 	connections     *memstore.Store[connectionData]
 	apiDestinations *memstore.Store[driver.APIDestination]
 	endpoints       *memstore.Store[driver.Endpoint]
+	partnerSources  *memstore.Store[partnerSource]
 	// endpointSettle holds each global endpoint's CREATING/UPDATING window.
 	endpointSettle *settle.Set
 	// secrets holds each connection's credentials; nil leaves SecretArn a bare
@@ -173,6 +174,7 @@ func New(opts *config.Options) *Mock {
 		connections:     memstore.New[connectionData](),
 		apiDestinations: memstore.New[driver.APIDestination](),
 		endpoints:       memstore.New[driver.Endpoint](),
+		partnerSources:  memstore.New[partnerSource](),
 		endpointSettle:  settle.NewSet(),
 		httpClient:      defaultHTTPClient(),
 		apiDestSlots:    make(chan struct{}, maxAPIDestinationDeliveries),
@@ -196,14 +198,18 @@ func New(opts *config.Options) *Mock {
 	return m
 }
 
-// CreateEventBus creates a new EventBridge event bus.
+// CreateEventBus creates a new EventBridge event bus. With EventSourceName set
+// it creates the partner event bus matched to that partner event source, which
+// becomes ACTIVE.
 func (m *Mock) CreateEventBus(_ context.Context, cfg driver.EventBusConfig) (*driver.EventBusInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "event bus name is required")
 	}
 
-	if m.buses.Has(cfg.Name) {
-		return nil, errors.Newf(errors.AlreadyExists, "event bus %q already exists", cfg.Name)
+	if cfg.EventSourceName != "" {
+		if err := m.checkPartnerBus(&cfg); err != nil {
+			return nil, err
+		}
 	}
 
 	busARN := idgen.AWSARN("events", m.opts.Region, m.opts.AccountID, "event-bus/"+cfg.Name)
@@ -229,7 +235,18 @@ func (m *Mock) CreateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 		events: []driver.Event{},
 	}
 
-	m.buses.Set(cfg.Name, bd)
+	if !m.buses.SetIfAbsent(cfg.Name, bd) {
+		return nil, errors.Newf(errors.AlreadyExists, "event bus %q already exists", cfg.Name)
+	}
+
+	if cfg.EventSourceName != "" {
+		// The source may have been deleted since checkPartnerBus looked.
+		if err := m.transitionOwnSource(cfg.EventSourceName, activate(cfg.EventSourceName)); err != nil {
+			m.buses.Delete(cfg.Name)
+
+			return nil, err
+		}
+	}
 
 	// Seed the ARN-keyed tag store so create-time tags are visible to
 	// ListTagsForResource, matching real EventBridge.
@@ -242,7 +259,8 @@ func (m *Mock) CreateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 	return &result, nil
 }
 
-// DeleteEventBus deletes an EventBridge event bus.
+// DeleteEventBus deletes an EventBridge event bus. Deleting a partner event bus
+// moves its event source back to PENDING.
 func (m *Mock) DeleteEventBus(_ context.Context, name string) error {
 	if name == defaultBusName {
 		return errors.New(errors.InvalidArgument, "cannot delete the default event bus")
@@ -251,6 +269,8 @@ func (m *Mock) DeleteEventBus(_ context.Context, name string) error {
 	if !m.buses.Delete(name) {
 		return errors.Newf(errors.NotFound, "event bus %q not found", name)
 	}
+
+	m.releasePartnerSource(name)
 
 	return nil
 }

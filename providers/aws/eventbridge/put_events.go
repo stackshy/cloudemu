@@ -29,8 +29,6 @@ const (
 )
 
 const (
-	putEventsEntryCountMessage = "1 validation error detected: Value at 'entries' failed to satisfy " +
-		"constraint: Member must have length less than or equal to 10 and greater than or equal to 1."
 	putEventsSizeMessage = "Total size of the entries in the request is over the limit."
 
 	msgSourceRequired     = "Parameter Source is not valid. Reason: Source is a required argument."
@@ -75,11 +73,12 @@ func entrySize(e *driver.Event) int {
 	return size
 }
 
-// validatePutEventsRequest applies the request-wide limits that fail the whole
-// call: 1 to 10 entries and a total size under the region's limit.
-func validatePutEventsRequest(events []driver.Event, region string) error {
-	if n := len(events); n < 1 || n > maxPutEventsEntries {
-		return errors.New(errors.InvalidArgument, putEventsEntryCountMessage)
+// validateEntriesRequest applies the request-wide limits that fail the whole
+// call: 1 to maxEntries entries and a total size under the region's limit.
+func validateEntriesRequest(events []driver.Event, region string, maxEntries int) error {
+	if n := len(events); n < 1 || n > maxEntries {
+		return errors.Newf(errors.InvalidArgument, "1 validation error detected: Value at 'entries' failed to satisfy "+
+			"constraint: Member must have length less than or equal to %d and greater than or equal to 1.", maxEntries)
 	}
 
 	total := 0
@@ -125,7 +124,7 @@ func isJSONObject(s string) bool {
 // addressed to a bus that does not exist still gets an EventId and counts as a
 // success, but is dropped: that is what real EventBridge does.
 func (m *Mock) PutEventEntries(ctx context.Context, events []driver.Event) ([]driver.PutEventsEntryResult, error) {
-	if err := validatePutEventsRequest(events, m.opts.Region); err != nil {
+	if err := validateEntriesRequest(events, m.opts.Region, maxPutEventsEntries); err != nil {
 		return nil, err
 	}
 
