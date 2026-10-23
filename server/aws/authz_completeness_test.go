@@ -75,9 +75,9 @@ func TestHandlerIAMServicesMatchTable(t *testing.T) {
 		"*elasticache.Handler": "elasticache", "*elbv2.Handler": "elasticloadbalancing", "*sns.Handler": "sns",
 		"*cloudformation.Handler": "cloudformation", "*cloudwatch.Handler": "cloudwatch", "*ec2.Handler": "ec2",
 		"*sagemaker.Handler": "sagemaker", "*s3.Handler": "s3", "*lambda.Handler": "lambda",
-		"*route53.Handler": "route53", "*cloudfront.Handler": "cloudfront",
+		"*route53.Handler": "route53", "*cloudfront.Handler": "cloudfront", "*eks.Handler": "eks",
 		// Tier 0: REST, service level.
-		"*apigateway.Handler": "apigateway", "*apigatewayv2.Handler": "apigateway", "*eks.Handler": "eks",
+		"*apigateway.Handler": "apigateway", "*apigatewayv2.Handler": "apigateway",
 		"*efs.Handler": "elasticfilesystem", "*batch.Handler": "batch",
 		"*sesv2.Handler": "ses", "*opensearch.Handler": "es", "*appsync.Handler": "appsync", "*appflow.Handler": "appflow",
 		"*mwaa.Handler": "airflow", "*mq.Handler": "mq", "*codeartifact.Handler": "codeartifact", "*backup.Handler": "backup",
@@ -155,6 +155,7 @@ func TestHandlerIAMServicesMatchTable(t *testing.T) {
 func TestOpLevelRESTHandlersAreResolvers(t *testing.T) {
 	want := map[string]bool{
 		"*s3.Handler": true, "*lambda.Handler": true, "*route53.Handler": true, "*cloudfront.Handler": true,
+		"*eks.Handler": true,
 	}
 
 	srv, _ := fullServer(t)

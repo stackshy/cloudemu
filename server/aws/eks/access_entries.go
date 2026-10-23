@@ -86,47 +86,6 @@ type listAccessPoliciesResponse struct {
 	NextToken      string             `json:"nextToken,omitempty"`
 }
 
-// Routing.
-
-// serveAccessEntriesCollection handles /clusters/{name}/access-entries.
-func (h *Handler) serveAccessEntriesCollection(w http.ResponseWriter, r *http.Request, clusterName string) {
-	switch r.Method {
-	case http.MethodPost:
-		h.createAccessEntry(w, r, clusterName)
-	case http.MethodGet:
-		h.listAccessEntries(w, r, clusterName)
-	default:
-		methodNotAllowed(w)
-	}
-}
-
-// serveAccessEntry handles /clusters/{name}/access-entries/{principalArn}.
-func (h *Handler) serveAccessEntry(w http.ResponseWriter, r *http.Request, clusterName, principalArn string) {
-	switch r.Method {
-	case http.MethodGet:
-		h.describeAccessEntry(w, r, clusterName, principalArn)
-	case http.MethodPost:
-		h.updateAccessEntry(w, r, clusterName, principalArn)
-	case http.MethodDelete:
-		h.deleteAccessEntry(w, r, clusterName, principalArn)
-	default:
-		methodNotAllowed(w)
-	}
-}
-
-// serveEntryPolicies handles
-// /clusters/{name}/access-entries/{principalArn}/access-policies.
-func (h *Handler) serveEntryPolicies(w http.ResponseWriter, r *http.Request, clusterName, principalArn string) {
-	switch r.Method {
-	case http.MethodPost:
-		h.associateAccessPolicy(w, r, clusterName, principalArn)
-	case http.MethodGet:
-		h.listAssociatedAccessPolicies(w, r, clusterName, principalArn)
-	default:
-		methodNotAllowed(w)
-	}
-}
-
 // Operations.
 
 func (h *Handler) createAccessEntry(w http.ResponseWriter, r *http.Request, clusterName string) {
@@ -236,12 +195,6 @@ func (h *Handler) associateAccessPolicy(w http.ResponseWriter, r *http.Request, 
 func (h *Handler) disassociateAccessPolicy(
 	w http.ResponseWriter, r *http.Request, clusterName, principalArn, policyArn string,
 ) {
-	if r.Method != http.MethodDelete {
-		methodNotAllowed(w)
-
-		return
-	}
-
 	if err := h.eks.DisassociateAccessPolicy(r.Context(), clusterName, principalArn, policyArn); err != nil {
 		writeErr(w, err)
 
@@ -278,12 +231,6 @@ func (h *Handler) listAssociatedAccessPolicies(w http.ResponseWriter, r *http.Re
 }
 
 func (h *Handler) listAccessPolicies(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		methodNotAllowed(w)
-
-		return
-	}
-
 	policies, err := h.eks.ListAccessPolicies(r.Context())
 	if err != nil {
 		writeErr(w, err)
