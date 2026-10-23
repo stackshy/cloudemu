@@ -49,6 +49,7 @@ import (
 	cgrpc "github.com/stackshy/cloudemu/v2/server/grpc"
 	bigtableadmingrpc "github.com/stackshy/cloudemu/v2/server/grpc/bigtableadmin"
 	ociserver "github.com/stackshy/cloudemu/v2/server/oci"
+	"github.com/stackshy/cloudemu/v2/server/wire"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsidentity"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
@@ -1110,16 +1111,12 @@ func (a *App) buildServers() ([]listenerServer, endpointSet, error) {
 			eps.Azure = fmt.Sprintf("https://%s", addr)
 		}
 
-		servers = append(servers, &httpServer{
-			label: p,
-			srv: &http.Server{
-				Addr:              addr,
-				Handler:           a.handlerFor(a.backends[p], a.seedFor(p)),
-				TLSConfig:         tlsCfg,
-				ReadHeaderTimeout: serverReadHeaderTimeout,
-			},
-			tls: isTLS,
-		})
+		servers = append(servers, newHTTPServer(p, &http.Server{
+			Addr:              addr,
+			Handler:           a.handlerFor(a.backends[p], a.seedFor(p)),
+			TLSConfig:         tlsCfg,
+			ReadHeaderTimeout: serverReadHeaderTimeout,
+		}, isTLS))
 	}
 
 	if a.k8sBackend != nil {
@@ -1133,16 +1130,12 @@ func (a *App) buildServers() ([]listenerServer, endpointSet, error) {
 			return nil, eps, fmt.Errorf("kubernetes data-plane TLS: %w", err)
 		}
 
-		servers = append(servers, &httpServer{
-			label: "kubernetes",
-			srv: &http.Server{
-				Addr:              addr,
-				Handler:           a.handlerFor(a.k8sBackend, nil),
-				TLSConfig:         k8sTLS,
-				ReadHeaderTimeout: serverReadHeaderTimeout,
-			},
-			tls: true,
-		})
+		servers = append(servers, newHTTPServer("kubernetes", &http.Server{
+			Addr:              addr,
+			Handler:           a.handlerFor(a.k8sBackend, nil),
+			TLSConfig:         k8sTLS,
+			ReadHeaderTimeout: serverReadHeaderTimeout,
+		}, true))
 		// Show the reachable (advertised) endpoint, not the bind address.
 		eps.Kubernetes = fmt.Sprintf("https://%s", net.JoinHostPort(a.advertiseHost, a.k8sPort))
 	}
@@ -1310,6 +1303,20 @@ type httpServer struct {
 	label string
 	srv   *http.Server
 	tls   bool
+	// stopStreams ends the long-lived streaming responses (such as a Live
+	// Tail session) when shutdown starts, so they do not hold the graceful
+	// shutdown until its timeout.
+	stopStreams context.CancelFunc
+}
+
+// newHTTPServer wraps srv, giving its connections a base context that carries
+// the server's stream-shutdown signal (see wire.StreamContext).
+func newHTTPServer(label string, srv *http.Server, isTLS bool) *httpServer {
+	streams, stop := context.WithCancel(context.Background())
+	base := wire.WithShutdown(context.Background(), streams)
+	srv.BaseContext = func(net.Listener) context.Context { return base }
+
+	return &httpServer{label: label, srv: srv, tls: isTLS, stopStreams: stop}
 }
 
 func (h *httpServer) name() string { return h.label }
@@ -1323,7 +1330,11 @@ func (h *httpServer) serve(ln net.Listener) error {
 	return h.srv.Serve(ln)
 }
 
-func (h *httpServer) shutdown(ctx context.Context) error { return h.srv.Shutdown(ctx) }
+func (h *httpServer) shutdown(ctx context.Context) error {
+	h.stopStreams()
+
+	return h.srv.Shutdown(ctx)
+}
 
 // grpcServer adapts the server/grpc transport wrapper to listenerServer, so the
 // optional gRPC endpoint binds and drains through the same loop as the HTTP

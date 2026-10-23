@@ -245,6 +245,43 @@ type DescribeAccountPoliciesInput struct {
 	AccountIdentifiers []string
 }
 
+// StartLiveTailInput is a StartLiveTail request. LogGroupIdentifiers are log
+// group ARNs. LogStreamNames and LogStreamNamePrefixes are mutually exclusive
+// and need exactly one log group.
+type StartLiveTailInput struct {
+	LogGroupIdentifiers   []string
+	LogStreamNames        []string
+	LogStreamNamePrefixes []string
+	LogEventFilterPattern string
+}
+
+// LiveTailEvent is one log event a Live Tail session delivers.
+type LiveTailEvent struct {
+	LogGroupIdentifier string
+	LogStreamName      string
+	Message            string
+	Timestamp          time.Time
+	IngestionTime      time.Time
+}
+
+// LiveTailUpdate is one sessionUpdate: the events ingested since the previous
+// update. Sampled is set when more events matched than one update carries.
+type LiveTailUpdate struct {
+	Results []LiveTailEvent
+	Sampled bool
+}
+
+// LiveTailSession is a running Live Tail session. Updates delivers one update
+// per interval and is closed when the session ends: on Close, when the
+// StartLiveTail context ends, or on timeout, after which TimedOut reports
+// true.
+type LiveTailSession interface {
+	SessionID() string
+	Updates() <-chan LiveTailUpdate
+	TimedOut() bool
+	Close()
+}
+
 // AWSLogging is an optional interface implemented by the AWS CloudWatch Logs
 // backend for operations with no cross-provider equivalent. The CloudWatch
 // Logs wire handler type-asserts for it; Azure, GCP and OCI backends do not
@@ -307,4 +344,8 @@ type AWSLogging interface {
 	PutAccountPolicy(ctx context.Context, input *PutAccountPolicyInput) (*AccountPolicy, error)
 	DescribeAccountPolicies(ctx context.Context, input DescribeAccountPoliciesInput) ([]AccountPolicy, error)
 	DeleteAccountPolicy(ctx context.Context, policyName, policyType string) error
+
+	// StartLiveTail opens a Live Tail session over events ingested from now
+	// on. The session runs until ctx ends, Close is called, or it times out.
+	StartLiveTail(ctx context.Context, input *StartLiveTailInput) (LiveTailSession, error)
 }

@@ -83,6 +83,10 @@ type Mock struct {
 	// step, and serializes claiming tasks for writing. It is never held
 	// across an S3 call.
 	exportMu sync.Mutex
+	// liveTails holds the running Live Tail sessions by ID, under liveTailMu.
+	// Sessions are ephemeral and never persisted.
+	liveTails  map[string]*liveTail
+	liveTailMu sync.Mutex
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -117,6 +121,7 @@ func New(opts *config.Options) *Mock {
 		periods: map[string]filterPeriod{},
 
 		accountPolicies: map[string]*accountPolicy{},
+		liveTails:       map[string]*liveTail{},
 	}
 }
 

@@ -11640,6 +11640,10 @@
             "name": "PutRetentionPolicy"
           },
           {
+            "name": "StartLiveTail",
+            "doc": "StartLiveTail opens a Live Tail session over events ingested from now"
+          },
+          {
             "name": "StartQuery",
             "doc": "Logs Insights. A query is Running until its first GetQueryResults,"
           },
@@ -11700,6 +11704,24 @@
           },
           {
             "name": "UpdateSink"
+          }
+        ]
+      },
+      {
+        "name": "LiveTailSession",
+        "doc": "LiveTailSession is a running Live Tail session. Updates delivers one update",
+        "operations": [
+          {
+            "name": "Close"
+          },
+          {
+            "name": "SessionID"
+          },
+          {
+            "name": "TimedOut"
+          },
+          {
+            "name": "Updates"
           }
         ]
       }

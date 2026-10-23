@@ -11,8 +11,8 @@ import (
 // maxDescribeExportTasks is the DescribeExportTasks limit maximum and default.
 const maxDescribeExportTasks = 50
 
-// dispatchExport handles the export task operations, delegating the policy
-// operations to dispatchPolicies.
+// dispatchExport handles the export task operations and StartLiveTail,
+// delegating the policy operations to dispatchPolicies.
 func (h *Handler) dispatchExport(w http.ResponseWriter, r *http.Request, op string) {
 	switch op {
 	case "CreateExportTask":
@@ -21,6 +21,8 @@ func (h *Handler) dispatchExport(w http.ResponseWriter, r *http.Request, op stri
 		h.describeExportTasks(w, r)
 	case "CancelExportTask":
 		h.cancelExportTask(w, r)
+	case "StartLiveTail":
+		h.startLiveTail(w, r)
 	default:
 		h.dispatchPolicies(w, r, op)
 	}

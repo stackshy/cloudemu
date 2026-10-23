@@ -148,7 +148,7 @@ func firstAfter(events []driver.LogEvent, cutoff time.Time) int {
 }
 
 // storeEvents appends accepted events to the stream, updates the group's
-// counters, and runs metric filters and subscriptions. It returns the
+// counters, and runs metric filters, subscriptions and Live Tail. It returns the
 // stream's next sequence token. Every upload, even one whose events were all
 // rejected, advances the token.
 func (m *Mock) storeEvents(
@@ -211,6 +211,7 @@ func (m *Mock) storeEvents(
 
 	m.evaluateMetricFilters(g, events)
 	m.deliverToSubscriptions(ctx, g, streamName, copied)
+	m.publishLiveTail(groupName, streamName, copied)
 
 	return token
 }
