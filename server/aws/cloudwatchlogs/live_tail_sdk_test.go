@@ -13,10 +13,14 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream"
+	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream/eventstreamapi"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	cwl "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	cwltypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/config"
@@ -31,6 +35,8 @@ type liveTailEnv struct {
 	client    *cwl.Client
 	transport *http.Transport
 	clock     *config.FakeClock
+	url       string
+	cfg       aws.Config
 
 	mu    sync.Mutex
 	hosts []string
@@ -51,6 +57,7 @@ func newLiveTailEnv(t *testing.T) *liveTailEnv {
 	}))
 	t.Cleanup(ts.Close)
 
+	env.url = ts.URL
 	addr := ts.Listener.Addr().String()
 	env.transport = &http.Transport{
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
@@ -68,6 +75,7 @@ func newLiveTailEnv(t *testing.T) *liveTailEnv {
 		t.Fatalf("aws config: %v", err)
 	}
 
+	env.cfg = cfg
 	env.client = cwl.NewFromConfig(cfg, func(o *cwl.Options) {
 		o.BaseEndpoint = aws.String("http://logs.localhost.test")
 	})
@@ -274,5 +282,85 @@ func TestSDKStartLiveTailErrors(t *testing.T) {
 				t.Fatalf("err = %v, want %s", err, tt.want)
 			}
 		})
+	}
+}
+
+// noHostPrefix is the documented way to reach a localhost endpoint from
+// aws-sdk-go-v2: it turns off the stream- host prefix for every call.
+func noHostPrefix(s *middleware.Stack) error {
+	return s.Initialize.Add(middleware.InitializeMiddlewareFunc("noHostPrefix",
+		func(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (
+			middleware.InitializeOutput, middleware.Metadata, error,
+		) {
+			return next.HandleInitialize(smithyhttp.DisableEndpointHostPrefix(ctx, true), in)
+		}), middleware.Before)
+}
+
+func TestSDKStartLiveTailWithoutHostPrefix(t *testing.T) {
+	env := newLiveTailEnv(t)
+	arn := env.groupARN(t, "/lt/plain", "s")
+
+	// A plain 127.0.0.1 endpoint with the default transport, as a user would
+	// configure it.
+	cfg := env.cfg.Copy()
+	cfg.HTTPClient = http.DefaultClient
+	client := cwl.NewFromConfig(cfg, func(o *cwl.Options) {
+		o.BaseEndpoint = aws.String(env.url)
+		o.APIOptions = append(o.APIOptions, noHostPrefix)
+	})
+
+	out, err := client.StartLiveTail(context.Background(), &cwl.StartLiveTailInput{LogGroupIdentifiers: []string{arn}})
+	if err != nil {
+		t.Fatalf("StartLiveTail: %v", err)
+	}
+
+	stream := out.GetStream()
+	defer stream.Close()
+
+	if _, ok := nextEvent(t, stream.Events()).(*cwltypes.StartLiveTailResponseStreamMemberSessionStart); !ok {
+		t.Fatal("expected sessionStart")
+	}
+}
+
+// TestStartLiveTailStreamingHostPrefix sends the request the way botocore
+// does, to the streaming- host prefix, and reads the frames.
+func TestStartLiveTailStreamingHostPrefix(t *testing.T) {
+	env := newLiveTailEnv(t)
+	arn := env.groupARN(t, "/lt/botocore", "s")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	body := `{"logGroupIdentifiers":["` + arn + `"]}`
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://streaming-logs.localhost.test/", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req.Header.Set("X-Amz-Target", "Logs_20140328.StartLiveTail")
+	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+
+	resp, err := (&http.Client{Transport: env.transport}).Do(req)
+	if err != nil {
+		t.Fatalf("StartLiveTail: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if !env.sawHost("streaming-logs.localhost.test") {
+		t.Fatal("StartLiveTail did not reach the streaming-logs. host")
+	}
+
+	dec := eventstream.NewDecoder()
+
+	for _, want := range []string{"initial-response", "sessionStart", "sessionUpdate"} {
+		msg, err := dec.Decode(resp.Body, nil)
+		if err != nil {
+			t.Fatalf("decode %s: %v", want, err)
+		}
+
+		if got := msg.Headers.Get(eventstreamapi.EventTypeHeader); got == nil || got.String() != want {
+			t.Fatalf("event type = %v, want %s", got, want)
+		}
 	}
 }

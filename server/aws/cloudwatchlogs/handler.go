@@ -22,8 +22,9 @@
 //	CreateExportTask    DescribeExportTasks CancelExportTask
 //	PutDataProtectionPolicy GetDataProtectionPolicy DeleteDataProtectionPolicy
 //	PutAccountPolicy    DescribeAccountPolicies DeleteAccountPolicy
-//	StartLiveTail (an event stream; SDKs send it to the stream-logs. host prefix,
-//	and dispatch is by X-Amz-Target, so the prefixed host needs no extra route)
+//	StartLiveTail (an event stream; aws-sdk-go-v2 sends it to a stream- host prefix
+//	and botocore to streaming-, and dispatch is by X-Amz-Target, so either
+//	prefixed host needs no extra route)
 //	TagResource / UntagResource / ListTagsForResource (and the legacy *LogGroup forms)
 //
 // CloudWatch Logs-only operations go through the optional driver.AWSLogging
