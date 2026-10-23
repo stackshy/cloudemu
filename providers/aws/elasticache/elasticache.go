@@ -207,8 +207,8 @@ type reservation[T any] struct {
 
 // Mock is an in-memory mock implementation of the AWS ElastiCache service.
 //
-// Lock order: mu, then a settle set's lock, then tagMu, then evMu. A lock is
-// only taken while holding locks earlier in that list. The settle sets compute
+// Lock order: mu, then a settle set's lock. A settle lock is only taken while
+// holding mu or no lock at all, never the reverse. The settle sets compute
 // state from the clock on read and never call back, so nothing re-enters mu.
 // No lock is held across a call to another service (monitoring, the VPC subnet
 // resolver) or to the real cache engine.
@@ -239,7 +239,7 @@ type Mock struct {
 	cacheSettle *settle.Set
 	rgSettle    *settle.Set
 
-	tagMu     sync.Mutex
+	// tagsByARN is guarded by mu like the stores above.
 	tagsByARN map[string]map[string]string
 }
 
@@ -345,9 +345,20 @@ func (m *Mock) cacheIDTaken(name string) bool {
 	// single-node cache clusters without being backed by m.caches, so guard the
 	// same id space here. Real ElastiCache rejects a create colliding with a
 	// member id with CacheClusterAlreadyExists.
-	_, member := m.lookupMember(name)
+	if _, member := m.lookupMember(name); member {
+		return true
+	}
 
-	return member
+	// A replication group still being created or deleted owns its member ids
+	// too, or a cluster named "<groupId>-001" could slip in and collide with the
+	// member once the group commits.
+	for _, r := range m.rgRes {
+		if slices.Contains(r.record.MemberClusters, name) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // reserveCache validates a create under mu, builds the cluster record, and

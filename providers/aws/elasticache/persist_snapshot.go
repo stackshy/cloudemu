@@ -60,9 +60,7 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 
 	snap.Caches = caches
 
-	m.tagMu.Lock()
 	snap.TagsByARN = m.tagsByARN
-	m.tagMu.Unlock()
 
 	return json.Marshal(snap)
 }
@@ -131,9 +129,7 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	}
 
 	if snap.TagsByARN != nil {
-		m.tagMu.Lock()
 		m.tagsByARN = snap.TagsByARN
-		m.tagMu.Unlock()
 	}
 
 	return nil

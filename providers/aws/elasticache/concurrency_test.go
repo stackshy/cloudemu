@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -527,5 +528,229 @@ func TestSnapshotRestoreSerialisedWithCreate(t *testing.T) {
 	list, err := dst.ListCaches(ctx, scope.Scope{})
 	if err != nil || len(list) != raceGoroutines {
 		t.Fatalf("restored %d clusters (%v), want %d", len(list), err, raceGoroutines)
+	}
+}
+
+func TestCreateCacheParameterGroupConcurrentDuplicate(t *testing.T) {
+	m, _ := newTestMock()
+
+	successes, codes := runConcurrently(raceGoroutines, func() error {
+		_, err := m.CreateCacheParameterGroup(context.Background(), "dup", "redis7", "d")
+		return err
+	})
+
+	assertOneWinner(t, successes, codes, FaultCacheParameterGroupAlreadyExists)
+}
+
+// TestModifyVsResetParameterGroupRace interleaves modifies, resets and reads of
+// one parameter group. Under -race it proves the overrides map is never
+// written while a reader holds it.
+func TestModifyVsResetParameterGroupRace(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestMock()
+
+	if _, err := m.CreateCacheParameterGroup(ctx, "pg", "redis7", "d"); err != nil {
+		t.Fatalf("CreateCacheParameterGroup: %v", err)
+	}
+
+	var wg sync.WaitGroup
+
+	for i := range raceGoroutines {
+		wg.Add(3)
+
+		go func() {
+			defer wg.Done()
+
+			if err := m.ModifyCacheParameterGroup(ctx, "pg", []ParameterUpdate{
+				{Name: "maxmemory-policy", Value: "allkeys-lru"}, {Name: "timeout", Value: strconv.Itoa(i + 20)},
+			}); err != nil {
+				t.Errorf("ModifyCacheParameterGroup: %v", err)
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			if err := m.ResetCacheParameterGroup(ctx, "pg", i%2 == 0, []string{"timeout"}); err != nil {
+				t.Errorf("ResetCacheParameterGroup: %v", err)
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			readParameterGroup(t, m, "pg")
+		}()
+	}
+
+	wg.Wait()
+}
+
+// readParameterGroup reads a group's overrides and parameters the way a
+// Describe caller would.
+func readParameterGroup(t *testing.T, m *Mock, name string) {
+	t.Helper()
+
+	groups, err := m.DescribeCacheParameterGroups(context.Background(), []string{name})
+	if err != nil {
+		t.Errorf("DescribeCacheParameterGroups: %v", err)
+		return
+	}
+
+	seen := 0
+	for range groups[0].Overrides {
+		seen++
+	}
+
+	if seen > 2 {
+		t.Errorf("overrides = %d entries, want at most 2", seen)
+	}
+
+	if _, err := m.DescribeCacheParameters(context.Background(), name, ""); err != nil {
+		t.Errorf("DescribeCacheParameters: %v", err)
+	}
+}
+
+// snapshotRaceResult holds the outcome of one round of
+// TestSnapshotVsDeleteReplicationGroupRace.
+type snapshotRaceResult struct {
+	manual, final, copied, deleted error
+}
+
+// TestSnapshotVsDeleteReplicationGroupRace races snapshot create, copy and
+// delete against deleting the replication group they back up. The manual
+// snapshot and the group's final snapshot share a name, so exactly one of them
+// wins; a snapshot of the group never outlives a failed lookup; and copy and
+// delete of one snapshot are serialized.
+func TestSnapshotVsDeleteReplicationGroupRace(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestMock()
+
+	for i := range raceGoroutines {
+		rg := fmt.Sprintf("rg%d", i)
+		if _, err := m.CreateReplicationGroup(ctx, driver.ReplicationGroupConfig{ID: rg, Engine: "redis"}); err != nil {
+			t.Fatalf("CreateReplicationGroup: %v", err)
+		}
+
+		if _, err := m.CreateSnapshot(ctx, driver.SnapshotConfig{SnapshotName: "base-" + rg, ReplicationGroupID: rg}); err != nil {
+			t.Fatalf("CreateSnapshot: %v", err)
+		}
+
+		var (
+			wg  sync.WaitGroup
+			res snapshotRaceResult
+		)
+
+		wg.Add(4)
+
+		go func() {
+			defer wg.Done()
+
+			_, res.manual = m.CreateSnapshot(ctx, driver.SnapshotConfig{SnapshotName: "snap-" + rg, ReplicationGroupID: rg})
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			res.final = m.DeleteReplicationGroup(ctx, rg, driver.DeleteReplicationGroupOptions{FinalSnapshotIdentifier: "snap-" + rg})
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			_, res.copied = m.CopySnapshot(ctx, driver.CopySnapshotConfig{SourceSnapshotName: "base-" + rg, TargetSnapshotName: "copy-" + rg})
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			_, res.deleted = m.DeleteSnapshot(ctx, "base-"+rg)
+		}()
+
+		wg.Wait()
+
+		checkSnapshotRaceOutcome(t, m, rg, &res)
+	}
+}
+
+// checkSnapshotRaceOutcome asserts the invariants of one round.
+func checkSnapshotRaceOutcome(t *testing.T, m *Mock, rg string, res *snapshotRaceResult) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	// Manual first: it wins and the final snapshot then collides, so the group
+	// survives. Delete first: the final snapshot wins and the manual one finds
+	// no group. Never both, never neither.
+	if (res.manual == nil) == (res.final == nil) {
+		t.Fatalf("%s: manual snapshot err %v, delete err %v; want exactly one to succeed", rg, res.manual, res.final)
+	}
+
+	// Losing to the delete, the manual snapshot finds the final snapshot's name
+	// already taken (the name is checked first) or, failing that, no group.
+	if code := faultCode(res.manual); res.manual != nil &&
+		code != FaultSnapshotAlreadyExists && code != FaultReplicationGroupNotFound {
+		t.Fatalf("%s: manual snapshot error %v, want SnapshotAlreadyExistsFault or ReplicationGroupNotFoundFault", rg, res.manual)
+	}
+
+	if res.final != nil && faultCode(res.final) != FaultSnapshotAlreadyExists {
+		t.Fatalf("%s: delete error %v, want SnapshotAlreadyExistsFault", rg, res.final)
+	}
+
+	_, describeErr := m.DescribeReplicationGroups(ctx, []string{rg})
+	if (res.final == nil) != (faultCode(describeErr) == FaultReplicationGroupNotFound) {
+		t.Fatalf("%s: delete err %v but describe err %v", rg, res.final, describeErr)
+	}
+
+	if res.deleted != nil {
+		t.Fatalf("%s: DeleteSnapshot of base: %v", rg, res.deleted)
+	}
+
+	if res.copied != nil && faultCode(res.copied) != FaultSnapshotNotFound {
+		t.Fatalf("%s: CopySnapshot error %v, want nil or SnapshotNotFoundFault", rg, res.copied)
+	}
+
+	if _, err := m.DescribeSnapshots(ctx, driver.SnapshotFilter{SnapshotName: "base-" + rg}); faultCode(err) != FaultSnapshotNotFound {
+		t.Fatalf("%s: base snapshot survived its delete: %v", rg, err)
+	}
+}
+
+// TestCreateCacheCollidingWithReservedGroupMember proves a replication group
+// still being created owns its member ids, so a cluster named "<rg>-002" is
+// refused during the window, and that a group whose member id is already a
+// cluster is refused too.
+func TestCreateCacheCollidingWithReservedGroupMember(t *testing.T) {
+	ctx := context.Background()
+	m, eng := newGatedMock()
+
+	done := make(chan error, 1)
+
+	go func() {
+		_, err := m.CreateReplicationGroup(ctx, driver.ReplicationGroupConfig{ID: "rg", Engine: "redis", NumCacheNodes: 2})
+		done <- err
+	}()
+
+	<-eng.provisionEntered
+
+	_, err := m.CreateCache(ctx, driver.CacheConfig{Name: "rg-002", Engine: "memcached"})
+	if code := faultCode(err); code != FaultCacheClusterAlreadyExists {
+		t.Fatalf("CreateCache(rg-002) during group create: code %q, want %q", code, FaultCacheClusterAlreadyExists)
+	}
+
+	close(eng.provisionRelease)
+
+	if err := <-done; err != nil {
+		t.Fatalf("CreateReplicationGroup: %v", err)
+	}
+
+	plain, _ := newTestMock()
+
+	if _, err := plain.CreateCache(ctx, driver.CacheConfig{Name: "g2-001", Engine: "memcached"}); err != nil {
+		t.Fatalf("CreateCache: %v", err)
+	}
+
+	_, err = plain.CreateReplicationGroup(ctx, driver.ReplicationGroupConfig{ID: "g2"})
+	if code := faultCode(err); code != FaultCacheClusterAlreadyExists {
+		t.Fatalf("CreateReplicationGroup over a cluster's id: code %q, want %q", code, FaultCacheClusterAlreadyExists)
 	}
 }

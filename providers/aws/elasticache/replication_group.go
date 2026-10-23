@@ -68,6 +68,14 @@ func (m *Mock) reserveReplicationGroup(
 		return cachedriver.ReplicationGroup{}, err
 	}
 
+	// Each member is a describable cache cluster, so a member id already used by
+	// a cluster (stored or reserved) is a CacheClusterAlreadyExists, as in AWS.
+	for _, member := range rg.MemberClusters {
+		if _, reserved := m.cacheRes[member]; reserved || m.caches.Has(member) {
+			return cachedriver.ReplicationGroup{}, cacheAlreadyExists(member)
+		}
+	}
+
 	m.rgRes[cfg.ID] = &reservation[cachedriver.ReplicationGroup]{state: statusCreating, record: rg}
 
 	return rg, nil

@@ -70,9 +70,6 @@ func (m *Mock) seedTags(arn string, tags map[string]string) {
 		return
 	}
 
-	m.tagMu.Lock()
-	defer m.tagMu.Unlock()
-
 	stored := make(map[string]string, len(tags))
 	for k, v := range tags {
 		stored[k] = v
@@ -89,9 +86,6 @@ func (m *Mock) AddTags(_ context.Context, arn string, tags map[string]string) er
 	if err := m.taggableResource(arn, true); err != nil {
 		return err
 	}
-
-	m.tagMu.Lock()
-	defer m.tagMu.Unlock()
 
 	stored := m.tagsByARN[arn]
 	if stored == nil {
@@ -115,9 +109,6 @@ func (m *Mock) ListTags(_ context.Context, arn string) (map[string]string, error
 		return nil, err
 	}
 
-	m.tagMu.Lock()
-	defer m.tagMu.Unlock()
-
 	out := make(map[string]string, len(m.tagsByARN[arn]))
 	for k, v := range m.tagsByARN[arn] {
 		out[k] = v
@@ -134,9 +125,6 @@ func (m *Mock) RemoveTags(_ context.Context, arn string, keys []string) error {
 	if err := m.taggableResource(arn, true); err != nil {
 		return err
 	}
-
-	m.tagMu.Lock()
-	defer m.tagMu.Unlock()
 
 	stored := m.tagsByARN[arn]
 	for _, k := range keys {
