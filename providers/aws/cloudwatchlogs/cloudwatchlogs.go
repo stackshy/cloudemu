@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -43,6 +44,8 @@ type logGroup struct {
 	streams       *memstore.Store[*logStream]
 	metricFilters *memstore.Store[*driver.MetricFilterInfo]
 	subFilters    *memstore.Store[*driver.SubscriptionFilterInfo]
+	// dataProtection is the group's data protection policy, nil when unset.
+	dataProtection atomic.Pointer[groupPolicy]
 }
 
 // LambdaInvoker asynchronously invokes a Lambda function by ARN with a
@@ -67,6 +70,8 @@ type Mock struct {
 	// queryResultKmsKey is the account-wide key associated with Logs Insights
 	// query results (AssociateKmsKey on the query-result resource).
 	queryResultKmsKey string
+	// accountPolicies holds account policies by type and name, under mu.
+	accountPolicies map[string]*accountPolicy
 	// periods holds each metric filter's per-period default-value state,
 	// keyed by filterPeriodKey.
 	periods map[string]filterPeriod
@@ -110,6 +115,8 @@ func New(opts *config.Options) *Mock {
 		exports: memstore.New[exportTask](),
 		opts:    opts,
 		periods: map[string]filterPeriod{},
+
+		accountPolicies: map[string]*accountPolicy{},
 	}
 }
 
@@ -235,8 +242,14 @@ func (m *Mock) PutLogEvents(ctx context.Context, groupName, streamName string, e
 	return err
 }
 
-// GetLogEvents retrieves log events matching the query.
-func (m *Mock) GetLogEvents(_ context.Context, input *driver.LogQueryInput) ([]driver.LogEvent, error) {
+// GetLogEvents retrieves log events matching the query. Events masked by a
+// data protection policy come back masked.
+func (m *Mock) GetLogEvents(ctx context.Context, input *driver.LogQueryInput) ([]driver.LogEvent, error) {
+	return m.GetAWSLogEvents(ctx, input, false)
+}
+
+// GetAWSLogEvents is GetLogEvents with the unmask flag.
+func (m *Mock) GetAWSLogEvents(_ context.Context, input *driver.LogQueryInput, unmask bool) ([]driver.LogEvent, error) {
 	g, ok := m.groups.Get(input.LogGroup)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", input.LogGroup)
@@ -257,10 +270,10 @@ func (m *Mock) GetLogEvents(_ context.Context, input *driver.LogQueryInput) ([]d
 			return nil, errors.Newf(errors.NotFound, "log stream %q not found in group %q", input.LogStream, input.LogGroup)
 		}
 
-		results = append(results, m.filterEvents(s, input)...)
+		results = append(results, m.filterEvents(s, input, unmask)...)
 	} else {
 		for _, s := range g.streams.SortedValues() {
-			events := m.filterEvents(s, input)
+			events := m.filterEvents(s, input, unmask)
 			results = append(results, events...)
 		}
 
@@ -292,13 +305,15 @@ func sortLogEventsAscending(events []driver.LogEvent) {
 func (*Mock) filterEvents(
 	s *logStream,
 	input *driver.LogQueryInput,
+	unmask bool,
 ) []driver.LogEvent {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var results []driver.LogEvent
 
-	for _, e := range s.events {
+	for i := range s.events {
+		e := &s.events[i]
 		if !input.StartTime.IsZero() && e.Timestamp.Before(input.StartTime) {
 			continue
 		}
@@ -311,16 +326,27 @@ func (*Mock) filterEvents(
 			continue
 		}
 
-		results = append(results, e)
+		results = append(results, eventView(e, unmask))
 	}
 
 	return results
 }
 
-// FilterLogEvents filters log events across streams using a pattern.
+// FilterLogEvents filters log events across streams using a pattern. Events
+// masked by a data protection policy come back masked.
 func (m *Mock) FilterLogEvents(
+	ctx context.Context,
+	input *driver.FilterLogEventsInput,
+) ([]driver.FilteredLogEvent, error) {
+	return m.FilterAWSLogEvents(ctx, input, false)
+}
+
+// FilterAWSLogEvents is FilterLogEvents with the unmask flag. The pattern
+// matches the stored (masked) text either way.
+func (m *Mock) FilterAWSLogEvents(
 	_ context.Context,
 	input *driver.FilterLogEventsInput,
+	unmask bool,
 ) ([]driver.FilteredLogEvent, error) {
 	g, ok := m.groups.Get(input.LogGroup)
 	if !ok {
@@ -344,10 +370,10 @@ func (m *Mock) FilterLogEvents(
 	var results []driver.FilteredLogEvent
 
 	if input.LogStream != "" {
-		results = m.filterStreamEvents(g, input.LogStream, input, pattern)
+		results = m.filterStreamEvents(g, input.LogStream, input, pattern, unmask)
 	} else {
 		for name, s := range g.streams.All() {
-			results = append(results, m.matchEvents(s, name, input, pattern)...)
+			results = append(results, m.matchEvents(s, name, input, pattern, unmask)...)
 		}
 
 		// CloudWatch Logs interleaves matches across streams in ascending
@@ -381,13 +407,14 @@ func (m *Mock) filterStreamEvents(
 	streamName string,
 	input *driver.FilterLogEventsInput,
 	pattern *filterpattern.Pattern,
+	unmask bool,
 ) []driver.FilteredLogEvent {
 	s, ok := g.streams.Get(streamName)
 	if !ok {
 		return nil
 	}
 
-	return m.matchEvents(s, streamName, input, pattern)
+	return m.matchEvents(s, streamName, input, pattern, unmask)
 }
 
 func (*Mock) matchEvents(
@@ -395,13 +422,15 @@ func (*Mock) matchEvents(
 	streamName string,
 	input *driver.FilterLogEventsInput,
 	pattern *filterpattern.Pattern,
+	unmask bool,
 ) []driver.FilteredLogEvent {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var results []driver.FilteredLogEvent
 
-	for _, e := range s.events {
+	for i := range s.events {
+		e := &s.events[i]
 		if !input.StartTime.IsZero() && e.Timestamp.Before(input.StartTime) {
 			continue
 		}
@@ -418,7 +447,7 @@ func (*Mock) matchEvents(
 			LogStream:     streamName,
 			Timestamp:     e.Timestamp,
 			IngestionTime: e.IngestionTime,
-			Message:       e.Message,
+			Message:       eventView(e, unmask).Message,
 		})
 	}
 

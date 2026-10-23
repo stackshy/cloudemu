@@ -103,13 +103,20 @@ func (m *Mock) DescribeSubscriptionFilters(_ context.Context, logGroup string) (
 // carried forward so a subscriber Lambda that writes back into CloudWatch Logs
 // stays bounded (the guard lives in lambda.InvokeExternal).
 func (m *Mock) deliverToSubscriptions(callerCtx context.Context, g *logGroup, streamName string, events []driver.LogEvent) {
-	if m.lambda == nil || g.subFilters.Len() == 0 || len(events) == 0 {
+	if m.lambda == nil || len(events) == 0 {
 		return
+	}
+
+	// An account subscription filter policy delivers in addition to the
+	// group's own filters.
+	filters := g.subFilters.SortedValues()
+	if sf := m.accountSubscription(g.info.Name); sf != nil {
+		filters = append(filters, sf)
 	}
 
 	ctx := recursionguard.WithDepth(context.Background(), recursionguard.Depth(callerCtx))
 
-	for _, sf := range g.subFilters.SortedValues() {
+	for _, sf := range filters {
 		matched := matchSubscriptionEvents(sf.FilterPattern, events)
 		if len(matched) == 0 {
 			continue

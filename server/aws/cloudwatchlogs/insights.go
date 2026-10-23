@@ -253,13 +253,14 @@ func (h *Handler) getLogRecord(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		LogRecordPointer string `json:"logRecordPointer"`
+		Unmask           bool   `json:"unmask"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	rec, err := ext.GetLogRecord(r.Context(), req.LogRecordPointer)
+	rec, err := ext.GetLogRecord(r.Context(), req.LogRecordPointer, req.Unmask)
 	if err != nil {
 		writeErr(w, err)
 		return

@@ -20,11 +20,17 @@ type AWSLogGroupOptions struct {
 	LogGroupClass string
 }
 
+// DataProtectionStatusActivated is the DescribeLogGroups dataProtectionStatus
+// of a log group that has a data protection policy.
+const DataProtectionStatusActivated = "ACTIVATED"
+
 // AWSLogGroup is a log group with its CloudWatch Logs-only attributes.
+// DataProtectionStatus is empty when the group has no data protection policy.
 type AWSLogGroup struct {
 	LogGroupInfo
-	KmsKeyID      string
-	LogGroupClass string
+	KmsKeyID             string
+	LogGroupClass        string
+	DataProtectionStatus string
 }
 
 // LogGroupTagFilter matches log groups that carry Key with any of Values (or
@@ -192,6 +198,53 @@ type DescribeExportTasksInput struct {
 	TaskID, StatusCode string
 }
 
+// DataProtectionPolicy is a log group's data protection policy. Document is
+// empty, and LastUpdatedTime zero, when the group has no policy.
+type DataProtectionPolicy struct {
+	LogGroupIdentifier string
+	Document           string
+	LastUpdatedTime    time.Time
+}
+
+// Account policy types and the only account policy scope.
+const (
+	AccountPolicyDataProtection     = "DATA_PROTECTION_POLICY"
+	AccountPolicySubscriptionFilter = "SUBSCRIPTION_FILTER_POLICY"
+	AccountPolicyFieldIndex         = "FIELD_INDEX_POLICY"
+	AccountPolicyTransformer        = "TRANSFORMER_POLICY"
+	AccountPolicyMetricExtraction   = "METRIC_EXTRACTION_POLICY"
+	AccountPolicyScopeAll           = "ALL"
+)
+
+// PutAccountPolicyInput is a PutAccountPolicy request. An empty Scope means ALL.
+type PutAccountPolicyInput struct {
+	PolicyName        string
+	PolicyType        string
+	PolicyDocument    string
+	Scope             string
+	SelectionCriteria string
+}
+
+// AccountPolicy is an account-level policy. A policy is identified by its
+// type and name.
+type AccountPolicy struct {
+	AccountID         string
+	PolicyName        string
+	PolicyType        string
+	PolicyDocument    string
+	Scope             string
+	SelectionCriteria string
+	LastUpdatedTime   time.Time
+}
+
+// DescribeAccountPoliciesInput narrows DescribeAccountPolicies. PolicyType is
+// required; PolicyName and AccountIdentifiers are optional filters.
+type DescribeAccountPoliciesInput struct {
+	PolicyType         string
+	PolicyName         string
+	AccountIdentifiers []string
+}
+
 // AWSLogging is an optional interface implemented by the AWS CloudWatch Logs
 // backend for operations with no cross-provider equivalent. The CloudWatch
 // Logs wire handler type-asserts for it; Azure, GCP and OCI backends do not
@@ -221,7 +274,8 @@ type AWSLogging interface {
 	GetQueryResults(ctx context.Context, queryID string) (*QueryResults, error)
 	StopQuery(ctx context.Context, queryID string) error
 	DescribeQueries(ctx context.Context, input DescribeQueriesInput) ([]QueryInfo, error)
-	GetLogRecord(ctx context.Context, logRecordPointer string) (map[string]string, error)
+	// GetLogRecord returns the masked record unless unmask is set.
+	GetLogRecord(ctx context.Context, logRecordPointer string, unmask bool) (map[string]string, error)
 	// GetLogGroupFields samples the 8 minutes either side of at, or the last
 	// 15 minutes when at is zero.
 	GetLogGroupFields(ctx context.Context, logGroup string, at time.Time) ([]LogGroupField, error)
@@ -235,4 +289,22 @@ type AWSLogging interface {
 	CreateExportTask(ctx context.Context, input *CreateExportTaskInput) (string, error)
 	DescribeExportTasks(ctx context.Context, input DescribeExportTasksInput) ([]ExportTask, error)
 	CancelExportTask(ctx context.Context, taskID string) error
+
+	// GetAWSLogEvents and FilterAWSLogEvents are GetLogEvents and
+	// FilterLogEvents with the unmask flag: data protection masks events at
+	// ingest, and only an unmask read returns the original text.
+	GetAWSLogEvents(ctx context.Context, input *LogQueryInput, unmask bool) ([]LogEvent, error)
+	FilterAWSLogEvents(ctx context.Context, input *FilterLogEventsInput, unmask bool) ([]FilteredLogEvent, error)
+
+	// Data protection policies take a log group name or ARN. Masking applies
+	// to events ingested after the policy is put.
+	PutDataProtectionPolicy(ctx context.Context, logGroupIdentifier, document string) (*DataProtectionPolicy, error)
+	GetDataProtectionPolicy(ctx context.Context, logGroupIdentifier string) (*DataProtectionPolicy, error)
+	DeleteDataProtectionPolicy(ctx context.Context, logGroupIdentifier string) error
+
+	// Account policies apply to every log group in the account, or to the
+	// groups the selection criteria pick.
+	PutAccountPolicy(ctx context.Context, input *PutAccountPolicyInput) (*AccountPolicy, error)
+	DescribeAccountPolicies(ctx context.Context, input DescribeAccountPoliciesInput) ([]AccountPolicy, error)
+	DeleteAccountPolicy(ctx context.Context, policyName, policyType string) error
 }

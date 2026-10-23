@@ -53,6 +53,9 @@ func (m *Mock) PutLogEventsWithResult(
 	m.purgeExpired(groupName, g)
 
 	accepted, rejected := m.ingestWindow(events, g.info.RetentionDays)
+	// Data protection masks at ingest, so every egress (reads, Insights,
+	// metric filters, subscriptions, exports) sees the masked text.
+	accepted = m.maskEvents(g, accepted)
 
 	if len(accepted) > 0 &&
 		accepted[len(accepted)-1].Timestamp.Sub(accepted[0].Timestamp) > putLogEventsMaxBatchSpan {

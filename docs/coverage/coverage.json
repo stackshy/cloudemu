@@ -11577,11 +11577,20 @@
             "doc": "Export tasks write a log group's events to an S3 bucket. A task moves"
           },
           {
+            "name": "DeleteAccountPolicy"
+          },
+          {
+            "name": "DeleteDataProtectionPolicy"
+          },
+          {
             "name": "DeleteRetentionPolicy"
           },
           {
             "name": "DescribeAWSMetricFilters",
             "doc": "DescribeAWSMetricFilters lists metric filters, sorted by filter name."
+          },
+          {
+            "name": "DescribeAccountPolicies"
           },
           {
             "name": "DescribeExportTasks"
@@ -11593,17 +11602,36 @@
             "name": "DisassociateKmsKey"
           },
           {
+            "name": "FilterAWSLogEvents"
+          },
+          {
+            "name": "GetAWSLogEvents",
+            "doc": "GetAWSLogEvents and FilterAWSLogEvents are GetLogEvents and"
+          },
+          {
+            "name": "GetDataProtectionPolicy"
+          },
+          {
             "name": "GetLogGroupFields",
             "doc": "GetLogGroupFields samples the 8 minutes either side of at, or the last"
           },
           {
-            "name": "GetLogRecord"
+            "name": "GetLogRecord",
+            "doc": "GetLogRecord returns the masked record unless unmask is set."
           },
           {
             "name": "GetQueryResults"
           },
           {
             "name": "ListAWSLogGroups"
+          },
+          {
+            "name": "PutAccountPolicy",
+            "doc": "Account policies apply to every log group in the account, or to the"
+          },
+          {
+            "name": "PutDataProtectionPolicy",
+            "doc": "Data protection policies take a log group name or ARN. Masking applies"
           },
           {
             "name": "PutLogEventsWithResult"

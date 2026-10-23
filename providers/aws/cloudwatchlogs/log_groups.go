@@ -105,7 +105,12 @@ func (g *logGroup) awsView() driver.AWSLogGroup {
 		class = driver.LogGroupClassStandard
 	}
 
-	return driver.AWSLogGroup{LogGroupInfo: info, KmsKeyID: g.kmsKeyID, LogGroupClass: class}
+	out := driver.AWSLogGroup{LogGroupInfo: info, KmsKeyID: g.kmsKeyID, LogGroupClass: class}
+	if g.dataProtection.Load() != nil {
+		out.DataProtectionStatus = driver.DataProtectionStatusActivated
+	}
+
+	return out
 }
 
 // ListAWSLogGroups returns every log group matching filter, ordered by name.

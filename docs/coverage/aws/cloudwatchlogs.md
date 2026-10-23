@@ -39,15 +39,23 @@ AWSLogging is an optional interface implemented by the AWS CloudWatch Logs
 | `CancelExportTask` |  |
 | `CreateAWSLogGroup` |  |
 | `CreateExportTask` | Export tasks write a log group's events to an S3 bucket. A task moves |
+| `DeleteAccountPolicy` |  |
+| `DeleteDataProtectionPolicy` |  |
 | `DeleteRetentionPolicy` |  |
 | `DescribeAWSMetricFilters` | DescribeAWSMetricFilters lists metric filters, sorted by filter name. |
+| `DescribeAccountPolicies` |  |
 | `DescribeExportTasks` |  |
 | `DescribeQueries` |  |
 | `DisassociateKmsKey` |  |
+| `FilterAWSLogEvents` |  |
+| `GetAWSLogEvents` | GetAWSLogEvents and FilterAWSLogEvents are GetLogEvents and |
+| `GetDataProtectionPolicy` |  |
 | `GetLogGroupFields` | GetLogGroupFields samples the 8 minutes either side of at, or the last |
-| `GetLogRecord` |  |
+| `GetLogRecord` | GetLogRecord returns the masked record unless unmask is set. |
 | `GetQueryResults` |  |
 | `ListAWSLogGroups` |  |
+| `PutAccountPolicy` | Account policies apply to every log group in the account, or to the |
+| `PutDataProtectionPolicy` | Data protection policies take a log group name or ARN. Masking applies |
 | `PutLogEventsWithResult` |  |
 | `PutRetentionPolicy` |  |
 | `StartQuery` | Logs Insights. A query is Running until its first GetQueryResults, |
@@ -59,3 +67,9 @@ AWSLogging is an optional interface implemented by the AWS CloudWatch Logs
 - AWS: `CreateExportTask` checks the destination bucket's policy the way CloudWatch Logs does before it accepts a task. The policy must allow the `logs.amazonaws.com` or `logs.<region>.amazonaws.com` service principal (or `*`) to call `s3:GetBucketAcl` on the bucket and `s3:PutObject` under the prefix, and a matching `Deny` wins. Policy conditions (`aws:SourceAccount`, `aws:SourceArn`, `s3:x-amz-acl`), `NotPrincipal`/`NotAction`/`NotResource`, the Region named in the principal, SSE-KMS key policies and cross-account buckets are not evaluated.
 - AWS: the destination bucket's Region is not compared with the log group's Region, so an export to a bucket in another Region is accepted.
 - AWS: an export task writes each log stream to a single `000000.gz` object, where CloudWatch Logs splits large streams across `000000.gz`, `000001.gz`, and so on. The events are written when the task settles to `COMPLETED` and an export-task API call observes it: at once without `--async-settle`, or on the first `DescribeExportTasks` after the settle window with it. `PENDING_CANCEL` is never reported; `CancelExportTask` moves a task straight to `CANCELLED`.
+- AWS: data protection detects four managed data identifiers: `EmailAddress`, `IpAddress` (IPv4 and IPv6), `AwsSecretKey` (a 40-character key next to a keyword such as `aws_secret_access_key`) and `CreditCardNumber` (13-19 digits that pass the Luhn check), plus custom data identifiers. Any other well-formed managed identifier ARN is accepted and stored but masks nothing, and the machine-learning and keyword-proximity detection AWS uses for the other identifiers is not modelled. Each masked character becomes one `*`.
+- AWS: data protection audit findings are not produced. No findings report goes to the `FindingsDestination`, and no `LogEventsWithFindings` metric is emitted. A CloudWatch Logs findings destination must exist, but S3 and Firehose destinations are not checked.
+- AWS: `logs:Unmask` is not enforced, so any caller can pass `unmask` to `GetLogEvents`, `FilterLogEvents` and `GetLogRecord`. A `FilterLogEvents` pattern always matches the masked text. The Logs Insights `unmask` command is not supported, and Live Tail is not modelled.
+- AWS: an account data protection policy applies to existing groups at once, without AWS's eventual-consistency delay of up to 5 minutes. `DescribeLogGroups` reports `dataProtectionStatus` `ACTIVATED` only for a group-level policy, and the `DELETED`, `ARCHIVED` and `DISABLED` statuses are never reported.
+- AWS: `FIELD_INDEX_POLICY`, `TRANSFORMER_POLICY` and `METRIC_EXTRACTION_POLICY` account policies are validated, stored and returned, but they have no data-plane effect: no field indexes, no transformation at ingest, and no change to EMF metric extraction. Transformer and metric extraction documents only have to be valid JSON. A `SUBSCRIPTION_FILTER_POLICY` delivers only to Lambda destinations, the same as group subscription filters.
+- AWS: account policy quotas are one data protection policy and one subscription filter policy per account, and, for each of the other types, one unscoped policy plus up to 20 scoped policies (5 for metric extraction). Scoped policies of one type can't share overlapping `LogGroupNamePrefix` values or an identical data source, and a type can have only one `NOT IN` policy. AWS's finer `IN`/`NOT IN` containment rules for metric extraction policies are not modelled. `DescribeAccountPolicies` returns every match on one page and never returns a `nextToken`.

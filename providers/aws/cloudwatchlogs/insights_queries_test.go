@@ -76,7 +76,7 @@ func TestInsightsQueryLifecycle(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalidArgument(err))
 
-	rec, err := m.GetLogRecord(ctx, rowField(res.Results[0], "@ptr"))
+	rec, err := m.GetLogRecord(ctx, rowField(res.Results[0], "@ptr"), false)
 	require.NoError(t, err)
 	assert.Equal(t, `{"level":"ERROR","latency":120,"user":{"id":"u1"}}`, rec["@message"])
 	assert.Equal(t, "u1", rec["user.id"])
@@ -276,6 +276,6 @@ func TestGetLogGroupFields(t *testing.T) {
 	_, err = m.GetLogGroupFields(ctx, "nope", time.Time{})
 	assert.True(t, errors.IsNotFound(err))
 
-	_, err = m.GetLogRecord(ctx, "not-a-pointer")
+	_, err = m.GetLogRecord(ctx, "not-a-pointer", false)
 	assert.True(t, errors.IsInvalidArgument(err))
 }

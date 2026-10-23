@@ -20,6 +20,8 @@
 //	AssociateKmsKey     DisassociateKmsKey  TestMetricFilter
 //	StartQuery GetQueryResults StopQuery DescribeQueries GetLogRecord GetLogGroupFields
 //	CreateExportTask    DescribeExportTasks CancelExportTask
+//	PutDataProtectionPolicy GetDataProtectionPolicy DeleteDataProtectionPolicy
+//	PutAccountPolicy    DescribeAccountPolicies DeleteAccountPolicy
 //	TagResource / UntagResource / ListTagsForResource (and the legacy *LogGroup forms)
 //
 // CloudWatch Logs-only operations go through the optional driver.AWSLogging

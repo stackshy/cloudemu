@@ -381,13 +381,13 @@ func (h *Handler) getLogEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch the full ordered slice (Limit -1 = no cap) and page it here so the
 	// forward / backward tokens can carry a real position across all events.
-	events, err := h.logs.GetLogEvents(r.Context(), &logdriver.LogQueryInput{
+	events, err := h.readLogEvents(r, &logdriver.LogQueryInput{
 		LogGroup:  req.LogGroupName,
 		LogStream: req.LogStreamName,
 		StartTime: millisToTime(req.StartTime),
 		EndTime:   millisToTime(req.EndTime),
 		Limit:     -1,
-	})
+	}, req.Unmask)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -442,14 +442,14 @@ func (h *Handler) filterLogEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch every match (Limit -1 = no cap) and page here so a NextToken can be
 	// handed back across all matches.
-	events, err := h.logs.FilterLogEvents(r.Context(), &logdriver.FilterLogEventsInput{
+	events, err := h.filterEvents(r, &logdriver.FilterLogEventsInput{
 		LogGroup:      req.LogGroupName,
 		LogStream:     stream,
 		FilterPattern: req.FilterPattern,
 		StartTime:     millisToTime(req.StartTime),
 		EndTime:       millisToTime(req.EndTime),
 		Limit:         -1,
-	})
+	}, req.Unmask)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -484,6 +484,27 @@ func (h *Handler) filterLogEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, resp)
+}
+
+// readLogEvents reads events with the unmask flag when the backend supports
+// it, and through the portable driver otherwise.
+func (h *Handler) readLogEvents(r *http.Request, in *logdriver.LogQueryInput, unmask bool) ([]logdriver.LogEvent, error) {
+	if ext, ok := h.logs.(logdriver.AWSLogging); ok {
+		return ext.GetAWSLogEvents(r.Context(), in, unmask)
+	}
+
+	return h.logs.GetLogEvents(r.Context(), in)
+}
+
+// filterEvents is readLogEvents for FilterLogEvents.
+func (h *Handler) filterEvents(
+	r *http.Request, in *logdriver.FilterLogEventsInput, unmask bool,
+) ([]logdriver.FilteredLogEvent, error) {
+	if ext, ok := h.logs.(logdriver.AWSLogging); ok {
+		return ext.FilterAWSLogEvents(r.Context(), in, unmask)
+	}
+
+	return h.logs.FilterLogEvents(r.Context(), in)
 }
 
 // scopeFilteredStreams restricts filtered events to the caller's requested

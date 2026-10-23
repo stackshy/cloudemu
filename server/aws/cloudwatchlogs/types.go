@@ -63,6 +63,7 @@ type getLogEventsRequest struct {
 	Limit         int32  `json:"limit"`
 	NextToken     string `json:"nextToken"`
 	StartFromHead *bool  `json:"startFromHead"`
+	Unmask        bool   `json:"unmask"`
 }
 
 type filterLogEventsRequest struct {
@@ -74,6 +75,7 @@ type filterLogEventsRequest struct {
 	EndTime             int64    `json:"endTime"`
 	Limit               int32    `json:"limit"`
 	NextToken           string   `json:"nextToken"`
+	Unmask              bool     `json:"unmask"`
 }
 
 // --- response envelopes ---
@@ -91,6 +93,9 @@ type logGroupJSON struct {
 	StoredBytes     int64  `json:"storedBytes"`
 	KmsKeyID        string `json:"kmsKeyId,omitempty"`
 	LogGroupClass   string `json:"logGroupClass,omitempty"`
+	// DataProtectionStatus is ACTIVATED while the group has a data
+	// protection policy.
+	DataProtectionStatus string `json:"dataProtectionStatus,omitempty"`
 }
 
 type describeLogGroupsResponse struct {
@@ -214,6 +219,8 @@ func toLogGroupJSON(g *logdriver.AWSLogGroup) logGroupJSON {
 		StoredBytes:     g.StoredBytes,
 		KmsKeyID:        g.KmsKeyID,
 		LogGroupClass:   g.LogGroupClass,
+
+		DataProtectionStatus: g.DataProtectionStatus,
 	}
 }
 

@@ -356,7 +356,7 @@ const ptrParts = 5
 // and ingestionTime. The API reference's sample shows a 10-digit @timestamp,
 // but that sample is hand-written (pointer "123456789", invalid JSON); the
 // SDKs carry no fixture and LocalStack does not implement GetLogRecord.
-func (m *Mock) GetLogRecord(_ context.Context, ptr string) (map[string]string, error) {
+func (m *Mock) GetLogRecord(_ context.Context, ptr string, unmask bool) (map[string]string, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(ptr)
 	parts := strings.Split(string(raw), ptrSep)
 
@@ -379,7 +379,7 @@ func (m *Mock) GetLogRecord(_ context.Context, ptr string) (map[string]string, e
 
 	rec := insights.NewRecord(&insights.Event{
 		Account: m.opts.AccountID, LogGroup: parts[0], LogStream: parts[1],
-		Timestamp: e.Timestamp, Ingestion: e.IngestionTime, Message: e.Message,
+		Timestamp: e.Timestamp, Ingestion: e.IngestionTime, Message: eventView(&e, unmask).Message,
 	}).Strings()
 
 	delete(rec, insights.FieldPtr)
