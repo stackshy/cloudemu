@@ -171,7 +171,7 @@ func TestParallelTaskLambdaRecursionBounded(t *testing.T) {
 
 	def := `{"StartAt":"P","States":{"P":{"Type":"Parallel","End":true,
 		"Branches":[{"StartAt":"T","States":{"T":{"Type":"Task","Resource":"` + lambdaFuncARN + `","End":true}}}]}}}`
-	arn := createDef(t, m, "par-recurse", def)
+	arn := createExpressDef(t, m, "par-recurse", def)
 
 	maxDepth := 0
 	m.SetLambdaSyncInvoker(fakeLambda{fn: func(ctx context.Context, _ string, payload []byte) ([]byte, string, error) {

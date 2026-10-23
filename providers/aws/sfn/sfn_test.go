@@ -641,9 +641,10 @@ func TestAsyncSettleSyncExecutionAndHistory(t *testing.T) {
 		config.WithAccountID("000000000000"), config.WithAsyncSettle()))
 	ctx := context.Background()
 	arn := createSM(t, m, "sm")
+	expressArn := createExpressDef(t, m, "sm-express", definition)
 
 	// Synchronous execution returns terminal SUCCEEDED with output, not RUNNING.
-	sync, err := m.StartSyncExecution(ctx, driver.StartExecutionInput{StateMachineArn: arn, Name: "sync1", Input: `{"k":1}`})
+	sync, err := m.StartSyncExecution(ctx, driver.StartExecutionInput{StateMachineArn: expressArn, Name: "sync1", Input: `{"k":1}`})
 	if err != nil {
 		t.Fatalf("StartSyncExecution: %v", err)
 	}

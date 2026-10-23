@@ -281,7 +281,7 @@ func TestTaskRecursionGuardTerminates(t *testing.T) {
 	m := newMock(t)
 
 	def := `{"StartAt":"T","States":{"T":{"Type":"Task","Resource":"` + lambdaFuncARN + `","End":true}}}`
-	arn := createDef(t, m, "recurse", def)
+	arn := createExpressDef(t, m, "recurse", def)
 
 	maxDepth := 0
 	m.SetLambdaSyncInvoker(fakeLambda{fn: func(ctx context.Context, _ string, payload []byte) ([]byte, string, error) {

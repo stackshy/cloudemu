@@ -22,6 +22,9 @@ const (
 	ExConflict                  = "ConflictException"
 	ExValidation                = "ValidationException"
 	ExMissingRequiredParameter  = "MissingRequiredParameter"
+	// ExStateMachineTypeNotSupported is returned when an operation does not
+	// support the state machine's type, e.g. StartSyncExecution on STANDARD.
+	ExStateMachineTypeNotSupported = "StateMachineTypeNotSupported"
 )
 
 // APIError tags a canonical cloudemu error with the SFN exception name it
