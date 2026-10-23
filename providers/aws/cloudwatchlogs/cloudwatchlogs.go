@@ -60,6 +60,9 @@ type Mock struct {
 	lambda     LambdaInvoker
 	keys       KeyResolver
 	queries    *memstore.Store[queryRecord]
+	// exports holds export tasks; exportStore is the S3 they write to.
+	exports     *memstore.Store[exportTask]
+	exportStore ExportStore
 
 	// queryResultKmsKey is the account-wide key associated with Logs Insights
 	// query results (AssociateKmsKey on the query-result resource).
@@ -71,6 +74,10 @@ type Mock struct {
 	// admitMu makes StartQuery's concurrent-query count and its insert one
 	// step. Settling only moves queries out of Running, so it needs no lock.
 	admitMu sync.Mutex
+	// exportMu makes the one-active-export-task check and the insert one
+	// step, and serializes claiming tasks for writing. It is never held
+	// across an S3 call.
+	exportMu sync.Mutex
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -100,6 +107,7 @@ func New(opts *config.Options) *Mock {
 	return &Mock{
 		groups:  memstore.New[*logGroup](),
 		queries: memstore.New[queryRecord](),
+		exports: memstore.New[exportTask](),
 		opts:    opts,
 		periods: map[string]filterPeriod{},
 	}

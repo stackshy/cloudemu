@@ -569,6 +569,8 @@ func wirePostBuildServices(o *config.Options, p *Provider) {
 	// subscription filter's pattern are delivered (gzipped awslogs payload) to
 	// the filter's Lambda destination on PutLogEvents.
 	p.CloudWatchLogs.SetLambdaInvoker(p.Lambda)
+	// CloudWatch Logs export tasks write log events to an S3 bucket.
+	p.CloudWatchLogs.SetExportStore(p.S3)
 	// CloudFormation is an orchestrator: it provisions each stack resource by
 	// calling the matching service driver, so its registry is built from the
 	// live mocks rather than a store of its own.

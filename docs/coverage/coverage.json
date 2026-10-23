@@ -11567,7 +11567,14 @@
             "doc": "AssociateKmsKey and DisassociateKmsKey target exactly one of a log group"
           },
           {
+            "name": "CancelExportTask"
+          },
+          {
             "name": "CreateAWSLogGroup"
+          },
+          {
+            "name": "CreateExportTask",
+            "doc": "Export tasks write a log group's events to an S3 bucket. A task moves"
           },
           {
             "name": "DeleteRetentionPolicy"
@@ -11575,6 +11582,9 @@
           {
             "name": "DescribeAWSMetricFilters",
             "doc": "DescribeAWSMetricFilters lists metric filters, sorted by filter name."
+          },
+          {
+            "name": "DescribeExportTasks"
           },
           {
             "name": "DescribeQueries"

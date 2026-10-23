@@ -19,6 +19,7 @@
 //	PutRetentionPolicy  DeleteRetentionPolicy ListLogGroups
 //	AssociateKmsKey     DisassociateKmsKey  TestMetricFilter
 //	StartQuery GetQueryResults StopQuery DescribeQueries GetLogRecord GetLogGroupFields
+//	CreateExportTask    DescribeExportTasks CancelExportTask
 //	TagResource / UntagResource / ListTagsForResource (and the legacy *LogGroup forms)
 //
 // CloudWatch Logs-only operations go through the optional driver.AWSLogging
@@ -130,8 +131,8 @@ func (h *Handler) dispatchGroupSettings(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
-// dispatchInsights handles the Logs Insights operations, delegating tagging
-// to dispatchTags.
+// dispatchInsights handles the Logs Insights operations, delegating export
+// tasks and tagging to dispatchExport.
 func (h *Handler) dispatchInsights(w http.ResponseWriter, r *http.Request, op string) {
 	switch op {
 	case "StartQuery":
@@ -147,7 +148,7 @@ func (h *Handler) dispatchInsights(w http.ResponseWriter, r *http.Request, op st
 	case "GetLogGroupFields":
 		h.getLogGroupFields(w, r)
 	default:
-		h.dispatchTags(w, r, op)
+		h.dispatchExport(w, r, op)
 	}
 }
 

@@ -27,4 +27,6 @@ Azure's `logging` service · portable interface `driver.Logging` · [Azure index
 
 ## Not in scope
 
-_Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
+- AWS: `CreateExportTask` checks the destination bucket's policy the way CloudWatch Logs does before it accepts a task. The policy must allow the `logs.amazonaws.com` or `logs.<region>.amazonaws.com` service principal (or `*`) to call `s3:GetBucketAcl` on the bucket and `s3:PutObject` under the prefix, and a matching `Deny` wins. Policy conditions (`aws:SourceAccount`, `aws:SourceArn`, `s3:x-amz-acl`), `NotPrincipal`/`NotAction`/`NotResource`, the Region named in the principal, SSE-KMS key policies and cross-account buckets are not evaluated.
+- AWS: the destination bucket's Region is not compared with the log group's Region, so an export to a bucket in another Region is accepted.
+- AWS: an export task writes each log stream to a single `000000.gz` object, where CloudWatch Logs splits large streams across `000000.gz`, `000001.gz`, and so on. The events are written when the task settles to `COMPLETED` and an export-task API call observes it: at once without `--async-settle`, or on the first `DescribeExportTasks` after the settle window with it. `PENDING_CANCEL` is never reported; `CancelExportTask` moves a task straight to `CANCELLED`.

@@ -152,6 +152,46 @@ type MalformedQueryError struct {
 
 func (e *MalformedQueryError) Error() string { return e.Message }
 
+// Export task status codes.
+const (
+	ExportTaskPending   = "PENDING"
+	ExportTaskRunning   = "RUNNING"
+	ExportTaskCompleted = "COMPLETED"
+	ExportTaskCancelled = "CANCELLED" //nolint:misspell // the API's status value is spelled this way.
+	ExportTaskFailed    = "FAILED"
+)
+
+// CreateExportTaskInput is a CreateExportTask request. From and To bound the
+// event timestamps exported, both inclusive.
+type CreateExportTaskInput struct {
+	TaskName            string
+	LogGroupName        string
+	LogStreamNamePrefix string
+	From, To            time.Time
+	Destination         string
+	DestinationPrefix   string
+}
+
+// ExportTask describes an export task for DescribeExportTasks.
+// CompletionTime is zero until the task reaches a terminal status.
+type ExportTask struct {
+	TaskID            string
+	TaskName          string
+	LogGroupName      string
+	From, To          time.Time
+	Destination       string
+	DestinationPrefix string
+	StatusCode        string
+	StatusMessage     string
+	CreationTime      time.Time
+	CompletionTime    time.Time
+}
+
+// DescribeExportTasksInput narrows DescribeExportTasks; empty fields match all.
+type DescribeExportTasksInput struct {
+	TaskID, StatusCode string
+}
+
 // AWSLogging is an optional interface implemented by the AWS CloudWatch Logs
 // backend for operations with no cross-provider equivalent. The CloudWatch
 // Logs wire handler type-asserts for it; Azure, GCP and OCI backends do not
@@ -188,4 +228,11 @@ type AWSLogging interface {
 
 	// TestMetricFilter runs a filter pattern over sample log messages.
 	TestMetricFilter(ctx context.Context, filterPattern string, logEventMessages []string) ([]MetricFilterMatch, error)
+
+	// Export tasks write a log group's events to an S3 bucket. A task moves
+	// PENDING -> RUNNING -> COMPLETED, and the account runs one active task
+	// at a time. DescribeExportTasks lists the newest task first.
+	CreateExportTask(ctx context.Context, input *CreateExportTaskInput) (string, error)
+	DescribeExportTasks(ctx context.Context, input DescribeExportTasksInput) ([]ExportTask, error)
+	CancelExportTask(ctx context.Context, taskID string) error
 }

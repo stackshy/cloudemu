@@ -17,12 +17,13 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // groups store holds an unexported *logGroup whose nested stores (streams, and
 // the metric/subscription filter stores) must be captured, so it is promoted to
 // an exported snapshot form keyed by group name. The wired deps (opts,
-// monitoring, lambda) are not serialized.
+// monitoring, lambda, exportStore) are not serialized.
 type logsSnapshot struct {
 	Groups            map[string]*logGroupSnapshot `json:"groups,omitempty"`
 	QueryResultKmsKey string                       `json:"queryResultKmsKey,omitempty"`
 	FilterPeriods     map[string]filterPeriod      `json:"filterPeriods,omitempty"`
 	Queries           json.RawMessage              `json:"queries,omitempty"`
+	ExportTasks       json.RawMessage              `json:"exportTasks,omitempty"`
 }
 
 // logGroupSnapshot mirrors logGroup. Its metric- and subscription-filter stores
@@ -59,6 +60,13 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	}
 
 	snap.Queries = queries
+
+	exports, err := m.exports.Snapshot()
+	if err != nil {
+		return nil, fmt.Errorf("cloudwatchlogs: snapshot export tasks: %w", err)
+	}
+
+	snap.ExportTasks = exports
 
 	if m.groups.Len() == 0 {
 		return json.Marshal(snap)
@@ -127,6 +135,12 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	if len(snap.Queries) > 0 {
 		if err := m.queries.LoadSnapshot(snap.Queries); err != nil {
 			return fmt.Errorf("cloudwatchlogs: restore queries: %w", err)
+		}
+	}
+
+	if len(snap.ExportTasks) > 0 {
+		if err := m.exports.LoadSnapshot(snap.ExportTasks); err != nil {
+			return fmt.Errorf("cloudwatchlogs: restore export tasks: %w", err)
 		}
 	}
 
