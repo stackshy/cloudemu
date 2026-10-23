@@ -306,6 +306,13 @@ func (h *Handler) getMetricStatisticsCore(
 		return getMetricStatisticsResult{}, err
 	}
 
+	// Period is required, so zero is out of range here.
+	if v, ok := h.monitoring.(periodValidator); ok {
+		if err := v.ValidatePeriod("Period", in.Period); err != nil {
+			return getMetricStatisticsResult{}, invalidParameterError(err)
+		}
+	}
+
 	// Callers often ask for several statistics at once and expect all of them
 	// on each datapoint.
 	stats := requestedStats(in)
@@ -335,7 +342,7 @@ func (h *Handler) getMetricStatisticsCore(
 
 			res, err := h.monitoring.GetMetricData(ctx, q)
 			if err != nil {
-				return getMetricStatisticsResult{}, err
+				return getMetricStatisticsResult{}, invalidParameterError(err)
 			}
 
 			acc.add(res, stat, unit)
