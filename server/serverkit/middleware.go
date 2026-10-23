@@ -97,3 +97,7 @@ func (w *statusWriter) WriteHeader(code int) {
 
 	w.ResponseWriter.WriteHeader(code)
 }
+
+// Unwrap exposes the underlying writer to http.ResponseController, so a
+// streaming handler can still flush through request logging.
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }

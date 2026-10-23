@@ -58,9 +58,21 @@ AWSLogging is an optional interface implemented by the AWS CloudWatch Logs
 | `PutDataProtectionPolicy` | Data protection policies take a log group name or ARN. Masking applies |
 | `PutLogEventsWithResult` |  |
 | `PutRetentionPolicy` |  |
+| `StartLiveTail` | StartLiveTail opens a Live Tail session over events ingested from now |
 | `StartQuery` | Logs Insights. A query is Running until its first GetQueryResults, |
 | `StopQuery` |  |
 | `TestMetricFilter` | TestMetricFilter runs a filter pattern over sample log messages. |
+
+### LiveTailSession
+
+LiveTailSession is a running Live Tail session. Updates delivers one update
+
+| Operation | Description |
+| --- | --- |
+| `Close` |  |
+| `SessionID` |  |
+| `TimedOut` |  |
+| `Updates` |  |
 
 ## Not in scope
 
