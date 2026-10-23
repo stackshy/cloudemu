@@ -27,4 +27,6 @@ GCP's `cache` service · portable interface `driver.Cache` · [GCP index](./READ
 
 ## Not in scope
 
-_Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
+- AWS: ElastiCache clusters, replication groups, and subnet and parameter groups share one id namespace across regions, so the same id cannot exist in two regions at once (#1693).
+- AWS: ElastiCache snapshot ARNs cannot be tagged yet; AddTagsToResource and ListTagsForResource on a `:snapshot:` ARN answer not-found (#1695).
+- AWS: with a real cache engine, a cluster or replication group reports `creating` only while the engine is being started and `deleting` only while it is being stopped. Without one, both are immediate unless `--async-settle` is set.

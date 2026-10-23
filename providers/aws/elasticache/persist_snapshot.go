@@ -39,7 +39,15 @@ type cacheDataSnapshot struct {
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused. Cache entry values
 // are the payload and are always captured.
+//
+// It holds mu for the whole capture (including the marshal, since the tag map
+// is captured by reference), so it never sees a half-applied create or delete.
+// A cluster or replication group whose real engine is still being provisioned
+// or torn down is not part of the captured state.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	var snap persistSnapshot
 	if err := m.snapshotStores(&snap); err != nil {
 		return nil, err
@@ -108,6 +116,11 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return fmt.Errorf("elasticache: parse snapshot: %w", err)
 	}
+
+	// Restore swaps every store in one critical section, so it is serialized
+	// against in-flight creates and deletes.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if err := m.restoreStores(&snap); err != nil {
 		return err

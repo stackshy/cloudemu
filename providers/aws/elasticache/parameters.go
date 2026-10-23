@@ -134,9 +134,12 @@ func defaultParameterIndex(family string) map[string]Parameter {
 // "engine-default" (only unmodified defaults). A missing group reports
 // CacheParameterGroupNotFound.
 func (m *Mock) DescribeCacheParameters(_ context.Context, name, source string) ([]Parameter, error) {
+	m.mu.Lock()
 	pg, ok := m.lookupParameterGroup(name)
+	m.mu.Unlock()
+
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "cache parameter group %q not found", name)
+		return nil, parameterGroupNotFound(name)
 	}
 
 	defaults := defaultCacheParameters(pg.Family)
@@ -186,9 +189,12 @@ func (m *Mock) ModifyCacheParameterGroup(_ context.Context, name string, updates
 		return err
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	pg, ok := m.parameterGroups.Get(name)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "cache parameter group %q not found", name)
+		return parameterGroupNotFound(name)
 	}
 
 	idx := defaultParameterIndex(pg.Family)
@@ -204,9 +210,9 @@ func (m *Mock) ModifyCacheParameterGroup(_ context.Context, name string, updates
 		}
 	}
 
-	if pg.Overrides == nil {
-		pg.Overrides = make(map[string]string, len(updates))
-	}
+	// Copy on write: a Describe result handed out earlier may still hold the old
+	// map, so it is never mutated in place.
+	pg.Overrides = cloneOverrides(pg.Overrides, len(updates))
 
 	for _, u := range updates {
 		pg.Overrides[u.Name] = u.Value
@@ -226,9 +232,12 @@ func (m *Mock) ResetCacheParameterGroup(_ context.Context, name string, resetAll
 		return err
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	pg, ok := m.parameterGroups.Get(name)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "cache parameter group %q not found", name)
+		return parameterGroupNotFound(name)
 	}
 
 	if resetAll {
@@ -245,6 +254,8 @@ func (m *Mock) ResetCacheParameterGroup(_ context.Context, name string, resetAll
 		}
 	}
 
+	pg.Overrides = cloneOverrides(pg.Overrides, 0)
+
 	for _, n := range names {
 		delete(pg.Overrides, n)
 	}
@@ -252,4 +263,15 @@ func (m *Mock) ResetCacheParameterGroup(_ context.Context, name string, resetAll
 	m.parameterGroups.Set(name, pg)
 
 	return nil
+}
+
+// cloneOverrides returns a writable copy of a parameter group's overrides,
+// sized for extra more entries.
+func cloneOverrides(in map[string]string, extra int) map[string]string {
+	out := make(map[string]string, len(in)+extra)
+	for k, v := range in {
+		out[k] = v
+	}
+
+	return out
 }

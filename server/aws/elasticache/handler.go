@@ -23,7 +23,6 @@ import (
 	"net/http"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsauthz"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
@@ -237,86 +236,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown ElastiCache action: "+r.Form.Get("Action"))
-	}
-}
-
-// writeErr maps cloudemu errors to ElastiCache XML error responses.
-func writeErr(w http.ResponseWriter, err error) {
-	msg := cerrors.Message(err)
-
-	switch {
-	case cerrors.IsNotFound(err):
-		awsquery.WriteXMLError(w, http.StatusNotFound, notFoundCode(err), msg)
-	case cerrors.IsAlreadyExists(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, alreadyExistsCode(err), msg)
-	case cerrors.IsInvalidArgument(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", msg)
-	case cerrors.IsFailedPrecondition(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, failedPreconditionCode(err), msg)
-	default:
-		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", msg)
-	}
-}
-
-// failedPreconditionCode picks the AWS-shaped error code for a failed
-// precondition. The driver encodes the intended fault as a prefix on the
-// message (a subnet group still in use, or an unsupported snapshot); a caller
-// matching the SDK's typed errors sees the code, not the message, so it has to
-// be surfaced as the wire Code. Anything else is a cache-cluster state error.
-func failedPreconditionCode(err error) string {
-	msg := err.Error()
-
-	switch {
-	case strings.Contains(msg, "CacheSubnetGroupInUse"):
-		return "CacheSubnetGroupInUse"
-	case strings.Contains(msg, "SnapshotFeatureNotSupportedFault"):
-		return "SnapshotFeatureNotSupportedFault"
-	case strings.Contains(msg, "InvalidCacheParameterGroupState"):
-		return "InvalidCacheParameterGroupState"
-	default:
-		return "InvalidCacheClusterState"
-	}
-}
-
-// notFoundCode picks the AWS-shaped error code for the resource the message
-// names. A caller matching the SDK's typed errors sees the code, not the
-// message, so a generic one leaves it unable to tell a missing replication
-// group from a missing cache cluster.
-//
-// Order matters: "cache subnet group" also contains "cache", so the more
-// specific resources are checked first.
-func notFoundCode(err error) string {
-	msg := err.Error()
-
-	switch {
-	case strings.Contains(msg, "snapshot"):
-		return "SnapshotNotFoundFault"
-	case strings.Contains(msg, "replication group"):
-		return "ReplicationGroupNotFoundFault"
-	case strings.Contains(msg, "cache subnet group"):
-		return "CacheSubnetGroupNotFoundFault"
-	case strings.Contains(msg, "parameter group"):
-		return "CacheParameterGroupNotFound"
-	default:
-		return "CacheClusterNotFound"
-	}
-}
-
-// alreadyExistsCode is the create-side counterpart of notFoundCode. Callers
-// treat the specific already-exists code as "already provisioned, carry on",
-// so collapsing it turns an idempotent re-run into a hard failure.
-func alreadyExistsCode(err error) string {
-	msg := err.Error()
-
-	switch {
-	case strings.Contains(msg, "snapshot"):
-		return "SnapshotAlreadyExistsFault"
-	case strings.Contains(msg, "replication group"):
-		return "ReplicationGroupAlreadyExists"
-	case strings.Contains(msg, "cache subnet group"):
-		return "CacheSubnetGroupAlreadyExists"
-	default:
-		return "CacheClusterAlreadyExists"
 	}
 }
 
