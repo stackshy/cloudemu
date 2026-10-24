@@ -88,7 +88,14 @@ func TestClassify(t *testing.T) {
 		},
 
 		{method: "GET", target: "/2020-06-30/functions/f/code-signing-config", op: opGetFunctionCodeSigningConfig, route: routeCodeSigning, name: "f"},
-		{method: "PUT", target: "/2020-06-30/functions/f/code-signing-config", op: opUnknown, route: routeCodeSigning, name: "f"},
+		{method: "PUT", target: "/2020-06-30/functions/f/code-signing-config", op: opPutFunctionCodeSigningConfig, route: routeCodeSigning, name: "f"},
+		{method: "POST", target: "/2020-06-30/functions/f/code-signing-config", op: opUnknown, route: routeCodeSigning, name: "f"},
+
+		{method: "POST", target: "/2020-04-22/code-signing-configs", op: opCreateCodeSigningConfig, route: routeCodeSigningConfigs},
+		{method: "GET", target: "/2020-04-22/code-signing-configs", op: opListCodeSigningConfigs, route: routeCodeSigningConfigs},
+		{method: "GET", target: "/2020-04-22/code-signing-configs/arn:aws:lambda:us-east-1:123456789012:code-signing-config:csc-0123456789abcdef0", op: opGetCodeSigningConfig, route: routeCodeSigningConfigs, item: "arn:aws:lambda:us-east-1:123456789012:code-signing-config:csc-0123456789abcdef0"},
+		{method: "GET", target: "/2020-04-22/code-signing-configs/arn:aws:lambda:us-east-1:123456789012:code-signing-config:csc-0123456789abcdef0/functions", op: opListFunctionsByCodeSigningConfig, route: routeCodeSigningConfigs, item: "arn:aws:lambda:us-east-1:123456789012:code-signing-config:csc-0123456789abcdef0"},
+		{method: "GET", target: "/2016-08-19/account-settings", op: opGetAccountSettings, route: routeAccountSettings},
 
 		{method: "PUT", target: "/2017-10-31/functions/f/concurrency", op: opPutFunctionConcurrency, route: routeConcurrency, name: "f"},
 		{method: "GET", target: "/2017-10-31/functions/f/concurrency", op: opGetFunctionConcurrency, route: routeConcurrency, name: "f"},

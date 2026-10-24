@@ -29,6 +29,8 @@ type lambdaSnapshot struct {
 	Funcs    map[string]*funcSnapshot  `json:"funcs,omitempty"`
 	Layers   map[string]*layerSnapshot `json:"layers,omitempty"`
 	Mappings json.RawMessage           `json:"mappings,omitempty"`
+	// CodeSigningConfigs is the code signing config store, keyed by ARN.
+	CodeSigningConfigs json.RawMessage `json:"codeSigningConfigs,omitempty"`
 }
 
 // funcSnapshot mirrors funcData. Versions carry each published version's config
@@ -58,6 +60,8 @@ type funcSnapshot struct {
 	// ProvisionedConcurrencyConfigs is the provisioned-concurrency config per
 	// qualifier (a published version or alias name).
 	ProvisionedConcurrencyConfigs map[string]driver.ProvisionedConcurrencyConfig `json:"provisionedConcurrencyConfigs,omitempty"`
+	// CodeSigningConfigARN is the attached code signing config, if any.
+	CodeSigningConfigARN string `json:"codeSigningConfigArn,omitempty"`
 }
 
 // versionSnapshot mirrors versionData (all fields unexported). Config carries the
@@ -69,6 +73,12 @@ type versionSnapshot struct {
 	CodeSHA    string                `json:"codeSha,omitempty"`
 	RevisionID string                `json:"revisionId,omitempty"`
 	CreatedAt  string                `json:"createdAt,omitempty"`
+	// CodeSize, Description and AWSConfig are the version's frozen package
+	// size, description and AWS-only settings. A snapshot taken before they
+	// were tracked restores them empty.
+	CodeSize    int64                     `json:"codeSize,omitempty"`
+	Description string                    `json:"description,omitempty"`
+	AWSConfig   *driver.AWSFunctionConfig `json:"awsConfig,omitempty"`
 }
 
 // layerSnapshot mirrors layerData; its version store holds a fully-exported
@@ -133,6 +143,15 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 
 	snap.Mappings = mappings
 
+	if m.cscs.Len() > 0 {
+		cscs, err := m.cscs.Snapshot()
+		if err != nil {
+			return nil, fmt.Errorf("lambda: snapshot code signing configs: %w", err)
+		}
+
+		snap.CodeSigningConfigs = cscs
+	}
+
 	return json.Marshal(snap)
 }
 
@@ -163,12 +182,15 @@ func snapshotFunc(fd *funcData) *funcSnapshot {
 		Concurrency: fd.concurrency, Policies: fd.policies, URLConfigs: fd.urlConfigs,
 		AWSConfig: fd.awsConfig, EventInvokeConfigs: fd.eventInvokeConfigs,
 		ProvisionedConcurrencyConfigs: fd.provisionedConcurrencyConfigs,
+		CodeSigningConfigARN:          fd.codeSigningConfigARN,
 	}
 
 	for _, v := range fd.versions {
+		awsCfg := cloneAWSConfig(&v.awsConfig)
 		fs.Versions = append(fs.Versions, &versionSnapshot{
 			Config: v.config, Version: v.version, CodeSHA: v.codeSHA,
 			RevisionID: v.revisionID, CreatedAt: v.createdAt,
+			CodeSize: v.codeSize, Description: v.description, AWSConfig: &awsCfg,
 		})
 	}
 
@@ -198,6 +220,9 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 
 	for name, fs := range snap.Funcs {
 		m.funcs.Set(name, m.restoreFunc(name, fs))
+		// Settle windows are not persisted: a restored function reports its
+		// terminal state.
+		m.clearSettle(name)
 	}
 	m.mu.Unlock()
 
@@ -213,6 +238,12 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	if len(snap.Mappings) > 0 {
 		if err := m.mappings.LoadSnapshot(snap.Mappings); err != nil {
 			return fmt.Errorf("lambda: restore mappings: %w", err)
+		}
+	}
+
+	if len(snap.CodeSigningConfigs) > 0 {
+		if err := m.cscs.LoadSnapshot(snap.CodeSigningConfigs); err != nil {
+			return fmt.Errorf("lambda: restore code signing configs: %w", err)
 		}
 	}
 
@@ -257,6 +288,7 @@ func (m *Mock) restoreFunc(name string, fs *funcSnapshot) funcData {
 		policies: fs.Policies, urlConfigs: legacyURLConfigs(fs), awsConfig: fs.AWSConfig,
 		eventInvokeConfigs:            fs.EventInvokeConfigs,
 		provisionedConcurrencyConfigs: fs.ProvisionedConcurrencyConfigs,
+		codeSigningConfigARN:          fs.CodeSigningConfigARN,
 	}
 
 	// Re-link the live handler if the host process has registered one for this
@@ -266,10 +298,16 @@ func (m *Mock) restoreFunc(name string, fs *funcSnapshot) funcData {
 	m.handlersMu.RUnlock()
 
 	for _, v := range fs.Versions {
-		fd.versions = append(fd.versions, &versionData{
+		vd := &versionData{
 			config: v.Config, version: v.Version, codeSHA: v.CodeSHA,
 			revisionID: v.RevisionID, createdAt: v.CreatedAt,
-		})
+			codeSize: v.CodeSize, description: v.Description,
+		}
+		if v.AWSConfig != nil {
+			vd.awsConfig = cloneAWSConfig(v.AWSConfig)
+		}
+
+		fd.versions = append(fd.versions, vd)
 	}
 
 	for k, a := range fs.Aliases {

@@ -2,6 +2,7 @@ package lambda
 
 import (
 	"context"
+	"maps"
 	"strconv"
 	"time"
 
@@ -18,16 +19,42 @@ const latestVersion = "$LATEST"
 const latestVersionPublished = "$LATEST.PUBLISHED"
 
 // PublishVersion snapshots the current function state as an immutable version.
-func (m *Mock) PublishVersion(_ context.Context, functionName, description string) (*driver.FunctionVersion, error) {
+// Like real Lambda it fails with ResourceConflictException while the function is
+// still Pending creation or an update is InProgress (only observable under
+// config.Options.AsyncSettle).
+func (m *Mock) PublishVersion(ctx context.Context, functionName, description string) (*driver.FunctionVersion, error) {
+	return m.publishVersion(ctx, functionName, description, true)
+}
+
+// PublishVersionOnWrite publishes a version as part of the write that just
+// changed the function: CreateFunction / UpdateFunctionCode with Publish=true.
+// AWS performs that publish atomically with the create/update, so unlike a
+// standalone PublishVersion it is not rejected by the Pending/InProgress window
+// the write itself opened. It is an AWS-only capability the Lambda server
+// handler type-asserts for.
+func (m *Mock) PublishVersionOnWrite(ctx context.Context, functionName, description string) (*driver.FunctionVersion, error) {
+	return m.publishVersion(ctx, functionName, description, false)
+}
+
+func (m *Mock) publishVersion(
+	ctx context.Context, functionName, description string, gate bool,
+) (*driver.FunctionVersion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return nil, m.errFunctionNotFound(ctx, functionName, "")
 	}
 
-	if m.engineBusy(functionName) {
+	// A standalone PublishVersion is refused while the function is Pending or an
+	// update is InProgress; a code deploy still running in the engine always
+	// blocks it.
+	if gate {
+		if err := m.checkUpdatable(&fd); err != nil {
+			return nil, err
+		}
+	} else if m.engineBusy(functionName) {
 		return nil, updateInProgress(fd.info.ARN)
 	}
 
@@ -37,40 +64,60 @@ func (m *Mock) PublishVersion(_ context.Context, functionName, description strin
 	// RevisionID, so a last-published version cut from the current $LATEST revision
 	// means nothing changed and no new version is created.
 	if n := len(fd.versions); n > 0 && fd.versions[n-1].revisionID == fd.info.RevisionID {
-		return versionResult(functionName, fd.versions[n-1], description), nil
+		return m.versionResult(functionName, fd.versions[n-1], description), nil
 	}
 
 	verNum := fd.nextVersion
 	fd.nextVersion++
 
-	verStr := strconv.Itoa(verNum)
-	sha := fd.info.CodeSHA256
-	rev := fd.info.RevisionID
-	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
+	// The PublishVersion Description overrides the function's description; when
+	// omitted the version keeps the description the function had when it was cut.
+	verDesc := description
+	if verDesc == "" {
+		verDesc = fd.info.Description
+	}
 
 	vd := &versionData{
-		config:     snapshotConfig(&fd.info),
-		version:    verStr,
-		codeSHA:    sha,
-		revisionID: rev,
-		createdAt:  now,
+		config:      snapshotConfig(&fd.info),
+		version:     strconv.Itoa(verNum),
+		codeSHA:     fd.info.CodeSHA256,
+		codeSize:    fd.info.CodeSize,
+		revisionID:  fd.info.RevisionID,
+		createdAt:   m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		description: verDesc,
+		awsConfig:   cloneAWSConfig(&fd.awsConfig),
+		// Only the atomic Publish=true on CreateFunction can cut a version while
+		// the function is still Pending; a standalone PublishVersion is refused then.
+		cutWhilePending: !gate && m.isPending(functionName),
 	}
 	fd.versions = append(fd.versions, vd)
 	m.funcs.Set(functionName, fd)
 
-	return versionResult(functionName, vd, description), nil
+	return m.versionResult(functionName, vd, ""), nil
 }
 
 // versionResult renders a published version's driver.FunctionVersion, used both
 // when a fresh version is cut and when a no-change PublishVersion returns the
-// existing version. description overrides the stored version description, matching
-// PublishVersion's Description parameter.
-func versionResult(functionName string, v *versionData, description string) *driver.FunctionVersion {
-	return &driver.FunctionVersion{
+// existing version. A non-empty description overrides the stored version
+// description, matching PublishVersion's Description parameter.
+func (m *Mock) versionResult(functionName string, v *versionData, description string) *driver.FunctionVersion {
+	out := m.versionInfo(functionName, v)
+	if description != "" {
+		out.Description = description
+	}
+
+	return &out
+}
+
+// versionInfo renders a published version from its frozen snapshot only, never
+// from the mutable $LATEST state, with the version's own lifecycle.
+func (m *Mock) versionInfo(functionName string, v *versionData) driver.FunctionVersion {
+	out := driver.FunctionVersion{
 		FunctionName: functionName,
 		Version:      v.version,
-		Description:  description,
+		Description:  v.description,
 		CodeSHA256:   v.codeSHA,
+		CodeSize:     v.codeSize,
 		RevisionID:   v.revisionID,
 		CreatedAt:    v.createdAt,
 		Runtime:      v.config.Runtime,
@@ -78,14 +125,37 @@ func versionResult(functionName string, v *versionData, description string) *dri
 		Memory:       v.config.Memory,
 		Timeout:      v.config.Timeout,
 		Role:         v.config.Role,
+		Environment:  maps.Clone(v.config.Environment),
 	}
+
+	m.observeVersion(functionName, v, &out)
+
+	return out
+}
+
+// observeVersion sets a published version's lifecycle. A published version is
+// immutable, so an update of $LATEST (and its InProgress window) never reaches
+// it: it is Active with LastUpdateStatus Successful. The one exception is the
+// version CreateFunction(Publish=true) cut, which AWS reports Pending (reason
+// Creating, no LastUpdateStatus) until the function's creation completes.
+func (m *Mock) observeVersion(functionName string, v *versionData, out *driver.FunctionVersion) {
+	if v.cutWhilePending && m.isPending(functionName) {
+		out.State = statePending
+		out.StateReason = stateReasonCreating
+		out.StateReasonCode = stateReasonCodeCreating
+
+		return
+	}
+
+	out.State = stateActive
+	out.LastUpdateStatus = lastUpdateSuccessful
 }
 
 // ListVersions returns all published versions for a function.
-func (m *Mock) ListVersions(_ context.Context, functionName string) ([]driver.FunctionVersion, error) {
+func (m *Mock) ListVersions(ctx context.Context, functionName string) ([]driver.FunctionVersion, error) {
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return nil, m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	result := make([]driver.FunctionVersion, 0, len(fd.versions)+1)
@@ -93,31 +163,48 @@ func (m *Mock) ListVersions(_ context.Context, functionName string) ([]driver.Fu
 	result = append(result, driver.FunctionVersion{
 		FunctionName: functionName,
 		Version:      latestVersion,
+		Description:  fd.info.Description,
 		CodeSHA256:   fd.info.CodeSHA256,
+		CodeSize:     fd.info.CodeSize,
 		RevisionID:   fd.info.RevisionID,
 		Runtime:      fd.info.Runtime,
 		Handler:      fd.info.Handler,
 		Memory:       fd.info.Memory,
 		Timeout:      fd.info.Timeout,
 		Role:         fd.info.Role,
+		Environment:  maps.Clone(fd.info.Environment),
 	})
 
 	for _, v := range fd.versions {
-		result = append(result, driver.FunctionVersion{
-			FunctionName: functionName,
-			Version:      v.version,
-			CodeSHA256:   v.codeSHA,
-			RevisionID:   v.revisionID,
-			CreatedAt:    v.createdAt,
-			Runtime:      v.config.Runtime,
-			Handler:      v.config.Handler,
-			Memory:       v.config.Memory,
-			Timeout:      v.config.Timeout,
-			Role:         v.config.Role,
-		})
+		result = append(result, m.versionInfo(functionName, v))
 	}
 
 	return result, nil
+}
+
+// GetVersionAWSConfig returns the AWS-only settings (VpcConfig,
+// DeadLetterConfig, TracingConfig, Architectures, EphemeralStorage, Layers) of
+// one function version: the live settings for "" / $LATEST, or the settings a
+// published version froze when it was cut. It is an AWS-only capability the
+// Lambda server handler type-asserts for, so a published version reports its own
+// configuration rather than whatever $LATEST was changed to afterwards.
+func (m *Mock) GetVersionAWSConfig(ctx context.Context, name, version string) (driver.AWSFunctionConfig, error) {
+	fd, ok := m.funcs.Get(name)
+	if !ok {
+		return driver.AWSFunctionConfig{}, m.errFunctionNotFound(ctx, name, "")
+	}
+
+	if version == "" || version == latestVersion {
+		return cloneAWSConfig(&fd.awsConfig), nil
+	}
+
+	for _, v := range fd.versions {
+		if v.version == version {
+			return cloneAWSConfig(&v.awsConfig), nil
+		}
+	}
+
+	return driver.AWSFunctionConfig{}, m.errFunctionNotFound(ctx, name, version)
 }
 
 // DeleteVersion deletes a single published version of a function, matching the
@@ -129,13 +216,13 @@ func (m *Mock) ListVersions(_ context.Context, functionName string) ([]driver.Fu
 // whole function (all versions and aliases) via DeleteFunction. It has no Azure
 // Functions / GCP Cloud Functions equivalent, so it is an AWS-only capability
 // asserted by the handler rather than part of the portable Serverless driver.
-func (m *Mock) DeleteVersion(_ context.Context, name, qualifier string) error {
+func (m *Mock) DeleteVersion(ctx context.Context, name, qualifier string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(name)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+		return m.errFunctionNotFound(ctx, name, "")
 	}
 
 	if qualifier == latestVersion || qualifier == latestVersionPublished {

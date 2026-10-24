@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
@@ -31,7 +30,7 @@ func (m *Mock) InvokeSync(
 ) (output []byte, functionError string, err error) {
 	name := functionNameFromARN(functionARN)
 	if _, ok := m.funcs.Get(name); !ok {
-		return nil, "", cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+		return nil, "", m.errFunctionNotFound(ctx, name, "")
 	}
 
 	depth := recursionguard.Depth(ctx)

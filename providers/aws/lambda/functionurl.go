@@ -38,7 +38,7 @@ const invokeModeResponseStream = "RESPONSE_STREAM"
 // isVersionQualifier). Only one URL config may exist per (function, qualifier).
 //
 //nolint:gocritic // hugeParam: matches the functionURLManager interface signature.
-func (m *Mock) CreateFunctionURLConfig(_ context.Context, cfg driver.FunctionURLConfig) (*driver.FunctionURLConfig, error) {
+func (m *Mock) CreateFunctionURLConfig(ctx context.Context, cfg driver.FunctionURLConfig) (*driver.FunctionURLConfig, error) {
 	if err := validateAuthType(cfg.AuthType); err != nil {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func (m *Mock) CreateFunctionURLConfig(_ context.Context, cfg driver.FunctionURL
 
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
+		return nil, m.errFunctionNotFound(ctx, cfg.FunctionName, "")
 	}
 
 	if err := validateFunctionURLQualifier(&fd, cfg.Qualifier); err != nil {
@@ -97,13 +97,13 @@ func (m *Mock) CreateFunctionURLConfig(_ context.Context, cfg driver.FunctionURL
 
 // GetFunctionURLConfig returns the Function URL config for a function's
 // qualifier ("" and "$LATEST" both mean the unqualified $LATEST URL).
-func (m *Mock) GetFunctionURLConfig(_ context.Context, functionName, qualifier string) (*driver.FunctionURLConfig, error) {
+func (m *Mock) GetFunctionURLConfig(ctx context.Context, functionName, qualifier string) (*driver.FunctionURLConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return nil, m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	cfg, ok := fd.urlConfigs[policyKey(qualifier)]
@@ -118,7 +118,7 @@ func (m *Mock) GetFunctionURLConfig(_ context.Context, functionName, qualifier s
 // config, leaving unset fields unchanged.
 //
 //nolint:gocritic // hugeParam: matches the functionURLManager interface signature.
-func (m *Mock) UpdateFunctionURLConfig(_ context.Context, cfg driver.FunctionURLConfig) (*driver.FunctionURLConfig, error) {
+func (m *Mock) UpdateFunctionURLConfig(ctx context.Context, cfg driver.FunctionURLConfig) (*driver.FunctionURLConfig, error) {
 	if err := validateAuthType(cfg.AuthType); err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func (m *Mock) UpdateFunctionURLConfig(_ context.Context, cfg driver.FunctionURL
 
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
+		return nil, m.errFunctionNotFound(ctx, cfg.FunctionName, "")
 	}
 
 	key := policyKey(cfg.Qualifier)
@@ -165,13 +165,13 @@ func (m *Mock) UpdateFunctionURLConfig(_ context.Context, cfg driver.FunctionURL
 }
 
 // DeleteFunctionURLConfig removes a function's URL config for a qualifier.
-func (m *Mock) DeleteFunctionURLConfig(_ context.Context, functionName, qualifier string) error {
+func (m *Mock) DeleteFunctionURLConfig(ctx context.Context, functionName, qualifier string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	key := policyKey(qualifier)
@@ -195,13 +195,13 @@ func (m *Mock) DeleteFunctionURLConfig(_ context.Context, functionName, qualifie
 
 // ListFunctionURLConfigs returns every Function URL config set on a function
 // (one per qualifier).
-func (m *Mock) ListFunctionURLConfigs(_ context.Context, functionName string) ([]driver.FunctionURLConfig, error) {
+func (m *Mock) ListFunctionURLConfigs(ctx context.Context, functionName string) ([]driver.FunctionURLConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return nil, m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	out := make([]driver.FunctionURLConfig, 0, len(fd.urlConfigs))

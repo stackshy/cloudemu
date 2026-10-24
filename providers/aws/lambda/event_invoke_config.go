@@ -25,7 +25,7 @@ const (
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) PutFunctionEventInvokeConfig(
-	_ context.Context, cfg driver.EventInvokeConfig,
+	ctx context.Context, cfg driver.EventInvokeConfig,
 ) (*driver.EventInvokeConfig, error) {
 	if err := validateEventInvokeConfig(cfg); err != nil {
 		return nil, err
@@ -36,10 +36,10 @@ func (m *Mock) PutFunctionEventInvokeConfig(
 
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
+		return nil, m.errFunctionNotFound(ctx, cfg.FunctionName, "")
 	}
 
-	if _, err := m.resolveQualifier(&fd, cfg.Qualifier, nil); err != nil {
+	if _, err := m.resolveQualifier(ctx, &fd, cfg.Qualifier, nil); err != nil {
 		return nil, err
 	}
 
@@ -68,7 +68,7 @@ func (m *Mock) PutFunctionEventInvokeConfig(
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) UpdateFunctionEventInvokeConfig(
-	_ context.Context, cfg driver.EventInvokeConfig,
+	ctx context.Context, cfg driver.EventInvokeConfig,
 ) (*driver.EventInvokeConfig, error) {
 	if err := validateEventInvokeConfig(cfg); err != nil {
 		return nil, err
@@ -79,10 +79,10 @@ func (m *Mock) UpdateFunctionEventInvokeConfig(
 
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
+		return nil, m.errFunctionNotFound(ctx, cfg.FunctionName, "")
 	}
 
-	if _, err := m.resolveQualifier(&fd, cfg.Qualifier, nil); err != nil {
+	if _, err := m.resolveQualifier(ctx, &fd, cfg.Qualifier, nil); err != nil {
 		return nil, err
 	}
 
@@ -116,14 +116,14 @@ func (m *Mock) UpdateFunctionEventInvokeConfig(
 // GetFunctionEventInvokeConfig returns the async-invoke config for a function
 // version/alias, or NotFound (ResourceNotFoundException) when none is set.
 func (m *Mock) GetFunctionEventInvokeConfig(
-	_ context.Context, functionName, qualifier string,
+	ctx context.Context, functionName, qualifier string,
 ) (*driver.EventInvokeConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return nil, m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	cfg, ok := fd.eventInvokeConfigs[policyKey(qualifier)]
@@ -139,13 +139,13 @@ func (m *Mock) GetFunctionEventInvokeConfig(
 
 // DeleteFunctionEventInvokeConfig removes the async-invoke config for a function
 // version/alias, reverting it to the default (2 retries, no destinations).
-func (m *Mock) DeleteFunctionEventInvokeConfig(_ context.Context, functionName, qualifier string) error {
+func (m *Mock) DeleteFunctionEventInvokeConfig(ctx context.Context, functionName, qualifier string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	key := policyKey(qualifier)
@@ -170,14 +170,14 @@ func (m *Mock) DeleteFunctionEventInvokeConfig(_ context.Context, functionName, 
 // ListFunctionEventInvokeConfigs returns every async-invoke config set on a
 // function (one per qualifier), backing AWS ListFunctionEventInvokeConfigs.
 func (m *Mock) ListFunctionEventInvokeConfigs(
-	_ context.Context, functionName string,
+	ctx context.Context, functionName string,
 ) ([]driver.EventInvokeConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return nil, m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	out := make([]driver.EventInvokeConfig, 0, len(fd.eventInvokeConfigs))

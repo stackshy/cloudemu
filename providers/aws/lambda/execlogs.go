@@ -14,21 +14,28 @@ import (
 // function's invocation logs under: /aws/lambda/<function-name>.
 const logGroupPrefix = "/aws/lambda/"
 
-// surfaceInvokeLogs writes one invocation's log lines into CloudWatch Logs,
-// mirroring the START/END/REPORT bookend real Lambda emits, plus any captured
-// stdout/stderr (from the real-engine path). It is best-effort: with no log
-// sink wired it is a no-op, so library users are unaffected.
-func (m *Mock) surfaceInvokeLogs(ctx context.Context, functionName, executedVersion, captured, funcError string) {
+// logTailBytes is how much of the execution log Invoke returns for
+// LogType=Tail: "The last 4 KB of the execution log, which is base64-encoded."
+// See https://docs.aws.amazon.com/lambda/latest/api/API_Invoke.html
+const logTailBytes = 4 * 1024
+
+// surfaceInvokeLogs renders one invocation's execution log (the START/END/
+// REPORT bookend real Lambda emits, plus any captured stdout/stderr from the
+// real-engine path), writes it into CloudWatch Logs when a log sink is wired
+// (best-effort: with no sink, library users are unaffected), and returns its
+// tail, the last 4 KB that Invoke reports for LogType=Tail.
+func (m *Mock) surfaceInvokeLogs(ctx context.Context, functionName, executedVersion, captured, funcError string) string {
+	requestID := idgen.UUID()
+	lines := invokeLogLines(executedVersion, requestID, captured, funcError)
+	tail := logTail(lines)
+
 	if m.logs == nil {
-		return
+		return tail
 	}
 
-	requestID := idgen.UUID()
 	now := m.opts.Clock.Now()
 	group := logGroupPrefix + functionName
 	stream := invokeLogStream(now, executedVersion, requestID)
-
-	lines := invokeLogLines(executedVersion, requestID, captured, funcError)
 
 	_, _ = m.logs.CreateLogGroup(ctx, logdriver.LogGroupConfig{Name: group})
 	_, _ = m.logs.CreateLogStream(ctx, group, stream)
@@ -45,6 +52,26 @@ func (m *Mock) surfaceInvokeLogs(ctx context.Context, functionName, executedVers
 	}
 
 	_ = m.logs.PutLogEvents(ctx, group, stream, events)
+
+	return tail
+}
+
+// logTail joins the execution-log lines (newline-terminated, as the log is
+// written) and keeps at most the last logTailBytes of it.
+func logTail(lines []string) string {
+	var b strings.Builder
+
+	for _, line := range lines {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+
+	full := b.String()
+	if len(full) > logTailBytes {
+		full = full[len(full)-logTailBytes:]
+	}
+
+	return full
 }
 
 // invokeLogStream builds the CloudWatch Logs stream name real Lambda uses for an

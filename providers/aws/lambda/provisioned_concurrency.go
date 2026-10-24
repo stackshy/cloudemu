@@ -33,7 +33,7 @@ const minProvisionedConcurrentExecutions = 1
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) PutFunctionProvisionedConcurrencyConfig(
-	_ context.Context, cfg driver.ProvisionedConcurrencyConfig,
+	ctx context.Context, cfg driver.ProvisionedConcurrencyConfig,
 ) (*driver.ProvisionedConcurrencyConfig, error) {
 	if cfg.RequestedProvisionedConcurrentExecutions < minProvisionedConcurrentExecutions {
 		return nil, cerrors.Newf(cerrors.InvalidArgument,
@@ -46,10 +46,10 @@ func (m *Mock) PutFunctionProvisionedConcurrencyConfig(
 
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
+		return nil, m.errFunctionNotFound(ctx, cfg.FunctionName, "")
 	}
 
-	resolved, err := m.resolveQualifier(&fd, cfg.Qualifier, nil)
+	resolved, err := m.resolveQualifier(ctx, &fd, cfg.Qualifier, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -94,14 +94,14 @@ func (m *Mock) PutFunctionProvisionedConcurrencyConfig(
 // config for a function's version/alias, or NotFound
 // (ProvisionedConcurrencyConfigNotFoundException on the wire) when none is set.
 func (m *Mock) GetFunctionProvisionedConcurrencyConfig(
-	_ context.Context, functionName, qualifier string,
+	ctx context.Context, functionName, qualifier string,
 ) (*driver.ProvisionedConcurrencyConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return nil, m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	cfg, ok := fd.provisionedConcurrencyConfigs[qualifier]
@@ -117,13 +117,13 @@ func (m *Mock) GetFunctionProvisionedConcurrencyConfig(
 
 // DeleteFunctionProvisionedConcurrencyConfig removes the provisioned-concurrency
 // config for a function's version/alias.
-func (m *Mock) DeleteFunctionProvisionedConcurrencyConfig(_ context.Context, functionName, qualifier string) error {
+func (m *Mock) DeleteFunctionProvisionedConcurrencyConfig(ctx context.Context, functionName, qualifier string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	if _, exists := fd.provisionedConcurrencyConfigs[qualifier]; !exists {
@@ -149,14 +149,14 @@ func (m *Mock) DeleteFunctionProvisionedConcurrencyConfig(_ context.Context, fun
 // config set on a function (one per qualifier), backing AWS
 // ListProvisionedConcurrencyConfigs.
 func (m *Mock) ListFunctionProvisionedConcurrencyConfigs(
-	_ context.Context, functionName string,
+	ctx context.Context, functionName string,
 ) ([]driver.ProvisionedConcurrencyConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return nil, m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	out := make([]driver.ProvisionedConcurrencyConfig, 0, len(fd.provisionedConcurrencyConfigs))

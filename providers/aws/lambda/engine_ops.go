@@ -90,6 +90,7 @@ func (m *Mock) deployNewFunction(ctx context.Context, cfg *driver.FunctionConfig
 	_, appeared := m.funcs.Get(cfg.Name)
 	if !appeared {
 		m.funcs.Set(cfg.Name, m.newFuncData(info, backed))
+		m.beginCreateSettle(cfg.Name)
 	}
 
 	m.mu.Unlock()
@@ -103,6 +104,7 @@ func (m *Mock) deployNewFunction(ctx context.Context, cfg *driver.FunctionConfig
 	}
 
 	result := info
+	m.observe(&result)
 
 	return &result, nil
 }
@@ -118,10 +120,11 @@ func (m *Mock) DeleteFunction(ctx context.Context, name string) error {
 	fd, ok := m.funcs.Get(name)
 	if !ok {
 		m.mu.Unlock()
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+		return m.errFunctionNotFound(ctx, name, "")
 	}
 
 	m.funcs.Delete(name)
+	m.clearSettle(name)
 
 	if m.engineBusy(name) || !fd.engineBacked {
 		m.mu.Unlock()
@@ -146,12 +149,12 @@ func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.Funct
 		m.mu.Lock()
 		defer m.mu.Unlock()
 
-		return m.commitUpdate(name, cfg, nil)
+		return m.commitUpdate(ctx, name, cfg, nil)
 	}
 
 	// A code update re-deploys to the engine using the post-merge runtime and
 	// handler, so the function runs the new code, not the stale deployment.
-	info, token, err := m.reserveCodeUpdate(name, cfg)
+	info, token, err := m.reserveCodeUpdate(ctx, name, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +174,7 @@ func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.Funct
 		// to this call.
 		m.removeDeployment(ctx, name)
 
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+		return nil, m.errFunctionNotFound(ctx, name, "")
 	}
 
 	defer m.mu.Unlock()
@@ -180,7 +183,7 @@ func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.Funct
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "deploy function %s: %v", name, err)
 	}
 
-	return m.commitUpdate(name, cfg, &backed)
+	return m.commitUpdate(ctx, name, cfg, &backed)
 }
 
 // reserveCodeUpdate validates a code update against the current function and
@@ -188,17 +191,21 @@ func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.Funct
 // configuration to deploy and the reservation token.
 //
 //nolint:gocritic // hugeParam: cfg is the by-value driver config.
-func (m *Mock) reserveCodeUpdate(name string, cfg driver.FunctionConfig) (driver.FunctionInfo, uint64, error) {
+func (m *Mock) reserveCodeUpdate(
+	ctx context.Context, name string, cfg driver.FunctionConfig,
+) (driver.FunctionInfo, uint64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(name)
 	if !ok {
-		return driver.FunctionInfo{}, 0, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+		return driver.FunctionInfo{}, 0, m.errFunctionNotFound(ctx, name, "")
 	}
 
-	if m.engineBusy(name) {
-		return driver.FunctionInfo{}, 0, updateInProgress(fd.info.ARN)
+	// Refused while Pending creation or while an update (an AsyncSettle window
+	// or an engine deploy) is InProgress.
+	if err := m.checkUpdatable(&fd); err != nil {
+		return driver.FunctionInfo{}, 0, err
 	}
 
 	info, err := m.mergeUpdate(fd.info, cfg)

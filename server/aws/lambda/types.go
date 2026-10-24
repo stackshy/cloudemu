@@ -52,6 +52,10 @@ type functionConfiguration struct {
 	Timeout      int    `json:"Timeout,omitempty"`
 	LastModified string `json:"LastModified,omitempty"`
 	State        string `json:"State,omitempty"`
+	// StateReason / StateReasonCode explain a Pending function ("The function
+	// is being created." / "Creating"); omitted once it is Active.
+	StateReason     string `json:"StateReason,omitempty"`
+	StateReasonCode string `json:"StateReasonCode,omitempty"`
 	// LastUpdateStatus is the terminal status of the last create/update ("Successful").
 	// SDK waiters (FunctionUpdatedV2) poll GetFunctionConfiguration for it.
 	LastUpdateStatus string                    `json:"LastUpdateStatus,omitempty"`
@@ -227,6 +231,8 @@ type createFunctionRequest struct {
 	// Publish, when true, publishes version 1 from the created function and
 	// returns that version's configuration (Version "1", qualified ARN).
 	Publish bool `json:"Publish"`
+	// CodeSigningConfigArn attaches a code signing config to the new function.
+	CodeSigningConfigArn string `json:"CodeSigningConfigArn"`
 }
 
 // functionCode is the deployment package in a CreateFunction body. The AWS SDK

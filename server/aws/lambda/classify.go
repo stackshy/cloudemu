@@ -74,7 +74,17 @@ const (
 	opListProvisionedConcurrency   opID = "ListProvisionedConcurrencyConfigs"
 
 	opGetFunctionCodeSigningConfig    opID = "GetFunctionCodeSigningConfig"
+	opPutFunctionCodeSigningConfig    opID = "PutFunctionCodeSigningConfig"
 	opDeleteFunctionCodeSigningConfig opID = "DeleteFunctionCodeSigningConfig"
+
+	opCreateCodeSigningConfig          opID = "CreateCodeSigningConfig"
+	opListCodeSigningConfigs           opID = "ListCodeSigningConfigs"
+	opGetCodeSigningConfig             opID = "GetCodeSigningConfig"
+	opUpdateCodeSigningConfig          opID = "UpdateCodeSigningConfig"
+	opDeleteCodeSigningConfig          opID = "DeleteCodeSigningConfig"
+	opListFunctionsByCodeSigningConfig opID = "ListFunctionsByCodeSigningConfig"
+
+	opGetAccountSettings opID = "GetAccountSettings"
 
 	opPutFunctionConcurrency    opID = "PutFunctionConcurrency"
 	opGetFunctionConcurrency    opID = "GetFunctionConcurrency"
@@ -96,6 +106,8 @@ const (
 	routeProvisionedConcurrency
 	routeCodeSigning
 	routeConcurrency
+	routeCodeSigningConfigs
+	routeAccountSettings
 )
 
 // opArgs is what classify extracts from the request.
@@ -186,8 +198,10 @@ func classify(r *http.Request) (opID, opArgs) {
 		return classifyEventInvokeConfig(r, trimRoute(path, eventInvokeConfigPrefix))
 	case isProvisionedConcurrencyPath(path):
 		return classifyProvisionedConcurrency(r)
-	case isCodeSigningPath(path):
-		return classifyCodeSigning(r)
+	}
+
+	if op, a, ok := classifyCodeSigningOrAccount(r, path); ok {
+		return op, a
 	}
 
 	if name, ok := concurrencyFunctionName(path); ok {
@@ -198,6 +212,25 @@ func classify(r *http.Request) (opID, opArgs) {
 	}
 
 	return classifyFunctions(r)
+}
+
+// classifyCodeSigningOrAccount classifies the code signing config API, a
+// function's code-signing-config sub-resource and the account settings API.
+// ok is false for any other path.
+func classifyCodeSigningOrAccount(r *http.Request, path string) (op opID, a opArgs, ok bool) {
+	switch {
+	case isCodeSigningPath(path):
+		op, a = classifyCodeSigning(r)
+	case strings.HasPrefix(path, codeSigningConfigsPrefix):
+		op, a = classifyCodeSigningConfigs(r, trimRoute(path, codeSigningConfigsPrefix))
+	case path == accountSettingsPath:
+		op = methodOp(r.Method, map[string]opID{http.MethodGet: opGetAccountSettings})
+		a = opArgs{route: routeAccountSettings}
+	default:
+		return opUnknown, opArgs{}, false
+	}
+
+	return op, a, true
 }
 
 // trimRoute strips a route prefix and the slash after it.
@@ -389,7 +422,36 @@ func classifyCodeSigning(r *http.Request) (opID, opArgs) {
 	a := opArgs{route: routeCodeSigning, name: name}
 
 	return methodOp(r.Method, map[string]opID{
-		http.MethodGet: opGetFunctionCodeSigningConfig, http.MethodDelete: opDeleteFunctionCodeSigningConfig,
+		http.MethodGet: opGetFunctionCodeSigningConfig, http.MethodPut: opPutFunctionCodeSigningConfig,
+		http.MethodDelete: opDeleteFunctionCodeSigningConfig,
+	}), a
+}
+
+// classifyCodeSigningConfigs handles /2020-04-22/code-signing-configs[/{arn}[/functions]].
+// item is the (path-unescaped) code signing config ARN.
+func classifyCodeSigningConfigs(r *http.Request, rest string) (opID, opArgs) {
+	a := opArgs{route: routeCodeSigningConfigs}
+
+	if rest == "" {
+		return methodOp(r.Method, map[string]opID{
+			http.MethodPost: opCreateCodeSigningConfig, http.MethodGet: opListCodeSigningConfigs,
+		}), a
+	}
+
+	if arn, ok := strings.CutSuffix(rest, codeSigningFunctionsSuffix); ok && arn != "" {
+		a.item = arn
+		if r.Method == http.MethodGet {
+			return opListFunctionsByCodeSigningConfig, a
+		}
+
+		return opUnknown, a
+	}
+
+	a.item = rest
+
+	return methodOp(r.Method, map[string]opID{
+		http.MethodGet: opGetCodeSigningConfig, http.MethodPut: opUpdateCodeSigningConfig,
+		http.MethodDelete: opDeleteCodeSigningConfig,
 	}), a
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/internal/regionctx"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
@@ -186,6 +187,20 @@ type versionData struct {
 	codeSHA    string
 	revisionID string
 	createdAt  string
+	// codeSize is the deployment-package size the version was cut from. A
+	// published version is immutable, so it is frozen here rather than read
+	// from the mutable $LATEST FunctionInfo.
+	codeSize int64
+	// description is the version's own description: the PublishVersion
+	// Description override, or the function's description when none was given.
+	description string
+	// awsConfig freezes the AWS-only settings (VpcConfig, DeadLetterConfig,
+	// TracingConfig, Architectures, EphemeralStorage, Layers) at publish time.
+	awsConfig driver.AWSFunctionConfig
+	// cutWhilePending marks the version CreateFunction(Publish=true) cut while
+	// the function was still Pending creation; it reports Pending until creation
+	// completes. Every other published version is Active/Successful.
+	cutWhilePending bool
 }
 
 type aliasData struct {
@@ -243,6 +258,9 @@ type funcData struct {
 	// normalized, since real Lambda cannot attach provisioned concurrency to
 	// the mutable $LATEST code).
 	provisionedConcurrencyConfigs map[string]driver.ProvisionedConcurrencyConfig
+	// codeSigningConfigARN is the code signing config attached to the function
+	// (PutFunctionCodeSigningConfig), or "" when none is.
+	codeSigningConfigARN string
 }
 
 // Mock is an in-memory mock implementation of AWS Lambda.
@@ -277,6 +295,16 @@ type Mock struct {
 	// call (see engine_ops.go); engineSeq mints the tokens. Both under mu.
 	engineOps map[string]uint64
 	engineSeq uint64
+	// createSettle / updateSettle overlay the transient lifecycle a function
+	// reports under config.Options.AsyncSettle: State Pending (keyed by function
+	// name) until creation completes, and LastUpdateStatus InProgress until an
+	// update completes. Both are inactive unless AsyncSettle is set, and, like
+	// every other provider's settle windows, are not persisted: a restored
+	// function reports its terminal state.
+	createSettle *settle.Set
+	updateSettle *settle.Set
+	// cscs holds the code signing configs keyed by ARN.
+	cscs *memstore.Store[driver.CodeSigningConfig]
 	// inflightMu guards inflight, the number of invocations currently executing
 	// per function name. It backs reserved-concurrency enforcement on Invoke.
 	inflightMu sync.Mutex
@@ -328,6 +356,10 @@ func New(opts *config.Options) *Mock {
 		handlers:  make(map[string]driver.HandlerFunc),
 		inflight:  make(map[string]int),
 		engineOps: make(map[string]uint64),
+
+		createSettle: settle.NewSet(),
+		updateSettle: settle.NewSet(),
+		cscs:         memstore.New[driver.CodeSigningConfig](),
 	}
 }
 
@@ -360,7 +392,7 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 	info := driver.FunctionInfo{
 		Name: cfg.Name, ARN: arn, Runtime: cfg.Runtime, Handler: cfg.Handler,
 		Role: cfg.Role, Description: cfg.Description,
-		Memory: cfg.Memory, Timeout: cfg.Timeout, State: "Active",
+		Memory: cfg.Memory, Timeout: cfg.Timeout, State: stateActive,
 		Environment: maps.Clone(cfg.Environment), Tags: maps.Clone(cfg.Tags),
 		LastModified: m.opts.Clock.Now().UTC().Format(time.RFC3339),
 		CodeSHA256:   codeHash(cfg.Code), CodeSize: int64(len(cfg.Code)),
@@ -405,15 +437,16 @@ func validateFunctionLimits(memory, timeout int) error {
 	return nil
 }
 
-func (m *Mock) GetFunction(_ context.Context, name string) (*driver.FunctionInfo, error) {
+func (m *Mock) GetFunction(ctx context.Context, name string) (*driver.FunctionInfo, error) {
 	fd, ok := m.funcs.Get(name)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+		return nil, m.errFunctionNotFound(ctx, name, "")
 	}
 
 	info := fd.info
 	info.Environment = maps.Clone(info.Environment)
 	info.Tags = maps.Clone(info.Tags)
+	m.observe(&info)
 
 	return &info, nil
 }
@@ -423,7 +456,9 @@ func (m *Mock) ListFunctions(_ context.Context) ([]driver.FunctionInfo, error) {
 	infos := make([]driver.FunctionInfo, 0, len(all))
 
 	for k := range all {
-		infos = append(infos, all[k].info)
+		info := all[k].info
+		m.observe(&info)
+		infos = append(infos, info)
 	}
 
 	return infos, nil
@@ -433,14 +468,22 @@ func (m *Mock) ListFunctions(_ context.Context) ([]driver.FunctionInfo, error) {
 // when set, is the engine state after a code deploy. Callers hold mu.
 //
 //nolint:gocritic // hugeParam: cfg is the by-value driver config.
-func (m *Mock) commitUpdate(name string, cfg driver.FunctionConfig, backed *bool) (*driver.FunctionInfo, error) {
+func (m *Mock) commitUpdate(
+	ctx context.Context, name string, cfg driver.FunctionConfig, backed *bool,
+) (*driver.FunctionInfo, error) {
 	fd, ok := m.funcs.Get(name)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+		return nil, m.errFunctionNotFound(ctx, name, "")
 	}
 
-	if backed == nil && m.engineBusy(name) {
-		return nil, updateInProgress(fd.info.ARN)
+	// A configuration update is refused while the function is still Pending
+	// creation or a previous update is InProgress (an AsyncSettle window or an
+	// engine deploy), as real Lambda does. A code update was checked when it
+	// reserved the name (reserveCodeUpdate) and is finalized here.
+	if backed == nil {
+		if err := m.checkUpdatable(&fd); err != nil {
+			return nil, err
+		}
 	}
 
 	info, err := m.mergeUpdate(fd.info, cfg)
@@ -455,8 +498,10 @@ func (m *Mock) commitUpdate(name string, cfg driver.FunctionConfig, backed *bool
 	}
 
 	m.funcs.Set(name, fd)
+	m.beginUpdateSettle(name)
 
 	result := info
+	m.observe(&result)
 
 	return &result, nil
 }
@@ -498,10 +543,16 @@ func (m *Mock) mergeUpdate(cur driver.FunctionInfo, cfg driver.FunctionConfig) (
 func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.InvokeOutput, error) {
 	fd, ok := m.funcs.Get(input.FunctionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", input.FunctionName)
+		return nil, m.errFunctionNotFound(ctx, input.FunctionName, "")
 	}
 
-	executedVersion, err := m.resolveQualifier(&fd, input.Qualifier, input.Payload)
+	// A function still Pending creation cannot be invoked
+	// (ResourceConflictException), matching real Lambda.
+	if err := m.checkInvocable(&fd); err != nil {
+		return nil, err
+	}
+
+	executedVersion, err := m.resolveQualifier(ctx, &fd, input.Qualifier, input.Payload)
 	if err != nil {
 		return nil, err
 	}
@@ -571,14 +622,16 @@ func (m *Mock) runInvocation(
 		// RegisterHandler to run real logic.
 		m.emitMetric(ctx, "Invocations", 1, dims)
 		m.emitMetric(ctx, "Duration", m.durationMillis(start), dims)
-		m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, "", "")
+		tail := m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, "", "")
 
 		payload := input.Payload
 		if len(payload) == 0 {
 			payload = []byte("{}")
 		}
 
-		return &driver.InvokeOutput{StatusCode: 200, Payload: payload, ExecutedVersion: executedVersion}, nil
+		return &driver.InvokeOutput{
+			StatusCode: 200, Payload: payload, ExecutedVersion: executedVersion, LogTail: tail,
+		}, nil
 	}
 
 	payload, err := h(ctx, input.Payload)
@@ -588,17 +641,21 @@ func (m *Mock) runInvocation(
 		m.emitMetric(ctx, "Invocations", 1, dims)
 		m.emitMetric(ctx, "Errors", 1, dims)
 		m.emitMetric(ctx, "Duration", duration, dims)
-		m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, "", err.Error())
+		tail := m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, "", err.Error())
 
-		return &driver.InvokeOutput{StatusCode: 500, Error: err.Error(), ExecutedVersion: executedVersion}, nil
+		return &driver.InvokeOutput{
+			StatusCode: 500, Error: err.Error(), ExecutedVersion: executedVersion, LogTail: tail,
+		}, nil
 	}
 
 	m.emitMetric(ctx, "Invocations", 1, dims)
 	m.emitMetric(ctx, "Duration", duration, dims)
 	m.emitMetric(ctx, "ConcurrentExecutions", 1, dims)
-	m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, "", "")
+	tail := m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, "", "")
 
-	return &driver.InvokeOutput{StatusCode: 200, Payload: payload, ExecutedVersion: executedVersion}, nil
+	return &driver.InvokeOutput{
+		StatusCode: 200, Payload: payload, ExecutedVersion: executedVersion, LogTail: tail,
+	}, nil
 }
 
 // durationMillis is the invocation's measured run time on the configured clock,
@@ -631,7 +688,7 @@ func (m *Mock) resolveHandler(fd *funcData, name string) driver.HandlerFunc {
 // routingKey (the invoke payload) selects one deterministically (see
 // selectAliasVersion). An unknown qualifier is a ResourceNotFoundException,
 // the same error AWS returns for an alias or version that doesn't exist.
-func (m *Mock) resolveQualifier(fd *funcData, qualifier string, routingKey []byte) (string, error) {
+func (m *Mock) resolveQualifier(ctx context.Context, fd *funcData, qualifier string, routingKey []byte) (string, error) {
 	if qualifier == "" || qualifier == latestVersion {
 		return latestVersion, nil
 	}
@@ -644,7 +701,7 @@ func (m *Mock) resolveQualifier(fd *funcData, qualifier string, routingKey []byt
 		return qualifier, nil
 	}
 
-	return "", cerrors.Newf(cerrors.NotFound, "function version/alias not found for %s", qualifier)
+	return "", m.errFunctionNotFound(ctx, fd.info.Name, qualifier)
 }
 
 // selectAliasVersion picks the concrete version a weighted alias routes an
@@ -791,14 +848,14 @@ func (m *Mock) invokeEngine(
 	if out.Error != "" {
 		m.emitMetric(ctx, "Errors", 1, dims)
 		m.emitMetric(ctx, "Duration", duration, dims)
-		m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, out.Logs, out.Error)
+		out.LogTail = m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, out.Logs, out.Error)
 
 		return out, nil
 	}
 
 	m.emitMetric(ctx, "Duration", duration, dims)
 	m.emitMetric(ctx, "ConcurrentExecutions", 1, dims)
-	m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, out.Logs, "")
+	out.LogTail = m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, out.Logs, "")
 
 	return out, nil
 }

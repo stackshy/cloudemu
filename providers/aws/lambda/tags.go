@@ -3,22 +3,21 @@ package lambda
 import (
 	"context"
 	"maps"
-
-	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
 // TagFunction adds or overwrites tags on a function (Lambda TagResource).
-func (m *Mock) TagFunction(_ context.Context, name string, tags map[string]string) error {
+func (m *Mock) TagFunction(ctx context.Context, name string, tags map[string]string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(name)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+		return m.errFunctionNotFound(ctx, name, "")
 	}
 
-	if m.engineBusy(name) {
-		return updateInProgress(fd.info.ARN)
+	// Real Lambda rejects TagResource while an update is InProgress.
+	if err := m.checkNotUpdating(&fd); err != nil {
+		return err
 	}
 
 	// Copy before editing: GetFunction and ListFunctionTags read the stored
@@ -34,13 +33,13 @@ func (m *Mock) TagFunction(_ context.Context, name string, tags map[string]strin
 }
 
 // UntagFunction removes tags by key from a function (Lambda UntagResource).
-func (m *Mock) UntagFunction(_ context.Context, name string, keys []string) error {
+func (m *Mock) UntagFunction(ctx context.Context, name string, keys []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(name)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+		return m.errFunctionNotFound(ctx, name, "")
 	}
 
 	next := maps.Clone(fd.info.Tags)
@@ -56,10 +55,10 @@ func (m *Mock) UntagFunction(_ context.Context, name string, keys []string) erro
 }
 
 // ListFunctionTags returns a function's tags (Lambda ListTags).
-func (m *Mock) ListFunctionTags(_ context.Context, name string) (map[string]string, error) {
+func (m *Mock) ListFunctionTags(ctx context.Context, name string) (map[string]string, error) {
 	fd, ok := m.funcs.Get(name)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+		return nil, m.errFunctionNotFound(ctx, name, "")
 	}
 
 	return maps.Clone(fd.info.Tags), nil

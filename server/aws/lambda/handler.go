@@ -17,6 +17,7 @@ package lambda
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net"
@@ -119,14 +120,26 @@ const packageTypeZip = "Zip"
 // returns HTTP 202 with an empty body for it, versus 200 for RequestResponse.
 const invocationTypeEvent = "Event"
 
+// logTypeTail is the X-Amz-Log-Type value asking Invoke to return the tail of
+// the execution log in X-Amz-Log-Result.
+const logTypeTail = "Tail"
+
+// statePending is the State of a function whose creation has not completed.
+const statePending = "Pending"
+
+// stateActive is the State of a function (or published version) ready to be
+// invoked; the fallback for a published version whose backend does not report
+// the version's own lifecycle.
+const stateActive = "Active"
+
 // invocationTypeDryRun validates parameters and permissions without running the
 // function. AWS returns HTTP 204 No Content (nothing is executed).
 const invocationTypeDryRun = "DryRun"
 
 // lastUpdateStatusSuccessful is the terminal LastUpdateStatus real AWS reports
-// once a create/update completes. cloudemu settles synchronously, so every
-// config response carries it. This is the value the FunctionUpdatedV2 waiter
-// (SAM/CDK/Terraform) polls for.
+// once a create/update completes. It is the fallback for a backend that does
+// not report LastUpdateStatus itself. This is the value the FunctionUpdatedV2
+// waiter (SAM/CDK/Terraform) polls for.
 const lastUpdateStatusSuccessful = "Successful"
 
 const (
@@ -207,6 +220,21 @@ type versionDeleter interface {
 	DeleteVersion(ctx context.Context, name, qualifier string) error
 }
 
+// versionAWSConfigReader is the AWS-only surface returning the AWS-only settings
+// a published version froze when it was cut, so a version keeps reporting its
+// own VpcConfig/Layers/Architectures/... after $LATEST changes.
+type versionAWSConfigReader interface {
+	GetVersionAWSConfig(ctx context.Context, name, version string) (sdrv.AWSFunctionConfig, error)
+}
+
+// writePublisher is the AWS-only surface backing Publish=true on
+// CreateFunction/UpdateFunctionCode: AWS publishes atomically with that write,
+// so the publish is not rejected by the Pending/InProgress state the write
+// itself just started.
+type writePublisher interface {
+	PublishVersionOnWrite(ctx context.Context, functionName, description string) (*sdrv.FunctionVersion, error)
+}
+
 // ObjectStore is the slice of the in-process S3 backend the handler needs to
 // fetch an S3-sourced deployment package (Code.S3Bucket/S3Key).
 type ObjectStore interface {
@@ -265,7 +293,16 @@ func (*Handler) Matches(r *http.Request) bool {
 		strings.HasPrefix(r.URL.Path, layersPrefix) ||
 		strings.HasPrefix(r.URL.Path, functionURLPrefix) ||
 		strings.HasPrefix(r.URL.Path, eventInvokeConfigPrefix) ||
-		isCodeSigningPath(r.URL.Path)
+		isCodeSigningOrAccountPath(r.URL.Path)
+}
+
+// isCodeSigningOrAccountPath reports whether path is under the code signing
+// config API, a function's code-signing-config sub-resource, or the account
+// settings API.
+func isCodeSigningOrAccountPath(path string) bool {
+	return strings.HasPrefix(path, codeSigningConfigsPrefix) ||
+		path == accountSettingsPath ||
+		isCodeSigningPath(path)
 }
 
 // ServeHTTP runs the operation classify picks for the request.
@@ -280,12 +317,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case routeFunctionURLInvoke:
 		h.serveFunctionURLInvoke(w, r)
 	case routeTags:
-		if foreignRef(&a, h.accountID, h.region) {
-			writeForeignRef(w, a.item)
-			return
-		}
-
-		h.serveTags(w, r, op, a.name)
+		h.serveTagsRoute(w, r, op, &a)
 	case routeEventSourceMappings:
 		h.serveEventSourceMappings(w, r, op, a.item)
 	case routeLayers:
@@ -294,15 +326,58 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveFunctionURL(w, r, op, &a)
 	case routeEventInvokeConfig:
 		h.serveEventInvokeConfig(w, r, op, &a)
-	case routeProvisionedConcurrency:
-		h.serveProvisionedConcurrency(w, r, op, &a)
-	case routeCodeSigning:
-		h.serveFunctionCodeSigningConfig(w, r, op, a.name)
-	case routeConcurrency:
-		h.serveConcurrency(w, r, op, a.name)
+	case routeProvisionedConcurrency, routeConcurrency:
+		h.serveConcurrencyRoute(w, r, op, &a)
+	case routeCodeSigning, routeCodeSigningConfigs, routeAccountSettings:
+		h.serveCodeSigningOrAccount(w, r, op, &a)
 	case routeFunctions:
 		h.serveFunctions(w, r, op, &a)
 	}
+}
+
+// serveTagsRoute serves /2017-03-31/tags/{arn}: a function's tags, or a code
+// signing config's when the ARN names one. A cross-account or cross-region ARN
+// is rejected first.
+func (h *Handler) serveTagsRoute(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) {
+	if foreignRef(a, h.accountID, h.region) {
+		writeForeignRef(w, a.item)
+		return
+	}
+
+	if isCodeSigningConfigARN(a.item) {
+		h.serveCodeSigningConfigTags(w, r, op, a.item)
+		return
+	}
+
+	h.serveTags(w, r, op, a.name)
+}
+
+// serveCodeSigningOrAccount serves the code signing config API
+// (routeCodeSigningConfigs), a function's code-signing-config sub-resource
+// (routeCodeSigning) and the account settings API (routeAccountSettings).
+func (h *Handler) serveCodeSigningOrAccount(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) {
+	if a.route == routeAccountSettings {
+		h.serveAccountSettings(w, r)
+		return
+	}
+
+	if a.route == routeCodeSigning {
+		h.serveFunctionCodeSigningConfig(w, r, op, a.name)
+		return
+	}
+
+	h.serveCodeSigningConfigs(w, r, op, a)
+}
+
+// serveConcurrencyRoute serves a function's provisioned concurrency
+// (routeProvisionedConcurrency) or reserved concurrency (routeConcurrency).
+func (h *Handler) serveConcurrencyRoute(w http.ResponseWriter, r *http.Request, op opID, a *opArgs) {
+	if a.route == routeProvisionedConcurrency {
+		h.serveProvisionedConcurrency(w, r, op, a)
+		return
+	}
+
+	h.serveConcurrency(w, r, op, a.name)
 }
 
 // serveFunctions serves the /2015-03-31/functions tree.
@@ -400,7 +475,7 @@ func (h *Handler) serveTags(w http.ResponseWriter, r *http.Request, op opID, nam
 			return
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{"Tags": tags})
+		writeJSON(w, http.StatusOK, map[string]any{bodyTags: tags})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "InvalidRequestException", "method not allowed")
 	}
@@ -790,7 +865,8 @@ func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, op opID,
 			return
 		}
 
-		writeJSON(w, http.StatusCreated, toVersionConfiguration(info, ver, h.awsFnConfig(r.Context(), name)))
+		writeJSON(w, http.StatusCreated, toVersionConfiguration(info, ver,
+			h.versionAWSConfig(r.Context(), name, ver.Version, h.awsFnConfig(r.Context(), name))))
 	case opListVersionsByFunction:
 		vers, err := h.fn.ListVersions(r.Context(), name)
 		if err != nil {
@@ -814,7 +890,8 @@ func (h *Handler) serveVersions(w http.ResponseWriter, r *http.Request, op opID,
 
 		out := listVersionsResponse{Versions: make([]functionConfiguration, 0, end-start)}
 		for i := start; i < end; i++ {
-			out.Versions = append(out.Versions, toVersionConfiguration(info, &vers[i], awsCfg))
+			out.Versions = append(out.Versions,
+				toVersionConfiguration(info, &vers[i], h.versionAWSConfig(r.Context(), name, vers[i].Version, awsCfg)))
 		}
 
 		out.NextMarker = nextMarker
@@ -985,47 +1062,15 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !checkModelConstraints(w, req.Role, req.Environment) {
+	if !h.validateCreate(w, r, &req) {
 		return
 	}
 
-	if err := h.checkCreateRequest(&req); err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	if err := h.validateLayers(r.Context(), req.Layers); err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	cfg := sdrv.FunctionConfig{
-		Name:        req.FunctionName,
-		Runtime:     req.Runtime,
-		Handler:     req.Handler,
-		Role:        req.Role,
-		Description: req.Description,
-		Memory:      req.MemorySize,
-		Timeout:     req.Timeout,
-		Tags:        req.Tags,
-	}
-	if req.Environment != nil {
-		cfg.Environment = req.Environment.Variables
-	}
-
-	code, err := h.resolveCode(r.Context(), req.Code)
+	cfg, err := h.createFunctionConfig(r.Context(), &req)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-
-	code, err = h.overlayLayers(code, req.Layers)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	cfg.Code = code
 
 	info, err := h.fn.CreateFunction(r.Context(), cfg)
 	if err != nil {
@@ -1034,6 +1079,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	awsCfg := h.applyAWSConfig(r.Context(), req.FunctionName, h.createAWSConfig(&req), true)
+
+	if !h.attachCreateCodeSigningConfig(w, r, req.FunctionName, req.CodeSigningConfigArn) {
+		return
+	}
 
 	// Publish=true cuts version 1 from the just-created function and returns that
 	// published version's configuration (Version "1", :1-qualified ARN), matching
@@ -1051,6 +1100,92 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, toConfiguration(info, awsCfg))
+}
+
+// validateCreate runs the CreateFunction checks that precede any state change:
+// model constraints, the request itself, its layers and its code signing
+// config. It writes the error and returns false on the first failure.
+func (h *Handler) validateCreate(w http.ResponseWriter, r *http.Request, req *createFunctionRequest) bool {
+	if !checkModelConstraints(w, req.Role, req.Environment) {
+		return false
+	}
+
+	if err := h.checkCreateRequest(req); err != nil {
+		writeErr(w, err)
+		return false
+	}
+
+	if err := h.validateLayers(r.Context(), req.Layers); err != nil {
+		writeErr(w, err)
+		return false
+	}
+
+	return h.checkCodeSigningConfigExists(w, r, req.CodeSigningConfigArn)
+}
+
+// createFunctionConfig builds the portable FunctionConfig a CreateFunction
+// request creates, with its code resolved and its layers overlaid.
+func (h *Handler) createFunctionConfig(ctx context.Context, req *createFunctionRequest) (sdrv.FunctionConfig, error) {
+	cfg := sdrv.FunctionConfig{
+		Name:        req.FunctionName,
+		Runtime:     req.Runtime,
+		Handler:     req.Handler,
+		Role:        req.Role,
+		Description: req.Description,
+		Memory:      req.MemorySize,
+		Timeout:     req.Timeout,
+		Tags:        req.Tags,
+	}
+	if req.Environment != nil {
+		cfg.Environment = req.Environment.Variables
+	}
+
+	code, err := h.resolveCode(ctx, req.Code)
+	if err != nil {
+		return sdrv.FunctionConfig{}, err
+	}
+
+	code, err = h.overlayLayers(code, req.Layers)
+	if err != nil {
+		return sdrv.FunctionConfig{}, err
+	}
+
+	cfg.Code = code
+
+	return cfg, nil
+}
+
+// attachCreateCodeSigningConfig attaches the CodeSigningConfigArn of a
+// CreateFunction request to the just-created function. AWS validates the config
+// before creating anything, so when the attach fails (the config was deleted
+// after checkCodeSigningConfigExists) the function is rolled back rather than
+// left behind for a retry to conflict with, and the error is reported as the
+// pre-check would have reported it. It writes the error and returns false on
+// failure; an empty arn or a backend without code signing passes.
+func (h *Handler) attachCreateCodeSigningConfig(w http.ResponseWriter, r *http.Request, name, arn string) bool {
+	if arn == "" {
+		return true
+	}
+
+	csm, ok := h.fn.(codeSigningManager)
+	if !ok {
+		return true
+	}
+
+	err := csm.PutFunctionCodeSigningConfig(r.Context(), name, arn)
+	if err == nil {
+		return true
+	}
+
+	// Best effort: the function was created by this request and nothing has been
+	// returned to the client yet, so removing it restores the pre-request state.
+	_ = h.fn.DeleteFunction(r.Context(), name)
+
+	if h.checkCodeSigningConfigExists(w, r, arn) {
+		writeErr(w, err)
+	}
+
+	return false
 }
 
 // checkCreateRequest resolves the FunctionName of a CreateFunction request to
@@ -1142,12 +1277,36 @@ func (h *Handler) publishConfiguration(
 	ctx context.Context, name, description string,
 	info *sdrv.FunctionInfo, awsCfg *sdrv.AWSFunctionConfig,
 ) (functionConfiguration, error) {
-	ver, err := h.fn.PublishVersion(ctx, name, description)
+	publish := h.fn.PublishVersion
+	if wp, ok := h.fn.(writePublisher); ok {
+		publish = wp.PublishVersionOnWrite
+	}
+
+	ver, err := publish(ctx, name, description)
 	if err != nil {
 		return functionConfiguration{}, err
 	}
 
-	return toVersionConfiguration(info, ver, awsCfg), nil
+	return toVersionConfiguration(info, ver, h.versionAWSConfig(ctx, name, ver.Version, awsCfg)), nil
+}
+
+// versionAWSConfig returns the AWS-only settings of one version of name: the
+// settings a published version froze at publish time when the backend tracks
+// them, else fallback (the function's live settings).
+func (h *Handler) versionAWSConfig(
+	ctx context.Context, name, version string, fallback *sdrv.AWSFunctionConfig,
+) *sdrv.AWSFunctionConfig {
+	r, ok := h.fn.(versionAWSConfigReader)
+	if !ok {
+		return fallback
+	}
+
+	cfg, err := r.GetVersionAWSConfig(ctx, name, version)
+	if err != nil {
+		return fallback
+	}
+
+	return &cfg
 }
 
 // validateLayers checks that every layer version ARN a CreateFunction /
@@ -1278,7 +1437,7 @@ func (h *Handler) resolvedConfiguration(ctx context.Context, name, qualifier str
 			return functionConfiguration{}, verr
 		}
 
-		cfg := toVersionConfiguration(info, ver, awsCfg)
+		cfg := toVersionConfiguration(info, ver, h.versionAWSConfig(ctx, name, ver.Version, awsCfg))
 		cfg.FunctionArn = info.ARN + ":" + qualifier
 
 		return cfg, nil
@@ -1286,11 +1445,13 @@ func (h *Handler) resolvedConfiguration(ctx context.Context, name, qualifier str
 
 	ver, verr := h.findVersion(ctx, name, qualifier)
 	if verr != nil {
+		// Real Lambda names the qualified function ARN: "Function not found:
+		// arn:aws:lambda:<region>:<account>:function:<name>:<qualifier>".
 		return functionConfiguration{}, cerrors.Newf(cerrors.NotFound,
-			"function version or alias %q not found for %s", qualifier, name)
+			"Function not found: %s:%s", info.ARN, qualifier)
 	}
 
-	return toVersionConfiguration(info, ver, awsCfg), nil
+	return toVersionConfiguration(info, ver, h.versionAWSConfig(ctx, name, ver.Version, awsCfg)), nil
 }
 
 // findVersion returns the published version (or $LATEST) snapshot matching
@@ -1399,17 +1560,7 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 	// alias/version fails with ResourceNotFoundException rather than a spurious
 	// 204.
 	if invokeType == invocationTypeDryRun {
-		if _, err = h.fn.Invoke(r.Context(), sdrv.InvokeInput{
-			FunctionName: functionName,
-			InvokeType:   invocationTypeDryRun,
-			Qualifier:    qualifier,
-		}); err != nil {
-			writeErr(w, err)
-			return
-		}
-
-		w.WriteHeader(http.StatusNoContent)
-
+		h.invokeDryRun(w, r, functionName, qualifier)
 		return
 	}
 
@@ -1431,6 +1582,28 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 		return
 	}
 
+	writeInvokeResult(w, r, out)
+}
+
+// invokeDryRun serves a DryRun invocation: it checks that the function and
+// qualifier exist without running anything and answers 204 No Content.
+func (h *Handler) invokeDryRun(w http.ResponseWriter, r *http.Request, functionName, qualifier string) {
+	if _, err := h.fn.Invoke(r.Context(), sdrv.InvokeInput{
+		FunctionName: functionName,
+		InvokeType:   invocationTypeDryRun,
+		Qualifier:    qualifier,
+	}); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// writeInvokeResult writes the response of a synchronous (RequestResponse)
+// invocation: the executed version and log tail headers, then the payload, or
+// the handler error with X-Amz-Function-Error.
+func writeInvokeResult(w http.ResponseWriter, r *http.Request, out *sdrv.InvokeOutput) {
 	w.Header().Set("Content-Type", contentTypeJSON)
 
 	// A synchronous (RequestResponse) invocation always reports the version that
@@ -1444,6 +1617,12 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 	}
 
 	w.Header().Set("X-Amz-Executed-Version", executedVersion)
+
+	// LogType=Tail returns "the last 4 KB of the execution log, which is
+	// base64-encoded" in X-Amz-Log-Result (synchronous invocations only).
+	if r.Header.Get("X-Amz-Log-Type") == logTypeTail && out.LogTail != "" {
+		w.Header().Set("X-Amz-Log-Result", base64.StdEncoding.EncodeToString([]byte(out.LogTail)))
+	}
 
 	if out.Error != "" {
 		// Lambda surfaces handler errors via the X-Amz-Function-Error header
@@ -1469,9 +1648,12 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 }
 
 // toVersionConfiguration renders a published version's configuration. It starts
-// from the live function (for name/ARN/state/environment) then overlays the
-// immutable per-version fields snapshotted at publish time, so each version
-// reports its own CodeSha256/RevisionId/runtime rather than reusing $LATEST.
+// from the live function (for name/ARN) then overlays the immutable per-version
+// fields snapshotted at publish time, so each version reports its own
+// CodeSha256/RevisionId/runtime/environment rather than reusing $LATEST. A
+// published version also keeps its own lifecycle: LastModified is its publish
+// time and State/LastUpdateStatus come from the version, never from an
+// in-flight update of $LATEST.
 func toVersionConfiguration(info *sdrv.FunctionInfo, ver *sdrv.FunctionVersion, awsCfg *sdrv.AWSFunctionConfig) functionConfiguration {
 	cfg := toConfiguration(info, awsCfg)
 	cfg.Version = ver.Version
@@ -1483,14 +1665,42 @@ func toVersionConfiguration(info *sdrv.FunctionInfo, ver *sdrv.FunctionVersion, 
 	cfg.Role = ver.Role
 	cfg.MemorySize = ver.Memory
 	cfg.Timeout = ver.Timeout
+	cfg.CodeSize = ver.CodeSize
+
+	cfg.Environment = nil
+	if len(ver.Environment) > 0 {
+		cfg.Environment = &envEnvelope{Variables: ver.Environment}
+	}
 
 	// A published version's ARN is qualified with the version number; $LATEST
 	// keeps the unqualified ARN.
 	if ver.Version != "" && ver.Version != latestVersion {
 		cfg.FunctionArn = info.ARN + ":" + ver.Version
+		applyVersionLifecycle(&cfg, ver)
 	}
 
 	return cfg
+}
+
+// applyVersionLifecycle replaces the $LATEST lifecycle fields toConfiguration
+// copied with a published version's own: its publish time as LastModified and
+// the State/StateReason/LastUpdateStatus the backend reports for the version.
+// A backend that does not report a version lifecycle falls back to
+// Active/Successful, which is what an immutable published version settles to.
+func applyVersionLifecycle(cfg *functionConfiguration, ver *sdrv.FunctionVersion) {
+	if ver.CreatedAt != "" {
+		cfg.LastModified = ver.CreatedAt
+	}
+
+	cfg.State = ver.State
+	cfg.StateReason = ver.StateReason
+	cfg.StateReasonCode = ver.StateReasonCode
+	cfg.LastUpdateStatus = ver.LastUpdateStatus
+
+	if cfg.State == "" {
+		cfg.State = stateActive
+		cfg.LastUpdateStatus = lastUpdateStatusSuccessful
+	}
 }
 
 func toConfiguration(info *sdrv.FunctionInfo, awsCfg *sdrv.AWSFunctionConfig) functionConfiguration {
@@ -1510,7 +1720,9 @@ func toConfiguration(info *sdrv.FunctionInfo, awsCfg *sdrv.AWSFunctionConfig) fu
 		Timeout:          info.Timeout,
 		LastModified:     info.LastModified,
 		State:            info.State,
-		LastUpdateStatus: lastUpdateStatusSuccessful,
+		StateReason:      info.StateReason,
+		StateReasonCode:  info.StateReasonCode,
+		LastUpdateStatus: lastUpdateStatus(info),
 		PackageType:      packageTypeZip,
 		CodeSha256:       info.CodeSHA256,
 		CodeSize:         info.CodeSize,
@@ -1565,6 +1777,22 @@ func applyAWSConfigToResponse(cfg *functionConfiguration, awsCfg *sdrv.AWSFuncti
 	if awsCfg.TracingConfig != nil {
 		cfg.TracingConfig = &tracingConfigEnvelope{Mode: awsCfg.TracingConfig.Mode}
 	}
+}
+
+// lastUpdateStatus is the LastUpdateStatus to report: the backend's own value
+// (InProgress while an update settles, Successful after), nothing while a new
+// function is still Pending (AWS first sets it once creation completes), and
+// Successful for a backend that does not model the update lifecycle.
+func lastUpdateStatus(info *sdrv.FunctionInfo) string {
+	if info.LastUpdateStatus != "" {
+		return info.LastUpdateStatus
+	}
+
+	if info.State == statePending {
+		return ""
+	}
+
+	return lastUpdateStatusSuccessful
 }
 
 // reservedConcurrency returns the function's reserved-concurrency envelope for
