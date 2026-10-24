@@ -95,8 +95,13 @@ type periodValidator interface {
 }
 
 // validateQueryPeriods checks the MetricStat Period and the optional Period
-// of every query, including ones that return no data.
+// of every query, including ones that return no data, and the period
+// argument of every SEARCH.
 func (h *Handler) validateQueryPeriods(queries []metricDataQueryCBR) error {
+	if err := validateSearchPeriods(queries); err != nil {
+		return err
+	}
+
 	v, ok := h.monitoring.(periodValidator)
 	if !ok {
 		return nil
@@ -121,6 +126,19 @@ func (h *Handler) validateQueryPeriods(queries []metricDataQueryCBR) error {
 	return nil
 }
 
+// validateSearchPeriods rejects an expression whose SEARCH period argument
+// is not a valid metric period, the same rule a MetricStat Period follows.
+func validateSearchPeriods(queries []metricDataQueryCBR) error {
+	for i := range queries {
+		if metricmath.InvalidSearchPeriod(queries[i].Expression) {
+			return newWireError(errValidation, "Error in expression '"+queries[i].ID+
+				"': Invalid SEARCH period. Valid periods are 1, 5, 10, 20, 30, 60 and any multiple of 60.")
+		}
+	}
+
+	return nil
+}
+
 // invalidParameterError maps a driver InvalidArgument error to the
 // InvalidParameterValue wire error and passes any other error through.
 func invalidParameterError(err error) error {
@@ -138,7 +156,9 @@ type bandExclusionSource interface {
 }
 
 // metricDataEvaluator builds the evaluator for one GetMetricData call. A band
-// trains on the two weeks before start as well.
+// trains on the two weeks before start as well. FILL fills the periods of
+// [start, end), and SEARCH finds the metrics ListMetrics lists: those with
+// data in the past two weeks.
 func (h *Handler) metricDataEvaluator(
 	ctx context.Context, queries []mondriver.MetricDataQuery, start, end time.Time,
 ) *metricmath.Evaluator {
@@ -148,11 +168,18 @@ func (h *Handler) metricDataEvaluator(
 		cfg.Excluded = src.BandExclusions
 	}
 
-	return metricmath.New(queries, h.metricFetcher(ctx, start, end)).WithBand(cfg)
+	search := func() ([]mondriver.MetricIdentifier, error) { return h.allMetricRows(ctx, listMetricsSpan) }
+
+	return metricmath.New(queries, h.metricFetcher(ctx, start, end)).
+		WithBand(cfg).
+		WithRange(start, end).
+		WithSearch(search)
 }
 
 // metricDataRows returns the result rows of one query. A band returns two
-// rows with the query's Id, the lower edge and then the upper edge.
+// rows with the query's Id, the lower edge and then the upper edge, and an
+// expression that returns an array of series, such as a SEARCH, returns one
+// row per series, all with the query's Id.
 func metricDataRows(eval *metricmath.Evaluator, q *metricDataQueryCBR, descending bool) ([]metricDataRow, error) {
 	band, isBand, err := eval.Band(q.ID)
 	if err != nil {
@@ -166,12 +193,34 @@ func metricDataRows(eval *metricmath.Evaluator, q *metricDataQueryCBR, descendin
 		return []metricDataRow{buildMetricDataRow(q, lower, descending), buildMetricDataRow(q, upper, descending)}, nil
 	}
 
-	series, err := eval.Resolve(q.ID)
+	all, err := eval.ResolveAll(q.ID)
 	if err != nil {
 		return nil, err
 	}
 
-	return []metricDataRow{buildMetricDataRow(q, series, descending)}, nil
+	rows := make([]metricDataRow, 0, len(all))
+
+	for _, s := range all {
+		row := buildMetricDataRow(q, s.Series, descending)
+		if s.Label != "" {
+			row.Label = seriesLabel(q.Label, s.Label)
+		}
+
+		rows = append(rows, row)
+	}
+
+	return rows, nil
+}
+
+// seriesLabel is the label of one series of an array result: the query's
+// Label, if any, then the series' own label, as the CloudWatch console
+// captions such a series ("Expression-Label Metric-Label").
+func seriesLabel(queryLabel, ownLabel string) string {
+	if queryLabel == "" {
+		return ownLabel
+	}
+
+	return queryLabel + " " + ownLabel
 }
 
 // metricFetcher reads one metric from the monitoring driver over [start, end).

@@ -122,7 +122,7 @@ func (e *Evaluator) BandAt(id string, period int) (Band, bool, error) {
 		excluded = e.band.Excluded(e.queries, n.input)
 	}
 
-	return computeBand(target, history, n.k, excludedPeriods{ranges: excluded, period: pointPeriod}), true, nil
+	return computeBand(target.asSeries(), history.asSeries(), n.k, excludedPeriods{ranges: excluded, period: pointPeriod}), true, nil
 }
 
 // historyEvaluator resolves the same queries over the training range.

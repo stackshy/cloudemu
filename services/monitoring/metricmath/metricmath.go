@@ -1,8 +1,9 @@
 // Package metricmath evaluates CloudWatch metric-math query lists. A list
 // holds MetricStat entries, which read one metric, and Expression entries,
-// which combine other entries by ID with + - * / and parentheses. GetMetricData
-// and metric-math alarms both use it, so the wire layer and the provider
-// compute the same series.
+// which combine other entries by ID with + - * /, parentheses, comparison and
+// logical operators, and the IF, FILL and SEARCH functions. GetMetricData and
+// metric-math alarms both use it, so the wire layer and the provider compute
+// the same series.
 //
 // ANOMALY_DETECTION_BAND(id, k) is supported as a whole expression. It is an
 // approximation of the AWS model: mean -/+ k standard deviations of the
@@ -38,10 +39,12 @@ type Evaluator struct {
 	queries    []driver.MetricDataQuery
 	byID       map[string]*driver.MetricDataQuery
 	fetch      Fetcher
-	memo       map[memoKey]Series
+	memo       map[memoKey]result
 	inProgress map[string]bool
 	band       BandConfig
 	history    *Evaluator
+	start, end time.Time
+	lister     Lister
 }
 
 // New returns an evaluator over queries that reads metrics through fetch.
@@ -55,57 +58,99 @@ func New(queries []driver.MetricDataQuery, fetch Fetcher) *Evaluator {
 		queries:    queries,
 		byID:       byID,
 		fetch:      fetch,
-		memo:       make(map[memoKey]Series, len(queries)),
+		memo:       make(map[memoKey]result, len(queries)),
 		inProgress: make(map[string]bool, len(queries)),
 	}
 }
 
+// WithRange sets the time range the metrics are read over, [start, end).
+// FILL fills the periods of this range that have no value, so without it
+// FILL leaves its input as is. It returns e.
+func (e *Evaluator) WithRange(start, end time.Time) *Evaluator {
+	e.start, e.end = start, end
+
+	return e
+}
+
+// WithSearch sets where SEARCH finds metrics. Without it a SEARCH finds
+// nothing. It returns e.
+func (e *Evaluator) WithSearch(l Lister) *Evaluator {
+	e.lister = l
+
+	return e
+}
+
 // Resolve returns the series of the entry with this ID. A fetch error is
 // returned. An unknown ID or an expression outside the supported syntax
-// gives an empty series.
+// gives an empty series, and so does an expression that returns several
+// series, such as a SEARCH that finds more than one metric.
 func (e *Evaluator) Resolve(id string) (Series, error) {
-	return e.resolve(id, 0)
+	r, err := e.resolve(id, 0)
+	if err != nil {
+		return Series{}, err
+	}
+
+	return r.asSeries(), nil
+}
+
+// ResolveAll returns every series of the entry with this ID: one for a
+// metric or a single-series expression, and one per found metric for an
+// expression that returns an array of series, such as a SEARCH.
+func (e *Evaluator) ResolveAll(id string) ([]Labeled, error) {
+	r, err := e.resolve(id, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.labeled(), nil
 }
 
 // ResolveAt is Resolve with every metric read at period seconds. An alarm
 // uses it so each point fills exactly one of its evaluation periods.
 func (e *Evaluator) ResolveAt(id string, period int) (Series, error) {
-	return e.resolve(id, period)
+	r, err := e.resolve(id, period)
+	if err != nil {
+		return Series{}, err
+	}
+
+	return r.asSeries(), nil
 }
 
 // resolve reads the entry at period. Zero means the entry's own period.
-func (e *Evaluator) resolve(id string, period int) (Series, error) {
+func (e *Evaluator) resolve(id string, period int) (result, error) {
 	key := memoKey{id: id, period: period}
-	if s, ok := e.memo[key]; ok {
-		return s, nil
+	if r, ok := e.memo[key]; ok {
+		return r, nil
 	}
 
 	q, ok := e.byID[id]
 	if !ok || e.inProgress[id] {
-		return Series{}, nil
+		return result{}, nil
 	}
 
 	e.inProgress[id] = true
 	defer delete(e.inProgress, id)
 
-	s, err := e.resolveQuery(q, period)
+	r, err := e.resolveQuery(q, period)
 	if err != nil {
-		return Series{}, err
+		return result{}, err
 	}
 
-	e.memo[key] = s
+	e.memo[key] = r
 
-	return s, nil
+	return r, nil
 }
 
-func (e *Evaluator) resolveQuery(q *driver.MetricDataQuery, period int) (Series, error) {
+func (e *Evaluator) resolveQuery(q *driver.MetricDataQuery, period int) (result, error) {
 	switch {
 	case q.MetricStat != nil:
 		if period == 0 {
 			period = q.MetricStat.Period
 		}
 
-		return e.fetch(q.MetricStat, period)
+		s, err := e.fetch(q.MetricStat, period)
+
+		return result{series: s}, err
 	case q.Expression != "":
 		// An expression's own Period sets the granularity of everything it
 		// reads. Without one it passes on the period it was asked for.
@@ -113,24 +158,35 @@ func (e *Evaluator) resolveQuery(q *driver.MetricDataQuery, period int) (Series,
 			period = q.Period
 		}
 
-		return e.evalExpression(q.Expression, period)
+		return e.evalExpression(q, period)
 	default:
-		return Series{}, nil
+		return result{}, nil
 	}
 }
 
-func (e *Evaluator) evalExpression(expr string, period int) (Series, error) {
-	n, ok := parseExpression(expr)
+func (e *Evaluator) evalExpression(q *driver.MetricDataQuery, period int) (result, error) {
+	n, ok := parseExpression(q.Expression)
 	if !ok {
-		return Series{}, nil
+		return result{}, nil
 	}
 
-	res, err := n.evaluate(scope{e: e, period: period})
+	// The expression's points are period seconds apart, or, when the
+	// entries keep their own periods, as far apart as the points it reads.
+	grid := period
+	if grid == 0 {
+		grid = Period(e.queries, q)
+	}
+
+	res, err := n.evaluate(scope{e: e, period: period, gridPeriod: grid})
 	if err != nil {
-		return Series{}, err
+		return result{}, err
 	}
 
-	return res.asSeries(), nil
+	if !res.isArray {
+		res = result{series: res.asSeries()}
+	}
+
+	return res, nil
 }
 
 // References returns the IDs an expression reads. ok is false when the

@@ -240,13 +240,8 @@ type deleteMetricStreamInput struct {
 	Name string `cbor:"Name"`
 }
 
-// deleteMetricStream is structurally identical to deleteDashboards (unmarshal
-// a single-field input, call the matching AWS-local store method, write an
-// empty success response). The two resources' delete semantics really do
-// share this shape, so the duplication is inherent rather than a missed
-// abstraction.
-//
-//nolint:dupl // structurally identical to deleteDashboards; see comment above.
+// deleteMetricStream deletes one metric stream and writes an empty success
+// response.
 func (h *Handler) deleteMetricStream(w http.ResponseWriter, r *http.Request, body []byte) {
 	store, ok := h.monitoring.(metricStreamStore)
 	if !ok {

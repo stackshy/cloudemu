@@ -1,6 +1,42 @@
 package metricmath
 
-import "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+import (
+	"math"
+	"slices"
+
+	"github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+)
+
+// Period rules from the MetricStat, MetricDataQuery and GetMetricStatistics
+// API references. Period is an Integer of at least 1. A regular resolution
+// period is a multiple of 60, and a high-resolution metric also allows 1, 5,
+// 10, 20 and 30.
+const (
+	maxPeriodSeconds      = math.MaxInt32
+	periodSecondsInMinute = 60
+)
+
+// ValidPeriod reports whether p is 1, 5, 10, 20, 30 or a multiple of 60 that
+// fits the API's Integer type. A valid period never overflows a
+// time.Duration once it is multiplied by time.Second.
+func ValidPeriod(p int) bool {
+	switch {
+	case p < 1 || p > maxPeriodSeconds:
+		return false
+	case p%periodSecondsInMinute == 0:
+		return true
+	default:
+		periods := highResolutionPeriods()
+
+		return slices.Contains(periods[:], p)
+	}
+}
+
+// highResolutionPeriods are the periods under a minute that a high-resolution
+// metric allows.
+func highResolutionPeriods() [5]int {
+	return [5]int{1, 5, 10, 20, 30}
+}
 
 // Period is the granularity of q's points. It is q's own Period, else its
 // metric's period, else the largest period of the metrics q reads, else the

@@ -187,7 +187,7 @@ func (m *Mock) mathDatums(a *alarmData, p *alarmeval.Params, at time.Time) []dri
 	// Reads end before EndTime. Shifting the window by 1ns keeps a datum put
 	// at the evaluation instant, as a plain alarm does.
 	start, end := p.WindowStart(at).Add(time.Nanosecond), at.Add(time.Nanosecond)
-	ev := metricmath.New(a.Metrics, m.rangeFetcher(start, end))
+	ev := metricmath.New(a.Metrics, m.rangeFetcher(start, end)).WithRange(start, end)
 
 	bandID, _, isBand := bandThreshold(a)
 	if isBand {

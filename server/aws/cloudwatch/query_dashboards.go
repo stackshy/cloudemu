@@ -37,7 +37,7 @@ func (h *Handler) queryGetDashboard(w http.ResponseWriter, r *http.Request) {
 
 	d, err := store.GetDashboard(r.Context(), r.Form.Get("DashboardName"))
 	if err != nil {
-		writeQueryDriverErr(w, err)
+		writeQueryDriverErr(w, dashboardErr(err))
 		return
 	}
 
@@ -96,7 +96,7 @@ func (h *Handler) queryDeleteDashboards(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := store.DeleteDashboards(r.Context(), queryStringList(r, "DashboardNames.member.")); err != nil {
-		writeQueryDriverErr(w, err)
+		writeQueryDriverErr(w, dashboardErr(err))
 		return
 	}
 

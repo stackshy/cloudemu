@@ -62,7 +62,7 @@ func TestEvaluateExpressions(t *testing.T) {
 		{"ratio percent", "m1/m2*100", []float64{500, 500, 600}},
 		{"unary minus", "-m1", []float64{-10, -20, -30}},
 		{"scalar left", "100-m1", []float64{90, 80, 70}},
-		{"divide by zero", "m1/0", []float64{0, 0, 0}},
+		{"divide by zero drops the point", "m1/0", []float64{}},
 	}
 
 	for _, tc := range tests {
@@ -76,13 +76,18 @@ func TestEvaluateExpressions(t *testing.T) {
 			s, err := metricmath.New(queries, f.fetch).Resolve("e1")
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, s.Values)
-			assert.Equal(t, at(0, 1, 2), s.Timestamps)
+
+			if len(tc.want) > 0 {
+				assert.Equal(t, at(0, 1, 2), s.Timestamps)
+			}
 		})
 	}
 }
 
-// TestSeriesAlignByTimestamp: a gap in one input drops that point and does
-// not shift the later points onto the wrong partner.
+// TestSeriesAlignByTimestamp checks points pair by timestamp, never by
+// position, and the user guide's arithmetic rule:
+// "Missing values in a time series are treated as 0", so Errors, which has
+// no point at minute 1, reads as 0 there.
 func TestSeriesAlignByTimestamp(t *testing.T) {
 	f := &fixedFetcher{series: map[string]metricmath.Series{
 		"Errors":   {Timestamps: at(0, 2), Values: []float64{5, 9}},
@@ -97,8 +102,45 @@ func TestSeriesAlignByTimestamp(t *testing.T) {
 
 	s, err := metricmath.New(queries, f.fetch).Resolve("rate")
 	require.NoError(t, err)
-	assert.Equal(t, at(0, 2), s.Timestamps)
-	assert.Equal(t, []float64{50, 30}, s.Values)
+	assert.Equal(t, at(0, 1, 2), s.Timestamps)
+	assert.Equal(t, []float64{50, 0, 30}, s.Values)
+}
+
+// TestArithmeticMissingAsZero runs the guide's series, metric1 [30, 20, 0, 0]
+// and metric2 [20, -, 20, -], through arithmetic: a missing point reads as 0,
+// and a point that divides by zero is dropped.
+func TestArithmeticMissingAsZero(t *testing.T) {
+	f := &fixedFetcher{series: map[string]metricmath.Series{
+		"A": {Timestamps: at(0, 1, 2, 3), Values: []float64{30, 20, 0, 0}},
+		"B": {Timestamps: at(0, 2), Values: []float64{20, 20}},
+	}}
+
+	tests := []struct {
+		expr  string
+		want  []float64
+		stamp []time.Time
+	}{
+		{"m1 - m2", []float64{10, 20, -20, 0}, at(0, 1, 2, 3)},
+		{"m1 + m2", []float64{50, 20, 20, 0}, at(0, 1, 2, 3)},
+		{"m1 / m2", []float64{1.5, 0}, at(0, 2)},
+		{"m2 / m1", []float64{20.0 / 30, 0}, at(0, 1)},
+		{"m1 / 0", []float64{}, []time.Time{}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.expr, func(t *testing.T) {
+			queries := []driver.MetricDataQuery{
+				{ID: "m1", MetricStat: stat("A", 60), ReturnData: boolPtr(false)},
+				{ID: "m2", MetricStat: stat("B", 60), ReturnData: boolPtr(false)},
+				{ID: "e1", Expression: tc.expr},
+			}
+
+			s, err := metricmath.New(queries, f.fetch).Resolve("e1")
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, s.Values)
+			assert.Equal(t, tc.stamp, s.Timestamps)
+		})
+	}
 }
 
 func TestEmptyResults(t *testing.T) {
@@ -110,7 +152,7 @@ func TestEmptyResults(t *testing.T) {
 		id      string
 	}{
 		{"unknown id", nil, "nope"},
-		{"unsupported syntax", []driver.MetricDataQuery{{ID: "e1", Expression: "FILL(m1, 0)"}}, "e1"},
+		{"unsupported syntax", []driver.MetricDataQuery{{ID: "e1", Expression: "RATE(m1)"}}, "e1"},
 		{"cycle", []driver.MetricDataQuery{{ID: "a", Expression: "b+1"}, {ID: "b", Expression: "a+1"}}, "a"},
 		{"missing reference", []driver.MetricDataQuery{{ID: "e1", Expression: "m9*2"}}, "e1"},
 	}
@@ -173,7 +215,7 @@ func TestReferences(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, []string{"m1"}, ids)
 
-	_, ok = metricmath.References("FILL(m1, 0)")
+	_, ok = metricmath.References("RATE(m1)")
 	assert.False(t, ok)
 
 	_, ok = metricmath.References("m1 +")
