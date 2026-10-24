@@ -388,3 +388,30 @@ func TestReputationEntityMaterializesHealthy(t *testing.T) {
 		t.Fatalf("ListReputationEntities = %d, %v", len(all), err)
 	}
 }
+
+func TestTemplateRequiresContent(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	if err := m.CreateEmailTemplate(ctx, driver.TemplateInput{Name: "empty"}); !errors.IsInvalidArgument(err) {
+		t.Fatalf("create with empty content: want InvalidArgument, got %v", err)
+	}
+
+	if _, err := m.GetEmailTemplate(ctx, "empty"); !errors.IsNotFound(err) {
+		t.Fatalf("rejected template was stored: %v", err)
+	}
+
+	in := driver.TemplateInput{Name: "t", Content: driver.TemplateContent{Text: "Body"}}
+	if err := m.CreateEmailTemplate(ctx, in); err != nil {
+		t.Fatalf("create with text only: %v", err)
+	}
+
+	if err := m.UpdateEmailTemplate(ctx, driver.TemplateInput{Name: "t"}); !errors.IsInvalidArgument(err) {
+		t.Fatalf("update with empty content: want InvalidArgument, got %v", err)
+	}
+
+	got, err := m.GetEmailTemplate(ctx, "t")
+	if err != nil || got.Content.Text != "Body" {
+		t.Fatalf("rejected update changed the template: %+v, %v", got, err)
+	}
+}
