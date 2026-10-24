@@ -36,6 +36,8 @@ func (m *Mock) CreateDBProxy(ctx context.Context, cfg rdsdriver.DBProxyConfig) (
 		return nil, cerrors.New(cerrors.InvalidArgument, "EngineFamily is required")
 	}
 
+	defer m.flushEventNotifications() // runs after the unlock below
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -60,6 +62,7 @@ func (m *Mock) CreateDBProxy(ctx context.Context, cfg rdsdriver.DBProxyConfig) (
 		CreatedAt:           m.opts.Clock.Now().UTC(),
 	}
 	m.proxies.Set(cfg.Name, proxy)
+	m.recordEventLocked(eventSource{sourceDBProxy, cfg.Name, proxy.ARN}, evProxyCreated, cfg.Name)
 
 	out := proxy
 
@@ -108,6 +111,8 @@ func cloneProxy(p rdsdriver.DBProxy) rdsdriver.DBProxy {
 }
 
 func (m *Mock) ModifyDBProxy(_ context.Context, name string, input rdsdriver.ModifyDBProxyInput) (*rdsdriver.DBProxy, error) {
+	defer m.flushEventNotifications() // runs after the unlock below
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -133,6 +138,7 @@ func (m *Mock) ModifyDBProxy(_ context.Context, name string, input rdsdriver.Mod
 	}
 
 	m.proxies.Set(name, p)
+	m.recordEventLocked(eventSource{sourceDBProxy, name, p.ARN}, evProxyModified, name)
 
 	out := p
 
@@ -140,6 +146,8 @@ func (m *Mock) ModifyDBProxy(_ context.Context, name string, input rdsdriver.Mod
 }
 
 func (m *Mock) DeleteDBProxy(_ context.Context, name string) (*rdsdriver.DBProxy, error) {
+	defer m.flushEventNotifications() // runs after the unlock below
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -151,6 +159,7 @@ func (m *Mock) DeleteDBProxy(_ context.Context, name string) (*rdsdriver.DBProxy
 	p.Status = "deleting"
 
 	m.proxies.Delete(name)
+	m.recordEventLocked(eventSource{sourceDBProxy, name, p.ARN}, evProxyDeleted, name)
 
 	out := p
 

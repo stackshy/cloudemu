@@ -396,7 +396,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsAlreadyExists(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, alreadyExistsCode(err), msg)
 	case cerrors.IsInvalidArgument(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", msg)
+		awsquery.WriteXMLError(w, http.StatusBadRequest, invalidArgumentCode(err), msg)
 	case cerrors.IsFailedPrecondition(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, invalidStateCode(err), msg)
 	default:
@@ -450,7 +450,7 @@ var notFoundFaults = []faultMapping{
 	{"parameter group", "DBParameterGroupNotFound"},
 	{"option group", "OptionGroupNotFoundFault"},
 	{"DB proxy", "DBProxyNotFoundFault"},
-	{"event subscription", "SubscriptionNotFoundFault"},
+	{"event subscription", "SubscriptionNotFound"},
 	{"DB cluster endpoint", "DBClusterEndpointNotFoundFault"},
 	{"global cluster", "GlobalClusterNotFoundFault"},
 	{"DB instance", "DBInstanceNotFound"},
@@ -466,7 +466,7 @@ var alreadyExistsFaults = []faultMapping{
 	{"parameter group", "DBParameterGroupAlreadyExists"},
 	{"option group", "OptionGroupAlreadyExistsFault"},
 	{"DB proxy", "DBProxyAlreadyExistsFault"},
-	{"event subscription", "SubscriptionAlreadyExistFault"},
+	{"event subscription", "SubscriptionAlreadyExist"},
 	{"DB cluster endpoint", "DBClusterEndpointAlreadyExistsFault"},
 	{"global cluster", "GlobalClusterAlreadyExistsFault"},
 	{"DB instance", "DBInstanceAlreadyExists"},
@@ -489,6 +489,30 @@ var invalidStateFaults = []faultMapping{
 	{"option group", "InvalidOptionGroupStateFault"},
 	{"DB cluster", "InvalidDBClusterStateFault"},
 	{"DB instance", "InvalidDBInstanceState"},
+}
+
+// codeInvalidParameterCombination is the RDS fault for parameters that are
+// individually valid but cannot be used together.
+const codeInvalidParameterCombination = "InvalidParameterCombination"
+
+// invalidArgumentFaults maps an invalid-argument error to the AWS-shaped fault
+// code. A rule that one parameter requires another ("X is supplied, Y must
+// also be provided"), or a parameter group whose family does not fit the
+// engine version, is InvalidParameterCombination in real RDS; every other
+// invalid argument is InvalidParameterValue.
+//
+//nolint:gochecknoglobals // ordered static lookup table
+var invalidArgumentFaults = []faultMapping{
+	{"must also be provided", codeInvalidParameterCombination},
+	{"can't be used for this instance", codeInvalidParameterCombination},
+	{"You must explicitly specify a new DB instance parameter group", codeInvalidParameterCombination},
+	{"valid in combination with AllowMajorVersionUpgrade", codeInvalidParameterCombination},
+}
+
+// invalidArgumentCode picks the AWS-shaped invalid-argument fault from the
+// message.
+func invalidArgumentCode(err error) string {
+	return matchFault(err.Error(), invalidArgumentFaults, "InvalidParameterValue")
 }
 
 // notFoundCode picks the AWS-shaped NotFound fault from the error message.

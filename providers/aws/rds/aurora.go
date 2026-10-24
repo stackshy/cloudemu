@@ -205,6 +205,8 @@ func (m *Mock) DeleteDBClusterEndpoint(_ context.Context, endpointID string) (*r
 // ---- failover ----
 
 func (m *Mock) FailoverDBCluster(_ context.Context, clusterID, targetInstanceID string) (*rdsdriver.Cluster, error) {
+	defer m.flushEventNotifications() // runs after the unlock below
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -236,6 +238,7 @@ func (m *Mock) FailoverDBCluster(_ context.Context, clusterID, targetInstanceID 
 	}
 
 	m.clusters.Set(clusterID, cluster)
+	m.recordEventLocked(eventSource{sourceDBCluster, clusterID, cluster.ARN}, evClusterFailover, cluster.Members[0])
 
 	out := cluster
 

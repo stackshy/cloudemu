@@ -2,6 +2,7 @@ package rds
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -23,6 +24,7 @@ const (
 	arnKindClusterParamGroup = "cluster-pg"
 	arnKindOptionGroup       = "og"
 	arnKindSubnetGroup       = "subgrp"
+	arnKindEventSubscription = "es"
 	arnFieldCount            = 7
 )
 
@@ -32,26 +34,166 @@ const (
 //
 //nolint:gochecknoglobals // static lookup table
 var engineVersionCatalog = map[string][]string{
-	"mysql":             {"8.0.35", "8.0.36"},
-	"postgres":          {"15.4", "16.2"},
-	"mariadb":           {"10.11.6"},
-	"aurora-mysql":      {"8.0.mysql_aurora.3.05.2"},
-	"aurora-postgresql": {"15.4", "16.1"},
-	"docdb":             {"5.0.0"},
-	"neptune":           {"1.3.1.0"},
+	engineMySQL:            {"8.0.35", "8.0.36"},
+	enginePostgres:         {"15.4", "16.2"},
+	engineMariaDB:          {"10.11.6"},
+	engineAuroraMySQL:      {"8.0.mysql_aurora.3.05.2"},
+	engineAuroraPostgreSQL: {"15.4", "16.1"},
+	engineDocDB:            {"5.0.0"},
+	engineNeptune:          {"1.3.1.0"},
 }
 
-// engineFamily maps an engine to its parameter-group family prefix.
+// Engine names whose parameter-group family is derived from the engine version.
+const (
+	engineMySQL            = "mysql"
+	enginePostgres         = "postgres"
+	engineMariaDB          = "mariadb"
+	engineAuroraMySQL      = "aurora-mysql"
+	engineAuroraPostgreSQL = "aurora-postgresql"
+)
+
+// Version thresholds for the family naming rules below.
+const (
+	// postgresMajorOnlyFrom is the first PostgreSQL major whose family is named
+	// by major alone (postgres10, postgres15); earlier majors use major.minor
+	// (postgres9.6).
+	postgresMajorOnlyFrom = 10
+	// neptuneMinorFamilyFrom is the Neptune 1.x minor (1.2.0.0) from which the
+	// family carries major.minor (neptune1.2, neptune1.3); earlier releases share
+	// the "neptune1" family.
+	neptuneMinorFamilyFrom = 2
+	// familyVersionFields is the number of leading version fields a family
+	// needs (major.minor).
+	familyVersionFields = 2
+)
+
+// parameterGroupFamily returns the DB parameter group family real RDS reports
+// (DescribeDBEngineVersions.DBParameterGroupFamily) and uses for the default
+// "default.<family>" group of an engine at a given engine version. The family
+// tracks the version, not just the engine: PostgreSQL 15.4 belongs to
+// postgres15 while 16.2 belongs to postgres16. The naming per engine follows
+// the DBParameterGroupFamily values RDS documents (e.g. postgres14, mysql8.0,
+// mariadb10.6, aurora-mysql8.0, aurora-postgresql14, oracle-ee-19,
+// oracle-se2-cdb-21, sqlserver-ee-15.0, db2-ae, neptune1.2, docdb5.0):
 //
-//nolint:gochecknoglobals // static lookup table
-var engineFamily = map[string]string{
-	"mysql":             "mysql8.0",
-	"postgres":          "postgres16",
-	"mariadb":           "mariadb10.11",
-	"aurora-mysql":      "aurora-mysql8.0",
-	"aurora-postgresql": "aurora-postgresql16",
-	"docdb":             "docdb5.0",
-	"neptune":           "neptune1.3",
+//	postgres / aurora-postgresql: <engine><major> (major >= 10), else <engine><major>.<minor>
+//	mysql / mariadb / docdb:      <engine><major>.<minor>
+//	aurora-mysql:                 aurora-mysql<major>.<minor> ("8.0.mysql_aurora.3.05.2" -> 8.0)
+//	neptune:                      neptune1 before 1.2.0.0, else neptune<major>.<minor>
+//	oracle-*:                     <engine>-<major> ("19.0.0.0.ru-2024-01.rur-2024-01.r1" -> 19)
+//	sqlserver-*:                  <engine>-<major>.<minor> ("15.00.4365.2.v1" -> 15.0)
+//	db2-*:                        <engine> (one family per edition)
+//
+// An empty version resolves to the engine's default version first. An unknown
+// engine, or a version that does not parse, yields "" (no known family).
+func parameterGroupFamily(engine, version string) string {
+	if strings.HasPrefix(engine, "db2-") {
+		return engine
+	}
+
+	if version == "" {
+		version = defaultEngineVersion(engine)
+	}
+
+	major, minor, ok := versionMajorMinor(version)
+	if !ok {
+		return ""
+	}
+
+	return versionedFamily(engine, major, minor)
+}
+
+// versionedFamily names the family of an engine whose family carries its
+// version (see parameterGroupFamily), or "" for an unknown engine.
+func versionedFamily(engine string, major, minor int) string {
+	majorStr := strconv.Itoa(major)
+	majorMinor := majorStr + "." + strconv.Itoa(minor)
+
+	switch {
+	case engine == enginePostgres || engine == engineAuroraPostgreSQL:
+		if major < postgresMajorOnlyFrom {
+			return engine + majorMinor
+		}
+
+		return engine + majorStr
+	case engine == engineMySQL, engine == engineMariaDB, engine == engineDocDB, engine == engineAuroraMySQL:
+		return engine + majorMinor
+	case engine == engineNeptune:
+		return neptuneFamily(major, minor)
+	case strings.HasPrefix(engine, "oracle-"):
+		return engine + "-" + majorStr
+	case strings.HasPrefix(engine, "sqlserver-"):
+		return engine + "-" + majorMinor
+	default:
+		return ""
+	}
+}
+
+// isKnownFamily reports whether family is a DB parameter group family that
+// parameterGroupFamily produces for some engine and version: the family names
+// a recognized engine followed by a version it could come from (postgres16,
+// mysql8.0, aurora-postgresql15, oracle-ee-19, sqlserver-ee-15.0, neptune1,
+// db2-se). It rejects names such as "bogus", "postgres16.2" or
+// "postgres-16", so "default.<family>" groups resolve only for real families.
+func isKnownFamily(family string) bool {
+	for engine := range validEngines {
+		if familyFromEngine(engine, family) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// familyFromEngine reports whether family is the family of engine at the
+// version spelled by the rest of the name ("16" or "16.0" for postgres16).
+func familyFromEngine(engine, family string) bool {
+	if family == engine {
+		return parameterGroupFamily(engine, "") == family
+	}
+
+	rest, ok := strings.CutPrefix(family, engine)
+	if !ok {
+		return false
+	}
+
+	rest = strings.TrimPrefix(rest, "-")
+	if !strings.Contains(rest, ".") {
+		rest += ".0"
+	}
+
+	return parameterGroupFamily(engine, rest) == family
+}
+
+// neptuneFamily returns the Neptune family: neptune1 for every release before
+// 1.2.0.0, then neptune<major>.<minor>.
+func neptuneFamily(major, minor int) string {
+	if major == 1 && minor < neptuneMinorFamilyFrom {
+		return "neptune1"
+	}
+
+	return engineNeptune + strconv.Itoa(major) + "." + strconv.Itoa(minor)
+}
+
+// versionMajorMinor parses the leading numeric major.minor fields of an engine
+// version ("15.4" -> 15, 4; "8.0.mysql_aurora.3.05.2" -> 8, 0).
+func versionMajorMinor(version string) (major, minor int, ok bool) {
+	parts := strings.Split(version, ".")
+	if len(parts) < familyVersionFields {
+		return 0, 0, false
+	}
+
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, false
+	}
+
+	minor, err = strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, false
+	}
+
+	return major, minor, true
 }
 
 // orderableInstanceClasses is the representative set of instance classes the
@@ -92,7 +234,7 @@ func (*Mock) DescribeDBEngineVersions(_ context.Context, engine, engineVersion s
 				Engine:                 eng,
 				EngineVersion:          v,
 				DBEngineDescription:    "Amazon RDS " + eng,
-				DBParameterGroupFamily: engineFamily[eng],
+				DBParameterGroupFamily: parameterGroupFamily(eng, v),
 			})
 		}
 	}
@@ -133,7 +275,7 @@ func (*Mock) DescribeOrderableDBInstanceOptions(
 //
 //nolint:gochecknoglobals // static lookup table
 var engineCatalogOrder = []string{
-	"mysql", "postgres", "mariadb", "aurora-mysql", "aurora-postgresql", "docdb", "neptune",
+	engineMySQL, enginePostgres, engineMariaDB, engineAuroraMySQL, engineAuroraPostgreSQL, engineDocDB, engineNeptune,
 }
 
 // ---- tagging ----
@@ -227,27 +369,37 @@ func (m *Mock) recordTags(kind, id string) (map[string]string, bool) {
 	return nil, false
 }
 
-// isGroupKind reports whether an ARN kind is a parameter/option/subnet group.
+// isGroupKind reports whether an ARN kind keeps its tags in groupTags (keyed
+// by ARN) rather than on its record: parameter/option/subnet groups and event
+// subscriptions.
 func isGroupKind(kind string) bool {
 	switch kind {
-	case arnKindParamGroup, arnKindClusterParamGroup, arnKindOptionGroup, arnKindSubnetGroup:
+	case arnKindParamGroup, arnKindClusterParamGroup, arnKindOptionGroup, arnKindSubnetGroup,
+		arnKindEventSubscription:
 		return true
 	default:
 		return false
 	}
 }
 
-// groupExists reports whether a parameter/option/subnet group named id exists.
+// groupExists reports whether a parameter/option/subnet group or event
+// subscription named id exists. A "default.<family>" DB / cluster parameter
+// group always exists (DescribeDB[Cluster]ParameterGroups resolves it), so it
+// is taggable like a stored group.
 func (m *Mock) groupExists(kind, id string) bool {
+	_, isDefault := defaultGroupFamily(id)
+
 	switch kind {
 	case arnKindParamGroup:
-		return m.paramGroups.Has(id)
+		return m.paramGroups.Has(id) || isDefault
 	case arnKindClusterParamGroup:
-		return m.clusterParamGroups.Has(id)
+		return m.clusterParamGroups.Has(id) || isDefault
 	case arnKindOptionGroup:
 		return m.optionGroups.Has(id)
 	case arnKindSubnetGroup:
 		return m.subnetGroups.Has(id)
+	case arnKindEventSubscription:
+		return m.eventSubs.Has(id)
 	default:
 		return false
 	}

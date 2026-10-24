@@ -2,8 +2,10 @@ package rds
 
 import (
 	"context"
+	"sync"
 	"testing"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -81,4 +83,68 @@ func TestSnapshotRoundTripRDS(t *testing.T) {
 	if !ok || cred.user != "root" {
 		t.Fatalf("restored clusterCreds[cl1] = %+v, ok %v", cred, ok)
 	}
+}
+
+// TestRestoreSnapshotWithoutEventsClearsLog: loading a snapshot saved before
+// any event was recorded leaves no stale events behind.
+func TestRestoreSnapshotWithoutEventsClearsLog(t *testing.T) {
+	ctx := context.Background()
+
+	empty, _ := newEventTestMock()
+
+	data, err := empty.Snapshot(ctx, false)
+	requireNoError(t, err)
+
+	m, _ := newEventTestMock()
+	_, err = m.CreateInstance(ctx, rdsdriver.InstanceConfig{ID: "db1", Engine: "mysql"})
+	requireNoError(t, err)
+
+	requireNoError(t, m.Restore(ctx, data))
+
+	events, err := m.DescribeEvents(ctx, rdsdriver.DescribeEventsInput{})
+	requireNoError(t, err)
+	assertEqual(t, 0, len(events))
+}
+
+// TestSnapshotConcurrentWithStateWrites runs Snapshot alongside writers of
+// the lock-guarded maps and the event log; under -race it fails if Snapshot
+// hands json.Marshal a live map instead of a copy taken under the lock.
+func TestSnapshotConcurrentWithStateWrites(t *testing.T) {
+	ctx := context.Background()
+	m := New(config.NewOptions(config.WithRegion("us-east-1"), config.WithAccountID("123456789012")))
+
+	_, err := m.CreateDBParameterGroup(ctx, rdsdriver.ParameterGroupConfig{
+		Name: "pg1", Family: "mysql8.0", Tags: map[string]string{"a": "1"},
+	})
+	requireNoError(t, err)
+
+	pgARN := parameterGroupARN("us-east-1", "123456789012", "pg1")
+
+	const rounds = 50
+
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+
+		for i := range rounds {
+			_ = m.AddTagsToResource(ctx, pgARN, map[string]string{"k": string(rune('a' + i%26))})
+			_, _ = m.ModifyDBParameterGroup(ctx, "pg1", []rdsdriver.Parameter{{Name: "x", Value: "1"}})
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+
+		for range rounds {
+			if _, err := m.Snapshot(ctx, false); err != nil {
+				t.Errorf("Snapshot: %v", err)
+				return
+			}
+		}
+	}()
+
+	wg.Wait()
 }

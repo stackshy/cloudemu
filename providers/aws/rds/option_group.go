@@ -52,8 +52,8 @@ func errOptionGroupNotFound(name string) error {
 //
 //nolint:gochecknoglobals // static lookup table
 var optionGroupOptionCatalog = map[string][]string{
-	"mysql":        {"MARIADB_AUDIT_PLUGIN"},
-	"mariadb":      {"MARIADB_AUDIT_PLUGIN"},
+	engineMySQL:    {"MARIADB_AUDIT_PLUGIN"},
+	engineMariaDB:  {"MARIADB_AUDIT_PLUGIN"},
 	"oracle-ee":    {"APEX", "OEM", "S3_INTEGRATION", "NATIVE_NETWORK_ENCRYPTION"},
 	"oracle-se2":   {"APEX", "OEM", "S3_INTEGRATION"},
 	"sqlserver-ee": {"TDE", "SQLSERVER_AUDIT"},

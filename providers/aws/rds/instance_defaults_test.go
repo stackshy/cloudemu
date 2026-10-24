@@ -14,12 +14,19 @@ func TestCreateInstanceDefaultParameterGroup(t *testing.T) {
 	tests := []struct {
 		name       string
 		engine     string
+		version    string
 		paramGroup string
 		want       string
 	}{
 		{name: "mysql default", engine: "mysql", want: "default.mysql8.0"},
-		{name: "postgres default", engine: "postgres", want: "default.postgres16"},
+		// The default postgres version is 15.4, so the family is postgres15,
+		// not the family of the newest catalog version.
+		{name: "postgres default version", engine: "postgres", want: "default.postgres15"},
+		{name: "postgres 15.4", engine: "postgres", version: "15.4", want: "default.postgres15"},
+		{name: "postgres 16.2", engine: "postgres", version: "16.2", want: "default.postgres16"},
+		{name: "aurora-postgresql 15.4", engine: "aurora-postgresql", version: "15.4", want: "default.aurora-postgresql15"},
 		{name: "aurora-mysql default", engine: "aurora-mysql", want: "default.aurora-mysql8.0"},
+		{name: "mariadb 10.11.6", engine: "mariadb", version: "10.11.6", want: "default.mariadb10.11"},
 		{name: "explicit preserved", engine: "mysql", paramGroup: "custom-pg", want: "custom-pg"},
 	}
 
@@ -30,6 +37,7 @@ func TestCreateInstanceDefaultParameterGroup(t *testing.T) {
 			inst, err := m.CreateInstance(context.Background(), rdsdriver.InstanceConfig{
 				ID:                   "db1",
 				Engine:               tc.engine,
+				EngineVersion:        tc.version,
 				DBParameterGroupName: tc.paramGroup,
 			})
 			requireNoError(t, err)

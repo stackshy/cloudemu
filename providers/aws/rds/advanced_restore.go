@@ -108,6 +108,8 @@ func (m *Mock) RestoreDBInstanceToPointInTime(
 		return nil, cerrors.New(cerrors.InvalidArgument, "TargetDBInstanceIdentifier is required")
 	}
 
+	defer m.flushEventNotifications() // runs after the unlock below
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -158,6 +160,8 @@ func (m *Mock) RestoreDBInstanceToPointInTime(
 
 	m.instances.Set(inst.ID, inst)
 	m.rootPasswords[inst.ID] = restoreCfg.MasterUserPassword
+	m.recordEventLocked(eventSource{sourceDBInstance, inst.ID, inst.ARN}, evInstancePITR,
+		input.SourceInstanceID, inst.ID)
 
 	m.emitInstanceMetrics(inst.ID, inst.Engine, cpuMetricRunning, connectionsRunning)
 

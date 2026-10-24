@@ -62,8 +62,8 @@ func TestDescribeEventsAndCategories(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
 
-	// No event timeline is retained, so events are always empty.
-	events, err := m.DescribeEvents(ctx, "db-instance", "mydb", nil)
+	// No resource named mydb exists, so it has no events.
+	events, err := m.DescribeEvents(ctx, rdsdriver.DescribeEventsInput{SourceType: "db-instance", SourceIdentifier: "mydb"})
 	if err != nil || len(events) != 0 {
 		t.Fatalf("DescribeEvents: got %d events, err %v", len(events), err)
 	}

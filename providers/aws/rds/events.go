@@ -24,16 +24,16 @@ func errEventSubscriptionNotFound(name string) error {
 //
 //nolint:gochecknoglobals // static lookup table
 var eventCategoryCatalog = map[string][]string{
-	"db-instance": {
-		"availability", "backup", "configuration change", "creation", "deletion",
-		"failover", "failure", "maintenance", "notification", "recovery", "restoration",
+	sourceDBInstance: {
+		catAvailability, catBackup, catConfigurationChange, catCreation, catDeletion,
+		catFailover, catFailure, catMaintenance, catNotification, catRecovery, catRestoration,
 	},
-	"db-cluster":          {"configuration change", "creation", "deletion", "failover", "failure", "maintenance", "notification"},
-	"db-snapshot":         {"creation", "deletion", "notification", "restoration"},
-	"db-cluster-snapshot": {"backup", "notification"},
-	"db-parameter-group":  {"configuration change"},
-	"db-security-group":   {"configuration change", "failure"},
-	"db-proxy":            {"configuration change", "creation", "deletion"},
+	sourceDBCluster:         {catConfigurationChange, catCreation, catDeletion, catFailover, catFailure, catMaintenance, catNotification},
+	sourceDBSnapshot:        {catCreation, catDeletion, catNotification, catRestoration},
+	sourceDBClusterSnapshot: {catBackup, catNotification},
+	sourceDBParameterGroup:  {catConfigurationChange},
+	sourceDBSecurityGroup:   {catConfigurationChange, catFailure},
+	sourceDBProxy:           {catConfigurationChange, catCreation, catDeletion},
 }
 
 //nolint:gocritic // cfg matches the driver interface signature.
@@ -66,6 +66,10 @@ func (m *Mock) CreateEventSubscription(ctx context.Context, cfg rdsdriver.EventS
 		CreatedAt:       m.opts.Clock.Now().UTC(),
 	}
 	m.eventSubs.Set(cfg.Name, sub)
+	// The subscription's tags live beside it, keyed by its ARN, so
+	// Add/Remove/ListTagsForResource on the "es:" ARN work (Terraform's
+	// aws_db_event_subscription reads them back after create).
+	m.setGroupTags(sub.ARN, copyTags(cfg.Tags))
 
 	out := sub
 
@@ -155,16 +159,11 @@ func (m *Mock) DeleteEventSubscription(_ context.Context, name string) (*rdsdriv
 	}
 
 	m.eventSubs.Delete(name)
+	m.setGroupTags(sub.ARN, nil)
 
 	out := sub
 
 	return &out, nil
-}
-
-// DescribeEvents returns an empty list: the emulator does not retain an event
-// timeline, so there are truthfully no events to report for any window.
-func (*Mock) DescribeEvents(_ context.Context, _, _ string, _ []string) ([]rdsdriver.Event, error) {
-	return []rdsdriver.Event{}, nil
 }
 
 func (*Mock) DescribeEventCategories(_ context.Context, sourceType string) ([]rdsdriver.EventCategoryGroup, error) {
@@ -194,6 +193,6 @@ func (*Mock) DescribeEventCategories(_ context.Context, sourceType string) ([]rd
 //
 //nolint:gochecknoglobals // static lookup table
 var eventCategorySourceTypes = []string{
-	"db-instance", "db-cluster", "db-snapshot", "db-cluster-snapshot",
-	"db-parameter-group", "db-security-group", "db-proxy",
+	sourceDBInstance, sourceDBCluster, sourceDBSnapshot, sourceDBClusterSnapshot,
+	sourceDBParameterGroup, sourceDBSecurityGroup, sourceDBProxy,
 }

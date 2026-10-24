@@ -409,6 +409,14 @@ func wireBedrockAgentRuntime(p *Provider) {
 	p.BedrockAgentRuntime.SetObjectStore(p.S3)
 }
 
+// wireRDS connects RDS to its cross-service dependencies: DB subnet groups
+// resolve their subnets through VPC, and event subscriptions deliver matching
+// RDS events to their SNS topic.
+func wireRDS(p *Provider) {
+	p.RDS.SetSubnetResolver(p.VPC)
+	p.RDS.SetSNSPublisher(p.SNS)
+}
+
 // newProvider builds a provider, using the supplied shared global services when
 // non-nil (multi-region) or a fresh bundle when nil (standalone). The global
 // struct fields are assigned BEFORE the cross-service Set* wiring runs, so every
@@ -450,7 +458,7 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	p.Athena.SetMonitoring(p.CloudWatch)
 	p.Athena.SetCatalog(p.Glue)
 	wireBedrockAgentRuntime(p)
-	p.RDS.SetSubnetResolver(p.VPC)
+	wireRDS(p)
 	p.ElastiCache.SetSubnetResolver(p.VPC)
 	p.EC2.SetSubnetResolver(p.VPC)
 	// RunInstances materializes the instance's primary (eth0) ENI in the VPC, and

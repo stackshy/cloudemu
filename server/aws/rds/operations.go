@@ -361,7 +361,7 @@ func (h *Handler) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 	// via ModifyDBInstance first. Real RDS rejects with InvalidParameterCombination
 	// and leaves the instance untouched.
 	if last.DeletionProtection {
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
+		awsquery.WriteXMLError(w, http.StatusBadRequest, codeInvalidParameterCombination,
 			"Cannot delete protected DB Instance, please disable deletion protection and try again.")
 
 		return
@@ -376,7 +376,7 @@ func (h *Handler) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 	if last.ClusterID == "" && !formBool(r.Form.Get("SkipFinalSnapshot")) {
 		finalID = r.Form.Get("FinalDBSnapshotIdentifier")
 		if finalID == "" {
-			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
+			awsquery.WriteXMLError(w, http.StatusBadRequest, codeInvalidParameterCombination,
 				"FinalDBSnapshotIdentifier is required unless SkipFinalSnapshot is true")
 
 			return
@@ -552,13 +552,14 @@ func (h *Handler) modifyDBCluster(w http.ResponseWriter, r *http.Request) {
 	id := form.Get("DBClusterIdentifier")
 
 	input := rdsdriver.ModifyInstanceInput{
-		EngineVersion:               form.Get("EngineVersion"),
-		MasterUserPassword:          form.Get("MasterUserPassword"),
-		DBClusterParameterGroupName: form.Get("DBClusterParameterGroupName"),
-		BackupRetentionPeriod:       formInt(form.Get("BackupRetentionPeriod")),
-		PreferredBackupWindow:       form.Get("PreferredBackupWindow"),
-		PreferredMaintenanceWindow:  form.Get("PreferredMaintenanceWindow"),
-		Tags:                        parseRDSTags(form),
+		EngineVersion:                form.Get("EngineVersion"),
+		MasterUserPassword:           form.Get("MasterUserPassword"),
+		DBClusterParameterGroupName:  form.Get("DBClusterParameterGroupName"),
+		DBInstanceParameterGroupName: form.Get("DBInstanceParameterGroupName"),
+		BackupRetentionPeriod:        formInt(form.Get("BackupRetentionPeriod")),
+		PreferredBackupWindow:        form.Get("PreferredBackupWindow"),
+		PreferredMaintenanceWindow:   form.Get("PreferredMaintenanceWindow"),
+		Tags:                         parseRDSTags(form),
 	}
 
 	if v := form.Get("DeletionProtection"); v != "" {
@@ -604,7 +605,7 @@ func (h *Handler) deleteDBCluster(w http.ResponseWriter, r *http.Request) {
 	// A deletion-protected cluster cannot be deleted; the flag must be cleared via
 	// ModifyDBCluster first. Real RDS rejects with InvalidParameterCombination.
 	if last.DeletionProtection {
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
+		awsquery.WriteXMLError(w, http.StatusBadRequest, codeInvalidParameterCombination,
 			"Cannot delete protected DB Cluster, please disable deletion protection and try again.")
 
 		return
@@ -616,7 +617,7 @@ func (h *Handler) deleteDBCluster(w http.ResponseWriter, r *http.Request) {
 	if !formBool(r.Form.Get("SkipFinalSnapshot")) {
 		finalID := r.Form.Get("FinalDBSnapshotIdentifier")
 		if finalID == "" {
-			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
+			awsquery.WriteXMLError(w, http.StatusBadRequest, codeInvalidParameterCombination,
 				"FinalDBSnapshotIdentifier is required unless SkipFinalSnapshot is true")
 
 			return

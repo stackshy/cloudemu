@@ -125,9 +125,16 @@ type Mock struct {
 	instSettle *settle.Set
 	snapSettle *settle.Set
 
+	// events is the RDS event log surfaced by DescribeEvents (guarded by mu),
+	// oldest first and bounded to the 14-day retention window. outbox holds the
+	// event notifications queued for SNS delivery once mu is released.
+	events []rdsdriver.Event
+	outbox []eventNotification
+
 	opts           *config.Options
 	subnetResolver SubnetResolver
 	monitoring     mondriver.Monitoring
+	sns            SNSPublisher
 }
 
 // New creates a new AWS RDS mock.
@@ -206,7 +213,7 @@ func (m *Mock) emitInstanceMetrics(instanceID, engine string, cpu, connections f
 
 func defaultPortFor(engine string) int {
 	switch engine {
-	case "postgres", "aurora-postgresql":
+	case enginePostgres, engineAuroraPostgreSQL:
 		return defaultPortPostgres
 	case engineNeptune:
 		return defaultPortNeptune
@@ -382,6 +389,7 @@ func (m *Mock) CreateInstance(ctx context.Context, cfg rdsdriver.InstanceConfig)
 	out := m.finalizeInstance(cfg.ID, cfg.ClusterID, inst, plan)
 
 	m.emitInstanceMetrics(cfg.ID, cfg.Engine, cpuMetricRunning, connectionsRunning)
+	m.recordEvent(eventSource{sourceDBInstance, cfg.ID, out.ARN}, evInstanceCreated)
 
 	m.mu.RLock()
 	out.State = m.settleInstanceState(cfg.ID, out.State)
@@ -461,7 +469,7 @@ func (m *Mock) newInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) rd
 	// RDS returns rather than an empty element.
 	paramGroup := cfg.DBParameterGroupName
 	if paramGroup == "" {
-		paramGroup = defaultParameterGroupName(cfg.Engine)
+		paramGroup = defaultParameterGroupName(cfg.Engine, engineVersion)
 	}
 
 	// BackupRetentionPeriod is NOT defaulted here: unlike AllocatedStorage/
@@ -517,13 +525,34 @@ func (m *Mock) newInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) rd
 	}
 }
 
+// upgradedDefaultGroup returns the parameter group a resource is on after its
+// engine version changes to newVersion. A resource on a "default.<family>"
+// group moves to the default group of the new version's family (postgres 15.4
+// on default.postgres15 upgraded to 16.2 lands on default.postgres16), as real
+// RDS does for a major version upgrade; a minor upgrade keeps the same family
+// and so the same name. A custom group, or an engine with no known family, is
+// left unchanged. An explicit DBParameterGroupName on the same request is
+// applied afterwards and wins.
+func upgradedDefaultGroup(current, engine, newVersion string) string {
+	if _, isDefault := defaultGroupFamily(current); !isDefault {
+		return current
+	}
+
+	if next := defaultParameterGroupName(engine, newVersion); next != "" {
+		return next
+	}
+
+	return current
+}
+
 // defaultParameterGroupName returns the DB parameter group real RDS assigns to
-// an instance whose caller supplied none: "default." + the engine's
-// parameter-group family (e.g. "default.mysql8.0"). An unknown engine has no
-// known family and so no default group, matching real RDS which only
+// an instance whose caller supplied none: "default." + the parameter-group
+// family of the instance's resolved engine version (e.g. postgres 15.4 ->
+// "default.postgres15", mysql 8.0.35 -> "default.mysql8.0"). An unknown engine
+// has no known family and so no default group, matching real RDS which only
 // auto-assigns one for a recognized engine.
-func defaultParameterGroupName(engine string) string {
-	family := engineFamily[engine]
+func defaultParameterGroupName(engine, engineVersion string) string {
+	family := parameterGroupFamily(engine, engineVersion)
 	if family == "" {
 		return ""
 	}
@@ -712,6 +741,12 @@ func (m *Mock) ModifyInstance(
 		return nil, err
 	}
 
+	// The parameter group the request leaves the instance on must belong to the
+	// family of the version it asks for, checked up front as RDS does.
+	if err := m.checkInstanceModifyGroup(&inst, &input); err != nil {
+		return nil, err
+	}
+
 	// ApplyImmediately (default false) governs the deferrable resize/version/
 	// password/storage changes. When set they take effect now and clear any
 	// pending changes; otherwise they are recorded in PendingModifiedValues and
@@ -765,6 +800,7 @@ func applyDeferrableMods(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstan
 
 	if input.EngineVersion != "" {
 		inst.EngineVersion = input.EngineVersion
+		inst.DBParameterGroupName = upgradedDefaultGroup(inst.DBParameterGroupName, inst.Engine, input.EngineVersion)
 	}
 
 	if input.MultiAZ != nil {
@@ -942,6 +978,8 @@ func (m *Mock) rotateEnginePassword(ctx context.Context, inst *rdsdriver.Instanc
 
 // DeleteInstance removes an instance.
 func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
+	defer m.flushEventNotifications() // runs after the unlock below
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -987,6 +1025,7 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 	m.instances.Delete(id)
 	delete(m.rootPasswords, id)
 	m.instSettle.Clear(id)
+	m.recordEventLocked(eventSource{sourceDBInstance, id, inst.ARN}, evInstanceDeleted)
 
 	return nil
 }
@@ -1003,6 +1042,8 @@ func (m *Mock) StopInstance(_ context.Context, id string) error {
 
 // RebootInstance cycles an instance through rebooting → available.
 func (m *Mock) RebootInstance(_ context.Context, id string) error {
+	defer m.flushEventNotifications() // runs after the unlock below
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1024,11 +1065,14 @@ func (m *Mock) RebootInstance(_ context.Context, id string) error {
 		m.opts.SettleDuration(settle.DefaultDBRebootSettle))
 
 	m.emitInstanceMetrics(id, inst.Engine, cpuMetricRunning, connectionsRunning)
+	m.recordEventLocked(eventSource{sourceDBInstance, id, inst.ARN}, evInstanceRestarted)
 
 	return nil
 }
 
 func (m *Mock) transitionInstance(id, from, to string, cpu, conns float64, verb string) error {
+	defer m.flushEventNotifications() // runs after the unlock below
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1054,6 +1098,13 @@ func (m *Mock) transitionInstance(id, from, to string, cpu, conns float64, verb 
 
 	m.emitInstanceMetrics(id, inst.Engine, cpu, conns)
 
+	spec := evInstanceStarted
+	if to == rdsdriver.StateStopped {
+		spec = evInstanceStopped
+	}
+
+	m.recordEventLocked(eventSource{sourceDBInstance, id, inst.ARN}, spec)
+
 	return nil
 }
 
@@ -1068,6 +1119,8 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg rdsdriver.ClusterConfig) (
 	if cfg.Engine == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "Engine is required")
 	}
+
+	defer m.flushEventNotifications() // runs after the unlock below
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1106,12 +1159,14 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg rdsdriver.ClusterConfig) (
 		maintenanceWindow = defaultMaintenanceWindow
 	}
 
+	engineVersion, clusterParamGroup := clusterVersionAndParamGroup(&cfg)
+
 	region := regionctx.RegionOr(ctx, m.opts.Region)
 	cluster := rdsdriver.Cluster{
 		ID:                               cfg.ID,
 		ARN:                              clusterARN(region, m.opts.AccountID, cfg.ID),
 		Engine:                           cfg.Engine,
-		EngineVersion:                    cfg.EngineVersion,
+		EngineVersion:                    engineVersion,
 		MasterUsername:                   cfg.MasterUsername,
 		DatabaseName:                     cfg.DatabaseName,
 		Endpoint:                         endpointFor(cfg.ID, region, "cluster"),
@@ -1120,7 +1175,7 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg rdsdriver.ClusterConfig) (
 		State:                            rdsdriver.StateAvailable,
 		VPCSecurityGroups:                append([]string(nil), cfg.VPCSecurityGroups...),
 		SubnetGroupName:                  cfg.SubnetGroupName,
-		DBClusterParameterGroupName:      cfg.DBClusterParameterGroupName,
+		DBClusterParameterGroupName:      clusterParamGroup,
 		BackupRetentionPeriod:            backupRetention,
 		PreferredBackupWindow:            backupWindow,
 		PreferredMaintenanceWindow:       maintenanceWindow,
@@ -1138,10 +1193,32 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg rdsdriver.ClusterConfig) (
 
 	m.clusters.Set(cfg.ID, cluster)
 	m.clusterCreds[cfg.ID] = clusterCred{user: cfg.MasterUsername, pass: cfg.MasterUserPassword}
+	m.recordEventLocked(eventSource{sourceDBCluster, cfg.ID, cluster.ARN}, evClusterCreated)
 
 	out := cluster
 
 	return &out, nil
+}
+
+// clusterVersionAndParamGroup resolves a new cluster's engine version and DB
+// cluster parameter group. An omitted EngineVersion resolves to the engine's
+// default version (as newInstance does for instances), so the reported
+// EngineVersion and the version-derived default group always agree. An
+// omitted group is the default DB cluster parameter group "for the specified
+// DB engine and version" (CreateDBCluster API reference,
+// DBClusterParameterGroupName).
+func clusterVersionAndParamGroup(cfg *rdsdriver.ClusterConfig) (engineVersion, paramGroup string) {
+	engineVersion = cfg.EngineVersion
+	if engineVersion == "" {
+		engineVersion = defaultEngineVersion(cfg.Engine)
+	}
+
+	paramGroup = cfg.DBClusterParameterGroupName
+	if paramGroup == "" {
+		paramGroup = defaultParameterGroupName(cfg.Engine, engineVersion)
+	}
+
+	return engineVersion, paramGroup
 }
 
 // DescribeClusters returns all clusters if ids is empty, else only matching ones.
@@ -1183,6 +1260,8 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cl
 func applyClusterModify(cluster *rdsdriver.Cluster, input rdsdriver.ModifyInstanceInput) {
 	if input.EngineVersion != "" {
 		cluster.EngineVersion = input.EngineVersion
+		cluster.DBClusterParameterGroupName = upgradedDefaultGroup(
+			cluster.DBClusterParameterGroupName, cluster.Engine, input.EngineVersion)
 	}
 
 	if input.DBClusterParameterGroupName != "" {
@@ -1235,9 +1314,18 @@ func (m *Mock) ModifyCluster(
 		return nil, err
 	}
 
+	members, err := m.clusterMemberUpgrades(&cluster, &input)
+	if err != nil {
+		return nil, err
+	}
+
 	applyClusterModify(&cluster, input)
 
 	m.clusters.Set(id, cluster)
+
+	for i := range members {
+		m.instances.Set(members[i].ID, members[i])
+	}
 
 	out := cluster
 
@@ -1266,6 +1354,8 @@ func (m *Mock) rotateClusterPassword(ctx context.Context, id, engine, newPasswor
 
 // DeleteCluster removes a cluster (only if it has no members).
 func (m *Mock) DeleteCluster(ctx context.Context, id string) error {
+	defer m.flushEventNotifications() // runs after the unlock below
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1288,6 +1378,7 @@ func (m *Mock) DeleteCluster(ctx context.Context, id string) error {
 
 	m.clusters.Delete(id)
 	delete(m.clusterCreds, id)
+	m.recordEventLocked(eventSource{sourceDBCluster, id, cluster.ARN}, evClusterDeleted)
 
 	return nil
 }
@@ -1303,6 +1394,8 @@ func (m *Mock) StopCluster(_ context.Context, id string) error {
 }
 
 func (m *Mock) transitionCluster(id, from, to, verb string) error {
+	defer m.flushEventNotifications() // runs after the unlock below
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1323,6 +1416,13 @@ func (m *Mock) transitionCluster(id, from, to, verb string) error {
 	cluster.State = to
 	m.clusters.Set(id, cluster)
 
+	spec := evClusterStarted
+	if to == rdsdriver.StateStopped {
+		spec = evClusterStopped
+	}
+
+	m.recordEventLocked(eventSource{sourceDBCluster, id, cluster.ARN}, spec)
+
 	return nil
 }
 
@@ -1331,6 +1431,8 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBSnapshotIdentifier is required")
 	}
+
+	defer m.flushEventNotifications() // runs after the unlock below
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1373,6 +1475,10 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (
 	m.instSettle.Begin(cfg.InstanceID, rdsdriver.StateBackingUp, now,
 		m.opts.SettleDuration(settle.DefaultDBSnapshotSettle))
 
+	snapSrc := eventSource{sourceDBSnapshot, cfg.ID, snap.ARN}
+	m.recordEventLocked(snapSrc, evSnapshotCreating)
+	m.recordEventLocked(snapSrc, evSnapshotCreated)
+
 	out := snap
 	out.State = m.settleSnapshotState(cfg.ID, out.State)
 
@@ -1413,14 +1519,18 @@ func (m *Mock) DescribeSnapshots(
 
 // DeleteSnapshot removes an instance snapshot.
 func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
+	defer m.flushEventNotifications() // runs after the unlock below
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if !m.snapshots.Delete(id) {
+	snap, ok := m.snapshots.Get(id)
+	if !ok || !m.snapshots.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "DB snapshot %q not found", id)
 	}
 
 	m.snapSettle.Clear(id)
+	m.recordEventLocked(eventSource{sourceDBSnapshot, id, snap.ARN}, evSnapshotDeleted)
 
 	return nil
 }
@@ -1478,7 +1588,7 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		PubliclyAccessible:         input.PubliclyAccessible,
 		DeletionProtection:         input.DeletionProtection,
 		SubnetGroupName:            input.SubnetGroupName,
-		DBParameterGroupName:       defaultParameterGroupName(snap.Engine),
+		DBParameterGroupName:       defaultParameterGroupName(snap.Engine, snap.EngineVersion),
 		AvailabilityZone:           defaultAvailabilityZone("", input.MultiAZ, region),
 		CreatedAt:                  m.opts.Clock.Now().UTC(),
 		Tags:                       copyTags(input.Tags),
@@ -1626,6 +1736,8 @@ func (m *Mock) CreateClusterSnapshot(
 		return nil, cerrors.New(cerrors.InvalidArgument, "DBClusterSnapshotIdentifier is required")
 	}
 
+	defer m.flushEventNotifications() // runs after the unlock below
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1655,6 +1767,10 @@ func (m *Mock) CreateClusterSnapshot(
 	}
 
 	m.clusterSnapshots.Set(cfg.ID, snap)
+
+	csSrc := eventSource{sourceDBClusterSnapshot, cfg.ID, snap.ARN}
+	m.recordEventLocked(csSrc, evClusterSnapshotCreating)
+	m.recordEventLocked(csSrc, evClusterSnapshotCreated)
 
 	out := snap
 
@@ -1758,8 +1874,11 @@ func (m *Mock) RestoreClusterFromSnapshot(
 		EngineMode:          engineMode,
 		DBClusterResourceID: resourceID("cluster-", input.NewClusterID),
 		AvailabilityZones:   availabilityZones(region),
-		CreatedAt:           m.opts.Clock.Now().UTC(),
-		Tags:                copyTags(input.Tags),
+		// A restored cluster gets the default cluster parameter group of the
+		// snapshot's engine version, like a cluster created without one.
+		DBClusterParameterGroupName: defaultParameterGroupName(snap.Engine, snap.EngineVersion),
+		CreatedAt:                   m.opts.Clock.Now().UTC(),
+		Tags:                        copyTags(input.Tags),
 	}
 
 	// Provision the shared database keyed and named by the new cluster id (an

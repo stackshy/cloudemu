@@ -11,8 +11,8 @@ import (
 // query-protocol wire in cloudemu, so their engine names are accepted here too.
 // AWS rejects any other value with InvalidParameterValue.
 var validEngines = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
-	"aurora-mysql":          {},
-	"aurora-postgresql":     {},
+	engineAuroraMySQL:       {},
+	engineAuroraPostgreSQL:  {},
 	"custom-oracle-ee":      {},
 	"custom-oracle-ee-cdb":  {},
 	"custom-oracle-se2":     {},
@@ -24,13 +24,13 @@ var validEngines = map[string]struct{}{ //nolint:gochecknoglobals // static look
 	"db2-ae":                {},
 	"db2-ce":                {},
 	"db2-se":                {},
-	"mariadb":               {},
-	"mysql":                 {},
+	engineMariaDB:           {},
+	engineMySQL:             {},
 	"oracle-ee":             {},
 	"oracle-ee-cdb":         {},
 	"oracle-se2":            {},
 	"oracle-se2-cdb":        {},
-	"postgres":              {},
+	enginePostgres:          {},
 	"sqlserver-dev-ee":      {},
 	"sqlserver-ee":          {},
 	"sqlserver-se":          {},
