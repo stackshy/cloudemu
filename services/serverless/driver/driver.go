@@ -20,6 +20,22 @@ type FunctionVersion struct {
 	Memory  int
 	Timeout int
 	Role    string
+	// CodeSize is the deployment-package size (bytes) the version was cut
+	// from. Like CodeSHA256 it is frozen at publish time, so a later
+	// UpdateFunctionCode on $LATEST does not change a published version's size.
+	CodeSize int64
+	// Environment is the environment-variable set snapshotted at publish time.
+	Environment map[string]string
+	// State, StateReason, StateReasonCode and LastUpdateStatus are a published
+	// version's own lifecycle. A published version is immutable, so it does not
+	// follow later $LATEST updates: it is Active/Successful, except the version
+	// CreateFunction(Publish=true) cuts, which is Pending with the function until
+	// creation completes. Empty for $LATEST (read FunctionInfo) and for a
+	// backend that does not model the lifecycle.
+	State            string
+	StateReason      string
+	StateReasonCode  string
+	LastUpdateStatus string
 }
 
 // PermissionStatement is one statement of a function's resource-based policy,
@@ -335,6 +351,23 @@ type FunctionInfo struct {
 	Version string
 	// RevisionID changes on every configuration or code update.
 	RevisionID string
+	// StateReason / StateReasonCode explain a non-terminal State (AWS Lambda
+	// reports "The function is being created." / "Creating" while a new
+	// function is Pending). Empty when the function is in its terminal state.
+	StateReason     string
+	StateReasonCode string
+	// LastUpdateStatus is the status of the last create/update: "InProgress"
+	// while an update settles, "Successful" once it completes, and empty while
+	// a freshly created function is still Pending (AWS first sets it to
+	// Successful when creation completes). A backend that does not model the
+	// update lifecycle leaves it empty.
+	LastUpdateStatus string
+	// LastUpdateStatusReason / LastUpdateStatusReasonCode explain a
+	// LastUpdateStatus that is not Successful (AWS Lambda reports "The function
+	// is being created." / "Creating" while an update is InProgress). Empty
+	// otherwise.
+	LastUpdateStatusReason     string
+	LastUpdateStatusReasonCode string
 }
 
 // InvokeInput configures a function invocation.
@@ -363,6 +396,12 @@ type InvokeOutput struct {
 	// service (CloudWatch Logs / Cloud Logging / Log Analytics) rather than
 	// returned on the wire.
 	Logs string
+	// LogTail is the tail (at most the last 4 KB) of the invocation's
+	// execution log, i.e. the START/END/REPORT lines plus any captured output
+	// in plain text. AWS returns it base64-encoded in X-Amz-Log-Result when the
+	// caller asks for LogType=Tail. Empty when the backend does not render an
+	// execution log.
+	LogTail string
 }
 
 // HandlerFunc is a function handler that processes invocations.
@@ -431,4 +470,45 @@ type Serverless interface {
 	GetEventSourceMapping(ctx context.Context, uuid string) (*EventSourceMappingInfo, error)
 	ListEventSourceMappings(ctx context.Context, functionName string) ([]EventSourceMappingInfo, error)
 	UpdateEventSourceMapping(ctx context.Context, uuid string, config EventSourceMappingConfig) (*EventSourceMappingInfo, error)
+}
+
+// CodeSigningConfig is an AWS Lambda code signing configuration
+// (CreateCodeSigningConfig): the signing profiles trusted to sign a function's
+// deployment package and the action taken when validation fails. It has no
+// Azure Functions or GCP Cloud Functions equivalent, so, like
+// EventInvokeConfig, it is managed through an AWS-only optional interface
+// rather than the portable Serverless interface.
+type CodeSigningConfig struct {
+	// ID is the "csc-" prefixed identifier; ARN embeds it.
+	ID          string
+	ARN         string
+	Description string
+	// SigningProfileVersionARNs is AllowedPublishers.SigningProfileVersionArns.
+	SigningProfileVersionARNs []string
+	// UntrustedArtifactOnDeployment is the CodeSigningPolicies action, "Warn"
+	// (the AWS default) or "Enforce".
+	UntrustedArtifactOnDeployment string
+	// LastModified is the ISO 8601 timestamp of the last create/update.
+	LastModified string
+	Tags         map[string]string
+}
+
+// CodeSigningConfigUpdate carries the optional fields of an
+// UpdateCodeSigningConfig request; a nil field is left unchanged.
+type CodeSigningConfigUpdate struct {
+	Description                   *string
+	SigningProfileVersionARNs     []string
+	UntrustedArtifactOnDeployment *string
+}
+
+// AccountSettings is the AWS Lambda GetAccountSettings result: the account's
+// limits and current usage in a Region. All sizes are in bytes.
+type AccountSettings struct {
+	TotalCodeSizeLimit             int64
+	CodeSizeUnzipped               int64
+	CodeSizeZipped                 int64
+	ConcurrentExecutions           int
+	UnreservedConcurrentExecutions int
+	FunctionCount                  int64
+	TotalCodeSizeUsed              int64
 }

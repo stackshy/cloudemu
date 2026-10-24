@@ -2,6 +2,7 @@ package lambda
 
 import (
 	"context"
+	"slices"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
@@ -49,10 +50,16 @@ func (m *Mock) release(name string, token uint64) {
 	}
 }
 
-// removeDeployment tears down name's engine deployment on a cleanup path,
-// where the caller has nothing better to do with a failure.
-func (m *Mock) removeDeployment(ctx context.Context, name string) {
-	_ = funcengine.Remove(ctx, m.opts.FunctionEngine, name)
+// removeDeployments tears down the engine deployments under keys on a cleanup
+// path, where the caller has nothing better to do with a failure. The function
+// no longer serves any of keys, so no new invocation pins them; each is removed
+// once the invocations already running on it finish. Callers hold the
+// function's engine reservation, not m.mu.
+func (m *Mock) removeDeployments(ctx context.Context, keys []string) {
+	for _, key := range keys {
+		m.pins.wait(key)
+		_ = funcengine.Remove(ctx, m.opts.FunctionEngine, key)
+	}
 }
 
 // updateInProgress is the ResourceConflictException Lambda returns for a
@@ -90,19 +97,21 @@ func (m *Mock) deployNewFunction(ctx context.Context, cfg *driver.FunctionConfig
 	_, appeared := m.funcs.Get(cfg.Name)
 	if !appeared {
 		m.funcs.Set(cfg.Name, m.newFuncData(info, backed))
+		m.beginCreateSettle(cfg.Name)
 	}
 
 	m.mu.Unlock()
 
 	if appeared {
 		if backed {
-			m.removeDeployment(ctx, cfg.Name)
+			m.removeDeployments(ctx, []string{cfg.Name})
 		}
 
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "function %s already exists", cfg.Name)
 	}
 
 	result := info
+	m.observe(&result)
 
 	return &result, nil
 }
@@ -118,10 +127,11 @@ func (m *Mock) DeleteFunction(ctx context.Context, name string) error {
 	fd, ok := m.funcs.Get(name)
 	if !ok {
 		m.mu.Unlock()
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+		return m.errFunctionNotFound(ctx, name, "")
 	}
 
 	m.funcs.Delete(name)
+	m.clearSettle(name)
 
 	if m.engineBusy(name) || !fd.engineBacked {
 		m.mu.Unlock()
@@ -133,8 +143,12 @@ func (m *Mock) DeleteFunction(ctx context.Context, name string) error {
 
 	defer m.release(name, token)
 
-	if err := funcengine.Remove(ctx, m.opts.FunctionEngine, name); err != nil {
-		return cerrors.Newf(cerrors.Internal, "remove function %s: %v", name, err)
+	// Besides the live deployment, a function updated under AsyncSettle may
+	// hold its prior revision's and retired deployments.
+	for _, key := range fd.engineKeys() {
+		if err := funcengine.Remove(ctx, m.opts.FunctionEngine, key); err != nil {
+			return cerrors.Newf(cerrors.Internal, "remove function %s: %v", name, err)
+		}
 	}
 
 	return nil
@@ -146,65 +160,128 @@ func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.Funct
 		m.mu.Lock()
 		defer m.mu.Unlock()
 
-		return m.commitUpdate(name, cfg, nil)
+		return m.commitUpdate(ctx, name, cfg, nil)
 	}
 
 	// A code update re-deploys to the engine using the post-merge runtime and
 	// handler, so the function runs the new code, not the stale deployment.
-	info, token, err := m.reserveCodeUpdate(name, cfg)
+	plan, err := m.reserveCodeUpdate(ctx, name, cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	defer m.release(name, token)
+	defer m.release(name, plan.token)
 
 	backed, err := funcengine.Deploy(ctx, m.opts.FunctionEngine, &driver.FunctionConfig{
-		Name: name, Runtime: info.Runtime, Handler: info.Handler,
-		Code: cfg.Code, Environment: info.Environment, Timeout: info.Timeout,
+		Name: plan.key, Runtime: plan.info.Runtime, Handler: plan.info.Handler,
+		Code: cfg.Code, Environment: plan.info.Environment, Timeout: plan.info.Timeout,
 	})
 
+	info, stale, err := m.finalizeCodeUpdate(ctx, name, cfg, plan, backed, err)
+
+	// The reservation is still held, so no other engine call for name runs
+	// while the deployments that no longer serve anything are removed.
+	m.removeDeployments(ctx, stale)
+
+	return info, err
+}
+
+// finalizeCodeUpdate applies a code update's deploy result to the function as
+// it is now, under m.mu. It returns the updated function and the engine keys
+// to remove once m.mu is released: the deployments the function retired, or,
+// when DeleteFunction ran during the deploy, every deployment the deleted
+// function held plus the new one.
+//
+//nolint:gocritic // hugeParam: cfg is the by-value driver config.
+func (m *Mock) finalizeCodeUpdate(
+	ctx context.Context, name string, cfg driver.FunctionConfig, plan *codeUpdatePlan, backed bool, deployErr error,
+) (*driver.FunctionInfo, []string, error) {
 	m.mu.Lock()
-
-	if _, ok := m.funcs.Get(name); !ok {
-		m.mu.Unlock()
-		// DeleteFunction ran during the deploy and left the engine cleanup
-		// to this call.
-		m.removeDeployment(ctx, name)
-
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
-	}
-
 	defer m.mu.Unlock()
 
-	if err != nil {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "deploy function %s: %v", name, err)
+	if _, ok := m.funcs.Get(name); !ok {
+		// DeleteFunction ran during the deploy and left the engine cleanup
+		// to this call.
+		stale := plan.held
+		if !slices.Contains(stale, plan.key) {
+			stale = append(slices.Clone(stale), plan.key)
+		}
+
+		return nil, stale, m.errFunctionNotFound(ctx, name, "")
 	}
 
-	return m.commitUpdate(name, cfg, &backed)
+	if deployErr != nil {
+		// A failed deploy to a fresh AsyncSettle key may have left a partial
+		// deployment; one to the live key is the function's current code.
+		var partial []string
+		if !slices.Contains(plan.held, plan.key) {
+			partial = []string{plan.key}
+		}
+
+		return nil, partial, cerrors.Newf(cerrors.InvalidArgument, "deploy function %s: %v", name, deployErr)
+	}
+
+	info, err := m.commitUpdate(ctx, name, cfg, &codeDeploy{backed: backed, key: plan.key})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return info, m.takeRetired(name), nil
+}
+
+// takeRetired clears and returns function name's retired engine keys, which the
+// caller removes while it holds the function's engine reservation. Callers
+// hold m.mu.
+func (m *Mock) takeRetired(name string) []string {
+	fd, ok := m.funcs.Get(name)
+	if !ok || len(fd.retired) == 0 {
+		return nil
+	}
+
+	retired := fd.retired
+	fd.retired = nil
+	m.funcs.Set(name, fd)
+
+	return retired
+}
+
+// codeUpdatePlan is a reserved code update: the merged configuration to deploy,
+// the engine key to deploy it to, the engine keys the function held when it
+// was reserved, and the reservation token.
+type codeUpdatePlan struct {
+	info  driver.FunctionInfo
+	key   string
+	held  []string
+	token uint64
 }
 
 // reserveCodeUpdate validates a code update against the current function and
-// reserves the function for the engine deploy. It returns the merged
-// configuration to deploy and the reservation token.
+// reserves the function for the engine deploy.
 //
 //nolint:gocritic // hugeParam: cfg is the by-value driver config.
-func (m *Mock) reserveCodeUpdate(name string, cfg driver.FunctionConfig) (driver.FunctionInfo, uint64, error) {
+func (m *Mock) reserveCodeUpdate(
+	ctx context.Context, name string, cfg driver.FunctionConfig,
+) (*codeUpdatePlan, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(name)
 	if !ok {
-		return driver.FunctionInfo{}, 0, cerrors.Newf(cerrors.NotFound, "function %s not found", name)
+		return nil, m.errFunctionNotFound(ctx, name, "")
 	}
 
-	if m.engineBusy(name) {
-		return driver.FunctionInfo{}, 0, updateInProgress(fd.info.ARN)
+	// Refused while Pending creation or while an update (an AsyncSettle window
+	// or an engine deploy) is InProgress.
+	if err := m.checkUpdatable(&fd); err != nil {
+		return nil, err
 	}
 
 	info, err := m.mergeUpdate(fd.info, cfg)
 	if err != nil {
-		return driver.FunctionInfo{}, 0, err
+		return nil, err
 	}
 
-	return info, m.reserve(name), nil
+	return &codeUpdatePlan{
+		info: info, key: m.updateEngineKey(&fd), held: fd.engineKeys(), token: m.reserve(name),
+	}, nil
 }

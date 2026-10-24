@@ -459,9 +459,11 @@ func TestDeleteAlias(t *testing.T) {
 		assertError(t, err, true)
 	})
 
-	t.Run("alias not found", func(t *testing.T) {
+	// Real Lambda answers DeleteAlias for an alias the function does not have
+	// with 204 and no error.
+	t.Run("alias not found is a no-op", func(t *testing.T) {
 		err := m.DeleteAlias(ctx, "my-func", "nope")
-		assertError(t, err, true)
+		requireNoError(t, err)
 	})
 
 	t.Run("function not found", func(t *testing.T) {

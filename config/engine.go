@@ -107,7 +107,10 @@ type FunctionEngine interface {
 // FunctionDeployment describes the code and runtime contract a FunctionEngine
 // must be able to execute.
 type FunctionDeployment struct {
-	Name    string            // function name (the Invoke/Remove key)
+	// Name is the Invoke/Remove key: the function name. Under AsyncSettle an
+	// AWS Lambda code update deploys to "<name>.update-<id>" instead, so the
+	// previous deployment keeps serving invocations until the update completes.
+	Name    string
 	Runtime string            // e.g. "python3.12", "nodejs20.x"
 	Handler string            // e.g. "main.handler" (file.function)
 	Code    []byte            // deployment package (a .zip archive)

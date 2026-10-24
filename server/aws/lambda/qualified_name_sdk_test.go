@@ -2,6 +2,8 @@ package lambda_test
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -312,23 +314,41 @@ func TestSDKDeleteFunctionLatestQualifierErrors(t *testing.T) {
 	}
 }
 
-// TestSDKDeleteFunctionMissingVersion verifies deleting a non-existent version
-// qualifier is a ResourceNotFoundException and deletes nothing.
+// TestSDKDeleteFunctionMissingVersion verifies deleting a version the function
+// does not have succeeds and deletes nothing: real Lambda's version-scoped
+// DeleteFunction is idempotent while the function exists. A missing function is
+// still ResourceNotFoundException with the unqualified function ARN.
 func TestSDKDeleteFunctionMissingVersion(t *testing.T) {
 	client, _ := newSDKClient(t)
 	ctx := context.Background()
 
 	publishV1(t, client, "foo")
 
-	_, err := client.DeleteFunction(ctx, &awslambda.DeleteFunctionInput{
-		FunctionName: aws.String("foo:99"),
-	})
-	if errorCode(err) != "ResourceNotFoundException" {
-		t.Fatalf("DeleteFunction(foo:99) error = %v, want ResourceNotFoundException", err)
+	for range 2 {
+		if _, err := client.DeleteFunction(ctx, &awslambda.DeleteFunctionInput{
+			FunctionName: aws.String("foo:99"),
+		}); err != nil {
+			t.Fatalf("DeleteFunction(foo:99) error = %v, want success", err)
+		}
 	}
 
 	if got := listVersionNumbers(t, client, "foo"); !got["$LATEST"] || !got["1"] {
 		t.Errorf("DeleteFunction(foo:99) altered versions = %v, want $LATEST and 1 intact", got)
+	}
+
+	_, err := client.DeleteFunction(ctx, &awslambda.DeleteFunctionInput{
+		FunctionName: aws.String("ghost"), Qualifier: aws.String("99"),
+	})
+
+	var nf *lambdatypes.ResourceNotFoundException
+	if !errors.As(err, &nf) {
+		t.Fatalf("DeleteFunction(ghost, Qualifier=99) error = %v, want ResourceNotFoundException", err)
+	}
+
+	// The message names the unqualified function ARN, without the qualifier.
+	if msg := aws.ToString(nf.Message); !strings.HasPrefix(msg, "Function not found: arn:aws:lambda:") ||
+		!strings.HasSuffix(msg, ":function:ghost") {
+		t.Errorf("message = %q, want Function not found: <unqualified ghost ARN>", msg)
 	}
 }
 

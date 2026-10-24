@@ -16,6 +16,7 @@ import (
 
 const (
 	testFn    = "arn:aws:lambda:us-east-1:123456789012:function:"
+	testCSC   = "arn:aws:lambda:us-east-1:123456789012:code-signing-config:csc-0123456789abcdef0"
 	testLayer = "arn:aws:lambda:us-east-1:123456789012:layer:"
 )
 
@@ -88,6 +89,17 @@ func TestIAMChecks(t *testing.T) {
 		{"PUT", "/2019-09-30/functions/f/provisioned-concurrency?Qualifier=1", "{}",
 			[]string{"lambda:PutProvisionedConcurrencyConfig " + testFn + "f:1"}},
 		{"GET", "/2020-06-30/functions/f/code-signing-config", "", []string{"lambda:GetFunctionCodeSigningConfig " + testFn + "f"}},
+		{"PUT", "/2020-06-30/functions/f/code-signing-config", `{"CodeSigningConfigArn":"arn:aws:lambda:us-east-1:123456789012:code-signing-config:csc-0123456789abcdef0"}`,
+			[]string{"lambda:PutFunctionCodeSigningConfig " + testFn + "f", "lambda:PutFunctionCodeSigningConfig " + testCSC}},
+		{"POST", "/2020-04-22/code-signing-configs", "{}", []string{"lambda:CreateCodeSigningConfig *"}},
+		{"GET", "/2020-04-22/code-signing-configs", "", []string{"lambda:ListCodeSigningConfigs *"}},
+		{"GET", "/2020-04-22/code-signing-configs/" + testCSC, "", []string{"lambda:GetCodeSigningConfig " + testCSC}},
+		{"PUT", "/2020-04-22/code-signing-configs/" + testCSC, "{}", []string{"lambda:UpdateCodeSigningConfig " + testCSC}},
+		{"DELETE", "/2020-04-22/code-signing-configs/" + testCSC, "", []string{"lambda:DeleteCodeSigningConfig " + testCSC}},
+		{"GET", "/2020-04-22/code-signing-configs/" + testCSC + "/functions", "",
+			[]string{"lambda:ListFunctionsByCodeSigningConfig " + testCSC}},
+		{"GET", "/2017-03-31/tags/" + testCSC, "", []string{"lambda:ListTags " + testCSC}},
+		{"GET", "/2016-08-19/account-settings", "", []string{"lambda:GetAccountSettings *"}},
 		{"PUT", "/2017-10-31/functions/f/concurrency", "{}", []string{"lambda:PutFunctionConcurrency " + testFn + "f"}},
 	}
 

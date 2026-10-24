@@ -11,13 +11,13 @@ import (
 )
 
 // CreateAlias creates a new alias pointing to a specific function version.
-func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.Alias, error) {
+func (m *Mock) CreateAlias(ctx context.Context, cfg driver.AliasConfig) (*driver.Alias, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
+		return nil, m.errFunctionNotFound(ctx, cfg.FunctionName, "")
 	}
 
 	if fd.aliases.Has(cfg.Name) {
@@ -56,18 +56,19 @@ func (m *Mock) CreateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 }
 
 // UpdateAlias updates an existing alias configuration.
-func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.Alias, error) {
+func (m *Mock) UpdateAlias(ctx context.Context, cfg driver.AliasConfig) (*driver.Alias, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
+		return nil, m.errFunctionNotFound(ctx, cfg.FunctionName, "")
 	}
 
 	ad, ok := fd.aliases.Get(cfg.Name)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "alias %s not found", cfg.Name)
+		// Real Lambda's UpdateAlias text names the alias-qualified function ARN.
+		return nil, cerrors.Newf(cerrors.NotFound, "Alias not found: %s:%s", fd.info.ARN, cfg.Name)
 	}
 
 	// ad is a shared pointer held in the store; guard the read-validate-mutate of
@@ -121,17 +122,22 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 // provisioned concurrency config and event invoke config. Real Lambda keeps
 // these as sub-resources of the alias ARN, so a later alias with the same name
 // starts with none of them instead of inheriting the old grants.
-func (m *Mock) DeleteAlias(_ context.Context, functionName, aliasName string) error {
+//
+// Deleting an alias the function does not have succeeds without changing
+// anything, as real Lambda does (HTTP 204; ResourceNotFoundException is not in
+// the DeleteAlias error list). A missing function is still
+// ResourceNotFoundException.
+func (m *Mock) DeleteAlias(ctx context.Context, functionName, aliasName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	if !fd.aliases.Has(aliasName) {
-		return cerrors.Newf(cerrors.NotFound, "alias %s not found", aliasName)
+		return nil
 	}
 
 	fd.aliases.Delete(aliasName)
@@ -166,15 +172,16 @@ func withoutKey[V any](src map[string]V, key string) map[string]V {
 }
 
 // GetAlias retrieves a specific alias for a function.
-func (m *Mock) GetAlias(_ context.Context, functionName, aliasName string) (*driver.Alias, error) {
+func (m *Mock) GetAlias(ctx context.Context, functionName, aliasName string) (*driver.Alias, error) {
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return nil, m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	ad, ok := fd.aliases.Get(aliasName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "alias %s not found", aliasName)
+		// Real Lambda's GetAlias text names the alias-qualified function ARN.
+		return nil, cerrors.Newf(cerrors.NotFound, "Cannot find alias arn: %s:%s", fd.info.ARN, aliasName)
 	}
 
 	ad.mu.Lock()
@@ -185,10 +192,10 @@ func (m *Mock) GetAlias(_ context.Context, functionName, aliasName string) (*dri
 }
 
 // ListAliases returns all aliases for a function.
-func (m *Mock) ListAliases(_ context.Context, functionName string) ([]driver.Alias, error) {
+func (m *Mock) ListAliases(ctx context.Context, functionName string) ([]driver.Alias, error) {
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+		return nil, m.errFunctionNotFound(ctx, functionName, "")
 	}
 
 	all := fd.aliases.All()
