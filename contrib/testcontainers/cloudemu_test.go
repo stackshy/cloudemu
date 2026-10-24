@@ -104,6 +104,15 @@ func TestRunResetSeed(t *testing.T) {
 	if body := get(t, ep+"/seeded/k.txt"); body != "from seed" {
 		t.Fatalf("seeded object = %q, want %q", body, "from seed")
 	}
+
+	// OCI starts by default; its Object Storage namespace answers on OCIEndpoint.
+	oci, err := ctr.OCIEndpoint(ctx)
+	if err != nil {
+		t.Fatalf("OCIEndpoint: %v", err)
+	}
+	if code := status(t, oci+"/n/"); code != http.StatusOK {
+		t.Fatalf("GET %s/n/ = %d, want 200", oci, code)
+	}
 }
 
 // TestEnforceAuthAdminToken runs the container with --enforce-auth: Reset and

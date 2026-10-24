@@ -5,14 +5,14 @@
   </picture>
 </p>
 
-<p align="center">In-memory emulator for the AWS, Azure and GCP APIs. Run it as a local server or embed it in Go tests.</p>
+<p align="center">In-memory emulator for the AWS, Azure, GCP and OCI APIs. Run it as a local server or embed it in Go tests.</p>
 
 <p align="center">
   <a href="https://github.com/stackshy/cloudemu/pkgs/container/cloudemu"><img src="https://img.shields.io/badge/docker-ghcr.io%2Fstackshy%2Fcloudemu-2496ED?logo=docker&logoColor=white" alt="Docker Image"></a>
   <a href="https://pkg.go.dev/github.com/stackshy/cloudemu/v2"><img src="https://pkg.go.dev/badge/github.com/stackshy/cloudemu/v2.svg" alt="Go Reference"></a>
   <a href="https://goreportcard.com/report/github.com/stackshy/cloudemu/v2"><img src="https://goreportcard.com/badge/github.com/stackshy/cloudemu/v2" alt="Go Report Card"></a>
   <a href="https://github.com/stackshy/cloudemu/blob/development/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
-  <img src="https://img.shields.io/badge/providers-AWS_|_Azure_|_GCP-orange" alt="Providers">
+  <img src="https://img.shields.io/badge/providers-AWS_|_Azure_|_GCP_|_OCI-orange" alt="Providers">
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@
 
 ---
 
-cloudemu serves the AWS, Azure and GCP APIs from memory. You point the normal SDK or CLI (any language) at a local endpoint and your code runs unchanged. You don't need a cloud account or network access, and nothing is billed. State is deterministic and can be reset between tests.
+cloudemu serves the AWS, Azure, GCP and Oracle Cloud (OCI) APIs from memory. You point the normal SDK or CLI (any language) at a local endpoint and your code runs unchanged. You don't need a cloud account or network access, and nothing is billed. State is deterministic and can be reset between tests.
 
 It emulates the API surface your code calls. It does not create real infrastructure.
 
@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/stackshy/cloudemu/HEAD/install.sh |
 go install github.com/stackshy/cloudemu/v2/cmd/cloudemu@latest
 
 # Docker (nothing to install, runs the server)
-docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 \
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 -p 4571:4571 \
   ghcr.io/stackshy/cloudemu:latest
 ```
 
@@ -52,12 +52,12 @@ Prebuilt binaries are on the [releases page](https://github.com/stackshy/cloudem
 
 ## Quickstart
 
-To use cloudemu with an existing application, run it as a server and change your SDK's endpoint (`AWS_ENDPOINT_URL` / `BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override). You don't need a `_test.go` file for this. The in-process library mode shown further down is for Go unit tests.
+To use cloudemu with an existing application, run it as a server and change your SDK's endpoint (`AWS_ENDPOINT_URL` / `BaseEndpoint`, `option.WithEndpoint`, the Azure ARM endpoint override, or the OCI client's `Host`). You don't need a `_test.go` file for this. The in-process library mode shown further down is for Go unit tests.
 
 ```sh
-docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 \
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4570:4570 -p 4571:4571 \
   ghcr.io/stackshy/cloudemu:latest
-#   AWS 4566 · Azure 4568 (TLS) · GCP 4569 · Kubernetes 4570 (TLS)
+#   AWS 4566 · Azure 4568 (TLS) · GCP 4569 · Kubernetes 4570 (TLS) · OCI 4571
 # Apple Silicon: add --platform linux/amd64 if the amd64 image won't start natively.
 ```
 
@@ -87,6 +87,10 @@ gcs, _ := storage.NewClient(ctx,
 cloudCfg := cloud.Configuration{Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
     cloud.ResourceManager: {Endpoint: "https://127.0.0.1:4568", Audience: "https://management.azure.com"},
 }}
+
+// OCI (oci-go-sdk): every service on one port; signatures aren't checked
+objects, _ := objectstorage.NewObjectStorageClientWithConfigurationProvider(cp)
+objects.Host = "http://127.0.0.1:4571"
 ```
 
 The app then writes an object and reads it back from the in-memory backend:
@@ -124,7 +128,7 @@ client.PutObject(ctx, &s3.PutObjectInput{ /* … */ }) // hits the in-memory bac
 
 ## Coverage
 
-76 AWS, 75 Azure and 55 GCP services (173 service interfaces, 3,700+ operations), plus an in-memory Kubernetes data plane. The full list is generated from the code and lives in [docs/coverage](docs/coverage/README.md). Some of what's there:
+76 AWS, 77 Azure, 57 GCP and 10 OCI services (177 service interfaces, 4,000+ operations), plus an in-memory Kubernetes data plane. The full list is generated from the code and lives in [docs/coverage](docs/coverage/README.md). Some of what's there:
 
 - Storage, compute, databases: S3/Blob/GCS, EC2/VMs/GCE, DynamoDB/Cosmos/Firestore, RDS/Aurora, Cloud SQL, Spanner, Bigtable
 - Serverless and containers: Lambda/Functions, App Runner, Cloud Run, ECS, Container Apps, and EKS/AKS/GKE with a Kubernetes API
@@ -134,6 +138,7 @@ client.PutObject(ctx, &s3.PutObjectInput{ /* … */ }) // hits the in-memory bac
 - Secrets, IAM, KMS, monitoring, logging: Secrets Manager/Key Vault, KMS, managed identities, CloudWatch/Azure Monitor, structured logs
 - AI/ML: Bedrock, SageMaker, Vertex AI, Azure OpenAI
 - Governance and FinOps: Backup, Config, Chaos Studio, management locks, Cost Explorer / Cost Management / Cloud Billing
+- Oracle Cloud (OCI): Identity (compartments, users, groups, policies), VCN, Compute and Block Volume, Object Storage, NoSQL, Vault, Logging, Monitoring, Notifications, with OCIDs, compartments and work requests
 
 The Kubernetes data plane supports CRUD, server-side apply and watch streams, so `client-go` informers work. Controllers converge synchronously: writing a Deployment brings its Pods to Running. It has a scheduler (node and inter-pod affinity, topology spread, scoring), an optional multi-node cluster (`--k8s-nodes N`, taints/tolerations, adding and removing nodes at runtime), and `exec`/`attach` over WebSocket. See [docs/services.md](docs/services.md).
 

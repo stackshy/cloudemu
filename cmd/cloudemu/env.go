@@ -3,15 +3,18 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 )
 
 // runEnv prints shell `export` lines that point real SDKs/CLIs at a running
 // cloudemu, so `eval "$(cloudemu env)"` wires the AWS CLI/SDK with zero code
-// change (the GCP/Azure on-ramps are printed as comments, since they have no single
-// endpoint env var). Ports/host mirror `cloudemu serve` defaults.
-func runEnv(args []string) error {
+// change (the GCP/Azure/OCI on-ramps are printed as comments, since they have no
+// single endpoint env var). Ports/host mirror `cloudemu serve` defaults.
+func runEnv(args []string) error { return writeEnv(os.Stdout, args) }
+
+func writeEnv(w io.Writer, args []string) error {
 	fs := flag.NewFlagSet("env", flag.ContinueOnError)
 
 	var (
@@ -19,6 +22,7 @@ func runEnv(args []string) error {
 		awsPort = fs.String("aws-port", "4566", "AWS endpoint port")
 		azrPort = fs.String("azure-port", "4568", "Azure endpoint port")
 		gcpPort = fs.String("gcp-port", "4569", "GCP endpoint port")
+		ociPort = fs.String("oci-port", "4571", "OCI endpoint port")
 		region  = fs.String("region", "us-east-1", "region to export for the AWS SDK/CLI")
 	)
 
@@ -36,8 +40,8 @@ func runEnv(args []string) error {
 	aws := "http://" + net.JoinHostPort(*host, *awsPort)
 	gcp := "http://" + net.JoinHostPort(*host, *gcpPort)
 	azure := "https://" + net.JoinHostPort(*host, *azrPort)
+	oci := "http://" + net.JoinHostPort(*host, *ociPort)
 
-	w := os.Stdout
 	fmt.Fprintf(w, "export AWS_ENDPOINT_URL=%s\n", aws)
 	fmt.Fprintf(w, "export AWS_ACCESS_KEY_ID=test\n")
 	fmt.Fprintf(w, "export AWS_SECRET_ACCESS_KEY=test\n")
@@ -45,6 +49,7 @@ func runEnv(args []string) error {
 	fmt.Fprintf(w, "export AWS_REGION=%s\n", *region)
 	fmt.Fprintf(w, "# GCP:   option.WithEndpoint(%q) + option.WithoutAuthentication()\n", gcp)
 	fmt.Fprintf(w, "# Azure: ResourceManager endpoint = %q (self-signed TLS: trust the cert or skip verify)\n", azure)
+	fmt.Fprintf(w, "# OCI:   client.Host = %q (any key; signatures aren't verified)\n", oci)
 
 	return nil
 }

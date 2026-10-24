@@ -213,6 +213,52 @@ with `azurerm` v4 against `azurerm_resource_group` and `azurerm_storage_account`
 > by hand, but neither is covered by the suite yet. Fixtures for either are
 > welcome.
 
+## OCI
+
+The `oracle/oci` provider takes per-client endpoint overrides from the
+`CLIENT_HOST_OVERRIDES` environment variable: a `;`-separated list of
+`<client>=<url>` pairs. Point each client your resources use at the OCI port.
+The override replaces the whole host URL, so plain HTTP works:
+
+```sh
+OCI=http://127.0.0.1:4571
+export CLIENT_HOST_OVERRIDES="oci_identity.IdentityClient=$OCI;oci_object_storage.ObjectStorageClient=$OCI;oci_core.VirtualNetworkClient=$OCI"
+```
+
+```hcl
+provider "oci" {
+  tenancy_ocid     = "ocid1.tenancy.oc1..aaaaaaaacloudemulocaltenancy" # the default --oci-tenancy
+  user_ocid        = "ocid1.user.oc1..local"
+  fingerprint      = "aa:bb:cc"
+  private_key_path = "key.pem" # any RSA key; signatures aren't verified
+  region           = "us-ashburn-1"
+}
+
+resource "oci_identity_compartment" "app" {
+  compartment_id = "ocid1.tenancy.oc1..aaaaaaaacloudemulocaltenancy"
+  name           = "app"
+  description    = "app compartment"
+  enable_delete  = true
+}
+
+data "oci_objectstorage_namespace" "ns" {
+  compartment_id = "ocid1.tenancy.oc1..aaaaaaaacloudemulocaltenancy"
+}
+
+resource "oci_objectstorage_bucket" "logs" {
+  compartment_id = oci_identity_compartment.app.id
+  namespace      = data.oci_objectstorage_namespace.ns.namespace
+  name           = "app-logs"
+}
+```
+
+With OpenTofu and this config, `apply` creates the compartment, bucket and an
+`oci_core_vcn`, a second `plan -detailed-exitcode` exits 0, and `destroy`
+removes them. A client name is the provider's service package and the SDK
+client type (`oci_identity.IdentityClient`, `oci_core.VirtualNetworkClient`), and
+a resource whose client isn't listed still goes to the real OCI endpoint, so
+add one entry per client the configuration touches.
+
 ## What's verified
 
 The `contrib/terraform` suite checks `apply → plan(no-diff) → destroy` against a

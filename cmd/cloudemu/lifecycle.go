@@ -41,8 +41,9 @@ var (
 	errUnknownCmd  = errors.New("unknown lifecycle command")
 )
 
-// endpointOrder is the canonical provider order for probing and printing.
-func endpointOrder() []string { return []string{"aws", "azure", "gcp", "kubernetes"} }
+// endpointOrder is the canonical provider order for probing and printing, the
+// same order serve prints its banner in.
+func endpointOrder() []string { return []string{"aws", "azure", "gcp", "oci", "kubernetes"} }
 
 // daemonState is the run-dir record describing a running standalone server.
 type daemonState struct {
@@ -365,13 +366,16 @@ func waitForEndpoints(path string, timeout time.Duration) (map[string]string, er
 	}
 }
 
-func printEndpoints(eps map[string]string) {
-	fmt.Println("cloudemu: running")
-	fmt.Println("─────────────────")
+func printEndpoints(eps map[string]string) { writeEndpoints(os.Stdout, eps) }
+
+// writeEndpoints renders the running daemon's endpoints in endpointOrder.
+func writeEndpoints(w io.Writer, eps map[string]string) {
+	fmt.Fprintln(w, "cloudemu: running")
+	fmt.Fprintln(w, "─────────────────")
 
 	for _, k := range endpointOrder() {
 		if ep := eps[k]; ep != "" {
-			fmt.Printf("  %-11s %s\n", k, ep)
+			fmt.Fprintf(w, "  %-11s %s\n", k, ep)
 		}
 	}
 }

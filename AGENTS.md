@@ -2,11 +2,11 @@
 
 Guidance for AI agents working in the cloudemu repository. (Human contributors: see [CONTRIBUTING.md](CONTRIBUTING.md).)
 
-> **Integrating cloudemu into an existing service = an endpoint override on the already-running service** (`AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override). Server mode (run the binary/Docker image and point real code at the printed endpoints) is the default for integration/E2E; library/in-process mode (`httptest.NewServer`, typed mocks) is for Go unit tests written inside cloudemu-aware code. Details: [docs/integration.md](docs/integration.md).
+> **Integrating cloudemu into an existing service = an endpoint override on the already-running service** (`AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, the Azure ARM endpoint override, or the OCI client's `Host`). Server mode (run the binary/Docker image and point real code at the printed endpoints) is the default for integration/E2E; library/in-process mode (`httptest.NewServer`, typed mocks) is for Go unit tests written inside cloudemu-aware code. Details: [docs/integration.md](docs/integration.md).
 
 ## What cloudemu is
 
-Zero-cost, in-memory emulation of AWS, Azure, and GCP cloud **APIs**. It runs three ways: as a standalone server (the `cloudemu serve` binary or the `ghcr.io/stackshy/cloudemu` Docker image) that any app in any language points at, and in-process from Go via either the SDK-compat HTTP server or the typed mock API. It emulates control surfaces, not a real cloud — it does not run workloads/containers, serve real traffic, authenticate requests, or enforce quotas. State is in-memory and resettable, so it is ephemeral by default (lost on process exit unless saved); persistence is opt-in — the whole emulator's state can be snapshotted to one JSON file and restored identity-preservingly across all four providers (`--persist`, `snapshot save`/`load`, the `/_cloudemu/snapshot` endpoint, the `persist` package). See the [README](README.md) for the full framing and scope.
+Zero-cost, in-memory emulation of AWS, Azure, GCP, and OCI cloud **APIs**. It runs three ways: as a standalone server (the `cloudemu serve` binary or the `ghcr.io/stackshy/cloudemu` Docker image) that any app in any language points at, and in-process from Go via either the SDK-compat HTTP server or the typed mock API. It emulates control surfaces, not a real cloud — it does not run workloads/containers, serve real traffic, authenticate requests, or enforce quotas. State is in-memory and resettable, so it is ephemeral by default (lost on process exit unless saved); persistence is opt-in — the whole emulator's state can be snapshotted to one JSON file and restored identity-preservingly across all four providers (`--persist`, `snapshot save`/`load`, the `/_cloudemu/snapshot` endpoint, the `persist` package). See the [README](README.md) for the full framing and scope.
 
 ## Where the capabilities are
 
@@ -19,7 +19,7 @@ These are produced from the driver interfaces in `services/*/driver` by `go gene
 
 ## Architecture (one paragraph)
 
-Three layers: a portable API (`services/<svc>/`) wraps a driver interface (`services/<svc>/driver/`), which each provider implements in `providers/{aws,azure,gcp,oci}/<native>/` with `memstore`-backed mocks. AWS, Azure, and GCP are fully implemented. OCI (`providers/oci/`) is in progress — its foundation is in place and services land one at a time, so a service not yet built reads as `nil`; consult `docs/coverage/` for which ones exist rather than any prose. Full detail: [docs/architecture.md](docs/architecture.md).
+Three layers: a portable API (`services/<svc>/`) wraps a driver interface (`services/<svc>/driver/`), which each provider implements in `providers/{aws,azure,gcp,oci}/<native>/` with `memstore`-backed mocks. AWS, Azure, GCP, and OCI are all supported. OCI (`providers/oci/`) covers fewer services than the other three, and a service it doesn't emulate yet reads as `nil`; consult `docs/coverage/` for which ones exist rather than any prose. Full detail: [docs/architecture.md](docs/architecture.md).
 
 ## Build, test, lint
 
@@ -33,7 +33,7 @@ Run all three before proposing a change. Lint must be clean (0 issues).
 
 ## Conventions that matter
 
-- **Mirror across providers.** A behavior added to one provider should be added to AWS, Azure, and GCP unless the capability genuinely doesn't exist there.
+- **Mirror across providers.** A behavior added to one provider should be added to AWS, Azure, and GCP (and OCI, where it emulates that service) unless the capability genuinely doesn't exist there.
 - **Regenerate coverage after interface or wiring changes.** If you touch a `services/*/driver` interface or wire a service into a provider factory, run `go generate ./...` and commit the updated `docs/coverage/` output.
 - **Per-service non-goals** are hand-maintained in `docs/coverage/nongoals/<service>.md` and inlined by the generator; the rest of `docs/coverage/` is generated — do not edit it by hand.
 - **Deterministic time** via `config.FakeClock` for time-dependent tests.

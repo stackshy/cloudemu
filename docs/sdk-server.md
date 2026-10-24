@@ -1,10 +1,10 @@
 # SDK-Compatible HTTP Server
 
-CloudEmu includes an HTTP server that speaks the AWS, Azure and GCP SDK wire protocols. Point the real `aws-sdk-go-v2`, `azure-sdk-for-go`, or `cloud.google.com/go` / `google.golang.org/api` clients at it with a custom endpoint, and your production code runs unchanged against the in-memory backend. The server runs in a local `httptest.NewServer`, so you don't need Docker or a cloud account, and the responses decode with the normal SDK types.
+CloudEmu includes an HTTP server that speaks the AWS, Azure, GCP and OCI SDK wire protocols. Point the real `aws-sdk-go-v2`, `azure-sdk-for-go`, `cloud.google.com/go` / `google.golang.org/api`, or `oci-go-sdk` clients at it with a custom endpoint, and your production code runs unchanged against the in-memory backend. The server runs in a local `httptest.NewServer`, so you don't need Docker or a cloud account, and the responses decode with the normal SDK types.
 
 The backend is in-memory by default. If you need real workloads behind the wire protocol, the same drivers can be backed by opt-in [real engines](features.md#11-real-data-plane-engines-opt-in) (real SQL, Redis or function code).
 
-> This page covers library mode: the in-process SDK-compat server for Go unit tests, built with `httptest.NewServer`. To use cloudemu with an application that is already running, don't start it from a `_test.go` file. Run [server mode](standalone-server.md) and set your SDK's endpoint (`AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override) as described in [integration.md](integration.md). Server mode is the default for integration and E2E tests. The wire protocol and service coverage below are the same in both modes; only the way you start the server differs.
+> This page covers library mode: the in-process SDK-compat server for Go unit tests, built with `httptest.NewServer`. To use cloudemu with an application that is already running, don't start it from a `_test.go` file. Run [server mode](standalone-server.md) and set your SDK's endpoint (`AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, the Azure ARM endpoint override, or the OCI client's `Host`) as described in [integration.md](integration.md). Server mode is the default for integration and E2E tests. The wire protocol and service coverage below are the same in both modes; only the way you start the server differs.
 
 ## Why
 
@@ -128,6 +128,31 @@ belong to the configured project (`config.WithProjectID`, or `--project-id` on
 `cloudemu serve`, default `cloudemu-local`). Set it to the project your
 provider or SDK uses.
 
+## Quick start (OCI)
+
+```go
+import (
+    "github.com/oracle/oci-go-sdk/v65/common"
+    "github.com/oracle/oci-go-sdk/v65/objectstorage"
+    "github.com/stackshy/cloudemu/v2"
+    ociserver "github.com/stackshy/cloudemu/v2/server/oci"
+)
+
+ts := httptest.NewServer(ociserver.New(ociserver.DriversFrom(cloudemu.NewOCI())))
+
+// Signatures aren't checked, so any key works.
+cp := common.NewRawConfigurationProvider(
+    "ocid1.tenancy.oc1..aaaaaaaacloudemulocaltenancy", "ocid1.user.oc1..test",
+    "us-ashburn-1", "aa:bb", privateKeyPEM, nil)
+
+client, _ := objectstorage.NewObjectStorageClientWithConfigurationProvider(cp)
+client.Host = ts.URL
+```
+
+Every OCI service is on the one server, so each client's `Host` is the same URL.
+The tenancy OCID is also the root compartment. Mutations OCI runs asynchronously
+answer with an `opc-work-request-id` that the SDK's work request client can poll.
+
 ## Quick start (Databricks)
 
 The Azure server also speaks the `databricks-sdk-go` `WorkspaceClient` wire protocol. Wire the same `*databricks.Mock` into both `Databricks` (ARM workspace control plane) and `DatabricksDataPlane` (the `/api/2.x` workspace data plane).
@@ -241,6 +266,25 @@ All handlers speak REST + JSON.
 | **Managed Service for Apache Kafka (managedkafka.googleapis.com v1)** | Clusters (Create/Update/Delete as LROs polled through the shared location-operations route, Get, List with `pageToken`/`pageSize`; `updateMask` required, only masked fields change, unknown/immutable/output-only paths are 400) and Topics (Create/Get/List/Patch/Delete, synchronous; `partitionCount` can only increase, `replicationFactor` immutable). Validates `vcpuCount >= 3`, 1-8 GiB memory per vCPU, 1-10 `networkConfigs[].subnet` in the cluster's region, `brokerCapacityConfig.diskSizeGib >= 100`, up to 10 `tlsConfig.trustConfig.casConfigs`, and the RFC 1035 `clusterId`; defaults `kafkaVersion` to `3.7.x` and `rebalanceConfig.mode` to `NO_REBALANCE`; accepts enums as names or proto3-JSON numbers; LROs carry `OperationMetadata`; `--async-settle` reports a new cluster `CREATING` before `ACTIVE`. Shares the `/clusters` path with GKE/AlloyDB and routes it by ownership: it claims Kafka-shaped creates, clusters it owns, Kafka-shaped PATCHes of a missing cluster (404), and a list only where the sibling owns no cluster; an id already used by the other service in that location is 409 `ALREADY_EXISTS`. Real `google.golang.org/api/managedkafka/v1` and `cloud.google.com/go/managedkafka` (GAPIC REST) clients round-trip end-to-end. Consumer groups, ACLs, Connect and Schema Registry are out of scope. |
 | **Backup and DR (backupdr.googleapis.com v1)** | Backup vaults: create (LRO; `backupVaultId`, required `backupMinimumEnforcedRetentionDuration`, `validateOnly`), get, list (`pageSize`/`pageToken`, `locations/-` wildcard; `filter`/`orderBy` accepted and ignored), patch (LRO; required `updateMask`, output-only/unknown paths 400, stale body `etag` 409 ABORTED), delete (LRO; `force`, `allowMissing`, `etag`, `validateOnly`; a vault holding backups without `force` is 400 FAILED_PRECONDITION). Output-only `state` ACTIVE, `deletable`, `etag` (rotates per update), `uid`, deterministic `serviceAccount` (`service-{12-digit number derived from the project id}@gcp-sa-backupdr-pr.iam.gserviceaccount.com`), `backupCount`/`totalStoredBytes` "0". Operations poll through the shared location-scoped LRO poller. Data sources, backups, backup plans, management servers and restores are out of scope. Real `google.golang.org/api/backupdr/v1` clients round-trip end-to-end. |
 | **Cloud CDN backend buckets** *(`compute/v1` `global/backendBuckets`)* | Insert, Get, List (`maxResults`/`pageToken`, `name` filter), Patch (JSON merge patch: `cdnPolicy` merges member-by-member), Update (full replace), Delete, `setEdgeSecurityPolicy`; every mutation returns a global `compute#operation` the SDK polls to DONE. Validates the RFC 1035 name, a required `bucketName` that must name an existing GCS bucket when the GCS backend is wired, `compressionMode`, `cdnPolicy.cacheMode`, TTL ranges (0-31,622,400s, `defaultTtl` <= `maxTtl`), `serveWhileStale` <= 604,800s, <= 5 bypass headers, and `negativeCachingPolicy` requiring `negativeCaching`. Duplicate -> 409, missing -> 404. Url-map `defaultService` / `pathMatchers[].defaultService` / `pathRules[].service` references to a missing backend bucket are rejected (400), and deleting a backend bucket a url-map routes to returns 400 `resourceInUseByAnotherResource`. Signed URL keys, IAM policy, and the edge security policy reference itself (no `securityPolicies` resource) are not modeled. |
+
+### OCI (`server/oci/`)
+
+All handlers speak OCI's REST + JSON, with `opc-request-id` on every response and `opc-next-page` paging.
+
+| Service | Operations |
+|---------|-----------|
+| **Identity** | Compartments (with subtree listing and moves), users, groups, group memberships, policies |
+| **VCN** | VCNs, subnets, security lists, network security groups and rules, route tables, DHCP options, internet/NAT/service gateways, DRGs and attachments, local and remote peering, VNICs, private and public IPs |
+| **Compute and Block Volume** | Instances (launch, actions, update, terminate), shapes, images, block and boot volumes, attachments, backups, volume groups, instance configurations and pools |
+| **Object Storage** | Namespaces, buckets, objects (multipart, versioning, copy), pre-authenticated requests, retention rules, lifecycle policies |
+| **NoSQL** | Tables from DDL, indexes, rows with conditional writes and TTL, SQL queries |
+| **Vault** | Vaults, keys and key versions, secrets and versions, the secret-bundle data plane |
+| **Logging** | Log groups, logs, ingestion, search |
+| **Monitoring** | Metric ingestion, listing and summaries, alarms |
+| **Notifications** | Topics, subscriptions, message publishing |
+| **Work requests** | Polling for every asynchronous mutation above |
+
+The full operation list per service is in the generated [OCI coverage](coverage/oci/README.md), and the OCI specifics are in [services.md](services.md).
 
 An operation cloudemu doesn't implement returns `501 Not Implemented` or the provider's native `UnknownOperation` / `NotImplemented` / `NOT_FOUND` error.
 

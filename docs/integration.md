@@ -1,6 +1,6 @@
 # Integrating CloudEmu into Your App
 
-To use CloudEmu with an existing service, you change one thing: the endpoint on the SDK client your app already builds. Run CloudEmu in server mode and set the endpoint with `AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override. Your app's normal code path then runs against the in-memory cloud, with no mocks in your code.
+To use CloudEmu with an existing service, you change one thing: the endpoint on the SDK client your app already builds. Run CloudEmu in server mode and set the endpoint with `AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, the Azure ARM endpoint override, or the OCI client's `Host`. Your app's normal code path then runs against the in-memory cloud, with no mocks in your code.
 
 Use server mode for integration and E2E tests. The in-process library mode at the bottom of this page is for Go unit tests.
 
@@ -9,11 +9,11 @@ Use server mode for integration and E2E tests. The in-process library mode at th
 ## 1. Run the server
 
 ```sh
-docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 \
+docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 -p 4571:4571 \
   ghcr.io/stackshy/cloudemu:latest   # Apple Silicon: add --platform linux/amd64 if needed
 ```
 
-It prints the endpoints: AWS `http://127.0.0.1:4566` (HTTP), Azure `https://127.0.0.1:4568` (HTTPS, self-signed), GCP `http://127.0.0.1:4569` (HTTP). Flags, ports and TLS are covered in [standalone-server.md](standalone-server.md).
+It prints the endpoints: AWS `http://127.0.0.1:4566` (HTTP), Azure `https://127.0.0.1:4568` (HTTPS, self-signed), GCP `http://127.0.0.1:4569` (HTTP), OCI `http://127.0.0.1:4571` (HTTP). Flags, ports and TLS are covered in [standalone-server.md](standalone-server.md).
 
 ## 2. Override the endpoint (per SDK)
 
@@ -78,6 +78,21 @@ opts := &arm.ClientOptions{ClientOptions: azcore.ClientOptions{Cloud: cloudCfg}}
 ```
 
 Any `azcore.TokenCredential` works, since tokens are not validated. See [standalone-server.md](standalone-server.md#trusting-the-azure-self-signed-cert-any-language) for trusting the cert per language.
+
+### OCI: `oci-go-sdk`
+
+Every OCI service is on one port, so set each client's `Host` to it. Any configuration provider works, since request signatures are not verified:
+
+```go
+cp := common.NewRawConfigurationProvider(
+	"ocid1.tenancy.oc1..aaaaaaaacloudemulocaltenancy", // default tenancy, also the root compartment
+	"ocid1.user.oc1..local", "us-ashburn-1", "aa:bb", privateKeyPEM, nil)
+
+vcn, _ := core.NewVirtualNetworkClientWithConfigurationProvider(cp)
+vcn.Host = "http://127.0.0.1:4571"
+```
+
+Other languages: set the client's service endpoint to the same address (Python `service_endpoint=`, Java `setEndpoint`).
 
 ## 3. Make the endpoint injectable
 

@@ -72,7 +72,7 @@ func TestRegisterCommonDefaults(t *testing.T) {
 		"k8s-progression":          "false",
 		"k8s-progression-interval": time.Second.String(),
 		"k8s-nodes":                "1",
-		"providers":                "aws,azure,gcp",
+		"providers":                "aws,azure,gcp,oci",
 		"aws-port":                 "4566",
 		"shutdown-timeout":         defaultShutdownTimeout.String(),
 		"tick-interval":            time.Second.String(),

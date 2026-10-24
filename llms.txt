@@ -1,8 +1,8 @@
 # cloudemu
 
-> Zero-cost, in-memory emulation of AWS, Azure, and GCP cloud **APIs** — 173 service interfaces spanning 3,700+ operations (76 AWS · 75 Azure · 55 GCP), plus a real in-memory Kubernetes data plane. Run it as a standalone server (binary or the `ghcr.io/stackshy/cloudemu` Docker image) and point any app in any language at a local endpoint, or use it in-process from Go (SDK-compat HTTP server, or typed mocks driven directly) — no accounts, no network, no bill. It emulates control surfaces, not a real cloud: it does not run workloads, serve traffic, authenticate requests, or enforce quotas. State lives in memory and is resettable — ephemeral by default, so it is lost on process exit unless you save it — but the whole emulator's state can be snapshotted to a single JSON file and restored into a fresh instance (opt-in, identity-preserving across all providers), so resources survive a restart when you ask them to.
+> Zero-cost, in-memory emulation of AWS, Azure, GCP, and OCI cloud **APIs** — 177 service interfaces spanning 4,000+ operations (76 AWS · 77 Azure · 57 GCP · 10 OCI), plus a real in-memory Kubernetes data plane. Run it as a standalone server (binary or the `ghcr.io/stackshy/cloudemu` Docker image) and point any app in any language at a local endpoint, or use it in-process from Go (SDK-compat HTTP server, or typed mocks driven directly) — no accounts, no network, no bill. It emulates control surfaces, not a real cloud: it does not run workloads, serve traffic, authenticate requests, or enforce quotas. State lives in memory and is resettable — ephemeral by default, so it is lost on process exit unless you save it — but the whole emulator's state can be snapshotted to a single JSON file and restored into a fresh instance (opt-in, identity-preserving across all providers), so resources survive a restart when you ask them to.
 
-**Agent hint (integration):** Integrating cloudemu into an existing service = an endpoint override on the already-running service (`AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override). Server mode (run the binary/Docker image and point real code at the printed endpoints) is the default for integration/E2E; library/in-process mode (`httptest.NewServer`, typed mocks) is for Go unit tests written inside cloudemu-aware code.
+**Agent hint (integration):** Integrating cloudemu into an existing service = an endpoint override on the already-running service (`AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, the Azure ARM endpoint override, or the OCI client's `Host`). Server mode (run the binary/Docker image and point real code at the printed endpoints) is the default for integration/E2E; library/in-process mode (`httptest.NewServer`, typed mocks) is for Go unit tests written inside cloudemu-aware code.
 
 ## Capabilities (start here)
 
@@ -14,7 +14,7 @@
 - [README](README.md): what cloudemu is and its scope, the three ways to run it (Docker/standalone, SDK-compat HTTP server, Go API), and quickstarts for each.
 - [Standalone server](docs/standalone-server.md): run cloudemu as a local dev cloud via `cloudemu serve` or the Docker image — the "point any app in any language at it" mode.
 - [Getting started](docs/getting-started.md): set up a test in five minutes.
-- [Architecture](docs/architecture.md): the three-layer design (portable API → driver interfaces → provider backends) and provider status (AWS/Azure/GCP implemented; OCI foundation only).
+- [Architecture](docs/architecture.md): the three-layer design (portable API → driver interfaces → provider backends) and provider status (AWS, Azure, GCP and OCI supported; OCI covers fewer services).
 - [SDK-compat server](docs/sdk-server.md): per-handler wire-protocol details and limitations.
 - [Services](docs/services.md): prose per-service capability reference.
 - [Integration](docs/integration.md): wiring cloudemu into an existing app and test suite.
