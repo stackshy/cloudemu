@@ -11,12 +11,27 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/sfn/driver"
 )
 
-// createDef registers a state machine with the given verbatim ASL definition.
+// createDef registers a STANDARD state machine with the given verbatim ASL
+// definition.
 func createDef(t *testing.T, m *sfn.Mock, name, def string) string {
 	t.Helper()
 
+	return createTypedDef(t, m, name, def, driver.TypeStandard)
+}
+
+// createExpressDef registers an EXPRESS state machine, the only type
+// StartSyncExecution accepts.
+func createExpressDef(t *testing.T, m *sfn.Mock, name, def string) string {
+	t.Helper()
+
+	return createTypedDef(t, m, name, def, driver.TypeExpress)
+}
+
+func createTypedDef(t *testing.T, m *sfn.Mock, name, def, smType string) string {
+	t.Helper()
+
 	arn, _, _, err := m.CreateStateMachine(context.Background(), driver.CreateStateMachineInput{
-		Name: name, Definition: def, RoleArn: "arn:aws:iam::000000000000:role/r",
+		Name: name, Definition: def, RoleArn: "arn:aws:iam::000000000000:role/r", Type: smType,
 	})
 	if err != nil {
 		t.Fatalf("CreateStateMachine(%s): %v", name, err)
@@ -25,11 +40,11 @@ func createDef(t *testing.T, m *sfn.Mock, name, def string) string {
 	return arn
 }
 
-// runSync creates a machine and runs one synchronous (instant) execution.
+// runSync creates an EXPRESS machine and runs one synchronous execution.
 func runSync(t *testing.T, m *sfn.Mock, name, def, input string) *driver.Execution {
 	t.Helper()
 
-	arn := createDef(t, m, name, def)
+	arn := createExpressDef(t, m, name, def)
 
 	exec, err := m.StartSyncExecution(context.Background(), driver.StartExecutionInput{
 		StateMachineArn: arn, Name: "run", Input: input,

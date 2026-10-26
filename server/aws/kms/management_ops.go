@@ -36,7 +36,7 @@ func (h *Handler) listGrants(w http.ResponseWriter, r *http.Request) {
 
 		sort.Slice(grants, func(i, j int) bool { return grants[i].GrantID < grants[j].GrantID })
 
-		start, end, next, truncated, perr := pageWindow(req.Marker, req.Limit, len(grants))
+		start, end, next, truncated, perr := pageWindow(req.Marker, req.Limit, len(grants), markerInvalid)
 		if perr != nil {
 			return nil, perr
 		}
@@ -80,7 +80,7 @@ func (h *Handler) listRetirableGrants(w http.ResponseWriter, r *http.Request) {
 
 		sort.Slice(grants, func(i, j int) bool { return grants[i].GrantID < grants[j].GrantID })
 
-		start, end, next, truncated, perr := pageWindow(req.Marker, req.Limit, len(grants))
+		start, end, next, truncated, perr := pageWindow(req.Marker, req.Limit, len(grants), markerInvalid)
 		if perr != nil {
 			return nil, perr
 		}
@@ -138,7 +138,7 @@ func (h *Handler) listKeyRotations(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 
-		start, end, next, truncated, perr := pageWindow(req.Marker, req.Limit, len(events))
+		start, end, next, truncated, perr := pageWindow(req.Marker, req.Limit, len(events), markerInvalid)
 		if perr != nil {
 			return nil, perr
 		}
@@ -201,7 +201,7 @@ func (h *Handler) listKeyPolicies(w http.ResponseWriter, r *http.Request) {
 
 		sort.Strings(names)
 
-		start, end, next, truncated, perr := pageWindow(req.Marker, req.Limit, len(names))
+		start, end, next, truncated, perr := pageWindow(req.Marker, req.Limit, len(names), markerValidation)
 		if perr != nil {
 			return nil, perr
 		}

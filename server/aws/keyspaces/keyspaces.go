@@ -17,6 +17,10 @@ func (h *Handler) createKeyspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if rejectTagListTooLong(w, len(in.Tags)) {
+		return
+	}
+
 	cfg := ksdriver.CreateKeyspaceConfig{Name: aws.ToString(in.KeyspaceName), Tags: tagMap(in.Tags)}
 	if in.ReplicationSpecification != nil {
 		cfg.ReplicationStrategy = string(in.ReplicationSpecification.ReplicationStrategy)

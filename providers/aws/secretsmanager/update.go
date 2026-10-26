@@ -24,8 +24,7 @@ func (m *Mock) UpdateSecret(ctx context.Context, name, description string, value
 	defer sd.mu.Unlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, "", errors.New(errors.FailedPrecondition,
-			"secret is scheduled for deletion, so this operation is not allowed")
+		return nil, "", errors.New(errors.FailedPrecondition, msgMarkedForDeletion)
 	}
 
 	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)

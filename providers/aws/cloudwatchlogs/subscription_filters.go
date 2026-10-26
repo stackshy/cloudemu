@@ -11,6 +11,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs/filterpattern"
 	"github.com/stackshy/cloudemu/v2/services/logging/driver"
 )
 
@@ -34,6 +35,10 @@ func (m *Mock) PutSubscriptionFilter(_ context.Context, cfg *driver.Subscription
 
 	if cfg.DestinationARN == "" {
 		return errors.New(errors.InvalidArgument, "destinationArn is required")
+	}
+
+	if err := validateFilterPattern(g, subscriptionFilterKind, cfg.Name, cfg.FilterPattern); err != nil {
+		return err
 	}
 
 	// A new filter (not an update of an existing name) must fit within the
@@ -98,13 +103,20 @@ func (m *Mock) DescribeSubscriptionFilters(_ context.Context, logGroup string) (
 // carried forward so a subscriber Lambda that writes back into CloudWatch Logs
 // stays bounded (the guard lives in lambda.InvokeExternal).
 func (m *Mock) deliverToSubscriptions(callerCtx context.Context, g *logGroup, streamName string, events []driver.LogEvent) {
-	if m.lambda == nil || g.subFilters.Len() == 0 || len(events) == 0 {
+	if m.lambda == nil || len(events) == 0 {
 		return
+	}
+
+	// An account subscription filter policy delivers in addition to the
+	// group's own filters.
+	filters := g.subFilters.SortedValues()
+	if sf := m.accountSubscription(g.info.Name); sf != nil {
+		filters = append(filters, sf)
 	}
 
 	ctx := recursionguard.WithDepth(context.Background(), recursionguard.Depth(callerCtx))
 
-	for _, sf := range g.subFilters.SortedValues() {
+	for _, sf := range filters {
 		matched := matchSubscriptionEvents(sf.FilterPattern, events)
 		if len(matched) == 0 {
 			continue
@@ -138,18 +150,18 @@ func (m *Mock) deliverSubscription(
 }
 
 // matchSubscriptionEvents returns the events whose message satisfies the filter
-// pattern. An empty pattern matches every event; otherwise substring matching is
-// used (the same simplification the metric-filter path applies — the richer
-// CloudWatch Logs filter grammar is tracked separately).
-func matchSubscriptionEvents(pattern string, events []driver.LogEvent) []driver.LogEvent {
-	if pattern == "" {
-		return events
+// pattern. A pattern that no longer parses (restored from an older snapshot)
+// matches nothing; patterns are validated when the filter is put.
+func matchSubscriptionEvents(raw string, events []driver.LogEvent) []driver.LogEvent {
+	pattern, err := filterpattern.Parse(raw)
+	if err != nil {
+		return nil
 	}
 
 	matched := make([]driver.LogEvent, 0, len(events))
 
 	for i := range events {
-		if strings.Contains(events[i].Message, pattern) {
+		if pattern.Match(events[i].Message) {
 			matched = append(matched, events[i])
 		}
 	}

@@ -21,26 +21,60 @@ func (h *Handler) createSecret(w http.ResponseWriter, r *http.Request) {
 		Tags:               tagsToMap(req.Tags),
 		KMSKeyID:           req.KmsKeyID,
 		ClientRequestToken: req.ClientRequestToken,
+		AddReplicaRegions:  replicaRegionsToDriver(req.AddReplicaRegions),
 	}, secretValue(req.SecretString, req.SecretBinary))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	// The driver seeds the initial version internally; fetch it so the
+	// The driver seeds the initial version internally; look it up so the
 	// response carries the VersionId real Secrets Manager returns.
 	out := createSecretResponse{ARN: info.ResourceID, Name: info.Name}
-	if ver, verr := h.secrets.GetSecretValue(r.Context(), info.Name, ""); verr == nil {
-		out.VersionID = ver.VersionID
+	if len(info.ReplicationStatus) > 0 {
+		out.ReplicationStatus = toReplicationStatusJSON(info.ReplicationStatus)
+	}
+
+	if versionID := h.currentVersionID(r, info.Name); versionID != "" {
+		out.VersionID = versionID
 
 		if isBinary(req.SecretString, req.SecretBinary) {
 			if st, ok := h.secrets.(secretStager); ok {
-				_ = st.MarkVersionBinary(r.Context(), info.Name, ver.VersionID)
+				_ = st.MarkVersionBinary(r.Context(), info.Name, versionID)
 			}
 		}
 	}
 
 	wire.WriteJSON(w, out)
+}
+
+// currentVersionID returns the id of the version carrying AWSCURRENT ("" when
+// there is none). With the AWS staging surface it reads the staging index, so
+// CreateSecret's own lookup is not a retrieval of the value and does not stamp
+// LastAccessedDate; other drivers fall back to a portable value read.
+func (h *Handler) currentVersionID(r *http.Request, name string) string {
+	if st, ok := h.secrets.(secretStager); ok {
+		stages, err := st.SecretVersionStages(r.Context(), name)
+		if err != nil {
+			return ""
+		}
+
+		for id, labels := range stages {
+			for _, l := range labels {
+				if l == stageCurrent {
+					return id
+				}
+			}
+		}
+
+		return ""
+	}
+
+	if ver, err := h.secrets.GetSecretValue(r.Context(), name, ""); err == nil {
+		return ver.VersionID
+	}
+
+	return ""
 }
 
 func (h *Handler) deleteSecret(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +150,9 @@ func (h *Handler) describeSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := toSecretListEntry(info)
+	if len(info.ReplicationStatus) > 0 {
+		out.ReplicationStatus = toReplicationStatusJSON(info.ReplicationStatus)
+	}
 
 	if isStager {
 		if stages, serr := st.SecretVersionStages(r.Context(), name); serr == nil {
@@ -246,14 +283,16 @@ func (h *Handler) listSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	infos, err := h.secrets.ListSecrets(r.Context())
+	if err := validateListSecrets(&req); err != nil {
+		writeValidation(w, err)
+		return
+	}
+
+	infos, err := h.listSecretInfos(r, req.IncludePlannedDeletion)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-
-	// A stable order (by name) keeps the offset-based NextToken valid across pages.
-	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
 
 	filtered := infos[:0:0]
 
@@ -263,29 +302,53 @@ func (h *Handler) listSecrets(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	start, end, next, err := pageWindow(req.NextToken, req.MaxResults, len(filtered))
+	page, next, err := listSecretsPage(filtered, &req)
 	if err != nil {
-		writeErr(w, err)
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidNextTokenException", msgInvalidNextToken)
 		return
 	}
 
-	st, isStager := h.secrets.(secretStager)
+	entries := make([]secretListEntryJSON, 0, len(page))
 
-	entries := make([]secretListEntryJSON, 0, end-start)
-
-	for i := start; i < end; i++ {
-		entry := toSecretListEntry(&filtered[i])
-
-		if isStager {
-			if rot, rerr := st.SecretRotationDetails(r.Context(), filtered[i].Name); rerr == nil {
-				applyRotationInfo(&entry, rot)
-			}
-		}
-
-		entries = append(entries, entry)
+	for i := range page {
+		entries = append(entries, h.listEntry(r, &page[i]))
 	}
 
 	wire.WriteJSON(w, listSecretsResponse{SecretList: entries, NextToken: next})
+}
+
+// listEntry renders one ListSecrets entry: the secret's metadata plus, when
+// the AWS staging surface is available, its rotation details and (for a
+// secret scheduled for deletion, only listed with IncludePlannedDeletion) its
+// DeletedDate, as DescribeSecret reports them.
+func (h *Handler) listEntry(r *http.Request, info *secretsdriver.SecretInfo) secretListEntryJSON {
+	entry := toSecretListEntry(info)
+
+	st, ok := h.secrets.(secretStager)
+	if !ok {
+		return entry
+	}
+
+	if rot, err := st.SecretRotationDetails(r.Context(), info.Name); err == nil {
+		applyRotationInfo(&entry, rot)
+	}
+
+	if date, deleted := st.SecretDeletionDate(r.Context(), info.Name); deleted {
+		entry.DeletedDate = epochSeconds(date)
+	}
+
+	return entry
+}
+
+// listSecretInfos returns the secrets ListSecrets considers: active secrets,
+// plus those scheduled for deletion when includePlannedDeletion is set and the
+// driver supports it (the AWS provider does).
+func (h *Handler) listSecretInfos(r *http.Request, includePlannedDeletion bool) ([]secretsdriver.SecretInfo, error) {
+	if rep, ok := h.secrets.(secretReplicator); ok {
+		return rep.ListSecretsWithOptions(r.Context(), includePlannedDeletion)
+	}
+
+	return h.secrets.ListSecrets(r.Context())
 }
 
 func (h *Handler) getSecretValue(w http.ResponseWriter, r *http.Request) {

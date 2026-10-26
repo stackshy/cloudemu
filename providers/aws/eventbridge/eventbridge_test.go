@@ -533,13 +533,16 @@ func TestPutEvents(t *testing.T) {
 		assert.Equal(t, 2, len(result.EventIDs))
 	})
 
-	t.Run("events to nonexistent bus counted as failures", func(t *testing.T) {
+	t.Run("events to nonexistent bus succeed and are dropped", func(t *testing.T) {
+		// Real EventBridge answers an entry for a missing bus with an EventId
+		// and no error, and drops the event.
 		result, err := m.PutEvents(ctx, []driver.Event{
 			{Source: "my.app", DetailType: "Test", Detail: "{}", EventBus: "nonexistent"},
 		})
 		require.NoError(t, err)
-		assert.Equal(t, 0, result.SuccessCount)
-		assert.Equal(t, 1, result.FailCount)
+		assert.Equal(t, 1, result.SuccessCount)
+		assert.Equal(t, 0, result.FailCount)
+		assert.Len(t, result.EventIDs, 1)
 	})
 
 	t.Run("history stores events", func(t *testing.T) {
@@ -548,16 +551,20 @@ func TestPutEvents(t *testing.T) {
 		assert.Equal(t, 2, len(history))
 	})
 
-	t.Run("mixed success and failure", func(t *testing.T) {
+	t.Run("existing and missing bus in one batch both succeed", func(t *testing.T) {
 		createTestBus(t, m, "custom-bus")
 
 		result, err := m.PutEvents(ctx, []driver.Event{
 			{Source: "my.app", DetailType: "OK", Detail: "{}", EventBus: "custom-bus"},
-			{Source: "my.app", DetailType: "Fail", Detail: "{}", EventBus: "ghost-bus"},
+			{Source: "my.app", DetailType: "Dropped", Detail: "{}", EventBus: "ghost-bus"},
 		})
 		require.NoError(t, err)
-		assert.Equal(t, 1, result.SuccessCount)
-		assert.Equal(t, 1, result.FailCount)
+		assert.Equal(t, 2, result.SuccessCount)
+		assert.Equal(t, 0, result.FailCount)
+
+		history, err := m.GetEventHistory(ctx, "custom-bus", 0)
+		require.NoError(t, err)
+		assert.Len(t, history, 1)
 	})
 
 	t.Run("byte-identical events in one call get unique ids", func(t *testing.T) {

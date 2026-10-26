@@ -172,19 +172,36 @@ func (m *Mock) SubscribeToShard(
 	recs := make([]driver.Record, len(shard.records)-start)
 	copy(recs, shard.records[start:])
 
-	return &driver.SubscribeToShardResult{
+	res := &driver.SubscribeToShardResult{
 		Records:                    recs,
-		ContinuationSequenceNumber: continuationSeq(shard, recs),
+		ContinuationSequenceNumber: continuationSeq(shard, start, recs),
 		MillisBehindLatest:         0,
-	}, nil
+	}
+
+	// A closed shard that has been read to its end signals shard end the way
+	// real Kinesis does: no continuation sequence number, plus the child shards
+	// to subscribe to next (KCL treats exactly this combination as shard end).
+	if shard.closed {
+		res.ContinuationSequenceNumber = ""
+		res.ChildShards = childShardsOf(sd.shards, shard.shard.ShardID)
+	}
+
+	return res, nil
 }
 
-// continuationSeq is the cursor a client uses to resume a subscription: the last
-// delivered record's sequence number, or the shard's starting sequence number
-// when no records were delivered.
-func continuationSeq(shard *shardState, recs []driver.Record) string {
+// continuationSeq is the cursor a client passes back as AFTER_SEQUENCE_NUMBER to
+// resume a subscription. Real Kinesis notes it "captures your shard progress
+// even when no data is written to the shard", so with nothing delivered it is
+// the record just before the read position (not the shard start, which would
+// replay a LATEST/AT_TIMESTAMP subscription from the beginning), or the shard's
+// starting sequence number when the position is the very start of the shard.
+func continuationSeq(shard *shardState, start int, recs []driver.Record) string {
 	if n := len(recs); n > 0 {
 		return recs[n-1].SequenceNumber
+	}
+
+	if start > 0 {
+		return shard.records[start-1].SequenceNumber
 	}
 
 	return shard.shard.SequenceNumberRange.StartingSequenceNumber
@@ -206,7 +223,7 @@ func (m *Mock) findConsumerStream(streamARN, consumerName, consumerARN string) (
 
 	// Fall back to scanning by consumer ARN.
 	if consumerARN != "" {
-		for _, sd := range m.streams.All() {
+		for _, sd := range m.liveStreams() {
 			sd.mu.RLock()
 			for name, c := range sd.consumers {
 				if c.ConsumerARN == consumerARN {

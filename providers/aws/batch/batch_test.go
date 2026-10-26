@@ -189,8 +189,10 @@ func TestRegisterJobDefinitionRevisionIncrements(t *testing.T) {
 		t.Fatalf("first revision/status wrong: %+v", first)
 	}
 
-	if len(first.PlatformCapabilities) != 1 || first.PlatformCapabilities[0] != "EC2" {
-		t.Fatalf("platformCapabilities default should be [EC2], got %v", first.PlatformCapabilities)
+	// No default is echoed when the caller sent none (it would drift in
+	// Terraform, which reads the list back as-is).
+	if len(first.PlatformCapabilities) != 0 {
+		t.Fatalf("platformCapabilities should be empty when none was sent, got %v", first.PlatformCapabilities)
 	}
 
 	second, err := m.RegisterJobDefinition(ctx, in)

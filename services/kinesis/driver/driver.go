@@ -29,6 +29,11 @@ const (
 	EncryptionKMS  = "KMS"
 )
 
+// MaxGetRecordsLimit is the upper bound of GetRecords' Limit (valid range
+// 1..10000) and the number of records returned when Limit is omitted. It is
+// shared by implementations and wire layers so the bound can't drift.
+const MaxGetRecordsLimit = 10000
+
 // Shard iterator types.
 const (
 	IteratorAtSequenceNumber    = "AT_SEQUENCE_NUMBER"
@@ -202,11 +207,14 @@ type SubscribeToShardInput struct {
 }
 
 // SubscribeToShardResult carries one enhanced fan-out event's worth of records
-// plus the continuation cursor used to resume the subscription.
+// plus the continuation cursor used to resume the subscription. At the end of a
+// closed shard ContinuationSequenceNumber is empty and ChildShards lists the
+// shard's children, matching the SubscribeToShardEvent shard-end contract.
 type SubscribeToShardResult struct {
 	Records                    []Record
 	ContinuationSequenceNumber string
 	MillisBehindLatest         int64
+	ChildShards                []ChildShard
 }
 
 // ShardFilter narrows ListShards to a subset of shards. Type is one of the

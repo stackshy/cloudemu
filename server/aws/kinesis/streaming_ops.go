@@ -1,13 +1,16 @@
 package kinesis
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream"
 	"github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream/eventstreamapi"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	kinesisdriver "github.com/stackshy/cloudemu/v2/services/kinesis/driver"
 )
@@ -20,6 +23,20 @@ const (
 	// connection. The SDK blocks its SubscribeToShard call until it arrives, so it
 	// must precede any data event.
 	eventTypeInitial = "initial-response"
+
+	// defaultSubscriptionLifetime is how long one SubscribeToShard connection
+	// stays open: real Kinesis pushes events "for up to 5 minutes, after which
+	// time you need to call SubscribeToShard again to renew the subscription".
+	defaultSubscriptionLifetime = 5 * time.Minute
+	// defaultSubscriptionPoll is how often an open subscription checks the shard
+	// for newly written records to push.
+	defaultSubscriptionPoll = 200 * time.Millisecond
+	// defaultSubscriptionHeartbeat is how long an idle subscription goes without
+	// an event before it pushes an empty one. Real enhanced fan-out keeps sending
+	// empty SubscribeToShardEvents (roughly every 5s) that carry the
+	// continuation and MillisBehindLatest, and KCL 2.x restarts a subscription
+	// that delivers nothing for ~35s.
+	defaultSubscriptionHeartbeat = 5 * time.Second
 )
 
 // startingPositionJSON is the {Type,SequenceNumber,Timestamp} wire shape of a
@@ -40,15 +57,18 @@ type subscribeToShardRequest struct {
 // frame. Data on each record is a base64 blob (encoding/json renders []byte as
 // base64), matching the SDK's blob decoding.
 type subscribeToShardEventJSON struct {
-	Records                    []recordJSON `json:"Records"`
-	ContinuationSequenceNumber string       `json:"ContinuationSequenceNumber"`
-	MillisBehindLatest         int64        `json:"MillisBehindLatest"`
+	Records                    []recordJSON     `json:"Records"`
+	ContinuationSequenceNumber *string          `json:"ContinuationSequenceNumber,omitempty"`
+	MillisBehindLatest         int64            `json:"MillisBehindLatest"`
+	ChildShards                []childShardJSON `json:"ChildShards,omitempty"`
 }
 
 // subscribeToShard handles Kinesis_20131202.SubscribeToShard. It resolves the
-// subscription against the driver, then writes an HTTP/2-style
-// application/vnd.amazon.eventstream response carrying a single
-// SubscribeToShardEvent frame before returning.
+// subscription against the driver, then holds an
+// application/vnd.amazon.eventstream response open, pushing a
+// SubscribeToShardEvent for the records available now and another whenever new
+// records land, until the shard ends, the subscription lifetime (5 minutes)
+// elapses, or the client disconnects.
 func (h *Handler) subscribeToShard(w http.ResponseWriter, r *http.Request) {
 	var req subscribeToShardRequest
 
@@ -76,12 +96,93 @@ func (h *Handler) subscribeToShard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeSubscribeEvent(w, res)
+	es := startEventStream(w)
+	if es.writeSubscribeEvent(res) != nil || res.ContinuationSequenceNumber == "" {
+		return
+	}
+
+	h.pushSubscription(r.Context(), es, req.ConsumerARN, req.ShardID, res.ContinuationSequenceNumber)
 }
 
-// writeSubscribeEvent frames res as a single SubscribeToShardEvent over the
-// eventstream protocol.
-func writeSubscribeEvent(w http.ResponseWriter, res *kinesisdriver.SubscribeToShardResult) {
+// pushSubscription keeps a subscription live: every poll interval it reads the
+// records written after the continuation cursor and pushes them as one event,
+// and an idle shard still gets an empty event every heartbeat interval. It runs
+// on the request goroutine (no goroutines to leak) and returns when the client
+// goes away (ctx), the server begins shutting down, the lifetime elapses, the
+// shard ends, the write fails, or the shard/consumer disappears (pushed as an
+// in-stream exception).
+func (h *Handler) pushSubscription(ctx context.Context, es *eventStream, consumerARN, shardID, cont string) {
+	lifetime := time.NewTimer(h.subscriptionLifetime)
+	defer lifetime.Stop()
+
+	tick := time.NewTicker(h.subscriptionPoll)
+	defer tick.Stop()
+
+	shutdown := wire.ShutdownSignal(ctx)
+	lastEvent := time.Now()
+
+	for awaitTick(ctx, shutdown, lifetime.C, tick.C) {
+		res, err := h.kinesis.SubscribeToShard(ctx, kinesisdriver.SubscribeToShardInput{
+			ConsumerARN:            consumerARN,
+			ShardID:                shardID,
+			StartingPositionType:   kinesisdriver.IteratorAfterSequenceNumber,
+			StartingSequenceNumber: cont,
+		})
+		if err != nil {
+			es.writeException(err)
+
+			return
+		}
+
+		// Nothing new on an open shard: keep waiting rather than pushing an
+		// empty event every tick, but send one once the heartbeat interval has
+		// passed so an idle subscription still shows progress.
+		if idleWithinHeartbeat(res, lastEvent, h.subscriptionHeartbeat) {
+			continue
+		}
+
+		if es.writeSubscribeEvent(res) != nil || res.ContinuationSequenceNumber == "" {
+			return
+		}
+
+		lastEvent = time.Now()
+		cont = res.ContinuationSequenceNumber
+	}
+}
+
+// awaitTick blocks until the next poll tick and reports true, or reports false
+// once the client goes away, the server begins shutting down, or the
+// subscription lifetime elapses.
+func awaitTick(ctx context.Context, shutdown <-chan struct{}, lifetime, tick <-chan time.Time) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-shutdown:
+		return false
+	case <-lifetime:
+		return false
+	case <-tick:
+		return true
+	}
+}
+
+// idleWithinHeartbeat reports whether a poll found nothing new on an open shard
+// and the last event went out less than one heartbeat ago, so nothing needs
+// pushing yet.
+func idleWithinHeartbeat(res *kinesisdriver.SubscribeToShardResult, lastEvent time.Time, heartbeat time.Duration) bool {
+	return len(res.Records) == 0 && res.ContinuationSequenceNumber != "" && time.Since(lastEvent) < heartbeat
+}
+
+// eventStream is an open application/vnd.amazon.eventstream response.
+type eventStream struct {
+	w       http.ResponseWriter
+	enc     *eventstream.Encoder
+	flusher http.Flusher
+}
+
+// startEventStream writes the eventstream response headers and the
+// initial-response frame the SDK's SubscribeToShard call blocks on.
+func startEventStream(w http.ResponseWriter) *eventStream {
 	w.Header().Set("Content-Type", contentTypeEventStream)
 	// Deliberately do NOT force "Connection: close" here. Closing the connection
 	// as the handler returns races the client's in-flight read of the final
@@ -91,36 +192,87 @@ func writeSubscribeEvent(w http.ResponseWriter, res *kinesisdriver.SubscribeToSh
 	// stream tests tolerate, never as lost data.
 	w.WriteHeader(http.StatusOK)
 
-	enc := eventstream.NewEncoder()
 	flusher, _ := w.(http.Flusher)
+	es := &eventStream{w: w, enc: eventstream.NewEncoder(), flusher: flusher}
 
 	// The SDK's SubscribeToShard call blocks until it reads the initial-response
 	// event, so emit it (empty SubscribeToShardOutput body) before any data.
-	writeEvent(w, enc, flusher, eventTypeInitial, []byte("{}"))
+	_ = es.writeEvent(eventTypeInitial, []byte("{}"))
 
-	payload, err := json.Marshal(subscribeToShardEventJSON{
-		Records:                    recordsToWire(res.Records),
-		ContinuationSequenceNumber: res.ContinuationSequenceNumber,
-		MillisBehindLatest:         res.MillisBehindLatest,
-	})
-	if err != nil {
-		return
+	return es
+}
+
+// writeSubscribeEvent frames res as one SubscribeToShardEvent. An empty
+// continuation (shard end) is omitted on the wire, i.e. null, with ChildShards.
+func (es *eventStream) writeSubscribeEvent(res *kinesisdriver.SubscribeToShardResult) error {
+	ev := subscribeToShardEventJSON{
+		Records:            recordsToWire(res.Records),
+		MillisBehindLatest: res.MillisBehindLatest,
+		ChildShards:        childShardsToWire(res.ChildShards),
 	}
 
-	writeEvent(w, enc, flusher, eventTypeSubscribe, payload)
+	if res.ContinuationSequenceNumber != "" {
+		ev.ContinuationSequenceNumber = &res.ContinuationSequenceNumber
+	}
+
+	payload, err := json.Marshal(ev)
+	if err != nil {
+		return err
+	}
+
+	return es.writeEvent(eventTypeSubscribe, payload)
 }
 
 // writeEvent frames one JSON event of the given type and flushes it.
-func writeEvent(w http.ResponseWriter, enc *eventstream.Encoder, flusher http.Flusher, eventType string, payload []byte) {
+func (es *eventStream) writeEvent(eventType string, payload []byte) error {
 	var hdr eventstream.Headers
 
 	hdr.Set(eventstreamapi.MessageTypeHeader, eventstream.StringValue(eventstreamapi.EventMessageType))
 	hdr.Set(eventstreamapi.EventTypeHeader, eventstream.StringValue(eventType))
 	hdr.Set(eventstreamapi.ContentTypeHeader, eventstream.StringValue(contentTypeJSON))
 
-	_ = enc.Encode(w, eventstream.Message{Headers: hdr, Payload: payload})
+	return es.encode(eventstream.Message{Headers: hdr, Payload: payload})
+}
 
-	if flusher != nil {
-		flusher.Flush()
+// writeException pushes err as an in-stream exception event (the
+// SubscribeToShardEventStream carries ResourceNotFoundException,
+// ResourceInUseException, ... members), which the SDK surfaces from Err().
+func (es *eventStream) writeException(err error) {
+	exType := "InternalFailureException"
+
+	var apiErr *kinesisdriver.APIError
+
+	switch {
+	case errors.As(err, &apiErr):
+		exType = apiErr.Exception
+	case cerrors.IsNotFound(err):
+		exType = "ResourceNotFoundException"
+	case cerrors.IsAlreadyExists(err), cerrors.IsFailedPrecondition(err):
+		exType = "ResourceInUseException"
 	}
+
+	payload, mErr := json.Marshal(map[string]string{"message": cerrors.Message(err)})
+	if mErr != nil {
+		return
+	}
+
+	var hdr eventstream.Headers
+
+	hdr.Set(eventstreamapi.MessageTypeHeader, eventstream.StringValue(eventstreamapi.ExceptionMessageType))
+	hdr.Set(eventstreamapi.ExceptionTypeHeader, eventstream.StringValue(exType))
+	hdr.Set(eventstreamapi.ContentTypeHeader, eventstream.StringValue(contentTypeJSON))
+
+	_ = es.encode(eventstream.Message{Headers: hdr, Payload: payload})
+}
+
+func (es *eventStream) encode(msg eventstream.Message) error {
+	if err := es.enc.Encode(es.w, msg); err != nil {
+		return err
+	}
+
+	if es.flusher != nil {
+		es.flusher.Flush()
+	}
+
+	return nil
 }

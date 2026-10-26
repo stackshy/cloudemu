@@ -62,6 +62,10 @@ func (m *Mock) CreateTopic(_ context.Context, clusterARN string, body json.RawMe
 	cd.mu.Lock()
 	defer cd.mu.Unlock()
 
+	if err := m.requireActive(cd); err != nil {
+		return nil, err
+	}
+
 	if cd.topics == nil {
 		cd.topics = map[string]driver.Topic{}
 	}
@@ -168,6 +172,10 @@ func (m *Mock) UpdateTopic(
 	cd.mu.Lock()
 	defer cd.mu.Unlock()
 
+	if err := m.requireActive(cd); err != nil {
+		return nil, err
+	}
+
 	t, ok := cd.getTopic(topicName)
 	if !ok {
 		return nil, notFound("topic not found: %s", topicName)
@@ -197,6 +205,10 @@ func (m *Mock) DeleteTopic(_ context.Context, clusterARN, topicName string) erro
 
 	cd.mu.Lock()
 	defer cd.mu.Unlock()
+
+	if err := m.requireActive(cd); err != nil {
+		return err
+	}
 
 	if _, ok := cd.getTopic(topicName); !ok {
 		return notFound("topic not found: %s", topicName)

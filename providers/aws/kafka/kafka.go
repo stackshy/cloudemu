@@ -10,9 +10,11 @@
 // secrets, policy, operations) live on clusterData under its lock so a mutation
 // is atomic with its reads.
 //
-// Clusters are provisioned immediately Active (deterministic, no wall-clock
-// wait), with a server-minted ARN. Cluster names are unique per account
-// (ConflictException on a duplicate). All reads deep-copy maps, slices, and
+// Clusters report ACTIVE immediately by default (deterministic, no wall-clock
+// wait), with a server-minted ARN. Under config.Options.AsyncSettle a new
+// cluster reports CREATING and a deleted one DELETING for a settle window (see
+// lifecycle.go), and a new VPC connection reports CREATING. Cluster names are
+// unique per account (ConflictException on a duplicate). All reads deep-copy maps, slices, and
 // json.RawMessage so a caller can never mutate stored state through a result.
 package kafka
 
@@ -26,6 +28,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/kafka/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 // Compile-time check that Mock implements driver.Kafka.
@@ -52,14 +55,25 @@ type clusterData struct {
 	scramSecrets  []string
 	policy        string
 	policyVersion string
-	mu            sync.RWMutex
+
+	// readyAt closes the CREATING window of a new cluster and deleteAt the
+	// DELETING window of a deleted one (both zero unless AsyncSettle is on).
+	// metricsSampleAt is when Tick last published its AWS/Kafka metrics.
+	readyAt         time.Time
+	deleteAt        time.Time
+	metricsSampleAt time.Time
+
+	mu sync.RWMutex
 }
 
 // vpcConnData is a stored VPC connection plus its lock. State transitions (e.g.
 // a client-vpc-connection reject) mutate under mu.
 type vpcConnData struct {
 	vpc driver.VpcConnection
-	mu  sync.RWMutex
+	// readyAt closes the CREATING window of a new connection (zero unless
+	// AsyncSettle is on).
+	readyAt time.Time
+	mu      sync.RWMutex
 }
 
 // replicatorData is a stored replicator plus its lock. UpdateReplicationInfo
@@ -102,6 +116,15 @@ type Mock struct {
 	// atomic with respect to a concurrent duplicate-name create. It also
 	// serializes replicator creation so the name-scan and ARN insert are atomic.
 	createMu sync.Mutex
+
+	// reapMu serializes the lazy removal of a cluster whose DELETING window has
+	// elapsed, so two readers never both free its name. Lock order:
+	// createMu -> reapMu -> clusterData.mu.
+	reapMu sync.Mutex
+
+	// monitoring receives the AWS/Kafka metrics Tick publishes; nil (the
+	// default) disables publishing.
+	monitoring mondriver.Monitoring
 
 	opts *config.Options
 }

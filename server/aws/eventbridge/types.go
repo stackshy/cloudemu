@@ -21,9 +21,10 @@ type tagJSON struct {
 // --- request envelopes ---
 
 type createEventBusRequest struct {
-	Name        string    `json:"Name"`
-	Description string    `json:"Description"`
-	Tags        []tagJSON `json:"Tags"`
+	Name            string    `json:"Name"`
+	EventSourceName string    `json:"EventSourceName"`
+	Description     string    `json:"Description"`
+	Tags            []tagJSON `json:"Tags"`
 }
 
 type nameRequest struct {
@@ -67,6 +68,7 @@ type targetJSON struct {
 	InputTransformer json.RawMessage `json:"InputTransformer,omitempty"`
 	DeadLetterConfig json.RawMessage `json:"DeadLetterConfig,omitempty"`
 	RetryPolicy      json.RawMessage `json:"RetryPolicy,omitempty"`
+	HTTPParameters   json.RawMessage `json:"HttpParameters,omitempty"`
 }
 
 type putTargetsRequest struct {
@@ -102,6 +104,8 @@ type putEventsEntry struct {
 
 type putEventsRequest struct {
 	Entries []putEventsEntry `json:"Entries"`
+	// EndpointID names the global endpoint the request was sent through.
+	EndpointID string `json:"EndpointId"`
 }
 
 type testEventPatternRequest struct {
@@ -295,19 +299,6 @@ func paginateByCursor[T any](items []T, nextToken string, limit int, keyOf func(
 	return items, ""
 }
 
-// isValidDetail reports whether a PutEvents entry's Detail is acceptable:
-// empty (defaulted downstream) or a well-formed JSON object. Real EventBridge
-// fails any other Detail with ErrorCode=MalformedDetail.
-func isValidDetail(detail string) bool {
-	if detail == "" {
-		return true
-	}
-
-	var obj map[string]json.RawMessage
-
-	return json.Unmarshal([]byte(detail), &obj) == nil
-}
-
 // entryTime converts a PutEvents entry's optional wire-form timestamp (Unix
 // epoch seconds) to a time.Time. A nil entry (the caller omitted Time) yields
 // the zero time, which the driver defaults to the PutEvents call's own time,
@@ -341,6 +332,10 @@ func toTargetJSON(t *ebdriver.Target) targetJSON {
 		out.RetryPolicy = json.RawMessage(t.RetryPolicy)
 	}
 
+	if t.HTTPParameters != "" {
+		out.HTTPParameters = json.RawMessage(t.HTTPParameters)
+	}
+
 	return out
 }
 
@@ -354,5 +349,6 @@ func fromTargetJSON(t *targetJSON) ebdriver.Target {
 		InputTransformer: string(t.InputTransformer),
 		DeadLetterConfig: string(t.DeadLetterConfig),
 		RetryPolicy:      string(t.RetryPolicy),
+		HTTPParameters:   string(t.HTTPParameters),
 	}
 }

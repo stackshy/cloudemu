@@ -3364,7 +3364,10 @@ streams records to a registered consumer as an
 `application/vnd.amazon.eventstream` response: it resolves the consumer's shard
 from the requested `StartingPosition`, emits the `initial-response` frame the SDK
 awaits, then a `SubscribeToShardEvent` frame carrying the records, continuation
-sequence number, and `MillisBehindLatest`. Polling via
+sequence number, and `MillisBehindLatest`. The connection then stays open and
+pushes a new event whenever records land on the shard, for up to 5 minutes (as
+real Kinesis does), until the client disconnects, or until the shard is closed
+(the final event carries `ChildShards` and no continuation). Polling via
 `GetShardIterator`/`GetRecords` covers the same read path.
 
 **Total: 39 operations.**
@@ -3959,7 +3962,7 @@ delete) is still enforced.
 | Serverless | 26 |
 | Networking | 51 |
 | Networking: AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN / Traffic Mirroring / Network Insights / VPC Block Public Access / IPAM full incl. discovery/BYOASN/BYOIP/resolver/policy + AWS/IPAM metrics) | 162 |
-| Network Firewall: AWS | 20 |
+| Network Firewall: AWS | 23 (+30 optional) |
 | Monitoring | 12 |
 | IAM | 35 |
 | DNS | 15 |
@@ -4005,7 +4008,7 @@ delete) is still enforced.
 | Data Integration: AWS Glue | 299 |
 | Threat Detection: Amazon GuardDuty | 87 |
 | Streaming: Amazon MSK | 59 |
-| **Grand Total** | **2842** (+227 optional) |
+| **Grand Total** | **2845** (+257 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
 to; see the sections marked "optional capability". They are counted separately

@@ -19,6 +19,8 @@ func TestMetricFilterFieldsRoundTrip(t *testing.T) {
 	_, err := m.CreateLogGroup(ctx, driver.LogGroupConfig{Name: "g"})
 	require.NoError(t, err)
 
+	// A default value and dimensions cannot be combined, so each goes on its
+	// own filter.
 	def := 0.0
 	require.NoError(t, m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
 		Name:            "f",
@@ -29,15 +31,24 @@ func TestMetricFilterFieldsRoundTrip(t *testing.T) {
 		MetricValue:     "1",
 		DefaultValue:    &def,
 		Unit:            "Count",
-		Dimensions:      map[string]string{"Service": "api"},
+	}))
+	require.NoError(t, m.PutMetricFilter(ctx, &driver.MetricFilterConfig{
+		Name:            "g",
+		LogGroup:        "g",
+		FilterPattern:   `{ $.service = * }`,
+		MetricName:      "ByService",
+		MetricNamespace: "MyApp",
+		MetricValue:     "1",
+		Dimensions:      map[string]string{"Service": "$.service"},
 	}))
 
 	filters, err := m.DescribeMetricFilters(ctx, "g")
 	require.NoError(t, err)
-	require.Len(t, filters, 1)
+	require.Len(t, filters, 2)
 
 	require.NotNil(t, filters[0].DefaultValue)
 	assert.InDelta(t, 0.0, *filters[0].DefaultValue, 0)
 	assert.Equal(t, "Count", filters[0].Unit)
-	assert.Equal(t, "api", filters[0].Dimensions["Service"])
+	assert.Equal(t, "$.service", filters[1].Dimensions["Service"])
+	assert.Equal(t, "None", filters[1].Unit, "an omitted unit is stored as None")
 }

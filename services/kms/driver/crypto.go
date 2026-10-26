@@ -123,6 +123,27 @@ func MacAlgorithmsFor(spec, usage string) []string {
 	}
 }
 
+// Key agreement algorithms.
+const (
+	KeyAgreementECDH = "ECDH"
+)
+
+// KeyAgreementAlgorithmsFor returns the key agreement algorithms KMS advertises
+// for a KEY_AGREEMENT key of the given spec (empty for any other usage/spec).
+// Only the NIST-standard ECC curves support key agreement.
+func KeyAgreementAlgorithmsFor(spec, usage string) []string {
+	if usage != UsageKeyAgreement {
+		return nil
+	}
+
+	switch spec {
+	case SpecECCNISTP256, SpecECCNISTP384, SpecECCNISTP521:
+		return []string{KeyAgreementECDH}
+	default:
+		return nil
+	}
+}
+
 // Message types for Sign/Verify.
 const (
 	MessageTypeRaw    = "RAW"
@@ -297,12 +318,30 @@ type GetPublicKeyInput struct {
 // GetPublicKeyOutput carries the DER-encoded (SPKI, RFC 5280) public key of an
 // asymmetric key plus the spec/usage and the algorithms the key supports.
 type GetPublicKeyOutput struct {
-	KeyID                string
-	PublicKey            []byte
-	KeySpec              string
-	KeyUsage             string
-	EncryptionAlgorithms []string
-	SigningAlgorithms    []string
+	KeyID                  string
+	PublicKey              []byte
+	KeySpec                string
+	KeyUsage               string
+	EncryptionAlgorithms   []string
+	SigningAlgorithms      []string
+	KeyAgreementAlgorithms []string
+}
+
+// DeriveSharedSecretInput describes a DeriveSharedSecret request. PublicKey is
+// the peer's DER-encoded SubjectPublicKeyInfo on the same curve as the key.
+type DeriveSharedSecretInput struct {
+	KeyID                 string
+	KeyAgreementAlgorithm string
+	PublicKey             []byte
+}
+
+// DeriveSharedSecretOutput carries the raw ECDH shared secret (the
+// x-coordinate of the shared point, as NIST SP 800-56A defines it).
+type DeriveSharedSecretOutput struct {
+	KeyID                 string
+	SharedSecret          []byte
+	KeyAgreementAlgorithm string
+	KeyOrigin             string
 }
 
 // Crypto is the cryptographic surface of KMS. It is embedded in the KMS
@@ -321,4 +360,5 @@ type Crypto interface {
 	Verify(ctx context.Context, in VerifyInput) (*VerifyOutput, error)
 	GenerateMac(ctx context.Context, in GenerateMacInput) (*GenerateMacOutput, error)
 	VerifyMac(ctx context.Context, in VerifyMacInput) (*VerifyMacOutput, error)
+	DeriveSharedSecret(ctx context.Context, in DeriveSharedSecretInput) (*DeriveSharedSecretOutput, error)
 }

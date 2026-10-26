@@ -21,8 +21,7 @@ func (m *Mock) PutResourcePolicy(_ context.Context, name, policy string) (*drive
 	defer sd.mu.Unlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.New(errors.FailedPrecondition,
-			"secret is scheduled for deletion, so this operation is not allowed")
+		return nil, errors.New(errors.FailedPrecondition, msgMarkedForDeletion)
 	}
 
 	sd.resourcePolicy = policy
@@ -60,8 +59,7 @@ func (m *Mock) DeleteResourcePolicy(_ context.Context, name string) (*driver.Sec
 	defer sd.mu.Unlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.New(errors.FailedPrecondition,
-			"secret is scheduled for deletion, so this operation is not allowed")
+		return nil, errors.New(errors.FailedPrecondition, msgMarkedForDeletion)
 	}
 
 	sd.resourcePolicy = ""

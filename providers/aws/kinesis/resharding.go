@@ -30,6 +30,10 @@ func (m *Mock) SplitShard(_ context.Context, name, arn, shardToSplit, newStartin
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
+	if err := m.requireActive(sd); err != nil {
+		return err
+	}
+
 	parent := findOpenShard(sd.shards, shardToSplit)
 	if parent == nil {
 		return errNotFound("open shard %q not found", shardToSplit)
@@ -71,6 +75,10 @@ func (m *Mock) MergeShards(_ context.Context, name, arn, shardToMerge, adjacentS
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
+
+	if err := m.requireActive(sd); err != nil {
+		return err
+	}
 
 	a := findOpenShard(sd.shards, shardToMerge)
 	b := findOpenShard(sd.shards, adjacentShardToMerge)

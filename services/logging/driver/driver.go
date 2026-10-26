@@ -46,6 +46,10 @@ type LogEvent struct {
 	// Timestamp. Zero when unknown.
 	IngestionTime time.Time
 	Message       string
+	// Unmasked is the original text of an event that a CloudWatch Logs data
+	// protection policy masked at ingest. Message then holds the masked text.
+	// Only the AWS backend sets it, and it never returns it from a read.
+	Unmasked string `json:"Unmasked,omitempty"`
 }
 
 // LogQueryInput configures a log query operation.

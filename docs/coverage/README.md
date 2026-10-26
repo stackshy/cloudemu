@@ -33,7 +33,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `backup` | [Backup](./aws/backup.md) | - | - | - | 25 |
 | `backupdr` | - | - | [BackupDR](./gcp/backupdr.md) | - | 6 |
 | `bastion` | - | [Bastion](./azure/bastion.md) | - | - | 4 |
-| `batch` | [Batch](./aws/batch.md) | - | - | - | 14 |
+| `batch` | [Batch](./aws/batch.md) | - | - | - | 24 |
 | `batch-azure` | - | [Batch](./azure/batch.md) | - | - | 17 |
 | `bedrock` | [Bedrock](./aws/bedrock.md) | - | - | - | 65 |
 | `bedrockagent` | [BedrockAgent](./aws/bedrockagent.md) | - | - | - | 32 |
@@ -81,7 +81,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `disks` | - | [Disks](./azure/disks.md) | - | - | 7 |
 | `dns` | [Route53](./aws/route53.md) | [DNS](./azure/dns.md) | [CloudDNS](./gcp/clouddns.md) | - | 16 |
 | `ecs` | [ECS](./aws/ecs.md) | - | - | - | 41 |
-| `efs` | [EFS](./aws/efs.md) | - | - | - | 27 |
+| `efs` | [EFS](./aws/efs.md) | - | - | - | 28 |
 | `eks` | [EKS](./aws/eks.md) | - | - | - | 40 |
 | `elasticsan` | - | [ElasticSan](./azure/elasticsan.md) | - | - | 8 |
 | `emr` | [EMR](./aws/emr.md) | - | - | - | 22 |
@@ -108,7 +108,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `keyspaces` | [Keyspaces](./aws/keyspaces.md) | - | - | - | 18 |
 | `kinesis` | [Kinesis](./aws/kinesis.md) | - | - | - | 39 |
 | `kinesisvideo` | [KinesisVideo](./aws/kinesisvideo.md) | - | - | - | 17 |
-| `kms` | [KMS](./aws/kms.md) | - | - | - | 46 |
+| `kms` | [KMS](./aws/kms.md) | - | - | - | 54 |
 | `kms-gcp` | - | - | [KMS](./gcp/kms.md) | - | 22 |
 | `kusto` | - | [Kusto](./azure/kusto.md) | - | - | 14 |
 | `loadbalancer` | [ELB](./aws/elb.md) | [LB](./azure/lb.md) | [LB](./gcp/lb.md) | - | 19 |

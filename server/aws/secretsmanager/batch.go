@@ -19,10 +19,7 @@ func (h *Handler) batchGetSecretValue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.SecretIDList) == 0 && len(req.Filters) == 0 {
-		wire.WriteJSONError(w, http.StatusBadRequest,
-			"InvalidParameterException", "either SecretIdList or Filters must be provided")
-
+	if !validateBatchRequest(w, &req) {
 		return
 	}
 
@@ -57,6 +54,26 @@ func (h *Handler) batchGetSecretValue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, batchGetSecretValueResponse{SecretValues: values, Errors: errs, NextToken: next})
+}
+
+// validateBatchRequest rejects a BatchGetSecretValue request with neither
+// SecretIdList nor Filters (InvalidParameterException) or with a malformed
+// filter (ValidationException), writing the error. It reports whether the
+// request is valid.
+func validateBatchRequest(w http.ResponseWriter, req *batchGetSecretValueRequest) bool {
+	if len(req.SecretIDList) == 0 && len(req.Filters) == 0 {
+		wire.WriteJSONError(w, http.StatusBadRequest,
+			"InvalidParameterException", "either SecretIdList or Filters must be provided")
+
+		return false
+	}
+
+	if err := validateFilters(req.Filters); err != nil {
+		writeValidation(w, err)
+		return false
+	}
+
+	return true
 }
 
 // filteredSecretIDs returns the names of secrets matching the BatchGetSecretValue

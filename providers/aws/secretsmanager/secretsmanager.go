@@ -65,6 +65,19 @@ const (
 	defaultRecoveryWindowDays = 30
 )
 
+// msgMarkedForDeletion is real Secrets Manager's InvalidRequestException message
+// for an operation on a secret that is scheduled for deletion. AWS documents it
+// as the error GetSecretValue writes to CloudTrail for such a secret
+// (https://docs.aws.amazon.com/secretsmanager/latest/userguide/monitoring_cloudwatch_deleted-secrets.html
+// filters on "*secret because it was marked for deletion*").
+const msgMarkedForDeletion = "You can't perform this operation on the secret because it was marked for deletion."
+
+// msgCreateScheduledForDeletion is real Secrets Manager's InvalidRequestException
+// message for CreateSecret reusing the name of a secret scheduled for deletion
+// (quoted in https://repost.aws/knowledge-center/delete-secrets-manager-secret).
+const msgCreateScheduledForDeletion = "You can't create this secret because a secret with this name is already " +
+	"scheduled for deletion."
+
 // defaultKMSKey is the AWS-managed key Secrets Manager uses to encrypt a secret
 // whose CreateSecret request omitted KmsKeyId.
 const defaultKMSKey = "alias/aws/secretsmanager"
@@ -178,15 +191,19 @@ func (m *Mock) CreateSecret(ctx context.Context, cfg driver.SecretConfig, value 
 	// Manager rejects an unknown key with InvalidParameterException rather than
 	// storing a dangling reference. AWS-managed aliases such as
 	// alias/aws/secretsmanager always exist, so they skip the check.
-	if _, managed := kmscrypto.ReservedAlias(cfg.KMSKeyID); cfg.KMSKeyID != "" && !managed && m.kmsCrypto != nil {
-		if _, err := m.kmsCrypto.DescribeKey(ctx, cfg.KMSKeyID); err != nil {
-			return nil, errors.Newf(errors.InvalidArgument,
-				"KMS key %q does not exist or is not accessible", cfg.KMSKeyID)
-		}
+	if err := m.validateKMSKey(ctx, cfg.KMSKeyID); err != nil {
+		return nil, err
 	}
 
 	if existing, ok := m.secrets.Get(cfg.Name); ok {
 		return m.createSecretConflict(ctx, existing, cfg, value)
+	}
+
+	// AddReplicaRegions is validated before anything is stored, so a bad replica
+	// list leaves no half-created secret behind.
+	replicas, err := m.initialReplicas(cfg.AddReplicaRegions)
+	if err != nil {
+		return nil, err
 	}
 
 	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
@@ -212,6 +229,9 @@ func (m *Mock) CreateSecret(ctx context.Context, cfg driver.SecretConfig, value 
 		UpdatedAt:   now,
 		Tags:        tags,
 		KMSKeyID:    cfg.KMSKeyID,
+		// The secret's home Region; replicas (if any) are listed separately.
+		PrimaryRegion:     m.opts.Region,
+		ReplicationStatus: replicas,
 	}
 
 	sd := &secretData{info: info, stages: map[string]string{}}
@@ -235,6 +255,20 @@ func (m *Mock) CreateSecret(ctx context.Context, cfg driver.SecretConfig, value 
 	result := info
 
 	return &result, nil
+}
+
+// validateKMSKey checks that a customer-supplied KmsKeyId names a key that
+// exists. Empty ids, AWS-managed aliases and a mock without KMS wired pass.
+func (m *Mock) validateKMSKey(ctx context.Context, keyID string) error {
+	if _, managed := kmscrypto.ReservedAlias(keyID); keyID == "" || managed || m.kmsCrypto == nil {
+		return nil
+	}
+
+	if _, err := m.kmsCrypto.DescribeKey(ctx, keyID); err != nil {
+		return errors.Newf(errors.InvalidArgument, "KMS key %q does not exist or is not accessible", keyID)
+	}
+
+	return nil
 }
 
 // seedInitialVersion appends the CreateSecret initial version to a freshly built
@@ -297,8 +331,7 @@ func (m *Mock) createSecretConflict(
 	existing.mu.Unlock()
 
 	if scheduledForDeletion {
-		return nil, errors.New(errors.FailedPrecondition,
-			"a secret with this name is already scheduled for deletion")
+		return nil, errors.New(errors.FailedPrecondition, msgCreateScheduledForDeletion)
 	}
 
 	return nil, errors.Newf(errors.AlreadyExists, "secret %q already exists", cfg.Name)
@@ -368,22 +401,38 @@ func (m *Mock) DeleteSecretWithOptions(
 
 	now := m.opts.Clock.Now().UTC()
 
+	// The replica check and the delete happen under one write lock, so a
+	// concurrent ReplicateSecretToRegions (which also takes sd.mu and refuses a
+	// secret marked for deletion) can't slip in between them.
+	sd.mu.Lock()
+
+	// Real Secrets Manager refuses to delete a primary secret that still has
+	// replicas: they must be removed with RemoveRegionsFromReplication first
+	// (https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_DeleteSecret.html).
+	if len(sd.info.ReplicationStatus) > 0 {
+		sd.mu.Unlock()
+
+		return nil, "", errors.New(errors.FailedPrecondition,
+			"You can't delete a primary secret that is replicated to other Regions. "+
+				"Remove the replicas with RemoveRegionsFromReplication first.")
+	}
+
 	if force {
-		sd.mu.RLock()
+		// Mark the secret deleted before releasing the lock so any call that
+		// grabs it before the store removal below sees it as gone.
+		sd.deletedAt = now
 		info := sd.info
-		sd.mu.RUnlock()
+		sd.mu.Unlock()
 
 		m.secrets.Delete(name)
 
 		return &info, now.Format(time.RFC3339), nil
 	}
 
-	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, "", errors.Newf(errors.FailedPrecondition,
-			"You can't perform this operation on the secret because it was marked for deletion.")
+		return nil, "", errors.New(errors.FailedPrecondition, msgMarkedForDeletion)
 	}
 
 	sd.deletedAt = now
@@ -404,8 +453,7 @@ func (m *Mock) GetSecret(_ context.Context, name string) (*driver.SecretInfo, er
 	defer sd.mu.RUnlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.New(errors.FailedPrecondition,
-			"secret is scheduled for deletion, so this operation is not allowed")
+		return nil, errors.New(errors.FailedPrecondition, msgMarkedForDeletion)
 	}
 
 	result := sd.info
@@ -414,14 +462,21 @@ func (m *Mock) GetSecret(_ context.Context, name string) (*driver.SecretInfo, er
 }
 
 // ListSecrets lists all secrets, excluding soft-deleted ones.
-func (m *Mock) ListSecrets(_ context.Context) ([]driver.SecretInfo, error) {
+func (m *Mock) ListSecrets(ctx context.Context) ([]driver.SecretInfo, error) {
+	return m.ListSecretsWithOptions(ctx, false)
+}
+
+// ListSecretsWithOptions is the AWS ListSecrets surface: secrets scheduled for
+// deletion are excluded unless includePlannedDeletion is set, matching the
+// IncludePlannedDeletion request flag.
+func (m *Mock) ListSecretsWithOptions(_ context.Context, includePlannedDeletion bool) ([]driver.SecretInfo, error) {
 	all := m.secrets.All()
 
 	secrets := make([]driver.SecretInfo, 0, len(all))
 
 	for _, sd := range all {
 		sd.mu.RLock()
-		if sd.deletedAt.IsZero() {
+		if includePlannedDeletion || sd.deletedAt.IsZero() {
 			secrets = append(secrets, sd.info)
 		}
 		sd.mu.RUnlock()
@@ -458,8 +513,7 @@ func (m *Mock) PutSecretValueStaged(
 	defer sd.mu.Unlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.New(errors.FailedPrecondition,
-			"secret is scheduled for deletion, so this operation is not allowed")
+		return nil, errors.New(errors.FailedPrecondition, msgMarkedForDeletion)
 	}
 
 	if clientRequestToken != "" {
@@ -521,18 +575,17 @@ func (m *Mock) GetSecretValue(ctx context.Context, name, versionID string) (*dri
 		return nil, errors.Newf(errors.NotFound, "secret %q not found", name)
 	}
 
-	sd.mu.RLock()
-	defer sd.mu.RUnlock()
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.New(errors.FailedPrecondition,
-			"secret is scheduled for deletion, so this operation is not allowed")
+		return nil, errors.New(errors.FailedPrecondition, msgMarkedForDeletion)
 	}
 
 	for i := range sd.versions {
 		v := &sd.versions[i]
 		if (versionID == "" && v.Current) || v.VersionID == versionID {
-			return m.decryptVersion(ctx, copyVersion(v))
+			return m.retrieveVersion(ctx, sd, v)
 		}
 	}
 
@@ -550,8 +603,7 @@ func (m *Mock) ListSecretVersions(_ context.Context, name string) ([]driver.Secr
 	defer sd.mu.RUnlock()
 
 	if !sd.deletedAt.IsZero() {
-		return nil, errors.New(errors.FailedPrecondition,
-			"secret is scheduled for deletion, so this operation is not allowed")
+		return nil, errors.New(errors.FailedPrecondition, msgMarkedForDeletion)
 	}
 
 	versions := make([]driver.SecretVersion, len(sd.versions))

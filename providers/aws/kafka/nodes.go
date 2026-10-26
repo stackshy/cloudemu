@@ -9,8 +9,9 @@ import (
 )
 
 // ListNodes returns one synthetic broker node per broker in the cluster, sized
-// to the cluster's NumberOfBrokerNodes. Broker IDs are 1..N; endpoints and the
-// client subnet are derived deterministically from the cluster name.
+// to the cluster's NumberOfBrokerNodes. Broker IDs are 1..N; endpoints are
+// derived deterministically from the cluster name, and each broker's client
+// subnet is one of the cluster's own ClientSubnets (see brokerSubnet).
 func (m *Mock) ListNodes(
 	_ context.Context, arn string, page driver.Page,
 ) (nodes []driver.Node, next string, err error) {
@@ -45,6 +46,11 @@ func (m *Mock) synthNodes(c *driver.Cluster) []driver.Node {
 		instance = c.BrokerNodeGroupInfo.InstanceType
 	}
 
+	var subnets []string
+	if c.BrokerNodeGroupInfo != nil {
+		subnets = c.BrokerNodeGroupInfo.ClientSubnets
+	}
+
 	nodes := make([]driver.Node, 0, count)
 
 	for i := 1; i <= count; i++ {
@@ -56,7 +62,7 @@ func (m *Mock) synthNodes(c *driver.Cluster) []driver.Node {
 			NodeType:     "BROKER",
 			InstanceType: instance,
 			RawOptions: map[string]json.RawMessage{
-				"brokerNodeInfo": brokerNodeInfoJSON(i, endpoint, c.KafkaVersion),
+				"brokerNodeInfo": brokerNodeInfoJSON(i, endpoint, brokerSubnet(subnets, i), c.KafkaVersion),
 			},
 		})
 	}
@@ -64,13 +70,28 @@ func (m *Mock) synthNodes(c *driver.Cluster) []driver.Node {
 	return nodes
 }
 
+// brokerSubnet returns the client subnet broker brokerID (1-based) lives in.
+// Real MSK distributes brokers evenly across the cluster's client subnets (one
+// per AZ), so brokers are assigned round-robin; "" when the cluster has none.
+func brokerSubnet(subnets []string, brokerID int) string {
+	if len(subnets) == 0 {
+		return ""
+	}
+
+	return subnets[(brokerID-1)%len(subnets)]
+}
+
 // brokerNodeInfoJSON builds the raw brokerNodeInfo block for a synthetic node.
-// brokerId is a JSON number (the SDK models it as *float64).
-func brokerNodeInfoJSON(brokerID int, endpoint, kafkaVersion string) json.RawMessage {
+// brokerId is a JSON number (the SDK models it as *float64). clientSubnet is
+// omitted when the cluster records no client subnets.
+func brokerNodeInfoJSON(brokerID int, endpoint, subnet, kafkaVersion string) json.RawMessage {
 	info := map[string]any{
-		"brokerId":     brokerID,
-		"clientSubnet": "subnet-" + strconv.Itoa(brokerID),
-		"endpoints":    []string{endpoint},
+		"brokerId":  brokerID,
+		"endpoints": []string{endpoint},
+	}
+
+	if subnet != "" {
+		info["clientSubnet"] = subnet
 	}
 
 	if kafkaVersion != "" {

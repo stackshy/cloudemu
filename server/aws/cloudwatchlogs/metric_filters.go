@@ -2,7 +2,6 @@ package cloudwatchlogs
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
@@ -65,9 +64,11 @@ func (h *Handler) putMetricFilter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.MetricTransformations) == 0 {
+	if len(req.MetricTransformations) != 1 {
 		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException",
-			"metricTransformations is required and must contain exactly one item")
+			"1 validation error detected: Value at 'metricTransformations' failed to satisfy constraint: "+
+				"Member must have length less than or equal to 1 and greater than or equal to 1")
+
 		return
 	}
 
@@ -91,45 +92,69 @@ func (h *Handler) putMetricFilter(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, struct{}{})
 }
 
-// describeMetricFilters lists a log group's metric filters, ASCII-sorted by
-// filter name and optionally narrowed by filterNamePrefix.
+// maxDescribeMetricFiltersLimit is the largest DescribeMetricFilters limit.
+const maxDescribeMetricFiltersLimit = 50
+
+// describeMetricFilters lists metric filters (Logs_20140328.DescribeMetricFilters),
+// for one log group or the whole account, ASCII-sorted by filter name and
+// narrowed by filterNamePrefix or by metricName plus metricNamespace.
 func (h *Handler) describeMetricFilters(w http.ResponseWriter, r *http.Request) {
+	ext, ok := h.awsLogs(w, "DescribeMetricFilters")
+	if !ok {
+		return
+	}
+
 	var req describeMetricFiltersRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
 
-	filters, err := h.logs.DescribeMetricFilters(r.Context(), req.LogGroupName)
+	if req.Limit < 0 || req.Limit > maxDescribeMetricFiltersLimit {
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException",
+			"1 validation error detected: Value at 'limit' failed to satisfy constraint: "+
+				"Member must have value between 1 and 50")
+
+		return
+	}
+
+	filters, err := ext.DescribeAWSMetricFilters(r.Context(), logdriver.DescribeMetricFiltersInput{
+		LogGroup: req.LogGroupName, FilterNamePrefix: req.FilterNamePrefix,
+		MetricName: req.MetricName, MetricNamespace: req.MetricNamespace,
+	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	out := make([]metricFilterJSON, 0, len(filters))
+	from, to, next := pageBounds(len(filters), decodeOffsetToken(req.NextToken), req.Limit)
 
-	for i := range filters {
-		mf := &filters[i]
-		if req.FilterNamePrefix != "" && !strings.HasPrefix(mf.Name, req.FilterNamePrefix) {
-			continue
-		}
-
-		out = append(out, metricFilterJSON{
-			FilterName:    mf.Name,
-			FilterPattern: mf.FilterPattern,
-			LogGroupName:  mf.LogGroup,
-			CreationTime:  epochMillis(mf.CreatedAt),
-			MetricTransformations: []metricTransformationJSON{{
-				MetricName:      mf.MetricName,
-				MetricNamespace: mf.MetricNamespace,
-				MetricValue:     mf.MetricValue,
-				DefaultValue:    mf.DefaultValue,
-				Unit:            mf.Unit,
-				Dimensions:      mf.Dimensions,
-			}},
-		})
+	resp := describeMetricFiltersResponse{MetricFilters: make([]metricFilterJSON, 0, to-from)}
+	for i := from; i < to; i++ {
+		resp.MetricFilters = append(resp.MetricFilters, toMetricFilterJSON(&filters[i]))
 	}
 
-	wire.WriteJSON(w, describeMetricFiltersResponse{MetricFilters: out})
+	if next > 0 {
+		resp.NextToken = encodeOffsetToken(next)
+	}
+
+	wire.WriteJSON(w, resp)
+}
+
+func toMetricFilterJSON(mf *logdriver.MetricFilterInfo) metricFilterJSON {
+	return metricFilterJSON{
+		FilterName:    mf.Name,
+		FilterPattern: mf.FilterPattern,
+		LogGroupName:  mf.LogGroup,
+		CreationTime:  epochMillis(mf.CreatedAt),
+		MetricTransformations: []metricTransformationJSON{{
+			MetricName:      mf.MetricName,
+			MetricNamespace: mf.MetricNamespace,
+			MetricValue:     mf.MetricValue,
+			DefaultValue:    mf.DefaultValue,
+			Unit:            mf.Unit,
+			Dimensions:      mf.Dimensions,
+		}},
+	}
 }
 
 // deleteMetricFilter removes a metric filter from a log group. A successful

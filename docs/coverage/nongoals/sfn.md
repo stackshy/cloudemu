@@ -1,0 +1,1 @@
+- `StopExecution` on an execution that has already closed returns 200 with its original `stopDate` and changes nothing. The API reference documents no error for this case, and the behavior is not verified against live AWS.

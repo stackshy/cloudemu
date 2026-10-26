@@ -9,8 +9,10 @@ import (
 // --- request envelopes ---
 
 type createLogGroupRequest struct {
-	LogGroupName string            `json:"logGroupName"`
-	Tags         map[string]string `json:"tags"`
+	LogGroupName  string            `json:"logGroupName"`
+	Tags          map[string]string `json:"tags"`
+	KmsKeyID      string            `json:"kmsKeyId"`
+	LogGroupClass string            `json:"logGroupClass"`
 }
 
 type describeLogGroupsRequest struct {
@@ -61,6 +63,7 @@ type getLogEventsRequest struct {
 	Limit         int32  `json:"limit"`
 	NextToken     string `json:"nextToken"`
 	StartFromHead *bool  `json:"startFromHead"`
+	Unmask        bool   `json:"unmask"`
 }
 
 type filterLogEventsRequest struct {
@@ -72,19 +75,27 @@ type filterLogEventsRequest struct {
 	EndTime             int64    `json:"endTime"`
 	Limit               int32    `json:"limit"`
 	NextToken           string   `json:"nextToken"`
+	Unmask              bool     `json:"unmask"`
 }
 
 // --- response envelopes ---
 
 // logGroupJSON is the CloudWatch Logs LogGroup shape. Timestamps are epoch
 // milliseconds, which is what the AWS JSON protocol uses for the SDK's
-// *int64 CreationTime field.
+// *int64 CreationTime field. arn carries AWS's trailing ":*"; logGroupArn is
+// the bare group ARN.
 type logGroupJSON struct {
 	LogGroupName    string `json:"logGroupName"`
 	Arn             string `json:"arn"`
+	LogGroupArn     string `json:"logGroupArn"`
 	CreationTime    int64  `json:"creationTime"`
 	RetentionInDays int32  `json:"retentionInDays,omitempty"`
 	StoredBytes     int64  `json:"storedBytes"`
+	KmsKeyID        string `json:"kmsKeyId,omitempty"`
+	LogGroupClass   string `json:"logGroupClass,omitempty"`
+	// DataProtectionStatus is ACTIVATED while the group has a data
+	// protection policy.
+	DataProtectionStatus string `json:"dataProtectionStatus,omitempty"`
 }
 
 type describeLogGroupsResponse struct {
@@ -107,8 +118,15 @@ type describeLogStreamsResponse struct {
 	NextToken  string          `json:"nextToken,omitempty"`
 }
 
+type rejectedLogEventsInfoJSON struct {
+	TooOldLogEventEndIndex   *int `json:"tooOldLogEventEndIndex,omitempty"`
+	ExpiredLogEventEndIndex  *int `json:"expiredLogEventEndIndex,omitempty"`
+	TooNewLogEventStartIndex *int `json:"tooNewLogEventStartIndex,omitempty"`
+}
+
 type putLogEventsResponse struct {
-	NextSequenceToken string `json:"nextSequenceToken"`
+	NextSequenceToken     string                     `json:"nextSequenceToken"`
+	RejectedLogEventsInfo *rejectedLogEventsInfoJSON `json:"rejectedLogEventsInfo,omitempty"`
 }
 
 type outputLogEvent struct {
@@ -191,13 +209,18 @@ func isoToEpochMillis(iso string) int64 {
 	return t.UnixMilli()
 }
 
-func toLogGroupJSON(info *logdriver.LogGroupInfo) logGroupJSON {
+func toLogGroupJSON(g *logdriver.AWSLogGroup) logGroupJSON {
 	return logGroupJSON{
-		LogGroupName:    info.Name,
-		Arn:             info.ResourceID,
-		CreationTime:    isoToEpochMillis(info.CreatedAt),
-		RetentionInDays: int32(info.RetentionDays), //nolint:gosec // retention days is a small positive value
-		StoredBytes:     info.StoredBytes,
+		LogGroupName:    g.Name,
+		Arn:             g.ResourceID + ":*",
+		LogGroupArn:     g.ResourceID,
+		CreationTime:    isoToEpochMillis(g.CreatedAt),
+		RetentionInDays: int32(g.RetentionDays), //nolint:gosec // retention days is a small positive value
+		StoredBytes:     g.StoredBytes,
+		KmsKeyID:        g.KmsKeyID,
+		LogGroupClass:   g.LogGroupClass,
+
+		DataProtectionStatus: g.DataProtectionStatus,
 	}
 }
 

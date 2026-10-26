@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"time"
 
-	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/kafka/driver"
 )
 
@@ -150,16 +150,17 @@ func (m *Mock) getClusterBR(arn string) (*clusterData, error) {
 // with mkErr so each op returns the exception the SDK actually models for it.
 func (m *Mock) getClusterErr(arn string, mkErr func(string, ...any) error) (*clusterData, error) {
 	cd, ok := m.clusters.Get(arn)
-	if !ok {
+	if !ok || m.reapIfGone(arn, cd) {
 		return nil, mkErr("cluster not found: %s", arn)
 	}
 
 	return cd, nil
 }
 
-// CreateCluster provisions a provisioned (v1) cluster that is immediately
-// Active. The cluster name is claimed atomically under createMu so a duplicate
-// name is rejected with ConflictException.
+// CreateCluster provisions a provisioned (v1) cluster. It reports ACTIVE, or
+// CREATING for a settle window under AsyncSettle. The cluster name is claimed
+// atomically under createMu so a duplicate name is rejected with
+// ConflictException.
 //
 //nolint:gocritic // hugeParam: signature fixed by driver.Kafka (by-value input).
 func (m *Mock) CreateCluster(_ context.Context, in driver.CreateClusterInput) (*driver.Cluster, error) {
@@ -192,37 +193,17 @@ func (m *Mock) CreateCluster(_ context.Context, in driver.CreateClusterInput) (*
 		kafkaVer = defaultKafkaVer
 	}
 
-	m.createMu.Lock()
-	defer m.createMu.Unlock()
-
-	if _, dup := m.clusterNames.Get(in.ClusterName); dup {
-		return nil, conflict("cluster already exists: %s", in.ClusterName)
-	}
-
-	arn := m.clusterARN(in.ClusterName)
-
-	cluster := driver.Cluster{
-		ClusterARN:          arn,
+	return m.insertCluster(driver.Cluster{
 		ClusterName:         in.ClusterName,
 		ClusterType:         driver.ClusterTypeProvisioned,
-		State:               driver.ClusterStateActive,
-		CurrentVersion:      "K" + idgen.GenerateID(""),
 		KafkaVersion:        kafkaVer,
 		NumberOfBrokerNodes: in.NumberOfBrokerNodes,
 		BrokerNodeGroupInfo: copyBrokerNodeGroupInfo(in.BrokerNodeGroupInfo),
 		StorageMode:         in.StorageMode,
 		EnhancedMonitoring:  in.EnhancedMonitoring,
 		Tags:                copyTags(in.Tags),
-		CreationTime:        m.now(),
 		RawOptions:          copyRaw(in.RawOptions),
-	}
-
-	m.clusters.Set(arn, &clusterData{cluster: cluster})
-	m.clusterNames.Set(in.ClusterName, arn)
-
-	out := snapshotCluster(cluster)
-
-	return &out, nil
+	})
 }
 
 // DescribeCluster returns a deep copy of the stored cluster.
@@ -233,11 +214,36 @@ func (m *Mock) DescribeCluster(_ context.Context, arn string) (*driver.Cluster, 
 	}
 
 	cd.mu.RLock()
-	defer cd.mu.RUnlock()
-
-	out := snapshotCluster(cd.cluster)
+	out := m.observedClusterLocked(cd)
+	cd.mu.RUnlock()
 
 	return &out, nil
+}
+
+// visibleClusters returns observed deep copies of every cluster real MSK would
+// still list, lazily removing any whose DELETING window has elapsed.
+func (m *Mock) visibleClusters() []driver.Cluster {
+	vals := m.clusters.SortedValues()
+
+	all := make([]driver.Cluster, 0, len(vals))
+
+	for _, cd := range vals {
+		cd.mu.RLock()
+		arn := cd.cluster.ClusterARN
+		cd.mu.RUnlock()
+
+		if m.reapIfGone(arn, cd) {
+			continue
+		}
+
+		cd.mu.RLock()
+		snap := m.observedClusterLocked(cd)
+		cd.mu.RUnlock()
+
+		all = append(all, snap)
+	}
+
+	return all
 }
 
 // ListClusters lists clusters (optionally filtered by name prefix), sorted by
@@ -245,20 +251,16 @@ func (m *Mock) DescribeCluster(_ context.Context, arn string) (*driver.Cluster, 
 func (m *Mock) ListClusters(
 	_ context.Context, namePrefix string, page driver.Page,
 ) (clusters []driver.Cluster, next string, err error) {
-	vals := m.clusters.SortedValues()
+	visible := m.visibleClusters()
 
-	all := make([]driver.Cluster, 0, len(vals))
+	all := make([]driver.Cluster, 0, len(visible))
 
-	for _, cd := range vals {
-		cd.mu.RLock()
-		snap := snapshotCluster(cd.cluster)
-		cd.mu.RUnlock()
-
-		if namePrefix != "" && !strings.HasPrefix(snap.ClusterName, namePrefix) {
+	for i := range visible {
+		if namePrefix != "" && !strings.HasPrefix(visible[i].ClusterName, namePrefix) {
 			continue
 		}
 
-		all = append(all, snap)
+		all = append(all, visible[i])
 	}
 
 	sort.Slice(all, func(i, j int) bool { return all[i].ClusterName < all[j].ClusterName })
@@ -271,7 +273,11 @@ func (m *Mock) ListClusters(
 	return all[start:end], nextTok, nil
 }
 
-// DeleteCluster removes a cluster and frees its name for reuse.
+// DeleteCluster deletes a cluster. With AsyncSettle off (the default) it is
+// removed at once and its name freed. Under AsyncSettle it reports DELETING via
+// Describe/List for a settle window and is then removed (lazily, on the next
+// read), as real MSK does. Deleting a cluster that is already DELETING returns
+// DELETING again.
 func (m *Mock) DeleteCluster(_ context.Context, arn, currentVersion string) (arnOut, state string, err error) {
 	cd, err := m.getCluster(arn)
 	if err != nil {
@@ -279,6 +285,12 @@ func (m *Mock) DeleteCluster(_ context.Context, arn, currentVersion string) (arn
 	}
 
 	cd.mu.Lock()
+
+	if cd.cluster.State == driver.ClusterStateDeleting {
+		cd.mu.Unlock()
+
+		return arn, driver.ClusterStateDeleting, nil
+	}
 
 	// Honor the optimistic-concurrency version: a stale currentVersion is a 400.
 	if currentVersion != "" && cd.cluster.CurrentVersion != currentVersion {
@@ -290,10 +302,19 @@ func (m *Mock) DeleteCluster(_ context.Context, arn, currentVersion string) (arn
 
 	name := cd.cluster.ClusterName
 	cd.cluster.State = driver.ClusterStateDeleting
+	// A delete supersedes any still-open CREATING window.
+	cd.readyAt = time.Time{}
+	cd.deleteAt = m.settleUntil(clusterDeleteSettle)
+	async := !cd.deleteAt.IsZero()
 	cd.mu.Unlock()
 
-	m.clusters.Delete(arn)
-	m.clusterNames.Delete(name)
+	if async {
+		return arn, driver.ClusterStateDeleting, nil
+	}
+
+	m.reapMu.Lock()
+	m.removeCluster(arn, name)
+	m.reapMu.Unlock()
 
 	return arn, driver.ClusterStateDeleting, nil
 }

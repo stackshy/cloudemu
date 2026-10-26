@@ -21,6 +21,10 @@ func (m *Mock) PutLifecycleConfiguration(
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
+	if err := m.requireAvailableLocked(fd); err != nil {
+		return nil, err
+	}
+
 	fd.lifecycle = append([]driver.LifecyclePolicy(nil), policies...)
 
 	return append([]driver.LifecyclePolicy(nil), fd.lifecycle...), nil
@@ -54,6 +58,10 @@ func (m *Mock) PutBackupPolicy(_ context.Context, fileSystemID, status string) (
 
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
+
+	if err := m.requireAvailableLocked(fd); err != nil {
+		return "", err
+	}
 
 	fd.backup = status
 
@@ -93,6 +101,10 @@ func (m *Mock) CreateReplicationConfiguration(
 
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
+
+	if err := m.requireAvailableLocked(fd); err != nil {
+		return nil, err
+	}
 
 	if fd.replication != nil {
 		return nil, conflict(driver.KindReplication,
@@ -194,10 +206,27 @@ func (m *Mock) DescribeReplicationConfigurations(
 	return out, nil
 }
 
-// PutAccountPreferences sets the account-level resource-id preference.
+// Resource-id preference values (PutAccountPreferences ResourceIdType).
+const (
+	resourceIDLong  = "LONG_ID"
+	resourceIDShort = "SHORT_ID"
+)
+
+// PutAccountPreferences sets the account-level resource-id preference. Since
+// October 2021 EFS rejects SHORT_ID: "you will receive an error when setting the
+// account preference to SHORT_ID"
+// (https://docs.aws.amazon.com/efs/latest/ug/API_PutAccountPreferences.html).
 func (m *Mock) PutAccountPreferences(_ context.Context, resourceIDType string) (string, error) {
-	if resourceIDType == "" {
+	switch resourceIDType {
+	case resourceIDLong:
+	case "":
 		return "", errors.New(errors.InvalidArgument, "ResourceIdType is required")
+	case resourceIDShort:
+		return "", errors.New(errors.InvalidArgument,
+			"setting the resource ID preference to SHORT_ID is no longer supported; use LONG_ID")
+	default:
+		return "", errors.Newf(errors.InvalidArgument,
+			"invalid ResourceIdType %q; valid values are LONG_ID and SHORT_ID", resourceIDType)
 	}
 
 	m.prefMu.Lock()
@@ -209,9 +238,16 @@ func (m *Mock) PutAccountPreferences(_ context.Context, resourceIDType string) (
 }
 
 // DescribeAccountPreferences returns the account-level resource-id preference.
+// An account that never set one reports LONG_ID: every file system and mount
+// target created since October 2021 gets a long ID, and SHORT_ID can no longer
+// be set.
 func (m *Mock) DescribeAccountPreferences(_ context.Context) (string, error) {
 	m.prefMu.RLock()
 	defer m.prefMu.RUnlock()
+
+	if m.accountPref == "" {
+		return resourceIDLong, nil
+	}
 
 	return m.accountPref, nil
 }

@@ -49,6 +49,7 @@ import (
 	cgrpc "github.com/stackshy/cloudemu/v2/server/grpc"
 	bigtableadmingrpc "github.com/stackshy/cloudemu/v2/server/grpc/bigtableadmin"
 	ociserver "github.com/stackshy/cloudemu/v2/server/oci"
+	"github.com/stackshy/cloudemu/v2/server/wire"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsidentity"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
@@ -1112,12 +1113,12 @@ func (a *App) buildServers() ([]listenerServer, endpointSet, error) {
 
 		servers = append(servers, &httpServer{
 			label: p,
-			srv: &http.Server{
+			srv: withShutdownSignal(&http.Server{
 				Addr:              addr,
 				Handler:           a.handlerFor(a.backends[p], a.seedFor(p)),
 				TLSConfig:         tlsCfg,
 				ReadHeaderTimeout: serverReadHeaderTimeout,
-			},
+			}),
 			tls: isTLS,
 		})
 	}
@@ -1324,6 +1325,19 @@ func (h *httpServer) serve(ln net.Listener) error {
 }
 
 func (h *httpServer) shutdown(ctx context.Context) error { return h.srv.Shutdown(ctx) }
+
+// withShutdownSignal gives every request srv serves a wire.ShutdownSignal that
+// closes the moment srv.Shutdown begins, so long-lived responses (Kinesis
+// SubscribeToShard event streams) end promptly rather than holding a graceful
+// shutdown open until its timeout. Ordinary requests are unaffected: the
+// request context itself is not canceled.
+func withShutdownSignal(srv *http.Server) *http.Server {
+	n := wire.NewShutdownNotifier()
+	srv.BaseContext = func(net.Listener) context.Context { return n.Context(context.Background()) }
+	srv.RegisterOnShutdown(n.Notify)
+
+	return srv
+}
 
 // grpcServer adapts the server/grpc transport wrapper to listenerServer, so the
 // optional gRPC endpoint binds and drains through the same loop as the HTTP

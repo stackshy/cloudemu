@@ -38,12 +38,30 @@ func (m *Mock) CreateJobQueue(_ context.Context, in driver.CreateJobQueueInput) 
 		return nil, cerrors.New(cerrors.InvalidArgument, "jobQueueName is required")
 	}
 
+	if err := validateTags(in.Tags); err != nil {
+		return nil, err
+	}
+
 	if len(in.ComputeEnvironmentOrder) == 0 {
 		return nil, cerrors.New(cerrors.InvalidArgument, "computeEnvironmentOrder must list at least one compute environment")
 	}
 
 	if err := m.validateOrder(in.ComputeEnvironmentOrder); err != nil {
 		return nil, err
+	}
+
+	m.policyBindMu.Lock()
+	defer m.policyBindMu.Unlock()
+
+	policyARN := ""
+
+	if in.SchedulingPolicyARN != "" {
+		arn, err := m.resolveSchedulingPolicy(in.SchedulingPolicyARN)
+		if err != nil {
+			return nil, err
+		}
+
+		policyARN = arn
 	}
 
 	state := in.State
@@ -59,7 +77,7 @@ func (m *Mock) CreateJobQueue(_ context.Context, in driver.CreateJobQueueInput) 
 		StatusReason:            jqHealthyReason,
 		Priority:                in.Priority,
 		ComputeEnvironmentOrder: cloneOrder(in.ComputeEnvironmentOrder),
-		SchedulingPolicyARN:     in.SchedulingPolicyARN,
+		SchedulingPolicyARN:     policyARN,
 		Tags:                    copyTags(in.Tags),
 	}
 
@@ -88,9 +106,24 @@ func (m *Mock) UpdateJobQueue(_ context.Context, in driver.UpdateJobQueueInput) 
 		}
 	}
 
+	// Held across the read, the policy resolution and the write, so the policy
+	// can't be deleted (and no other update can land) in between.
+	m.policyBindMu.Lock()
+	defer m.policyBindMu.Unlock()
+
+	cur, ok := m.jobQueues.Get(name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "job queue %q does not exist", name)
+	}
+
+	policyARN, err := m.nextSchedulingPolicy(&cur, in.SchedulingPolicyARN)
+	if err != nil {
+		return nil, err
+	}
+
 	var updated driver.JobQueue
 
-	ok := m.jobQueues.Update(name, func(q driver.JobQueue) driver.JobQueue {
+	ok = m.jobQueues.Update(name, func(q driver.JobQueue) driver.JobQueue {
 		next := cloneJobQueue(q)
 		if in.State != nil {
 			next.State = *in.State
@@ -100,9 +133,7 @@ func (m *Mock) UpdateJobQueue(_ context.Context, in driver.UpdateJobQueueInput) 
 			next.Priority = *in.Priority
 		}
 
-		if in.SchedulingPolicyARN != nil {
-			next.SchedulingPolicyARN = *in.SchedulingPolicyARN
-		}
+		next.SchedulingPolicyARN = policyARN
 
 		if len(in.ComputeEnvironmentOrder) > 0 {
 			next.ComputeEnvironmentOrder = cloneOrder(in.ComputeEnvironmentOrder)
@@ -158,4 +189,27 @@ func (m *Mock) validateOrder(order []driver.ComputeEnvironmentOrder) error {
 	}
 
 	return nil
+}
+
+// nextSchedulingPolicy resolves the scheduling-policy ARN an UpdateJobQueue
+// leaves on the queue. Per the CreateJobQueue reference, a FIFO queue (no
+// policy) can't have one added, and a fair-share queue's policy can be replaced
+// but not removed. A nil ref leaves the policy unchanged.
+func (m *Mock) nextSchedulingPolicy(q *driver.JobQueue, ref *string) (string, error) {
+	if ref == nil {
+		return q.SchedulingPolicyARN, nil
+	}
+
+	switch {
+	case *ref == "" && q.SchedulingPolicyARN == "":
+		return "", nil
+	case *ref == "":
+		return "", cerrors.Newf(cerrors.InvalidArgument,
+			"the scheduling policy of job queue %q can be replaced but not removed", q.Name)
+	case q.SchedulingPolicyARN == "":
+		return "", cerrors.Newf(cerrors.InvalidArgument,
+			"job queue %q has no scheduling policy (FIFO) and can't have one added", q.Name)
+	}
+
+	return m.resolveSchedulingPolicy(*ref)
 }

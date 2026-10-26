@@ -95,12 +95,17 @@ func (m *Mock) createClusterV2Serverless(in driver.CreateClusterV2Input) (*drive
 }
 
 // insertCluster finishes minting a cluster (ARN, version, state, creation time)
-// and stores it atomically under createMu, rejecting a duplicate name.
+// and stores it atomically under createMu, rejecting a duplicate name. The
+// stored state is ACTIVE; under AsyncSettle a CREATING window is overlaid on
+// reads, and the returned cluster reports it.
 //
 //nolint:gocritic // hugeParam: takes the assembled cluster by value to finalize.
 func (m *Mock) insertCluster(cluster driver.Cluster) (*driver.Cluster, error) {
 	m.createMu.Lock()
 	defer m.createMu.Unlock()
+
+	// A name held by a cluster that has finished deleting is free again.
+	m.reapName(cluster.ClusterName)
 
 	if _, dup := m.clusterNames.Get(cluster.ClusterName); dup {
 		return nil, conflict("cluster already exists: %s", cluster.ClusterName)
@@ -111,10 +116,18 @@ func (m *Mock) insertCluster(cluster driver.Cluster) (*driver.Cluster, error) {
 	cluster.CurrentVersion = "K" + idgen.GenerateID("")
 	cluster.CreationTime = m.now()
 
-	m.clusters.Set(cluster.ClusterARN, &clusterData{cluster: cluster})
+	if cluster.ClusterType == driver.ClusterTypeProvisioned {
+		cluster.RawOptions = m.withDefaultEncryption(cluster.RawOptions)
+	}
+
+	cd := &clusterData{cluster: cluster, readyAt: m.settleUntil(clusterCreateSettle)}
+
+	m.clusters.Set(cluster.ClusterARN, cd)
 	m.clusterNames.Set(cluster.ClusterName, cluster.ClusterARN)
 
-	out := snapshotCluster(cluster)
+	cd.mu.RLock()
+	out := m.observedClusterLocked(cd)
+	cd.mu.RUnlock()
 
 	return &out, nil
 }
@@ -134,14 +147,12 @@ func (m *Mock) ListClustersV2(
 		return nil, "", vErr
 	}
 
-	vals := m.clusters.SortedValues()
+	visible := m.visibleClusters()
 
-	all := make([]driver.Cluster, 0, len(vals))
+	all := make([]driver.Cluster, 0, len(visible))
 
-	for _, cd := range vals {
-		cd.mu.RLock()
-		snap := snapshotCluster(cd.cluster)
-		cd.mu.RUnlock()
+	for i := range visible {
+		snap := visible[i]
 
 		if namePrefix != "" && !strings.HasPrefix(snap.ClusterName, namePrefix) {
 			continue

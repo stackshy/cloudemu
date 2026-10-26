@@ -136,10 +136,8 @@ func clusterToWire(c *driver.Cluster) map[string]json.RawMessage {
 		base["brokerNodeGroupInfo"] = bngToWire(c.BrokerNodeGroupInfo)
 	}
 
-	if _, ok := c.RawOptions["encryptionInfo"]; !ok {
-		base["encryptionInfo"] = defaultEncryptionInfo()
-	}
-
+	// encryptionInfo (including MSK's default at-rest key) is completed by the
+	// provider at create time and carried in RawOptions; mergeRaw surfaces it.
 	addZookeeperConnect(base, c)
 
 	return mergeRaw(base, c.RawOptions)
@@ -189,22 +187,6 @@ func regionFromARN(arn string) string {
 	}
 
 	return parts[regionIndex]
-}
-
-// defaultEncryptionInfo returns the MSK default encryption configuration that
-// real DescribeCluster surfaces when none is specified at create time:
-// in-transit TLS (client-broker + in-cluster) and at-rest with an
-// AWS-managed data-volume KMS key.
-func defaultEncryptionInfo() map[string]any {
-	return map[string]any{
-		"encryptionAtRest": map[string]any{
-			"dataVolumeKMSKeyId": "arn:aws:kms:us-east-1:000000000000:key/msk-default",
-		},
-		"encryptionInTransit": map[string]any{
-			"clientBroker": "TLS",
-			"inCluster":    true,
-		},
-	}
 }
 
 // enhancedMonitoringOrDefault returns the cluster's EnhancedMonitoring level,
@@ -305,9 +287,9 @@ func provisionedBlock(c *driver.Cluster) map[string]any {
 		block["brokerNodeGroupInfo"] = bngToWire(c.BrokerNodeGroupInfo)
 	}
 
-	if _, ok := c.RawOptions["encryptionInfo"]; !ok {
-		block["encryptionInfo"] = defaultEncryptionInfo()
-	}
+	// The provider stores the cluster's (defaulted) encryptionInfo in RawOptions;
+	// v2 reports it inside the provisioned block.
+	overlayRaw(block, c.RawOptions, "encryptionInfo", "encryptionInfo")
 
 	addZookeeperConnect(block, c)
 

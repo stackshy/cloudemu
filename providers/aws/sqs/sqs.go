@@ -87,6 +87,13 @@ type queueData struct {
 	deduplicationIndex map[string]time.Time
 	dlqConfig          *driver.DeadLetterConfig
 	seqCounter         atomic.Uint64
+
+	// lastAccessed is the provider-clock time (Unix nanoseconds) of the last
+	// action on the queue. With the message count it decides whether the
+	// queue is active and so publishes its CloudWatch gauges (see metrics.go).
+	lastAccessed atomic.Int64
+	// lastSampleAt is when the gauges were last published. Guarded by mu.
+	lastSampleAt time.Time
 }
 
 // EventSourceInvoker delivers an SQS event-source-mapping batch to whatever
@@ -123,7 +130,7 @@ func (m *Mock) emitMetric(metricName string, value float64, unit string, dims ma
 	}
 
 	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{{
-		Namespace: "AWS/SQS", MetricName: metricName, Value: value, Unit: unit,
+		Namespace: metricsNamespace, MetricName: metricName, Value: value, Unit: unit,
 		Dimensions: dims, Timestamp: m.opts.Clock.Now(),
 	}})
 }
@@ -197,7 +204,7 @@ func (m *Mock) CreateQueue(ctx context.Context, cfg driver.QueueConfig) (*driver
 	// CreateQueue is idempotent: re-creating an existing queue with the exact
 	// same attributes returns the existing URL. QueueNameExists is returned only
 	// when the incoming attributes differ from the stored ones.
-	if existing, ok := m.queues.Get(url); ok {
+	if existing, ok := m.accessQueue(url); ok {
 		if sameQueueConfig(existing, &cfg) {
 			result := existing.info
 			return &result, nil
@@ -255,6 +262,7 @@ func (m *Mock) CreateQueue(ctx context.Context, cfg driver.QueueConfig) (*driver
 		}
 	}
 
+	qd.touch(now)
 	m.queues.Set(url, qd)
 
 	result := info
@@ -443,7 +451,7 @@ func (m *Mock) DeleteQueue(_ context.Context, url string) error {
 
 // GetQueueInfo retrieves information about an SQS queue by URL.
 func (m *Mock) GetQueueInfo(_ context.Context, url string) (*driver.QueueInfo, error) {
-	qd, ok := m.queues.Get(url)
+	qd, ok := m.accessQueue(url)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "queue %q not found", url)
 	}
@@ -487,7 +495,7 @@ func (m *Mock) ListQueues(_ context.Context, prefix string) ([]driver.QueueInfo,
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) SendMessage(ctx context.Context, input driver.SendMessageInput) (*driver.SendMessageOutput, error) {
-	qd, ok := m.queues.Get(input.QueueURL)
+	qd, ok := m.accessQueue(input.QueueURL)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "queue %q not found", input.QueueURL)
 	}
@@ -769,11 +777,22 @@ func (m *Mock) buildStoredMessage(qd *queueData, input *driver.SendMessageInput,
 		Attributes:        attrs,
 		MessageAttributes: copyMessageAttributes(input.MessageAttributes),
 		SystemAttributes:  systemAttributeStrings(input.SystemAttributes),
-		SenderID:          m.opts.AccountID,
+		SenderID:          senderID(input.SenderID, m.opts.AccountID),
 		SequenceNumber:    seqNum,
 		VisibleAt:         now.Add(time.Duration(delaySeconds) * time.Second),
 		SentAt:            now,
 	}
+}
+
+// senderID is the SenderId recorded on a sent message: the caller's IAM unique
+// id when the wire handler resolved one, else the account id (library callers
+// and service-to-service deliveries carry no caller principal).
+func senderID(caller, accountID string) string {
+	if caller != "" {
+		return caller
+	}
+
+	return accountID
 }
 
 // systemAttributeStrings flattens caller-supplied SQS message system attributes
@@ -868,7 +887,7 @@ func findDuplicate(qd *queueData, input *driver.SendMessageInput, now time.Time)
 // When WaitTimeSeconds (or the queue's ReceiveMessageWaitTimeSeconds default) is > 0, it long-polls:
 // it retries on a short interval until a message is available, the deadline elapses, or ctx is canceled.
 func (m *Mock) ReceiveMessages(ctx context.Context, input driver.ReceiveMessageInput) ([]driver.Message, error) {
-	qd, ok := m.queues.Get(input.QueueURL)
+	qd, ok := m.accessQueue(input.QueueURL)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "queue %q not found", input.QueueURL)
 	}
@@ -1125,7 +1144,7 @@ func (m *Mock) moveToDLQ(dlqURL, sourceURL string, msg *sqsMessage) {
 
 // DeleteMessage deletes a message from the specified queue using its receipt handle.
 func (m *Mock) DeleteMessage(_ context.Context, queueURL, receiptHandle string) error {
-	qd, ok := m.queues.Get(queueURL)
+	qd, ok := m.accessQueue(queueURL)
 	if !ok {
 		return errors.Newf(errors.NotFound, "queue %q not found", queueURL)
 	}
@@ -1138,19 +1157,28 @@ func (m *Mock) DeleteMessage(_ context.Context, queueURL, receiptHandle string) 
 	}
 
 	qd.mu.Lock()
-	defer qd.mu.Unlock()
+
+	deleted := false
 
 	for i, msg := range qd.messages {
 		if msg.ReceiptHandle == receiptHandle {
 			qd.messages = append(qd.messages[:i], qd.messages[i+1:]...)
-			m.emitMetric("NumberOfMessagesDeleted", 1, "Count", map[string]string{"QueueName": qd.info.Name})
+			deleted = true
 
-			return nil
+			break
 		}
 	}
 
+	qd.mu.Unlock()
+
 	// DeleteMessage is idempotent: an old/stale (but well-formed) receipt handle
-	// against an existing queue succeeds without deleting anything.
+	// against an existing queue succeeds without deleting anything. The metric
+	// is published after the lock is released, since an alarm on it may
+	// deliver back into this queue.
+	if deleted {
+		m.emitMetric("NumberOfMessagesDeleted", 1, "Count", map[string]string{"QueueName": qd.info.Name})
+	}
+
 	return nil
 }
 
@@ -1178,7 +1206,7 @@ func isWellFormedReceiptHandle(handle string) bool {
 
 // ChangeVisibility changes the visibility timeout of a message in the specified queue.
 func (m *Mock) ChangeVisibility(_ context.Context, queueURL, receiptHandle string, timeout int) error {
-	qd, ok := m.queues.Get(queueURL)
+	qd, ok := m.accessQueue(queueURL)
 	if !ok {
 		return errors.Newf(errors.NotFound, "queue %q not found", queueURL)
 	}
@@ -1244,6 +1272,7 @@ func batchEntryToSendInput(queue string, entry *driver.BatchSendEntry) driver.Se
 		Attributes:        entry.Attributes,
 		MessageAttributes: entry.MessageAttributes,
 		SystemAttributes:  entry.SystemAttributes,
+		SenderID:          entry.SenderID,
 	}
 }
 
@@ -1279,7 +1308,7 @@ func (m *Mock) DeleteMessageBatch(
 func (m *Mock) ReceiveMessagesWithOptions(
 	_ context.Context, queue string, opts driver.ReceiveOptions,
 ) ([]driver.Message, error) {
-	qd, ok := m.queues.Get(queue)
+	qd, ok := m.accessQueue(queue)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "queue %q not found", queue)
 	}
@@ -1289,7 +1318,6 @@ func (m *Mock) ReceiveMessagesWithOptions(
 	}
 
 	qd.mu.Lock()
-	defer qd.mu.Unlock()
 
 	maxMsgs := defaultMaxMessages(opts.MaxMessages)
 
@@ -1302,17 +1330,14 @@ func (m *Mock) ReceiveMessagesWithOptions(
 	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visTimeout, now)
 
 	removeByIndices(qd, toRemove)
+	qd.mu.Unlock()
 
 	if results == nil {
 		results = []driver.Message{}
 	}
 
-	dims := map[string]string{"QueueName": qd.info.Name}
-	if len(results) > 0 {
-		m.emitMetric("NumberOfMessagesReceived", float64(len(results)), "Count", dims)
-	} else {
-		m.emitMetric("NumberOfEmptyReceives", 1.0, "Count", dims)
-	}
+	// Published after the lock is released, like ReceiveMessages.
+	m.emitReceiveMetrics(qd, len(results))
 
 	return results, nil
 }
@@ -1321,7 +1346,7 @@ func (m *Mock) ReceiveMessagesWithOptions(
 func (m *Mock) GetQueueAttributes(
 	_ context.Context, queue string,
 ) (*driver.QueueAttributes, error) {
-	qd, ok := m.queues.Get(queue)
+	qd, ok := m.accessQueue(queue)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "queue %q not found", queue)
 	}
@@ -1329,9 +1354,11 @@ func (m *Mock) GetQueueAttributes(
 	qd.mu.Lock()
 	defer qd.mu.Unlock()
 
-	now := m.opts.Clock.Now()
-	visible, notVisible := countMessages(qd, now)
-	delayed := countDelayedMessages(qd, now)
+	// ApproximateNumberOfMessagesNotVisible counts in-flight messages only
+	// (received, not yet deleted or expired); delayed messages are reported
+	// separately, matching the CloudWatch gauges.
+	g := sampleGauges(qd, m.opts.Clock.Now())
+	visible, notVisible, delayed := g.visible, g.notVisible, g.delayed
 
 	return &driver.QueueAttributes{
 		DelaySeconds:                  qd.delaySeconds,
@@ -1357,24 +1384,11 @@ func (m *Mock) GetQueueAttributes(
 	}, nil
 }
 
-// countDelayedMessages counts messages still within their delay window.
-func countDelayedMessages(qd *queueData, now time.Time) int {
-	delayed := 0
-
-	for _, msg := range qd.messages {
-		if msg.ReceiveCount == 0 && msg.VisibleAt.After(now) {
-			delayed++
-		}
-	}
-
-	return delayed
-}
-
 // SetQueueAttributes updates the attributes of the specified queue.
 func (m *Mock) SetQueueAttributes(
 	_ context.Context, queue string, attrs map[string]int,
 ) error {
-	qd, ok := m.queues.Get(queue)
+	qd, ok := m.accessQueue(queue)
 	if !ok {
 		return errors.Newf(errors.NotFound, "queue %q not found", queue)
 	}
@@ -1415,7 +1429,7 @@ func applyQueueAttributes(qd *queueData, attrs map[string]int) {
 // Policy, KmsMasterKeyId) that the numeric SetQueueAttributes path cannot express.
 // It is AWS-specific and used directly by the SQS wire handler.
 func (m *Mock) SetQueueAttributesRaw(_ context.Context, queue string, attrs map[string]string) error {
-	qd, ok := m.queues.Get(queue)
+	qd, ok := m.accessQueue(queue)
 	if !ok {
 		return errors.Newf(errors.NotFound, "queue %q not found", queue)
 	}
@@ -1512,7 +1526,7 @@ func parseNumericAttrs(attrs map[string]string) map[string]int {
 // ListDeadLetterSourceQueues returns the URLs of queues whose RedrivePolicy
 // targets the given DLQ URL.
 func (m *Mock) ListDeadLetterSourceQueues(_ context.Context, dlqURL string) ([]string, error) {
-	if _, ok := m.queues.Get(dlqURL); !ok {
+	if _, ok := m.accessQueue(dlqURL); !ok {
 		return nil, errors.Newf(errors.NotFound, "queue %q not found", dlqURL)
 	}
 
@@ -1533,7 +1547,7 @@ func (m *Mock) ListDeadLetterSourceQueues(_ context.Context, dlqURL string) ([]s
 
 // PurgeQueue removes all messages from the specified queue.
 func (m *Mock) PurgeQueue(_ context.Context, queue string) error {
-	qd, ok := m.queues.Get(queue)
+	qd, ok := m.accessQueue(queue)
 	if !ok {
 		return errors.Newf(errors.NotFound, "queue %q not found", queue)
 	}
@@ -1545,18 +1559,6 @@ func (m *Mock) PurgeQueue(_ context.Context, queue string) error {
 	qd.lastModifiedAt = m.opts.Clock.Now()
 
 	return nil
-}
-
-func countMessages(qd *queueData, now time.Time) (visible, notVisible int) {
-	for _, msg := range qd.messages {
-		if msg.VisibleAt.After(now) {
-			notVisible++
-		} else {
-			visible++
-		}
-	}
-
-	return visible, notVisible
 }
 
 func removeByIndices(qd *queueData, indices []int) {

@@ -38,7 +38,8 @@ type createVpcConnectionRequest struct {
 
 // CreateVpcConnection mints a VPC connection in the AVAILABLE state, carrying
 // the client subnets and security groups verbatim in raw options so a later
-// Describe reflects them.
+// Describe reflects them. Under AsyncSettle it reports CREATING for a settle
+// window first (real VpcConnectionState has CREATING and no PENDING value).
 func (m *Mock) CreateVpcConnection(_ context.Context, body json.RawMessage) (*driver.VpcConnection, error) {
 	var req createVpcConnectionRequest
 	if len(body) > 0 {
@@ -79,11 +80,14 @@ func (m *Mock) CreateVpcConnection(_ context.Context, body json.RawMessage) (*dr
 
 	// The ARN embeds a fresh UUID; SetIfAbsent keeps the create atomic and guards
 	// the (impossible-but-cheap) collision.
-	if !m.vpcConns.SetIfAbsent(vpc.VpcConnectionARN, &vpcConnData{vpc: vpc}) {
+	vd := &vpcConnData{vpc: vpc, readyAt: m.settleUntil(vpcConnCreateSettle)}
+	if !m.vpcConns.SetIfAbsent(vpc.VpcConnectionARN, vd) {
 		return nil, badRequest("vpc connection already exists: %s", vpc.VpcConnectionARN)
 	}
 
-	out := snapshotVpcConnection(vpc)
+	vd.mu.RLock()
+	out := m.observedVpcConnectionLocked(vd)
+	vd.mu.RUnlock()
 
 	return &out, nil
 }
@@ -139,9 +143,8 @@ func (m *Mock) DescribeVpcConnection(_ context.Context, arn string) (*driver.Vpc
 	}
 
 	vd.mu.RLock()
-	defer vd.mu.RUnlock()
-
-	out := snapshotVpcConnection(vd.vpc)
+	out := m.observedVpcConnectionLocked(vd)
+	vd.mu.RUnlock()
 
 	return &out, nil
 }
@@ -154,7 +157,7 @@ func (m *Mock) DeleteVpcConnection(_ context.Context, arn string) (*driver.VpcCo
 	}
 
 	vd.mu.RLock()
-	out := snapshotVpcConnection(vd.vpc)
+	out := m.observedVpcConnectionLocked(vd)
 	vd.mu.RUnlock()
 
 	m.vpcConns.Delete(arn)
@@ -204,7 +207,7 @@ func (m *Mock) snapshotVpcConnections(targetCluster string) []driver.VpcConnecti
 
 	for _, vd := range vals {
 		vd.mu.RLock()
-		snap := snapshotVpcConnection(vd.vpc)
+		snap := m.observedVpcConnectionLocked(vd)
 		vd.mu.RUnlock()
 
 		if targetCluster != "" && snap.TargetClusterARN != targetCluster {

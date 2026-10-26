@@ -63,4 +63,8 @@ SubnetGroups is an OPTIONAL capability, discovered by type assertion. Cache
 
 ## Not in scope
 
-_Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
+- AWS: ElastiCache clusters, replication groups, and subnet and parameter groups share one id namespace across regions, so the same id cannot exist in two regions at once (#1693).
+- AWS: ElastiCache snapshot ARNs cannot be tagged yet; AddTagsToResource and ListTagsForResource on a `:snapshot:` ARN answer not-found (#1695).
+- AWS: with a real cache engine, a cluster or replication group reports `creating` only while the engine is being started and `deleting` only while it is being stopped. Without one, both are immediate unless `--async-settle` is set.
+- AWS: a persisted snapshot (`--persist`, `/_cloudemu/snapshot`) leaves out ElastiCache clusters and replication groups that are still `creating` or `deleting` with a real engine, so they are not restored.
+- AWS: while a replication group is `deleting` with a real engine, its member clusters (`<groupId>-001`, …) are already gone from DescribeCacheClusters, though the group itself still shows `deleting`.

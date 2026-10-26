@@ -37,6 +37,10 @@ func (m *Mock) PutClusterPolicy(_ context.Context, clusterARN string, body json.
 	cd.mu.Lock()
 	defer cd.mu.Unlock()
 
+	if err := m.requireActive(cd); err != nil {
+		return "", err
+	}
+
 	if req.CurrentVersion != "" && req.CurrentVersion != cd.policyVersion {
 		return "", badRequest(
 			"currentVersion %q does not match policy version %q", req.CurrentVersion, cd.policyVersion)
@@ -74,6 +78,10 @@ func (m *Mock) DeleteClusterPolicy(_ context.Context, clusterARN string) error {
 
 	cd.mu.Lock()
 	defer cd.mu.Unlock()
+
+	if err := m.requireActive(cd); err != nil {
+		return err
+	}
 
 	cd.policy = ""
 	cd.policyVersion = ""

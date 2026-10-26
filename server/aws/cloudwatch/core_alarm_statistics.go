@@ -67,7 +67,19 @@ func validateAlarmPeriods(cfg *mondriver.AlarmConfig) error {
 		return newWireError(errValidation, "DatapointsToAlarm must be less than or equal to EvaluationPeriods.")
 	}
 
-	if len(cfg.Metrics) > 0 || cfg.Period == 0 {
+	// validateQueryShape checks the MetricStat periods of a metric math
+	// alarm. Each one is held to the same lookback cap.
+	if len(cfg.Metrics) > 0 {
+		for _, p := range alarmPeriods(cfg) {
+			if err := validateAlarmLookback(p, cfg.EvaluationPeriods); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
+	if cfg.Period == 0 {
 		return nil
 	}
 
@@ -79,15 +91,20 @@ func validateAlarmPeriods(cfg *mondriver.AlarmConfig) error {
 }
 
 // validateAlarmLookback checks EvaluationPeriods * Period against the day or
-// week cap that applies to period p.
+// week cap that applies to period p. It divides instead of multiplying, so a
+// huge Period or EvaluationPeriods cannot overflow past the cap.
 func validateAlarmLookback(p, evaluationPeriods int) error {
-	lookback := p * max(evaluationPeriods, 1)
+	if p <= 0 {
+		return nil
+	}
+
+	n := max(evaluationPeriods, 1)
 
 	switch {
-	case p < hourPeriod && lookback > maxAlarmLookbackDay:
+	case p < hourPeriod && n > maxAlarmLookbackDay/p:
 		return newWireError(errValidation, "Metrics cannot be checked across more than a day "+
 			"(EvaluationPeriods * Period must be <= 86400)")
-	case p >= hourPeriod && lookback > maxAlarmLookbackWeek:
+	case p >= hourPeriod && n > maxAlarmLookbackWeek/p:
 		return newWireError(errValidation, "Metrics cannot be checked across more than a week "+
 			"(EvaluationPeriods * Period must be <= 604800)")
 	}

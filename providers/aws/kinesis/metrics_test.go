@@ -73,6 +73,11 @@ func TestStreamLevelMetrics(t *testing.T) {
 		{"GetRecords.Bytes", 9, "Bytes"},
 		{"GetRecords.Success", 1, "Count"},
 		{"GetRecords.IteratorAgeMilliseconds", 0, "Milliseconds"},
+		// Never throttled: a 0-valued datapoint is still published so
+		// Average/Maximum alarms on these always-available metrics resolve.
+		{"WriteProvisionedThroughputExceeded", 0, "Count"},
+		{"ReadProvisionedThroughputExceeded", 0, "Count"},
+		{"PutRecords.ThrottledRecords", 0, "Count"},
 	}
 
 	for _, w := range want {
@@ -88,6 +93,29 @@ func TestStreamLevelMetrics(t *testing.T) {
 
 		if len(res.Values) != 1 || res.Values[0] != w.sum || res.Unit != w.unit {
 			t.Errorf("%s = %v unit %q, want [%v] unit %q", w.name, res.Values, res.Unit, w.sum, w.unit)
+		}
+	}
+
+	// Throttling metrics are per operation, like IncomingRecords: one sample
+	// per put call (PutRecord + PutRecords) and one per GetRecords call, not
+	// one per record.
+	for name, wantSamples := range map[string]float64{
+		"WriteProvisionedThroughputExceeded": 2,
+		"ReadProvisionedThroughputExceeded":  1,
+		"IncomingRecords":                    2,
+	} {
+		res, gerr := cw.GetMetricData(ctx, mondriver.GetMetricInput{
+			Namespace: "AWS/Kinesis", MetricName: name,
+			Dimensions: map[string]string{"StreamName": "s"},
+			StartTime:  clk.Now().Add(-time.Minute), EndTime: clk.Now().Add(time.Minute),
+			Period: 60, Stat: "SampleCount",
+		})
+		if gerr != nil {
+			t.Fatalf("GetMetricData %s SampleCount: %v", name, gerr)
+		}
+
+		if len(res.Values) != 1 || res.Values[0] != wantSamples {
+			t.Errorf("%s SampleCount = %v, want [%v]", name, res.Values, wantSamples)
 		}
 	}
 }

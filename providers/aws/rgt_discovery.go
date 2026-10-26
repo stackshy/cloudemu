@@ -2,7 +2,9 @@ package aws
 
 import (
 	"context"
+	"slices"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
 	cloudtraildriver "github.com/stackshy/cloudemu/v2/services/cloudtrail/driver"
@@ -13,9 +15,11 @@ import (
 	guarddutydriver "github.com/stackshy/cloudemu/v2/services/guardduty/driver"
 	kafkadriver "github.com/stackshy/cloudemu/v2/services/kafka/driver"
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
+	kinesisdriver "github.com/stackshy/cloudemu/v2/services/kinesis/driver"
 	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
 	mdbdriver "github.com/stackshy/cloudemu/v2/services/memorydb/driver"
 	nfdriver "github.com/stackshy/cloudemu/v2/services/networkfirewall/driver"
+	opensearchdriver "github.com/stackshy/cloudemu/v2/services/opensearch/driver"
 	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 	r53rdriver "github.com/stackshy/cloudemu/v2/services/route53resolver/driver"
@@ -84,21 +88,14 @@ func (d taggedDiscovery) discoverOpenSearch(ctx context.Context) ([]resourcedisc
 		return nil, err
 	}
 
-	out := make([]resourcediscovery.DiscoveredResource, 0, len(domains))
+	return project(ctx, domains, d.openSearchRow)
+}
 
-	for i := range domains {
-		name := domains[i].DomainName
-		arn := idgen.AWSARN("es", d.p.Region, d.p.AccountID, "domain/"+name)
+func (d taggedDiscovery) openSearchRow(ctx context.Context, dom opensearchdriver.DomainInfo) (resourcediscovery.DiscoveredResource, error) {
+	arn := idgen.AWSARN("es", d.p.Region, d.p.AccountID, "domain/"+dom.DomainName)
+	tags, err := d.p.OpenSearch.ListTags(ctx, arn)
 
-		tags, err := d.p.OpenSearch.ListTags(ctx, arn)
-		if err != nil {
-			return nil, err
-		}
-
-		out = append(out, row("es", "domain", name, arn, tags))
-	}
-
-	return out, nil
+	return row("es", "domain", dom.DomainName, arn, tags), err
 }
 
 func (d taggedDiscovery) discoverSFN(ctx context.Context) ([]resourcediscovery.DiscoveredResource, error) {
@@ -141,14 +138,97 @@ func (d taggedDiscovery) discoverKMS(ctx context.Context) ([]resourcediscovery.D
 }
 
 func (d taggedDiscovery) discoverNetworkFirewall(ctx context.Context) ([]resourcediscovery.DiscoveredResource, error) {
-	firewalls, err := d.p.NetworkFirewall.ListFirewalls(ctx)
+	nf := d.p.NetworkFirewall
+
+	collectors := []func() ([]resourcediscovery.DiscoveredResource, error){
+		func() ([]resourcediscovery.DiscoveredResource, error) {
+			return pageRows(func(token string) ([]nfdriver.Firewall, string, error) {
+				return nf.ListFirewalls(ctx, nil, nfdriver.ListOptions{NextToken: token})
+			}, func(f *nfdriver.Firewall) resourcediscovery.DiscoveredResource {
+				return row("network-firewall", "firewall", f.Name, f.ARN, f.Tags)
+			})
+		},
+		func() ([]resourcediscovery.DiscoveredResource, error) {
+			return pageRows(func(token string) ([]nfdriver.FirewallPolicy, string, error) {
+				return nf.ListFirewallPolicies(ctx, nfdriver.ListOptions{NextToken: token})
+			}, func(p *nfdriver.FirewallPolicy) resourcediscovery.DiscoveredResource {
+				return row("network-firewall", "firewall-policy", p.Name, p.ARN, p.Tags)
+			})
+		},
+		func() ([]resourcediscovery.DiscoveredResource, error) {
+			return pageRows(func(token string) ([]nfdriver.RuleGroup, string, error) {
+				return nf.ListRuleGroups(ctx, nfdriver.RuleGroupFilter{}, nfdriver.ListOptions{NextToken: token})
+			}, func(g *nfdriver.RuleGroup) resourcediscovery.DiscoveredResource {
+				return row("network-firewall", "rule-group", g.Name, g.ARN, g.Tags)
+			})
+		},
+		func() ([]resourcediscovery.DiscoveredResource, error) {
+			return pageRows(func(token string) ([]nfdriver.TLSInspectionConfig, string, error) {
+				return nf.ListTLSInspectionConfigurations(ctx, nfdriver.ListOptions{NextToken: token})
+			}, func(c *nfdriver.TLSInspectionConfig) resourcediscovery.DiscoveredResource {
+				return row("network-firewall", "tls-configuration", c.Name, c.ARN, c.Tags)
+			})
+		},
+		func() ([]resourcediscovery.DiscoveredResource, error) {
+			return pageRows(func(token string) ([]nfdriver.VPCEndpointAssociation, string, error) {
+				return nf.ListVpcEndpointAssociations(ctx, "", nfdriver.ListOptions{NextToken: token})
+			}, func(a *nfdriver.VPCEndpointAssociation) resourcediscovery.DiscoveredResource {
+				return row("network-firewall", "vpc-endpoint-association", a.ID, a.ARN, a.Tags)
+			})
+		},
+	}
+
+	var out []resourcediscovery.DiscoveredResource
+
+	for _, collect := range collectors {
+		rows, err := collect()
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, rows...)
+	}
+
+	return out, nil
+}
+
+// pageRows drains a NextToken-paginated list call and maps every item to a row.
+func pageRows[T any](
+	list func(token string) ([]T, string, error), toRow func(*T) resourcediscovery.DiscoveredResource,
+) ([]resourcediscovery.DiscoveredResource, error) {
+	items, err := allPages(list)
 	if err != nil {
 		return nil, err
 	}
 
-	return project(ctx, firewalls, func(_ context.Context, f nfdriver.Firewall) (resourcediscovery.DiscoveredResource, error) {
-		return row("network-firewall", "firewall", f.Name, f.ARN, f.Tags), nil
-	})
+	rows := make([]resourcediscovery.DiscoveredResource, 0, len(items))
+	for i := range items {
+		rows = append(rows, toRow(&items[i]))
+	}
+
+	return rows, nil
+}
+
+// allPages drains a NextToken-paginated list call.
+func allPages[T any](list func(token string) ([]T, string, error)) ([]T, error) {
+	var all []T
+
+	token := ""
+
+	for {
+		items, next, err := list(token)
+		if err != nil {
+			return nil, err
+		}
+
+		all = append(all, items...)
+
+		if next == "" {
+			return all, nil
+		}
+
+		token = next
+	}
 }
 
 func (d taggedDiscovery) discoverSESv2(ctx context.Context) ([]resourcediscovery.DiscoveredResource, error) {
@@ -271,124 +351,111 @@ func (d taggedDiscovery) discoverWAFv2(ctx context.Context) ([]resourcediscovery
 }
 
 func (d taggedDiscovery) discoverGlue(ctx context.Context) ([]resourcediscovery.DiscoveredResource, error) {
-	var (
-		out   []resourcediscovery.DiscoveredResource
-		token string
-	)
-
-	for {
-		names, next, err := d.p.Glue.ListJobs(ctx, gluedriver.TablePagination{NextToken: token, MaxResults: pageLimit})
-		if err != nil {
-			return nil, err
-		}
-
-		for _, name := range names {
-			arn := idgen.AWSARN("glue", d.p.Region, d.p.AccountID, "job/"+name)
-
-			tags, err := d.p.Glue.GetTags(ctx, arn)
-			if err != nil {
-				return nil, err
-			}
-
-			out = append(out, row("glue", "job", name, arn, tags))
-		}
-
-		if next == "" {
-			return out, nil
-		}
-
-		token = next
+	names, err := listAll(func(token string) ([]string, string, error) {
+		return d.p.Glue.ListJobs(ctx, gluedriver.TablePagination{NextToken: token, MaxResults: pageLimit})
+	})
+	if err != nil {
+		return nil, err
 	}
+
+	return project(ctx, names, d.glueJobRow)
+}
+
+// glueJobRow reads a Glue job's tags. GetTags reads an ARN-keyed store and
+// returns no error for a job that no longer exists, so GetJob runs first: a job
+// deleted after ListJobs then reports NotFound and is skipped, instead of
+// surfacing as a row for a resource that is gone.
+func (d taggedDiscovery) glueJobRow(ctx context.Context, name string) (resourcediscovery.DiscoveredResource, error) {
+	if _, err := d.p.Glue.GetJob(ctx, name); err != nil {
+		return resourcediscovery.DiscoveredResource{}, err
+	}
+
+	arn := idgen.AWSARN("glue", d.p.Region, d.p.AccountID, "job/"+name)
+	tags, err := d.p.Glue.GetTags(ctx, arn)
+
+	return row("glue", "job", name, arn, tags), err
 }
 
 func (d taggedDiscovery) discoverKafka(ctx context.Context) ([]resourcediscovery.DiscoveredResource, error) {
-	var (
-		out   []resourcediscovery.DiscoveredResource
-		token string
-	)
-
-	for {
-		clusters, next, err := d.p.Kafka.ListClusters(ctx, "", kafkadriver.Page{NextToken: token, MaxResults: pageLimit})
-		if err != nil {
-			return nil, err
-		}
-
-		for i := range clusters {
-			tags, err := d.p.Kafka.ListTagsForResource(ctx, clusters[i].ClusterARN)
-			if err != nil {
-				return nil, err
-			}
-
-			out = append(out, row("kafka", "cluster", clusters[i].ClusterName, clusters[i].ClusterARN, tags))
-		}
-
-		if next == "" {
-			return out, nil
-		}
-
-		token = next
+	clusters, err := listAll(func(token string) ([]kafkadriver.Cluster, string, error) {
+		return d.p.Kafka.ListClusters(ctx, "", kafkadriver.Page{NextToken: token, MaxResults: pageLimit})
+	})
+	if err != nil {
+		return nil, err
 	}
+
+	return project(ctx, clusters, d.kafkaRow)
+}
+
+//nolint:gocritic // hugeParam: the signature is project's by-value per-item callback.
+func (d taggedDiscovery) kafkaRow(ctx context.Context, c kafkadriver.Cluster) (resourcediscovery.DiscoveredResource, error) {
+	tags, err := d.p.Kafka.ListTagsForResource(ctx, c.ClusterARN)
+
+	return row("kafka", "cluster", c.ClusterName, c.ClusterARN, tags), err
 }
 
 func (d taggedDiscovery) discoverKinesis(ctx context.Context) ([]resourcediscovery.DiscoveredResource, error) {
-	var (
-		out   []resourcediscovery.DiscoveredResource
-		token string
-	)
-
-	for {
+	streams, err := listAll(func(token string) ([]kinesisdriver.StreamSummary, string, error) {
 		res, err := d.p.Kinesis.ListStreams(ctx, token, "", pageLimit)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 
-		for i := range res.StreamSummaries {
-			s := res.StreamSummaries[i]
-
-			tags, err := d.p.Kinesis.ListTagsForResource(ctx, s.StreamARN)
-			if err != nil {
-				return nil, err
-			}
-
-			out = append(out, row("kinesis", "stream", s.StreamName, s.StreamARN, tags))
+		if !res.HasMoreStreams {
+			return res.StreamSummaries, "", nil
 		}
 
-		if !res.HasMoreStreams || res.NextToken == "" {
-			return out, nil
-		}
-
-		token = res.NextToken
+		return res.StreamSummaries, res.NextToken, nil
+	})
+	if err != nil {
+		return nil, err
 	}
+
+	return project(ctx, streams, d.kinesisRow)
+}
+
+//nolint:gocritic // hugeParam: the signature is project's by-value per-item callback.
+func (d taggedDiscovery) kinesisRow(ctx context.Context, s kinesisdriver.StreamSummary) (resourcediscovery.DiscoveredResource, error) {
+	tags, err := d.p.Kinesis.ListTagsForResource(ctx, s.StreamARN)
+
+	return row("kinesis", "stream", s.StreamName, s.StreamARN, tags), err
 }
 
 func (d taggedDiscovery) discoverGuardDuty(ctx context.Context) ([]resourcediscovery.DiscoveredResource, error) {
-	var (
-		out   []resourcediscovery.DiscoveredResource
-		token string
-	)
-
-	for {
-		ids, next, err := d.p.GuardDuty.ListDetectors(ctx, guarddutydriver.Page{NextToken: token, MaxResults: pageLimit})
-		if err != nil {
-			return nil, err
-		}
-
-		for _, id := range ids {
-			det, err := d.p.GuardDuty.GetDetector(ctx, id)
-			if err != nil {
-				return nil, err
-			}
-
-			arn := idgen.AWSARN("guardduty", d.p.Region, d.p.AccountID, "detector/"+id)
-			out = append(out, row("guardduty", "detector", id, arn, det.Tags))
-		}
-
-		if next == "" {
-			return out, nil
-		}
-
-		token = next
+	ids, err := d.listGuardDutyDetectors(ctx)
+	if err != nil {
+		return nil, err
 	}
+
+	return project(ctx, ids, d.guardDutyRow)
+}
+
+func (d taggedDiscovery) listGuardDutyDetectors(ctx context.Context) ([]string, error) {
+	return listAll(func(token string) ([]string, string, error) {
+		return d.p.GuardDuty.ListDetectors(ctx, guarddutydriver.Page{NextToken: token, MaxResults: pageLimit})
+	})
+}
+
+// guardDutyRow reads a detector's tags through GetDetector. Like real GuardDuty,
+// GetDetector reports a detector that does not exist as BadRequestException,
+// not NotFound, so the error alone can't tell a deleted detector from a real
+// failure. When GetDetector fails, a fresh ListDetectors decides: if the
+// detector is no longer listed it was deleted after the walk listed it, and the
+// row is reported as NotFound so project skips it. Otherwise the original error
+// propagates.
+func (d taggedDiscovery) guardDutyRow(ctx context.Context, id string) (resourcediscovery.DiscoveredResource, error) {
+	det, err := d.p.GuardDuty.GetDetector(ctx, id)
+	if err != nil {
+		if ids, lerr := d.listGuardDutyDetectors(ctx); lerr == nil && !slices.Contains(ids, id) {
+			return resourcediscovery.DiscoveredResource{}, cerrors.Newf(cerrors.NotFound, "detector %s was deleted", id)
+		}
+
+		return resourcediscovery.DiscoveredResource{}, err
+	}
+
+	arn := idgen.AWSARN("guardduty", d.p.Region, d.p.AccountID, "detector/"+id)
+
+	return row("guardduty", "detector", id, arn, det.Tags), nil
 }
 
 func (d taggedDiscovery) discoverConfig(ctx context.Context) ([]resourcediscovery.DiscoveredResource, error) {
@@ -419,6 +486,12 @@ func (d taggedDiscovery) discoverConfig(ctx context.Context) ([]resourcediscover
 // collected rows. It factors out the identical enumerate → read-tags → row loop
 // the single-list discoverers share. The projection returns its error last so a
 // tag-read failure inside fn short-circuits the walk with that error.
+//
+// A NotFound from fn means the resource was deleted between the list call and
+// its tag read. It is skipped, the same as a resource that was never listed,
+// so a delete racing GetResources doesn't fail the whole inventory (the
+// resourcediscovery walkers handle this race the same way). Any other error
+// still propagates.
 func project[T any](ctx context.Context, items []T,
 	fn func(context.Context, T) (resourcediscovery.DiscoveredResource, error),
 ) ([]resourcediscovery.DiscoveredResource, error) {
@@ -426,6 +499,10 @@ func project[T any](ctx context.Context, items []T,
 
 	for i := range items {
 		r, err := fn(ctx, items[i])
+		if cerrors.IsNotFound(err) {
+			continue
+		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -434,6 +511,30 @@ func project[T any](ctx context.Context, items []T,
 	}
 
 	return out, nil
+}
+
+// listAll follows a NextToken-paginated list call to its last page and returns
+// every item, so a paginated walker can hand the full list to project.
+func listAll[T any](list func(token string) ([]T, string, error)) ([]T, error) {
+	var (
+		all   []T
+		token string
+	)
+
+	for {
+		items, next, err := list(token)
+		if err != nil {
+			return nil, err
+		}
+
+		all = append(all, items...)
+
+		if next == "" {
+			return all, nil
+		}
+
+		token = next
+	}
 }
 
 // row builds a DiscoveredResource, dropping an empty tag map so a resource with

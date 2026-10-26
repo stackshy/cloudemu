@@ -16,6 +16,16 @@
 //	PutLogEvents        GetLogEvents        FilterLogEvents
 //	PutMetricFilter     DescribeMetricFilters DeleteMetricFilter
 //	PutSubscriptionFilter DescribeSubscriptionFilters DeleteSubscriptionFilter
+//	PutRetentionPolicy  DeleteRetentionPolicy ListLogGroups
+//	AssociateKmsKey     DisassociateKmsKey  TestMetricFilter
+//	StartQuery GetQueryResults StopQuery DescribeQueries GetLogRecord GetLogGroupFields
+//	CreateExportTask    DescribeExportTasks CancelExportTask
+//	PutDataProtectionPolicy GetDataProtectionPolicy DeleteDataProtectionPolicy
+//	PutAccountPolicy    DescribeAccountPolicies DeleteAccountPolicy
+//	TagResource / UntagResource / ListTagsForResource (and the legacy *LogGroup forms)
+//
+// CloudWatch Logs-only operations go through the optional driver.AWSLogging
+// interface, which the AWS backend implements.
 package cloudwatchlogs
 
 import (
@@ -80,19 +90,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// dispatchManagement handles the retention, metric-filter, and
-// subscription-filter operations, delegating tagging (and the
-// unknown-operation error) to dispatchTags.
+// dispatchManagement handles the metric-filter and subscription-filter
+// operations, delegating the log-group settings, tagging, and the
+// unknown-operation error to dispatchGroupSettings.
 func (h *Handler) dispatchManagement(w http.ResponseWriter, r *http.Request, op string) {
 	switch op {
-	case "PutRetentionPolicy":
-		h.putRetentionPolicy(w, r)
 	case "PutMetricFilter":
 		h.putMetricFilter(w, r)
 	case "DescribeMetricFilters":
 		h.describeMetricFilters(w, r)
 	case "DeleteMetricFilter":
 		h.deleteMetricFilter(w, r)
+	case "TestMetricFilter":
+		h.testMetricFilter(w, r)
 	case "PutSubscriptionFilter":
 		h.putSubscriptionFilter(w, r)
 	case "DescribeSubscriptionFilters":
@@ -100,7 +110,47 @@ func (h *Handler) dispatchManagement(w http.ResponseWriter, r *http.Request, op 
 	case "DeleteSubscriptionFilter":
 		h.deleteSubscriptionFilter(w, r)
 	default:
-		h.dispatchTags(w, r, op)
+		h.dispatchGroupSettings(w, r, op)
+	}
+}
+
+// dispatchGroupSettings handles retention, ListLogGroups, and KMS key
+// association, delegating tagging to dispatchTags.
+func (h *Handler) dispatchGroupSettings(w http.ResponseWriter, r *http.Request, op string) {
+	switch op {
+	case "PutRetentionPolicy":
+		h.putRetentionPolicy(w, r)
+	case "DeleteRetentionPolicy":
+		h.deleteRetentionPolicy(w, r)
+	case "ListLogGroups":
+		h.listLogGroups(w, r)
+	case "AssociateKmsKey":
+		h.associateKmsKey(w, r)
+	case "DisassociateKmsKey":
+		h.disassociateKmsKey(w, r)
+	default:
+		h.dispatchInsights(w, r, op)
+	}
+}
+
+// dispatchInsights handles the Logs Insights operations, delegating export
+// tasks and tagging to dispatchExport.
+func (h *Handler) dispatchInsights(w http.ResponseWriter, r *http.Request, op string) {
+	switch op {
+	case "StartQuery":
+		h.startQuery(w, r)
+	case "GetQueryResults":
+		h.getQueryResults(w, r)
+	case "StopQuery":
+		h.stopQuery(w, r)
+	case "DescribeQueries":
+		h.describeQueries(w, r)
+	case "GetLogRecord":
+		h.getLogRecord(w, r)
+	case "GetLogGroupFields":
+		h.getLogGroupFields(w, r)
+	default:
+		h.dispatchExport(w, r, op)
 	}
 }
 
@@ -116,47 +166,25 @@ func (h *Handler) dispatchTags(w http.ResponseWriter, r *http.Request, op string
 	case "ListTagsForResource", "ListTagsLogGroup":
 		h.listTagsForResource(w, r)
 	default:
-		wire.WriteJSONError(w, http.StatusBadRequest,
-			"UnknownOperationException", "unknown CloudWatch Logs operation: "+op)
+		writeUnknownOperation(w, op)
 	}
 }
 
-// putRetentionPolicy sets a log group's retention (SSM PutRetentionPolicy),
-// backed by the driver's UpdateLogGroup.
-func (h *Handler) putRetentionPolicy(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		LogGroupName    string `json:"logGroupName"`
-		RetentionInDays int    `json:"retentionInDays"`
-	}
-
-	if !wire.DecodeJSON(w, r, &req) {
-		return
-	}
-
-	if !validRetentionInDays[req.RetentionInDays] {
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterException",
-			"retentionInDays is not a valid value")
-		return
-	}
-
-	if _, err := h.logs.UpdateLogGroup(r.Context(), logdriver.LogGroupConfig{
-		Name: req.LogGroupName, RetentionDays: req.RetentionInDays,
-	}); err != nil {
-		writeErr(w, err)
-		return
-	}
-
-	wire.WriteJSON(w, struct{}{})
+func writeUnknownOperation(w http.ResponseWriter, op string) {
+	wire.WriteJSONError(w, http.StatusBadRequest,
+		"UnknownOperationException", "unknown CloudWatch Logs operation: "+op)
 }
 
-// validRetentionInDays is the closed set of retentionInDays values CloudWatch
-// Logs accepts; any other value is rejected with InvalidParameterException.
-//
-//nolint:gochecknoglobals // fixed lookup table for a closed enum.
-var validRetentionInDays = map[int]bool{
-	1: true, 3: true, 5: true, 7: true, 14: true, 30: true, 60: true, 90: true,
-	120: true, 150: true, 180: true, 365: true, 400: true, 545: true, 731: true,
-	1096: true, 1827: true, 2192: true, 2557: true, 2922: true, 3288: true, 3653: true,
+// awsLogs returns the CloudWatch Logs-only driver surface. When the backend
+// does not implement it, the operation is answered as unknown, which is what
+// a backend without the operation would do.
+func (h *Handler) awsLogs(w http.ResponseWriter, op string) (logdriver.AWSLogging, bool) {
+	ext, ok := h.logs.(logdriver.AWSLogging)
+	if !ok {
+		writeUnknownOperation(w, op)
+	}
+
+	return ext, ok
 }
 
 // writeErr maps canonical cloudemu errors to CloudWatch Logs JSON error

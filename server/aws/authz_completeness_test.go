@@ -93,7 +93,7 @@ func TestHandlerIAMServicesMatchTable(t *testing.T) {
 		"*athena.Handler": "athena", "*cognito.Handler": "cognito-idp", "*cognito.WellKnown": "cognito-idp", "*configservice.Handler": "config",
 		"*wafv2.Handler": "wafv2", "*ecs.Handler": "ecs", "*ecr.Handler": "ecr", "*route53resolver.Handler": "route53resolver",
 		"*eventbridge.Handler": "events", "*cloudwatchlogs.Handler": "logs", "*secretsmanager.Handler": "secretsmanager",
-		"*keyspaces.Handler": "cassandra", "*memorydb.Handler": "memorydb", "*networkfirewall.Handler": "network-firewall",
+		"*keyspaces.Handler": "cassandra", "*keyspaces.CBORHandler": "cassandra", "*memorydb.Handler": "memorydb", "*networkfirewall.Handler": "network-firewall",
 		"*resourcegroupstaggingapi.Handler": "tag", "*transfer.Handler": "transfer", "*timestreamwrite.Handler": "timestream",
 		"*healthlake.Handler": "healthlake", "*apprunner.Handler": "apprunner", "*globalaccelerator.Handler": "globalaccelerator",
 		"*costexplorer.Handler": "ce", "*servicequotas.Handler": "servicequotas", "*emr.Handler": "elasticmapreduce",

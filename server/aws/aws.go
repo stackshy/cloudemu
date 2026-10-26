@@ -587,7 +587,8 @@ func NewFromProvider(p *awsprovider.Provider) *server.Server {
 // non-nil driver in d. Handlers are registered most-specific-first so the
 // dispatch is unambiguous:
 //
-//   - CloudWatch matches on Smithy-Protocol: rpc-v2-cbor header.
+//   - Keyspaces rpc-v2-cbor matches its own /service/KeyspacesService/ path;
+//     CloudWatch then matches any other Smithy-Protocol: rpc-v2-cbor request.
 //   - DynamoDB matches on X-Amz-Target header (JSON-RPC).
 //   - RDS matches form-encoded POSTs whose Action is one of the known RDS
 //     operations. It must register before EC2 because both speak the AWS
@@ -623,6 +624,14 @@ type authzSets struct {
 func newServer(d Drivers) (*server.Server, authzSets) {
 	srv := server.New()
 
+	// STS records the sessions it mints here; EKS reads the cluster creator and
+	// SQS the message SenderId from it, so all of them see the caller the same
+	// way.
+	identities := d.Identities
+	if identities == nil {
+		identities = awsidentity.New(d.AccountID, d.IAM)
+	}
+
 	// The auth gate reads X-Amz-Target only for the handlers registered
 	// through rpc, which route on that header.
 	jsonRPC := map[server.Handler]bool{}
@@ -650,6 +659,14 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 		srv.Register(bedrockagentruntime.New(d.BedrockAgentRuntime))
 	}
 
+	// Keyspaces rpc-v2-cbor (aws-sdk-go-v2/service/keyspaces v1.37.0+, so
+	// hashicorp/aws 6.69+) matches only /service/KeyspacesService/operation/*.
+	// It registers before CloudWatch, which claims every other rpc-v2-cbor
+	// request under /service/. The AWS JSON 1.0 handler registers below.
+	if d.Keyspaces != nil {
+		srv.Register(keyspacessrv.NewCBOR(d.Keyspaces))
+	}
+
 	if d.CloudWatch != nil {
 		// The VPC driver optionally supplies derived AWS/IPAM metrics; surface
 		// them through CloudWatch when it implements the capability.
@@ -673,7 +690,9 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 	// prefix (AmazonSQS.* vs DynamoDB_20120810.*); their Matches predicates
 	// are mutually exclusive.
 	if d.SQS != nil {
-		srv.Register(sqs.New(d.SQS))
+		sqsHandler := sqs.New(d.SQS)
+		sqsHandler.SetIdentities(identities)
+		srv.Register(sqsHandler)
 	}
 
 	// Resource Groups Tagging API: X-Amz-Target prefix
@@ -1137,13 +1156,6 @@ func newServer(d Drivers) (*server.Server, authzSets) {
 	stsSessions := d.STSSessions
 	if stsSessions == nil && d.EnforceAuth {
 		stsSessions = stssrv.NewSessionStore(authClock)
-	}
-
-	// STS records the sessions it mints here, and EKS reads the cluster
-	// creator from it, so both see the caller the same way.
-	identities := d.Identities
-	if identities == nil {
-		identities = awsidentity.New(d.AccountID, d.IAM)
 	}
 
 	if d.STS {

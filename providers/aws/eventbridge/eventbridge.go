@@ -10,6 +10,7 @@ import (
 	"maps"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -18,6 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -95,6 +97,31 @@ type Mock struct {
 	sns        SNSPublisher
 	sfn        StepFunctionsStarter
 	tagsByARN  tagStore
+
+	archives *memstore.Store[*archiveData]
+
+	connections     *memstore.Store[connectionData]
+	apiDestinations *memstore.Store[driver.APIDestination]
+	endpoints       *memstore.Store[driver.Endpoint]
+	partnerSources  *memstore.Store[partnerSource]
+	// endpointSettle holds each global endpoint's CREATING/UPDATING window.
+	endpointSettle *settle.Set
+	// secrets holds each connection's credentials; nil leaves SecretArn a bare
+	// identifier.
+	secrets ConnectionSecretStore
+
+	// httpClient calls API destination targets; tokens caches each OAuth
+	// connection's access token and limiter enforces each destination's
+	// invocation rate. None of them is held locked during a call.
+	httpClient HTTPDoer
+	tokens     tokenCache
+	limiter    rateLimiter
+	// apiDestSlots bounds how many API destination deliveries run at once.
+	apiDestSlots chan struct{}
+	replays      *memstore.Store[driver.Replay]
+	// activeReplays counts replays currently delivering, bounded by
+	// maxActiveReplays.
+	activeReplays atomic.Int32
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -139,8 +166,18 @@ func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64,
 // New creates a new EventBridge mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	m := &Mock{
-		buses: memstore.New[*busData](),
-		opts:  opts,
+		buses:    memstore.New[*busData](),
+		opts:     opts,
+		archives: memstore.New[*archiveData](),
+		replays:  memstore.New[driver.Replay](),
+
+		connections:     memstore.New[connectionData](),
+		apiDestinations: memstore.New[driver.APIDestination](),
+		endpoints:       memstore.New[driver.Endpoint](),
+		partnerSources:  memstore.New[partnerSource](),
+		endpointSettle:  settle.NewSet(),
+		httpClient:      defaultHTTPClient(),
+		apiDestSlots:    make(chan struct{}, maxAPIDestinationDeliveries),
 	}
 
 	// Create the default event bus automatically.
@@ -161,14 +198,18 @@ func New(opts *config.Options) *Mock {
 	return m
 }
 
-// CreateEventBus creates a new EventBridge event bus.
+// CreateEventBus creates a new EventBridge event bus. With EventSourceName set
+// it creates the partner event bus matched to that partner event source, which
+// becomes ACTIVE.
 func (m *Mock) CreateEventBus(_ context.Context, cfg driver.EventBusConfig) (*driver.EventBusInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "event bus name is required")
 	}
 
-	if m.buses.Has(cfg.Name) {
-		return nil, errors.Newf(errors.AlreadyExists, "event bus %q already exists", cfg.Name)
+	if cfg.EventSourceName != "" {
+		if err := m.checkPartnerBus(&cfg); err != nil {
+			return nil, err
+		}
 	}
 
 	busARN := idgen.AWSARN("events", m.opts.Region, m.opts.AccountID, "event-bus/"+cfg.Name)
@@ -194,7 +235,18 @@ func (m *Mock) CreateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 		events: []driver.Event{},
 	}
 
-	m.buses.Set(cfg.Name, bd)
+	if !m.buses.SetIfAbsent(cfg.Name, bd) {
+		return nil, errors.Newf(errors.AlreadyExists, "event bus %q already exists", cfg.Name)
+	}
+
+	if cfg.EventSourceName != "" {
+		// The source may have been deleted since checkPartnerBus looked.
+		if err := m.transitionOwnSource(cfg.EventSourceName, activate(cfg.EventSourceName)); err != nil {
+			m.buses.Delete(cfg.Name)
+
+			return nil, err
+		}
+	}
 
 	// Seed the ARN-keyed tag store so create-time tags are visible to
 	// ListTagsForResource, matching real EventBridge.
@@ -207,7 +259,8 @@ func (m *Mock) CreateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 	return &result, nil
 }
 
-// DeleteEventBus deletes an EventBridge event bus.
+// DeleteEventBus deletes an EventBridge event bus. Deleting a partner event bus
+// moves its event source back to PENDING.
 func (m *Mock) DeleteEventBus(_ context.Context, name string) error {
 	if name == defaultBusName {
 		return errors.New(errors.InvalidArgument, "cannot delete the default event bus")
@@ -216,6 +269,8 @@ func (m *Mock) DeleteEventBus(_ context.Context, name string) error {
 	if !m.buses.Delete(name) {
 		return errors.Newf(errors.NotFound, "event bus %q not found", name)
 	}
+
+	m.releasePartnerSource(name)
 
 	return nil
 }
@@ -312,8 +367,8 @@ func (m *Mock) PutRule(_ context.Context, cfg *driver.RuleConfig) (*driver.Rule,
 		targets: memstore.New[driver.Target](),
 	}
 
-	for _, t := range rule.Targets {
-		rd.targets.Set(t.ID, t)
+	for i := range rule.Targets {
+		rd.targets.Set(rule.Targets[i].ID, rule.Targets[i])
 	}
 
 	bd.rules.Set(cfg.Name, rd)
@@ -431,6 +486,10 @@ func (m *Mock) setRuleState(eventBus, ruleName, state string) error {
 
 // PutTargets adds targets to a rule.
 func (m *Mock) PutTargets(_ context.Context, eventBus, ruleName string, targets []driver.Target) error {
+	if err := validateTargetInputs(targets); err != nil {
+		return err
+	}
+
 	busName := eventBus
 	if busName == "" {
 		busName = defaultBusName
@@ -446,8 +505,8 @@ func (m *Mock) PutTargets(_ context.Context, eventBus, ruleName string, targets 
 		return errors.Newf(errors.NotFound, "rule %q not found on event bus %q", ruleName, busName)
 	}
 
-	for _, t := range targets {
-		rd.targets.Set(t.ID, t)
+	for i := range targets {
+		rd.targets.Set(targets[i].ID, targets[i])
 	}
 
 	rd.rule.Targets = targetsFromStore(rd.targets)
@@ -503,47 +562,6 @@ func (m *Mock) ListTargets(_ context.Context, eventBus, ruleName string) ([]driv
 	return targetsFromStore(rd.targets), nil
 }
 
-// PutEvents publishes events to the event bus.
-func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.PublishResult, error) {
-	result := &driver.PublishResult{
-		EventIDs: make([]string, 0, len(events)),
-	}
-
-	for i := range events {
-		eventID := generateEventID(&events[i], m.opts.Clock.Now(), i)
-		events[i].ID = eventID
-
-		if events[i].Time.IsZero() {
-			events[i].Time = m.opts.Clock.Now()
-		}
-
-		busName := events[i].EventBus
-		if busName == "" {
-			busName = defaultBusName
-		}
-
-		bd, ok := m.buses.Get(busName)
-		if !ok {
-			result.FailCount++
-
-			continue
-		}
-
-		m.storeEvent(bd, &events[i])
-		matched := m.MatchedRules(&events[i])
-		m.deliverToTargets(ctx, matched, &events[i])
-
-		dims := map[string]string{"EventBusName": busName}
-		m.emitMetric(ctx, "PutEventsRequestCount", 1, dims)
-		m.emitMetric(ctx, "MatchedEvents", float64(len(matched)), dims)
-
-		result.SuccessCount++
-		result.EventIDs = append(result.EventIDs, eventID)
-	}
-
-	return result, nil
-}
-
 // PublishServiceEvent puts a native AWS service lifecycle event (EC2 instance
 // state change, ECS task state change, ...) on the default event bus, the way
 // real AWS services publish to the account's default bus automatically. The
@@ -587,13 +605,18 @@ func (m *Mock) PublishServiceEvent(ctx context.Context, source, detailType strin
 // A target whose dispatch fails is routed to its configured DeadLetterConfig
 // queue (see deliverToTarget), matching real EventBridge's DLQ behavior.
 func (m *Mock) deliverToTargets(ctx context.Context, matched []driver.Rule, event *driver.Event) {
+	m.deliverEnvelope(ctx, matched, event, m.eventEnvelope(event))
+}
+
+// deliverEnvelope delivers an already-rendered envelope for event to the
+// targets of the matched rules. Replays use it to deliver an envelope that
+// carries the replay name.
+func (m *Mock) deliverEnvelope(ctx context.Context, matched []driver.Rule, event *driver.Event, envelope []byte) {
 	// Decouple delivery from the caller's cancellation/deadline (real EventBridge
 	// delivery is asynchronous) while carrying forward the re-entrant delivery
 	// depth so a Lambda target that re-publishes an event stays bounded (the guard
 	// lives in lambda.InvokeExternal).
 	dctx := recursionguard.WithDepth(context.Background(), recursionguard.Depth(ctx))
-
-	envelope := m.eventEnvelope(event)
 
 	busName := event.EventBus
 	if busName == "" {
@@ -616,14 +639,41 @@ func (m *Mock) deliverToTargets(ctx context.Context, matched []driver.Rule, even
 
 // deliverToTarget dispatches one target and, on failure, routes the original
 // event to the target's dead-letter queue when one is configured.
+//
+// An API destination target is called over HTTP in the background (see
+// goDeliverAPIDestination), so a slow or rate-limited endpoint never holds up
+// the PutEvents caller. Every other target is dispatched in line.
 func (m *Mock) deliverToTarget(
 	ctx context.Context, rule *driver.Rule, t *driver.Target, busName string, envelope []byte, reserved map[string]json.RawMessage,
 ) {
-	if m.dispatchTarget(ctx, t.ARN, targetBody(t, envelope, reserved)) {
+	body := targetBody(t, envelope, reserved)
+
+	if isAPIDestination(t.ARN) {
+		target, ruleName := *t, rule.Name
+		// The delivery outlives the PutEvents request, whose context the HTTP
+		// server cancels once the handler returns.
+		bgCtx := context.WithoutCancel(ctx)
+
+		m.goDeliverAPIDestination(func() {
+			if !m.dispatchAPIDestination(bgCtx, &target, body) {
+				m.deadLetter(bgCtx, ruleName, &target, busName, envelope)
+			}
+		})
+
 		return
 	}
 
-	dims := map[string]string{"RuleName": rule.Name, "EventBusName": busName}
+	if m.dispatchTarget(ctx, t.ARN, body) {
+		return
+	}
+
+	m.deadLetter(ctx, rule.Name, t, busName, envelope)
+}
+
+// deadLetter records a failed delivery and sends the original event to the
+// target's dead-letter queue when one is configured.
+func (m *Mock) deadLetter(ctx context.Context, ruleName string, t *driver.Target, busName string, envelope []byte) {
+	dims := map[string]string{"RuleName": ruleName, busDimension: busName}
 	m.emitMetric(ctx, "FailedInvocations", 1, dims)
 
 	dlqARN := deadLetterARN(t.DeadLetterConfig)
@@ -768,8 +818,37 @@ func envelopeWithoutDetail(envelope []byte) json.RawMessage {
 	return out
 }
 
+// Envelope keys shared by the delivered envelope and the object patterns match.
+const (
+	envKeySource     = "source"
+	envKeyDetailType = "detail-type"
+)
+
 // eventEnvelope renders the standard EventBridge delivery envelope for an event.
 func (m *Mock) eventEnvelope(event *driver.Event) []byte {
+	return marshalEnvelope(m.envelopeFields(event))
+}
+
+// replayEnvelope renders the envelope of a replayed event, which carries the
+// name of the replay that sent it in a top-level "replay-name" field.
+func (m *Mock) replayEnvelope(event *driver.Event, replayName string) []byte {
+	fields := m.envelopeFields(event)
+	fields["replay-name"] = replayName
+
+	return marshalEnvelope(fields)
+}
+
+func marshalEnvelope(fields map[string]any) []byte {
+	body, err := json.Marshal(fields)
+	if err != nil {
+		return []byte("{}")
+	}
+
+	return body
+}
+
+// envelopeFields returns the fields of the standard EventBridge envelope.
+func (m *Mock) envelopeFields(event *driver.Event) map[string]any {
 	detail := json.RawMessage(event.Detail)
 	if len(detail) == 0 {
 		detail = json.RawMessage("{}")
@@ -783,22 +862,17 @@ func (m *Mock) eventEnvelope(event *driver.Event) []byte {
 		resources = []string{}
 	}
 
-	body, err := json.Marshal(map[string]any{
-		"version":     "0",
-		"id":          event.ID,
-		"detail-type": event.DetailType,
-		"source":      event.Source,
-		"account":     m.opts.AccountID,
-		"time":        event.Time.UTC().Format(time.RFC3339),
-		"region":      m.opts.Region,
-		"resources":   resources,
-		"detail":      detail,
-	})
-	if err != nil {
-		return []byte("{}")
+	return map[string]any{
+		"version":        "0",
+		"id":             event.ID,
+		envKeyDetailType: event.DetailType,
+		envKeySource:     event.Source,
+		"account":        m.opts.AccountID,
+		"time":           event.Time.UTC().Format(time.RFC3339),
+		"region":         m.opts.Region,
+		"resources":      resources,
+		"detail":         detail,
 	}
-
-	return body
 }
 
 // GetEventHistory retrieves event history for an event bus.
@@ -841,8 +915,8 @@ func targetsFromStore(store *memstore.Store[driver.Target]) []driver.Target {
 	all := store.All()
 
 	targets := make([]driver.Target, 0, len(all))
-	for _, t := range all {
-		targets = append(targets, t)
+	for id := range all {
+		targets = append(targets, all[id])
 	}
 
 	return targets
@@ -899,8 +973,8 @@ func matchesPattern(event *driver.Event, pattern string) bool {
 // reach into it; an unparsable detail is treated as an empty object.
 func eventObject(event *driver.Event) map[string]any {
 	obj := map[string]any{
-		"source":      event.Source,
-		"detail-type": event.DetailType,
+		envKeySource:     event.Source,
+		envKeyDetailType: event.DetailType,
 	}
 
 	if len(event.Resources) > 0 {

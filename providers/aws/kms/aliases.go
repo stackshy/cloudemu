@@ -121,8 +121,30 @@ func (m *Mock) ListAliases(_ context.Context, keyID string) ([]driver.Alias, err
 	return out, nil
 }
 
+// reservedTagPrefix is the tag-key namespace AWS reserves for system tags.
+// User-defined tags can't use it ("You can't edit or delete a tag that begins
+// with the aws: prefix"); KMS rejects such a tag with TagException.
+const reservedTagPrefix = "aws:"
+
+// validateTags rejects tags KMS refuses: a key in the reserved "aws:"
+// namespace (matched case-insensitively, as AWS tagging treats the prefix).
+func validateTags(tags map[string]string) error {
+	for k := range tags {
+		if strings.HasPrefix(strings.ToLower(k), reservedTagPrefix) {
+			return driver.NewAPIError(driver.ExTag, errors.InvalidArgument,
+				"Tag key %q is invalid: the aws: prefix is reserved for AWS use", k)
+		}
+	}
+
+	return nil
+}
+
 // TagResource adds or overwrites tags on a key.
 func (m *Mock) TagResource(_ context.Context, keyID string, tags map[string]string) error {
+	if err := validateTags(tags); err != nil {
+		return err
+	}
+
 	return m.mutateKey(keyID, func(kd *keyData) error {
 		for k, v := range tags {
 			kd.tags[k] = v

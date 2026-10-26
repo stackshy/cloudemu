@@ -8,7 +8,7 @@ import (
 
 // TagQueue adds or overwrites tags on a queue (SQS TagQueue).
 func (m *Mock) TagQueue(_ context.Context, queueURL string, tags map[string]string) error {
-	qd, ok := m.queues.Get(queueURL)
+	qd, ok := m.accessQueue(queueURL)
 	if !ok {
 		return errors.Newf(errors.NotFound, "queue %q not found", queueURL)
 	}
@@ -29,7 +29,7 @@ func (m *Mock) TagQueue(_ context.Context, queueURL string, tags map[string]stri
 
 // UntagQueue removes tags by key from a queue (SQS UntagQueue).
 func (m *Mock) UntagQueue(_ context.Context, queueURL string, keys []string) error {
-	qd, ok := m.queues.Get(queueURL)
+	qd, ok := m.accessQueue(queueURL)
 	if !ok {
 		return errors.Newf(errors.NotFound, "queue %q not found", queueURL)
 	}
@@ -46,7 +46,7 @@ func (m *Mock) UntagQueue(_ context.Context, queueURL string, keys []string) err
 
 // ListQueueTags returns a queue's tags (SQS ListQueueTags).
 func (m *Mock) ListQueueTags(_ context.Context, queueURL string) (map[string]string, error) {
-	qd, ok := m.queues.Get(queueURL)
+	qd, ok := m.accessQueue(queueURL)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "queue %q not found", queueURL)
 	}

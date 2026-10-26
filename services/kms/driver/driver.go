@@ -15,6 +15,8 @@ const (
 	UsageEncryptDecrypt    = "ENCRYPT_DECRYPT"
 	UsageSignVerify        = "SIGN_VERIFY"
 	UsageGenerateVerifyMac = "GENERATE_VERIFY_MAC"
+	// UsageKeyAgreement marks an NIST ECC key pair used with DeriveSharedSecret.
+	UsageKeyAgreement = "KEY_AGREEMENT"
 )
 
 // Key spec values (the algorithm/parameters of the key material).
@@ -38,12 +40,17 @@ const (
 	StateDisabled        = "Disabled"
 	StatePendingDeletion = "PendingDeletion"
 	StatePendingImport   = "PendingImport"
+	// StateUnavailable is reported for a key in a custom key store while the
+	// store is not connected. It is derived when the key is read, never stored.
+	StateUnavailable = "Unavailable"
 )
 
 // Key origin values.
 const (
-	OriginAWSKMS   = "AWS_KMS"
-	OriginExternal = "EXTERNAL"
+	OriginAWSKMS           = "AWS_KMS"
+	OriginExternal         = "EXTERNAL"
+	OriginAWSCloudHSM      = "AWS_CLOUDHSM"
+	OriginExternalKeyStore = "EXTERNAL_KEY_STORE"
 )
 
 // Key manager values.
@@ -74,10 +81,18 @@ type KeyMetadata struct {
 	// Algorithm lists advertised for the key, populated from KeySpec+KeyUsage.
 	// Only the one matching the usage is set: EncryptionAlgorithms for
 	// ENCRYPT_DECRYPT, SigningAlgorithms for SIGN_VERIFY, MacAlgorithms for
-	// GENERATE_VERIFY_MAC.
-	EncryptionAlgorithms []string
-	SigningAlgorithms    []string
-	MacAlgorithms        []string
+	// GENERATE_VERIFY_MAC, KeyAgreementAlgorithms for KEY_AGREEMENT.
+	EncryptionAlgorithms   []string
+	SigningAlgorithms      []string
+	MacAlgorithms          []string
+	KeyAgreementAlgorithms []string
+
+	// Custom key store placement (set only for keys created in a custom key
+	// store). CloudHsmClusterID is set for AWS_CLOUDHSM stores and XksKeyID for
+	// EXTERNAL_KEY_STORE stores.
+	CustomKeyStoreID  string
+	CloudHsmClusterID string
+	XksKeyID          string
 
 	// Multi-region configuration (populated only when MultiRegion is true).
 	// MultiRegionKeyType is "PRIMARY" or "REPLICA".
@@ -95,6 +110,10 @@ type CreateKeyInput struct {
 	MultiRegion bool
 	Policy      string
 	Tags        map[string]string
+	// CustomKeyStoreID places the key in a (CONNECTED) custom key store.
+	CustomKeyStoreID string
+	// XksKeyID names the external key backing an EXTERNAL_KEY_STORE key.
+	XksKeyID string
 }
 
 // Alias is a friendly name pointing at a key.
@@ -113,6 +132,7 @@ type KMS interface {
 	Crypto
 	Management
 	KeyImport
+	CustomKeyStores
 
 	// Key lifecycle.
 	CreateKey(ctx context.Context, in CreateKeyInput) (*KeyMetadata, error)

@@ -12,6 +12,9 @@ const (
 	// KindAvailabilityZone marks a mount target placed outside a One Zone
 	// file system's zone.
 	KindAvailabilityZone = "AvailabilityZone"
+	// KindFileSystemState marks an operation rejected because the file system
+	// is not in the "available" lifecycle state (IncorrectFileSystemLifeCycleState).
+	KindFileSystemState = "FileSystemState"
 )
 
 // ResourceError tags a canonical cloudemu error with the EFS resource kind it

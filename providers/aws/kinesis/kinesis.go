@@ -18,6 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/internal/regionctx"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/kinesis/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -66,6 +67,13 @@ type streamData struct {
 	maxRecKiB int32
 	warmMiBps int32
 	seq       int64 // per-stream monotonic sequence counter
+	// createWin overlays CREATING on the stored ACTIVE status for the settle
+	// window after CreateStream; deleteWin (with deleting set) reports DELETING
+	// until the stream is purged. Both are inactive unless config.AsyncSettle
+	// is on, and are transient (not snapshotted), like every settle window.
+	createWin settle.Window
+	deleteWin settle.Window
+	deleting  bool
 	mu        sync.RWMutex
 }
 
@@ -189,7 +197,7 @@ func (m *Mock) resolve(name, arn string) (*streamData, error) {
 		name = n
 	}
 
-	sd, ok := m.streams.Get(name)
+	sd, ok := m.lookup(name)
 	if !ok {
 		return nil, errNotFoundName(name)
 	}

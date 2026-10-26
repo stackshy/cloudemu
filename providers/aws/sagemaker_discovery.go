@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 	sagemakerdriver "github.com/stackshy/cloudemu/v2/services/sagemaker/driver"
 )
@@ -169,6 +170,13 @@ func (a sagemakerDiscovery) DiscoverResources(
 
 		for _, it := range items {
 			tags, err := a.liveTags(ctx, it.arn)
+			// NotFound means the resource was deleted between its list call and
+			// this tag read. Skip it, the same as one that was never listed. Any
+			// other error propagates.
+			if cerrors.IsNotFound(err) {
+				continue
+			}
+
 			if err != nil {
 				return nil, err
 			}

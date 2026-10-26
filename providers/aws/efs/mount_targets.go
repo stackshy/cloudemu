@@ -6,6 +6,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -32,6 +33,11 @@ func (m *Mock) CreateMountTarget(ctx context.Context, in driver.CreateMountTarge
 
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
+
+	// A mount target can only be created once the file system is "available".
+	if err := m.requireAvailableLocked(fd); err != nil {
+		return nil, err
+	}
 
 	vpcID, azName, azIdent := m.mountTargetPlacement(&fd.fs, subnet)
 
@@ -70,7 +76,17 @@ func (m *Mock) CreateMountTarget(ctx context.Context, in driver.CreateMountTarge
 	fd.fs.NumberOfMountTargets = int32(len(fd.mountTgts))
 	m.mtIndex.Set(id, fd.fs.FileSystemID)
 
-	out := *mt
+	// Real EFS returns while the mount target is still "creating"; under
+	// AsyncSettle it reports that until the window elapses.
+	if ready := m.settleDeadline(mountTargetCreateSettle); !ready.IsZero() {
+		if fd.mtReadyAt == nil {
+			fd.mtReadyAt = map[string]time.Time{}
+		}
+
+		fd.mtReadyAt[id] = ready
+	}
+
+	out := m.mtViewLocked(fd, mt)
 
 	return &out, nil
 }
@@ -251,7 +267,9 @@ func (m *Mock) nextIP() string {
 	return fmt.Sprintf("10.0.%d.%d", n/ipSegmentSize, n%ipSegmentSize)
 }
 
-// DeleteMountTarget removes a mount target.
+// DeleteMountTarget removes a mount target. Under AsyncSettle the call returns
+// while the mount target is "deleting" (as real EFS does) and it disappears once
+// the window elapses; a repeated delete of a "deleting" mount target is a no-op.
 func (m *Mock) DeleteMountTarget(_ context.Context, mountTargetID string) error {
 	fsID, ok := m.mtIndex.Get(mountTargetID)
 	if !ok {
@@ -268,11 +286,25 @@ func (m *Mock) DeleteMountTarget(_ context.Context, mountTargetID string) error 
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
 
-	delete(fd.mountTgts, mountTargetID)
-	//nolint:gosec // mount-target count is tiny, never near int32 max
-	fd.fs.NumberOfMountTargets = int32(len(fd.mountTgts))
+	if _, ok := fd.mountTgts[mountTargetID]; !ok {
+		return notFound(driver.KindMountTarget, "mount target %q not found", mountTargetID)
+	}
 
-	m.mtIndex.Delete(mountTargetID)
+	if _, deleting := fd.mtDeleteAt[mountTargetID]; deleting {
+		return nil
+	}
+
+	if at := m.settleDeadline(mountTargetDeleteSettle); !at.IsZero() {
+		if fd.mtDeleteAt == nil {
+			fd.mtDeleteAt = map[string]time.Time{}
+		}
+
+		fd.mtDeleteAt[mountTargetID] = at
+
+		return nil
+	}
+
+	m.removeMountTargetLocked(fd, mountTargetID)
 
 	return nil
 }
@@ -319,7 +351,7 @@ func (m *Mock) mountTargetByID(mountTargetID string) ([]driver.MountTarget, erro
 		return nil, notFound(driver.KindMountTarget, "mount target %q not found", mountTargetID)
 	}
 
-	return []driver.MountTarget{*mt}, nil
+	return []driver.MountTarget{m.mtViewLocked(fd, mt)}, nil
 }
 
 func (m *Mock) mountTargetsOfFS(fileSystemID string) ([]driver.MountTarget, error) {
@@ -333,7 +365,7 @@ func (m *Mock) mountTargetsOfFS(fileSystemID string) ([]driver.MountTarget, erro
 
 	out := make([]driver.MountTarget, 0, len(fd.mountTgts))
 	for _, mt := range fd.mountTgts {
-		out = append(out, *mt)
+		out = append(out, m.mtViewLocked(fd, mt))
 	}
 
 	return out, nil
@@ -407,6 +439,17 @@ func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointI
 	// file-system path is safe the same way: its loser recovers by id, not by
 	// object lookup).
 	fd.mu.Lock()
+
+	// An access point can only be created on an "available" file system. The
+	// check runs under the same lock as the store, so a concurrent
+	// DeleteFileSystem either sees this access point (FileSystemInUse) or has
+	// already marked the file system "deleting" (rejected here).
+	if err := m.requireAvailableLocked(fd); err != nil {
+		fd.mu.Unlock()
+
+		return nil, err
+	}
+
 	ap := &driver.AccessPoint{
 		ClientToken:    in.ClientToken,
 		Name:           name,

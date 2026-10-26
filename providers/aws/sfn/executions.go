@@ -218,7 +218,23 @@ func (m *Mock) StartExternal(ctx context.Context, stateMachineARN, input string)
 	return err
 }
 
+// StartSyncExecution runs an EXPRESS workflow synchronously. Real Step
+// Functions does not offer it for STANDARD workflows and rejects them with
+// StateMachineTypeNotSupported.
 func (m *Mock) StartSyncExecution(ctx context.Context, in driver.StartExecutionInput) (*driver.Execution, error) {
+	sd, err := m.getSM(in.StateMachineArn)
+	if err != nil {
+		return nil, err
+	}
+
+	sd.mu.RLock()
+	smType := sd.sm.Type
+	sd.mu.RUnlock()
+
+	if smType != driver.TypeExpress {
+		return nil, smTypeNotSupported("This operation is not supported by this type of state machine")
+	}
+
 	return m.runExecution(ctx, in, false)
 }
 
@@ -310,6 +326,10 @@ func (m *Mock) abortExecution(ed *execData, errCode, cause string) (time.Time, *
 
 	now := m.now()
 
+	// Pinned: StopExecution on an already-closed execution returns 200 with the
+	// stored stop date and changes nothing. The API reference documents no
+	// error for this case and the behavior is not verified against live AWS.
+	//
 	// While an execution is still settling (observably RUNNING under AsyncSettle),
 	// Stop aborts it: ABORTED with a stop date, no output, the caller's error/cause
 	// persisted, and the history trimmed to the events already visible plus a

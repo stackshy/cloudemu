@@ -3,8 +3,10 @@ package cloudwatch
 import (
 	"context"
 	"sort"
+	"strconv"
 	"time"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/metricmath"
 )
@@ -57,6 +59,10 @@ func (h *Handler) getMetricDataCore(ctx context.Context, in *getMetricDataInput)
 		return getMetricDataResult{}, err
 	}
 
+	if err := h.validateQueryPeriods(in.MetricDataQueries); err != nil {
+		return getMetricDataResult{}, err
+	}
+
 	queries := toDriverQueries(in.MetricDataQueries)
 	eval := h.metricDataEvaluator(ctx, queries, timeOrZero(in.StartTime), timeOrZero(in.EndTime))
 	rows := make([]metricDataRow, 0, len(in.MetricDataQueries))
@@ -71,7 +77,7 @@ func (h *Handler) getMetricDataCore(ctx context.Context, in *getMetricDataInput)
 
 		qrows, err := metricDataRows(eval, q, descending)
 		if err != nil {
-			return getMetricDataResult{}, err
+			return getMetricDataResult{}, invalidParameterError(err)
 		}
 
 		rows = append(rows, qrows...)
@@ -80,6 +86,49 @@ func (h *Handler) getMetricDataCore(ctx context.Context, in *getMetricDataInput)
 	page, next := pageMetricData(rows, offset, in.MaxDatapoints, descending)
 
 	return getMetricDataResult{Rows: page, NextToken: next}, nil
+}
+
+// periodValidator is the AWS-local capability that checks a metric Period.
+// param names the request field in the error message.
+type periodValidator interface {
+	ValidatePeriod(param string, period int) error
+}
+
+// validateQueryPeriods checks the MetricStat Period and the optional Period
+// of every query, including ones that return no data.
+func (h *Handler) validateQueryPeriods(queries []metricDataQueryCBR) error {
+	v, ok := h.monitoring.(periodValidator)
+	if !ok {
+		return nil
+	}
+
+	for i := range queries {
+		member := "MetricDataQueries.member." + strconv.Itoa(i+1)
+
+		if ms := queries[i].MetricStat; ms != nil {
+			if err := v.ValidatePeriod(member+".MetricStat.Period", ms.Period); err != nil {
+				return invalidParameterError(err)
+			}
+		}
+
+		if p := queries[i].Period; p != 0 {
+			if err := v.ValidatePeriod(member+".Period", p); err != nil {
+				return invalidParameterError(err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// invalidParameterError maps a driver InvalidArgument error to the
+// InvalidParameterValue wire error and passes any other error through.
+func invalidParameterError(err error) error {
+	if cerrors.IsInvalidArgument(err) {
+		return newWireError(errInvalidParameterValue, cerrors.Message(err))
+	}
+
+	return err
 }
 
 // bandExclusionSource is the AWS-local capability that returns the excluded

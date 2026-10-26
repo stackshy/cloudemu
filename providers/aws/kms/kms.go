@@ -80,10 +80,16 @@ type aliasData struct {
 
 // Mock is an in-memory implementation of AWS KMS.
 type Mock struct {
-	keys    *memstore.Store[*keyData]
-	aliases *memstore.Store[*aliasData]
-	grants  *memstore.Store[*driver.Grant]
-	opts    *config.Options
+	keys            *memstore.Store[*keyData]
+	aliases         *memstore.Store[*aliasData]
+	grants          *memstore.Store[*driver.Grant]
+	customKeyStores *memstore.Store[*driver.CustomKeyStore]
+	opts            *config.Options
+
+	// cksMu serializes custom key store mutations (name/cluster/proxy
+	// uniqueness, connection-state transitions) and the placement of new keys
+	// into a store, so a check-then-act can't race.
+	cksMu sync.Mutex
 }
 
 // New creates a new KMS mock with the given configuration options.
@@ -93,6 +99,8 @@ func New(opts *config.Options) *Mock {
 		aliases: memstore.New[*aliasData](),
 		grants:  memstore.New[*driver.Grant](),
 		opts:    opts,
+
+		customKeyStores: memstore.New[*driver.CustomKeyStore](),
 	}
 }
 

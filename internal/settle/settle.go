@@ -70,14 +70,31 @@ const (
 
 	DefaultLatticeSettle = 2 * time.Second // VPC Lattice resource CREATE_IN_PROGRESS->ACTIVE
 
+	DefaultEventBridgeEndpointSettle = 2 * time.Second // EventBridge global endpoint CREATING/UPDATING->ACTIVE
+
 	DefaultBedrockFlowExecutionSettle = 2 * time.Second // Bedrock flow execution Running->Succeeded
 
 	DefaultBedrockIngestionSettle = 2 * time.Second // Bedrock KB ingestion job IN_PROGRESS->COMPLETE
+
+	DefaultFlowOperationSettle = 2 * time.Second // Network Firewall flow operation IN_PROGRESS->COMPLETED
+
+	DefaultExportTaskPendingSettle = 1 * time.Second // CloudWatch Logs export task PENDING->RUNNING
+	DefaultExportTaskRunSettle     = 2 * time.Second // CloudWatch Logs export task RUNNING->COMPLETED
 
 	// S3 RestoreObject ongoing-request="true"->"false", by retrieval tier.
 	DefaultRestoreExpeditedSettle = 1 * time.Second
 	DefaultRestoreStandardSettle  = 3 * time.Second
 	DefaultRestoreBulkSettle      = 5 * time.Second
+
+	// DefaultBatchJobPhase is how long an AWS Batch job dwells in SUBMITTED,
+	// RUNNABLE and STARTING before moving on; RUNNING lasts
+	// DefaultBatchJobRunDwell.
+	DefaultBatchJobPhase = 1 * time.Second
+
+	// DefaultBatchJobRunDwell is how long an AWS Batch job stays RUNNING. It is
+	// longer than the other phases so a real CLI or SDK client can observe a
+	// running job and call TerminateJob on it before it finishes.
+	DefaultBatchJobRunDwell = 5 * time.Second
 )
 
 // Window is a read-time overlay describing a resource still settling into its

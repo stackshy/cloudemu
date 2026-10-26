@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/services/logging/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,7 +23,7 @@ func TestGetLogEventsTimestampOrder(t *testing.T) {
 	_, err = m.CreateLogStream(ctx, "g", "s")
 	require.NoError(t, err)
 
-	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	base := testClockStart()
 
 	require.NoError(t, m.PutLogEvents(ctx, "g", "s", []driver.LogEvent{
 		{Timestamp: base.Add(5000 * time.Millisecond), Message: "late"},
@@ -52,14 +53,25 @@ func TestRetentionUnsetNeverDrops(t *testing.T) {
 	_, err = m.CreateLogStream(ctx, "g", "s")
 	require.NoError(t, err)
 
-	// Clock is 2025-01-01; this event is ~1 year old.
-	old := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	// Ingest at the clock's current time, then let a year pass: with no
+	// retention policy the event must still be there.
 	require.NoError(t, m.PutLogEvents(ctx, "g", "s", []driver.LogEvent{
-		{Timestamp: old, Message: "ancient"},
+		{Timestamp: m.opts.Clock.Now(), Message: "ancient"},
 	}))
+
+	advanceClock(t, m, 365*24*time.Hour)
 
 	got, err := m.GetLogEvents(ctx, &driver.LogQueryInput{LogGroup: "g", LogStream: "s"})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "ancient", got[0].Message)
+}
+
+// advanceClock moves the test mock's FakeClock forward.
+func advanceClock(t *testing.T, m *Mock, d time.Duration) {
+	t.Helper()
+
+	fc, ok := m.opts.Clock.(*config.FakeClock)
+	require.True(t, ok, "test mock must use a FakeClock")
+	fc.Advance(d)
 }

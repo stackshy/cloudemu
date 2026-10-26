@@ -431,6 +431,9 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	p.ElastiCache.SetMonitoring(p.CloudWatch)
 	p.MemoryDB.SetMonitoring(p.CloudWatch)
 	p.CloudWatchLogs.SetMonitoring(p.CloudWatch)
+	// CloudWatch Logs -> KMS: a log group key (CreateLogGroup kmsKeyId,
+	// AssociateKmsKey) must be an existing, enabled KMS key.
+	p.CloudWatchLogs.SetKeyResolver(p.KMS)
 	p.SNS.SetMonitoring(p.CloudWatch)
 	p.ECR.SetMonitoring(p.CloudWatch)
 	p.ECS.SetMonitoring(p.CloudWatch)
@@ -461,6 +464,10 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	// EFS mount targets derive their VpcId and AZ from the subnet, so all mount
 	// targets of a file system share a VpcId and each reflects its subnet's zone.
 	p.EFS.SetSubnetResolver(p.VPC)
+	// A firewall's subnets sit in the zones the subnets really are in, and a firewall
+	// takes at most one subnet per zone.
+	p.NetworkFirewall.SetSubnetResolver(p.VPC)
+	p.EFS.SetMonitoring(p.CloudWatch)
 	// An IamInstanceProfile passed to RunInstances resolves through IAM so the
 	// role->profile->instance chain reads back on DescribeInstances.
 	p.EC2.SetInstanceProfileResolver(p.IAM)
@@ -496,6 +503,9 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	// matching real EKS (which auto-creates the cluster SG and infers the VPC).
 	p.EKS.SetSubnetResolver(p.VPC)
 	p.SageMaker.SetMonitoring(p.CloudWatch)
+	// MSK publishes DEFAULT-level AWS/Kafka metrics for each ACTIVE provisioned
+	// cluster once a minute, from the serve scheduler (see Tickables).
+	p.Kafka.SetMonitoring(p.CloudWatch)
 	// CloudWatch alarm -> SNS: an alarm state transition fires its configured
 	// SNS-topic actions, fanning a notification out to the topic's subscribers.
 	p.CloudWatch.SetSNSPublisher(p.SNS)
@@ -543,6 +553,9 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 // mocks. It is split out of New so the factory stays within the function-length
 // budget; the wiring-parity test scans this helper as if it were New().
 func wirePostBuildServices(o *config.Options, p *Provider) {
+	// EventBridge connections keep their credentials in a real Secrets Manager
+	// secret (events!connection/<name>/<id>), as AWS does.
+	p.EventBridge.SetConnectionSecretStore(p.SecretsManager)
 	// S3 event notifications deliver to their configured targets: SQS queues,
 	// SNS topics, and Lambda functions.
 	p.S3.SetSQSDeliverer(p.SQS)
@@ -563,6 +576,8 @@ func wirePostBuildServices(o *config.Options, p *Provider) {
 	// subscription filter's pattern are delivered (gzipped awslogs payload) to
 	// the filter's Lambda destination on PutLogEvents.
 	p.CloudWatchLogs.SetLambdaInvoker(p.Lambda)
+	// CloudWatch Logs export tasks write log events to an S3 bucket.
+	p.CloudWatchLogs.SetExportStore(p.S3)
 	// CloudFormation is an orchestrator: it provisions each stack resource by
 	// calling the matching service driver, so its registry is built from the
 	// live mocks rather than a store of its own.
@@ -589,6 +604,7 @@ func wireLifecycleEvents(p *Provider) {
 	p.Glue.SetEventPublisher(p.EventBridge)
 	p.CloudWatch.SetEventPublisher(p.EventBridge)
 	p.SageMaker.SetEventPublisher(p.EventBridge)
+	p.Batch.SetEventPublisher(p.EventBridge)
 }
 
 // awsDrivers assembles the resource-discovery driver set from the provider's
@@ -628,7 +644,10 @@ func awsDrivers(p *Provider) *resourcediscovery.Drivers {
 // background ticker calls each one on its interval. New time-driven services
 // register here.
 func (p *Provider) Tickables() []config.Tickable {
-	return []config.Tickable{p.CloudWatch, p.SSM, p.CloudFormation}
+	// SQS, EFS and Kafka run before CloudWatch so the alarms evaluated in the
+	// same tick see the queue gauges and AWS/EFS and AWS/Kafka metrics they just
+	// published.
+	return []config.Tickable{p.SQS, p.EFS, p.Kafka, p.CloudWatch, p.SSM, p.CloudFormation, p.Batch}
 }
 
 // Close tears down any real engines wired into the provider via

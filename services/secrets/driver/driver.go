@@ -50,6 +50,10 @@ type SecretConfig struct {
 	// VersionAliases maps GCP Secret Manager version aliases to version ids.
 	// Ignored by AWS/Azure.
 	VersionAliases map[string]string
+	// AddReplicaRegions are the AWS Secrets Manager Regions (and optional
+	// per-replica KMS keys) to replicate the new secret to (CreateSecret
+	// AddReplicaRegions). Ignored by Azure/GCP.
+	AddReplicaRegions []SecretReplicaRegion
 }
 
 // SecretInfo describes a secret.
@@ -86,6 +90,36 @@ type SecretInfo struct {
 	// VersionAliases maps GCP Secret Manager version aliases to version ids,
 	// echoed on the secret and honored by GetSecretValue. Nil when unset.
 	VersionAliases map[string]string
+	// PrimaryRegion is the AWS Secrets Manager Region the secret was created in
+	// (DescribeSecret/ListSecrets PrimaryRegion). Empty for Azure/GCP.
+	PrimaryRegion string
+	// LastAccessedDate is the RFC3339 date (truncated to midnight UTC, as AWS
+	// reports it) the secret value was last retrieved. Empty when the secret
+	// has never been retrieved. AWS Secrets Manager only.
+	LastAccessedDate string
+	// ReplicationStatus lists the AWS Secrets Manager replica Regions of this
+	// primary secret and their status. Nil when the secret is not replicated.
+	// The slice is replaced, never mutated in place, so copies of SecretInfo
+	// may share it safely.
+	ReplicationStatus []SecretReplicationStatus
+}
+
+// SecretReplicaRegion is one AWS Secrets Manager replica target
+// (ReplicaRegionType): a Region and the optional KMS key that encrypts the
+// replica (empty selects aws/secretsmanager).
+type SecretReplicaRegion struct {
+	Region   string
+	KMSKeyID string
+}
+
+// SecretReplicationStatus is one AWS Secrets Manager replica's status
+// (ReplicationStatusType). Status is one of InSync, InProgress or Failed.
+type SecretReplicationStatus struct {
+	Region           string
+	KMSKeyID         string
+	Status           string
+	StatusMessage    string
+	LastAccessedDate string
 }
 
 // GCPReplica is one location a user-managed GCP secret replicates to, with an

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	"github.com/stretchr/testify/assert"
@@ -67,4 +68,83 @@ func TestSnapshotEmpty(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, bytes.Equal(data, data2))
+}
+
+// TestSnapshotConnectionsAndAPIDestinations proves connections (with their
+// credentials and secret ARN) and API destinations survive a snapshot and
+// restore.
+func TestSnapshotConnectionsAndAPIDestinations(t *testing.T) {
+	ctx := context.Background()
+
+	src, _ := newConnectionMock(t)
+
+	c, err := src.CreateConnection(ctx, basicConnection("c1"))
+	require.NoError(t, err)
+
+	_, err = src.CreateAPIDestination(ctx, destinationConfig("d1", c.ARN))
+	require.NoError(t, err)
+
+	data, err := src.Snapshot(ctx, true)
+	require.NoError(t, err)
+
+	dst, _ := newTestMock()
+	require.NoError(t, dst.Restore(ctx, data))
+
+	data2, err := dst.Snapshot(ctx, true)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(data), string(data2))
+
+	got, err := dst.DescribeConnection(ctx, "c1")
+	require.NoError(t, err)
+	assert.Equal(t, c.SecretARN, got.SecretARN)
+
+	stored, ok := dst.connections.Get("c1")
+	require.True(t, ok)
+	assert.Equal(t, "pass", stored.Info.AuthParameters.Basic.Password, "credentials survive a restore")
+
+	d, err := dst.DescribeAPIDestination(ctx, "d1")
+	require.NoError(t, err)
+	assert.Equal(t, "ACTIVE", d.State)
+}
+
+// TestSnapshotArchivesAndReplays proves archives (with their archived events)
+// and replays survive a snapshot and restore.
+func TestSnapshotArchivesAndReplays(t *testing.T) {
+	ctx := context.Background()
+
+	src, _ := newTestMock()
+	a := createTestArchive(t, src, "arch", "default", `{"source":["s"]}`)
+	putTestEvent(t, src, "", "s")
+
+	_, err := src.StartReplay(ctx, &driver.ReplayConfig{
+		Name: "rp", EventSourceARN: a.ARN,
+		EventStartTime: a.CreatedAt.Add(-time.Hour), EventEndTime: a.CreatedAt.Add(time.Hour),
+		Destination: driver.ReplayDestination{ARN: busARN("default")},
+	})
+	require.NoError(t, err)
+
+	data, err := src.Snapshot(ctx, true)
+	require.NoError(t, err)
+
+	dst, _ := newTestMock()
+	require.NoError(t, dst.Restore(ctx, data))
+
+	data2, err := dst.Snapshot(ctx, true)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(data), string(data2))
+
+	arch, err := dst.DescribeArchive(ctx, "arch")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), arch.EventCount)
+
+	// The restored archive keeps capturing from its bus.
+	putTestEvent(t, dst, "", "s")
+
+	arch, err = dst.DescribeArchive(ctx, "arch")
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), arch.EventCount)
+
+	rp, err := dst.DescribeReplay(ctx, "rp")
+	require.NoError(t, err)
+	assert.Equal(t, "COMPLETED", rp.State)
 }

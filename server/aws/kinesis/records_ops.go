@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	kinesisdriver "github.com/stackshy/cloudemu/v2/services/kinesis/driver"
 )
 
@@ -125,13 +126,31 @@ func (h *Handler) getShardIterator(w http.ResponseWriter, r *http.Request) {
 
 type getRecordsRequest struct {
 	ShardIterator string `json:"ShardIterator"`
-	Limit         int32  `json:"Limit"`
+	Limit         *int32 `json:"Limit"`
 	StreamARN     string `json:"StreamARN"`
 }
 
 func (h *Handler) getRecords(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *getRecordsRequest) (any, error) {
-		out, err := h.kinesis.GetRecords(ctx, req.ShardIterator, req.Limit)
+		// The driver reads a zero limit as "Limit omitted" (the default) and
+		// enforces the 1..MaxGetRecordsLimit range for every other value, so an
+		// explicitly sent Limit of 0 is the one wire shape it cannot see; reject
+		// just that here with the same InvalidArgumentException and bound.
+		var limit int32
+
+		if req.Limit != nil {
+			if *req.Limit == 0 {
+				return nil, &kinesisdriver.APIError{
+					Exception: kinesisdriver.ExInvalidArgument,
+					Err: cerrors.Newf(cerrors.InvalidArgument,
+						"Limit 0 is invalid: it must be between 1 and %d", kinesisdriver.MaxGetRecordsLimit),
+				}
+			}
+
+			limit = *req.Limit
+		}
+
+		out, err := h.kinesis.GetRecords(ctx, req.ShardIterator, limit)
 		if err != nil {
 			return nil, err
 		}

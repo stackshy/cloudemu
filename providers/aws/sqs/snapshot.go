@@ -48,6 +48,11 @@ type queueSnapshot struct {
 	DeduplicationIndex map[string]time.Time     `json:"deduplicationIndex,omitempty"`
 	DLQConfig          *driver.DeadLetterConfig `json:"dlqConfig,omitempty"`
 	SeqCounter         uint64                   `json:"seqCounter,omitempty"`
+	// LastAccessedAt and LastSampleAt drive the per-minute CloudWatch gauges
+	// (metrics.go): whether the queue is still active, and when it last
+	// published.
+	LastAccessedAt time.Time `json:"lastAccessedAt"`
+	LastSampleAt   time.Time `json:"lastSampleAt"`
 }
 
 // messageSnapshot mirrors sqsMessage, promoting its one unexported field
@@ -132,6 +137,7 @@ func snapshotQueue(qd *queueData) *queueSnapshot {
 		FifoThroughputLim: qd.fifoThroughputLim, CreatedAt: qd.createdAt,
 		LastModifiedAt: qd.lastModifiedAt, DeduplicationIndex: qd.deduplicationIndex,
 		DLQConfig: qd.dlqConfig, SeqCounter: qd.seqCounter.Load(),
+		LastAccessedAt: qd.lastAccessedAt(), LastSampleAt: qd.lastSampleAt,
 	}
 
 	if len(qd.messages) > 0 {
@@ -190,7 +196,11 @@ func restoreQueue(qs *queueSnapshot) *queueData {
 		sqsManagedSSE: qs.SqsManagedSSE, deduplicationScope: qs.DeduplicationScope,
 		fifoThroughputLim: qs.FifoThroughputLim, createdAt: qs.CreatedAt,
 		lastModifiedAt: qs.LastModifiedAt, deduplicationIndex: qs.DeduplicationIndex,
-		dlqConfig: qs.DLQConfig,
+		dlqConfig: qs.DLQConfig, lastSampleAt: qs.LastSampleAt,
+	}
+
+	if !qs.LastAccessedAt.IsZero() {
+		qd.touch(qs.LastAccessedAt)
 	}
 
 	if qd.deduplicationIndex == nil {

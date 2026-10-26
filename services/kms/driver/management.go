@@ -21,6 +21,7 @@ const (
 	GrantOpDescribeKey                     = "DescribeKey"
 	GrantOpGenerateMac                     = "GenerateMac"
 	GrantOpVerifyMac                       = "VerifyMac"
+	GrantOpDeriveSharedSecret              = "DeriveSharedSecret"
 )
 
 // Rotation types.

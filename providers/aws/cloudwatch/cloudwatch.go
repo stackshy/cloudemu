@@ -178,6 +178,14 @@ func (m *Mock) PutMetricData(ctx context.Context, data []driver.MetricDatum) err
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*driver.MetricDataResult, error) {
+	// Zero keeps meaning the one-minute default. Any other value follows the
+	// AWS Period rule, so it cannot overflow the bucket step.
+	if input.Period != 0 {
+		if err := m.ValidatePeriod("Period", input.Period); err != nil {
+			return nil, err
+		}
+	}
+
 	return m.readMetric(&input), nil
 }
 
@@ -200,7 +208,7 @@ func (m *Mock) readMetric(input *driver.GetMetricInput) *driver.MetricDataResult
 
 	period := input.Period
 	if period <= 0 {
-		period = 60
+		period = defaultPeriodSeconds
 	}
 
 	return buildMetricResult(filtered, input.StartTime, period, input.Stat)
@@ -272,20 +280,26 @@ func buildMetricResult(filtered []driver.MetricDatum, startTime time.Time, perio
 	// unit reads back as None, like on AWS.
 	result.Unit = alarmeval.EffectiveUnit(unitOf(filtered))
 
-	periodDur := time.Duration(period) * time.Second
+	// Count in whole seconds, so a long period cannot overflow a Duration.
+	step := int64(period)
+	if step <= 0 {
+		return result
+	}
+
+	bucket := func(ts time.Time) int64 { return int64(ts.Sub(startTime)/time.Second) / step }
 
 	for from := 0; from < len(filtered); {
-		idx := filtered[from].Timestamp.Sub(startTime) / periodDur
+		idx := bucket(filtered[from].Timestamp)
 
 		to := from + 1
-		for to < len(filtered) && filtered[to].Timestamp.Sub(startTime)/periodDur == idx {
+		for to < len(filtered) && bucket(filtered[to].Timestamp) == idx {
 			to++
 		}
 
 		// A period where an extended statistic is not available, such as a
 		// percentile over negative values, is left out as on AWS.
 		if v, ok := alarmeval.StatValue(filtered[from:to], stat); ok {
-			result.Timestamps = append(result.Timestamps, startTime.Add(idx*periodDur))
+			result.Timestamps = append(result.Timestamps, startTime.Add(time.Duration(idx*step)*time.Second))
 			result.Values = append(result.Values, v)
 		}
 

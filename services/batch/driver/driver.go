@@ -1,6 +1,7 @@
 // Package driver defines the interface and types for AWS Batch implementations.
-// It models the Batch control plane: compute environments, job queues, and
-// job-definition revisions, plus resource tagging.
+// It models the Batch control plane: compute environments, job queues,
+// job-definition revisions, fair-share scheduling policies, and the job
+// lifecycle (submit/describe/list/cancel/terminate), plus resource tagging.
 //
 // The interface is deliberately narrow: a backend stores what it is given and
 // echoes it back, generating ARNs, ECS cluster ARNs, and job-definition
@@ -31,7 +32,21 @@ type Batch interface {
 	DescribeJobDefinitions(ctx context.Context, in DescribeJobDefinitionsInput) ([]JobDefinition, error)
 	DeregisterJobDefinition(ctx context.Context, nameRevisionOrARN string) error
 
-	// Tags (by ARN), shared across all three resource kinds.
+	// Scheduling policies.
+	CreateSchedulingPolicy(ctx context.Context, in CreateSchedulingPolicyInput) (*SchedulingPolicy, error)
+	DescribeSchedulingPolicies(ctx context.Context, arns []string) ([]SchedulingPolicy, error)
+	ListSchedulingPolicies(ctx context.Context) ([]SchedulingPolicy, error)
+	UpdateSchedulingPolicy(ctx context.Context, in UpdateSchedulingPolicyInput) error
+	DeleteSchedulingPolicy(ctx context.Context, arn string) error
+
+	// Jobs.
+	SubmitJob(ctx context.Context, in SubmitJobInput) (*Job, error)
+	DescribeJobs(ctx context.Context, jobIDs []string) ([]Job, error)
+	ListJobs(ctx context.Context, in ListJobsInput) (*ListJobsOutput, error)
+	CancelJob(ctx context.Context, jobID, reason string) error
+	TerminateJob(ctx context.Context, jobID, reason string) error
+
+	// Tags (by ARN), shared across every taggable resource kind.
 	TagResource(ctx context.Context, arn string, tags map[string]string) error
 	UntagResource(ctx context.Context, arn string, keys []string) error
 	ListTagsForResource(ctx context.Context, arn string) (map[string]string, error)

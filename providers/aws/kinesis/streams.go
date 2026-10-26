@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/kinesis/driver"
 )
 
@@ -41,8 +42,107 @@ func (*Mock) buildShards(count int32, startIndex int, startSeq string, createdAt
 	return shards
 }
 
+// Stream lifecycle settle windows. Real Kinesis CreateStream returns while the
+// stream is CREATING and DeleteStream leaves it DELETING until removal. With
+// config.AsyncSettle off (the default) SettleDuration returns 0, so streams are
+// ACTIVE immediately and deleted immediately, the historical behavior.
+const (
+	settleStreamCreate = 2 * time.Second // CREATING -> ACTIVE
+	settleStreamDelete = 2 * time.Second // DELETING -> gone
+)
+
+// lookup returns the named stream, first purging it if its DELETING window has
+// elapsed so a finished deletion reads as ResourceNotFoundException.
+func (m *Mock) lookup(name string) (*streamData, bool) {
+	sd, ok := m.streams.Get(name)
+	if !ok {
+		return nil, false
+	}
+
+	if m.reapIfDeleted(name, sd) {
+		return nil, false
+	}
+
+	return sd, true
+}
+
+// liveStreams returns every stream that still exists, purging those whose
+// DELETING window has elapsed.
+func (m *Mock) liveStreams() map[string]*streamData {
+	all := m.streams.All()
+
+	for name, sd := range all {
+		if m.reapIfDeleted(name, sd) {
+			delete(all, name)
+		}
+	}
+
+	return all
+}
+
+// reapIfDeleted removes sd when its asynchronous deletion has completed and
+// reports whether it did.
+func (m *Mock) reapIfDeleted(name string, sd *streamData) bool {
+	sd.mu.RLock()
+	done := sd.deleting && sd.deleteWin.Settled(m.now())
+	arn := sd.desc.StreamARN
+	sd.mu.RUnlock()
+
+	if !done {
+		return false
+	}
+
+	m.removeStream(name, arn, sd)
+
+	return true
+}
+
+// removeStream drops the stream and its ARN index entry, unless the name has
+// since been taken by a different stream. Each removal is a compare-and-delete
+// under the store's lock, so a concurrent CreateStream that reaps the same entry
+// and installs a new stream under the name can never have that new stream (or
+// its ARN entry) removed by this purge.
+func (m *Mock) removeStream(name, arn string, sd *streamData) {
+	m.streams.UpdateOrDelete(name, func(cur *streamData) (*streamData, bool) {
+		return cur, cur != sd
+	})
+
+	// Checking the stream store while holding the ARN index lock closes the gap
+	// with CreateStream, which installs the stream before (re)writing the ARN
+	// entry: either the new stream is already visible here and the entry is
+	// kept, or CreateStream's Set lands after this delete and restores it.
+	m.arnToName.UpdateOrDelete(arn, func(cur string) (string, bool) {
+		return cur, cur != name || m.streams.Has(name)
+	})
+}
+
+// statusOf is the stream's observed status: DELETING while a deletion is
+// settling, CREATING inside the post-create window, else the stored status.
+// Caller holds sd.mu.
+func (m *Mock) statusOf(sd *streamData) string {
+	if sd.deleting {
+		return driver.StatusDeleting
+	}
+
+	return sd.createWin.Observe(m.now(), sd.desc.StreamStatus)
+}
+
+// requireActive returns the ResourceInUseException real Kinesis raises when a
+// stream-level control-plane operation targets a stream that is not ACTIVE
+// (CREATING or DELETING under AsyncSettle). Without AsyncSettle every stream is
+// ACTIVE, so this never fires. Caller holds sd.mu.
+func (m *Mock) requireActive(sd *streamData) error {
+	if status := m.statusOf(sd); status != driver.StatusActive {
+		return errInUse("Stream %s under account %s is not in ACTIVE state (current state: %s)",
+			sd.desc.StreamName, m.opts.AccountID, status)
+	}
+
+	return nil
+}
+
 // CreateStream creates a new stream with the requested shard count (or on-demand
-// default) and moves it straight to ACTIVE.
+// default). It reports CREATING for a short window when AsyncSettle is on and
+// ACTIVE immediately otherwise.
 func (m *Mock) CreateStream(ctx context.Context, in driver.CreateStreamInput) error {
 	if in.StreamName == "" {
 		return invalidArg("StreamName is required")
@@ -84,8 +184,14 @@ func (m *Mock) CreateStream(ctx context.Context, in driver.CreateStreamInput) er
 		},
 		consumers: map[string]*driver.Consumer{},
 		tags:      copyTags(in.Tags),
+		createWin: settle.Pending(driver.StatusCreating, now, m.opts.SettleDuration(settleStreamCreate)),
 	}
 	sd.shards = m.buildShards(shardCount, 0, formatSeq(0), now)
+
+	// A stream whose deletion already completed must not block re-creation.
+	if old, ok := m.streams.Get(in.StreamName); ok {
+		m.reapIfDeleted(in.StreamName, old)
+	}
 
 	if !m.streams.SetIfAbsent(in.StreamName, sd) {
 		return errInUse("stream %q already exists", in.StreamName)
@@ -96,25 +202,44 @@ func (m *Mock) CreateStream(ctx context.Context, in driver.CreateStreamInput) er
 	return nil
 }
 
-// DeleteStream removes a stream (and its consumers when enforced).
+// DeleteStream removes a stream (and its consumers when enforced). Only an
+// ACTIVE stream can be deleted; with AsyncSettle on the stream then reports
+// DELETING (still serving reads and writes, as real Kinesis may) until the
+// settle window elapses, after which it is gone.
 func (m *Mock) DeleteStream(_ context.Context, name, arn string, enforceConsumerDeletion bool) error {
 	sd, err := m.resolve(name, arn)
 	if err != nil {
 		return err
 	}
 
-	sd.mu.RLock()
-	hasConsumers := len(sd.consumers) > 0
+	sd.mu.Lock()
+
 	streamName := sd.desc.StreamName
 	streamARN := sd.desc.StreamARN
-	sd.mu.RUnlock()
 
-	if hasConsumers && !enforceConsumerDeletion {
+	if err := m.requireActive(sd); err != nil {
+		sd.mu.Unlock()
+
+		return err
+	}
+
+	if len(sd.consumers) > 0 && !enforceConsumerDeletion {
+		sd.mu.Unlock()
+
 		return errInUse("stream %q has registered consumers; set EnforceConsumerDeletion", streamName)
 	}
 
-	m.streams.Delete(streamName)
-	m.arnToName.Delete(streamARN)
+	if d := m.opts.SettleDuration(settleStreamDelete); d > 0 {
+		sd.deleting = true
+		sd.deleteWin = settle.Pending(driver.StatusDeleting, m.now(), d)
+		sd.mu.Unlock()
+
+		return nil
+	}
+
+	sd.mu.Unlock()
+
+	m.removeStream(streamName, streamARN, sd)
 
 	return nil
 }
@@ -132,6 +257,7 @@ func (m *Mock) DescribeStream(
 	defer sd.mu.RUnlock()
 
 	out := sd.desc
+	out.StreamStatus = m.statusOf(sd)
 	shards, more := pageShards(sd.shards, limit, exclusiveStartShardID)
 	out.Shards = shards
 	out.HasMoreShards = more
@@ -182,7 +308,7 @@ func (m *Mock) DescribeStreamSummary(_ context.Context, name, arn string) (*driv
 	return &driver.StreamSummary{
 		StreamName:              sd.desc.StreamName,
 		StreamARN:               sd.desc.StreamARN,
-		StreamStatus:            sd.desc.StreamStatus,
+		StreamStatus:            m.statusOf(sd),
 		StreamModeDetails:       sd.desc.StreamModeDetails,
 		RetentionPeriodHours:    sd.desc.RetentionPeriodHours,
 		StreamCreationTimestamp: sd.desc.StreamCreationTimestamp,
@@ -212,7 +338,7 @@ func openShardCount(shards []*shardState) int32 {
 func (m *Mock) ListStreams(
 	_ context.Context, nextToken, exclusiveStartStreamName string, limit int32,
 ) (*driver.ListStreamsOutput, error) {
-	all := m.streams.All()
+	all := m.liveStreams()
 
 	names := make([]string, 0, len(all))
 	for name := range all {
@@ -257,7 +383,7 @@ func (m *Mock) ListStreams(
 		out.StreamSummaries = append(out.StreamSummaries, driver.StreamSummary{
 			StreamName:              sd.desc.StreamName,
 			StreamARN:               sd.desc.StreamARN,
-			StreamStatus:            sd.desc.StreamStatus,
+			StreamStatus:            m.statusOf(sd),
 			StreamModeDetails:       sd.desc.StreamModeDetails,
 			RetentionPeriodHours:    sd.desc.RetentionPeriodHours,
 			StreamCreationTimestamp: sd.desc.StreamCreationTimestamp,
@@ -294,6 +420,10 @@ func (m *Mock) setRetention(name, arn string, hours int32, increase bool) error 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
+	if err := m.requireActive(sd); err != nil {
+		return err
+	}
+
 	if increase && hours < sd.desc.RetentionPeriodHours {
 		return invalidArg("new retention %d is below current %d", hours, sd.desc.RetentionPeriodHours)
 	}
@@ -324,6 +454,10 @@ func (m *Mock) UpdateShardCount(
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
+
+	if err := m.requireActive(sd); err != nil {
+		return 0, 0, err
+	}
 
 	before := openShardCount(sd.shards)
 
@@ -415,6 +549,10 @@ func (m *Mock) UpdateStreamMode(_ context.Context, arn, mode string) error {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
+	if err := m.requireActive(sd); err != nil {
+		return err
+	}
+
 	sd.desc.StreamModeDetails = mode
 
 	return nil
@@ -446,6 +584,10 @@ func (m *Mock) setEncryption(name, arn, encryptionType, keyID string, on bool) e
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
+
+	if err := m.requireActive(sd); err != nil {
+		return err
+	}
 
 	if on {
 		sd.desc.EncryptionType = driver.EncryptionKMS

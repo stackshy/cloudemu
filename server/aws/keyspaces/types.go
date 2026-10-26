@@ -30,12 +30,18 @@ func toWireSchema(s *ksdriver.SchemaDefinition) *types.SchemaDefinition {
 	return out
 }
 
+// toWireCapacity emits read/write capacity units only for PROVISIONED tables.
+// Real Keyspaces omits them for PAY_PER_REQUEST (their documented valid range
+// starts at 1, so 0 is never a real value).
 func toWireCapacity(c ksdriver.CapacitySpecification) *types.CapacitySpecificationSummary {
-	return &types.CapacitySpecificationSummary{
-		ThroughputMode:     types.ThroughputMode(c.ThroughputMode),
-		ReadCapacityUnits:  aws.Int64(c.ReadCapacityUnits),
-		WriteCapacityUnits: aws.Int64(c.WriteCapacityUnits),
+	out := &types.CapacitySpecificationSummary{ThroughputMode: types.ThroughputMode(c.ThroughputMode)}
+
+	if c.ThroughputMode == ksdriver.ThroughputProvisioned {
+		out.ReadCapacityUnits = aws.Int64(c.ReadCapacityUnits)
+		out.WriteCapacityUnits = aws.Int64(c.WriteCapacityUnits)
 	}
+
+	return out
 }
 
 func toWireEncryption(e ksdriver.EncryptionSpecification) *types.EncryptionSpecification {

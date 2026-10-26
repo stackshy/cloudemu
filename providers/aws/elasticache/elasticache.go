@@ -79,6 +79,9 @@ const (
 	// modify before settling to available.
 	statusCreating  = "creating"
 	statusModifying = "modifying"
+	// statusDeleting is what a cluster or replication group reports from its
+	// delete call until it is gone.
+	statusDeleting = "deleting"
 
 	defaultRedisVersion     = "7.1"
 	defaultMemcachedVersion = "1.6.22"
@@ -135,8 +138,7 @@ func normalizeNodeCount(engine string, requested int) (int, error) {
 // check). An empty name places the cluster in the default subnet group.
 func (m *Mock) requireSubnetGroup(name string) error {
 	if name != "" && !m.subnetGroups.Has(name) {
-		return errors.Newf(errors.NotFound,
-			"CacheSubnetGroupNotFoundFault: cache subnet group %q not found", name)
+		return subnetGroupNotFound(name)
 	}
 
 	return nil
@@ -194,8 +196,31 @@ func defaultEngineVersion(engine string) string {
 	return defaultRedisVersion
 }
 
+// reservation holds an id whose resource is mid-way through a real-engine
+// provision (state creating) or deprovision (state deleting). The id cannot be
+// reused until the engine call returns, and Describe reports record with that
+// status, the way a real resource in those states is still visible.
+type reservation[T any] struct {
+	state  string
+	record T
+}
+
 // Mock is an in-memory mock implementation of the AWS ElastiCache service.
+//
+// Lock order: mu, then a settle set's lock. A settle lock is only taken while
+// holding mu or no lock at all, never the reverse. The settle sets compute
+// state from the clock on read and never call back, so nothing re-enters mu.
+// No lock is held across a call to another service (monitoring, the VPC subnet
+// resolver) or to the real cache engine.
 type Mock struct {
+	// mu guards the control-plane stores and the reservations below, so every
+	// check-then-act (duplicate checks, parent validation, in-use scans,
+	// cascades, Snapshot/Restore) is atomic. The per-cache key/value stores
+	// (cacheData.items) are data plane and rely on memstore's own locking.
+	mu       sync.Mutex
+	cacheRes map[string]*reservation[driver.CacheInfo]
+	rgRes    map[string]*reservation[driver.ReplicationGroup]
+
 	caches            *memstore.Store[*cacheData]
 	subnetGroups      *memstore.Store[driver.SubnetGroup]
 	replicationGroups *memstore.Store[driver.ReplicationGroup]
@@ -214,7 +239,7 @@ type Mock struct {
 	cacheSettle *settle.Set
 	rgSettle    *settle.Set
 
-	tagMu     sync.Mutex
+	// tagsByARN is guarded by mu like the stores above.
 	tagsByARN map[string]map[string]string
 }
 
@@ -259,6 +284,8 @@ func New(opts *config.Options) *Mock {
 		snapshots:         memstore.New[driver.Snapshot](),
 		cacheSettle:       settle.NewSet(),
 		rgSettle:          settle.NewSet(),
+		cacheRes:          make(map[string]*reservation[driver.CacheInfo]),
+		rgRes:             make(map[string]*reservation[driver.ReplicationGroup]),
 		tagsByARN:         make(map[string]map[string]string),
 		opts:              opts,
 	}
@@ -277,28 +304,119 @@ func (m *Mock) settleRGStatus(id, final string) string {
 }
 
 // CreateCache creates a new ElastiCache cluster.
+//
+// The id is reserved under mu while the request is validated, the optional
+// real engine is provisioned with no lock held, and the cluster is committed
+// under mu again. A concurrent create of the same id sees the reservation and
+// reports CacheClusterAlreadyExists.
+//
+//nolint:gocritic // cfg is passed by value to match the driver.Cache signature.
 func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver.CacheInfo, error) {
-	if cfg.Name == "" {
-		return nil, errors.New(errors.InvalidArgument, "cache name is required")
+	info, err := m.reserveCache(ctx, &cfg)
+	if err != nil {
+		return nil, err
 	}
 
-	if m.caches.Has(cfg.Name) {
-		return nil, errors.Newf(errors.AlreadyExists, "cache %q already exists", cfg.Name)
+	// Opt-in: back the cache with a real server, replacing the synthetic
+	// endpoint with the real host:port a client connects to.
+	if err = cacheengine.Provision(ctx, m.opts.CacheEngine, &info); err != nil {
+		m.mu.Lock()
+		delete(m.cacheRes, info.Name)
+		m.mu.Unlock()
+
+		return nil, err
+	}
+
+	return m.commitCache(&info), nil
+}
+
+// cacheIDTaken reports whether name is already used by a cluster, a pending
+// reservation, or a replication-group member node. The caller holds mu.
+func (m *Mock) cacheIDTaken(name string) bool {
+	if m.caches.Has(name) {
+		return true
+	}
+
+	if _, reserved := m.cacheRes[name]; reserved {
+		return true
 	}
 
 	// A replication group's member nodes ("<groupId>-001", …) are describable as
 	// single-node cache clusters without being backed by m.caches, so guard the
 	// same id space here. Real ElastiCache rejects a create colliding with a
 	// member id with CacheClusterAlreadyExists.
-	if _, member := m.lookupMember(cfg.Name); member {
-		return nil, errors.Newf(errors.AlreadyExists, "cache %q already exists", cfg.Name)
+	if _, member := m.lookupMember(name); member {
+		return true
 	}
 
+	// A replication group still being created or deleted owns its member ids
+	// too, or a cluster named "<groupId>-001" could slip in and collide with the
+	// member once the group commits.
+	for _, r := range m.rgRes {
+		if slices.Contains(r.record.MemberClusters, name) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// reserveCache validates a create under mu, builds the cluster record, and
+// reserves its id in the creating state.
+func (m *Mock) reserveCache(ctx context.Context, cfg *driver.CacheConfig) (driver.CacheInfo, error) {
+	if cfg.Name == "" {
+		return driver.CacheInfo{}, errors.New(errors.InvalidArgument, "cache name is required")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.cacheIDTaken(cfg.Name) {
+		return driver.CacheInfo{}, cacheAlreadyExists(cfg.Name)
+	}
+
+	info, err := m.buildCacheInfo(ctx, cfg)
+	if err != nil {
+		return driver.CacheInfo{}, err
+	}
+
+	m.cacheRes[cfg.Name] = &reservation[driver.CacheInfo]{state: statusCreating, record: info}
+
+	return info, nil
+}
+
+// commitCache stores a provisioned cluster and drops its reservation.
+func (m *Mock) commitCache(info *driver.CacheInfo) *driver.CacheInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.cacheRes, info.Name)
+
+	m.caches.Set(info.Name, &cacheData{info: *info, items: memstore.New[cacheItem]()})
+	m.seedTags(info.ARN, info.Tags)
+
+	// Under AsyncSettle a fresh cluster reports creating until the window elapses,
+	// matching real ElastiCache (CreateCacheCluster → creating → available). With
+	// the default (AsyncSettle off) SettleDuration is 0 → inactive window →
+	// available immediately, so nothing changes for existing callers.
+	m.cacheSettle.Begin(info.Name, statusCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultCacheSettle))
+
+	result := *info
+	result.Tags = cloneTags(info.Tags)
+	result.Status = m.settleCacheStatus(info.Name, result.Status)
+
+	return &result
+}
+
+// buildCacheInfo applies the restore seed and defaults to a create request and
+// validates it against its parents. The caller holds mu.
+func (m *Mock) buildCacheInfo(ctx context.Context, cfg *driver.CacheConfig) (driver.CacheInfo, error) {
 	// A restore (SnapshotName set) seeds the unset config fields from the
 	// snapshot before defaults are applied, so the new cluster reproduces the
 	// source's engine/version/node-type/count/port.
-	if err := m.seedCacheRestore(&cfg); err != nil {
-		return nil, err
+	if err := m.seedCacheRestore(cfg); err != nil {
+		return driver.CacheInfo{}, err
 	}
 
 	engine := cfg.Engine
@@ -307,7 +425,20 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	}
 
 	if err := validateEngine(engine, false); err != nil {
-		return nil, err
+		return driver.CacheInfo{}, err
+	}
+
+	numNodes, err := normalizeNodeCount(engine, cfg.NumCacheNodes)
+	if err != nil {
+		return driver.CacheInfo{}, err
+	}
+
+	if err := m.requireSubnetGroup(cfg.SubnetGroupName); err != nil {
+		return driver.CacheInfo{}, err
+	}
+
+	if err := m.requireParameterGroup(cfg.ParameterGroupName); err != nil {
+		return driver.CacheInfo{}, err
 	}
 
 	nodeType := cfg.NodeType
@@ -320,66 +451,40 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		engineVersion = defaultEngineVersion(engine)
 	}
 
-	numNodes, err := normalizeNodeCount(engine, cfg.NumCacheNodes)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := m.requireSubnetGroup(cfg.SubnetGroupName); err != nil {
-		return nil, err
-	}
-
-	if err := m.requireParameterGroup(cfg.ParameterGroupName); err != nil {
-		return nil, err
-	}
-
 	region := regionctx.RegionOr(ctx, m.opts.Region)
-	endpoint := clusterEndpoint(cfg.Name, region, engine, resolvePort(engine, cfg.Port))
 
-	tags := cloneTags(cfg.Tags)
-
-	info := driver.CacheInfo{
+	return driver.CacheInfo{
 		Name:                    cfg.Name,
 		Scope:                   cfg.Scope,
 		NodeType:                nodeType,
 		Engine:                  engine,
 		EngineVersion:           engineVersion,
 		Status:                  statusAvailable,
-		Endpoint:                endpoint,
+		Endpoint:                clusterEndpoint(cfg.Name, region, engine, resolvePort(engine, cfg.Port)),
 		ARN:                     m.cacheARN(region, cfg.Name),
 		CreatedAt:               m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:                    tags,
+		Tags:                    cloneTags(cfg.Tags),
 		NumCacheNodes:           numNodes,
 		SubnetGroupName:         cfg.SubnetGroupName,
 		ParameterGroupName:      cfg.ParameterGroupName,
 		AutoMinorVersionUpgrade: boolOrDefault(cfg.AutoMinorVersionUpgrade, true),
+	}, nil
+}
+
+// mutableCache returns the stored cluster a mutating call targets. A cluster
+// that is still being created or is being deleted reports
+// InvalidCacheClusterState, not CacheClusterNotFound: in AWS it exists in that
+// state. The caller holds mu.
+func (m *Mock) mutableCache(name string) (*cacheData, error) {
+	if cd, ok := m.caches.Get(name); ok {
+		return cd, nil
 	}
 
-	// Opt-in: back the cache with a real server, replacing the synthetic
-	// endpoint with the real host:port a client connects to.
-	if err := cacheengine.Provision(ctx, m.opts.CacheEngine, &info); err != nil {
-		return nil, err
+	if r, reserved := m.cacheRes[name]; reserved {
+		return nil, cacheInvalidState(name, r.state)
 	}
 
-	cd := &cacheData{
-		info:  info,
-		items: memstore.New[cacheItem](),
-	}
-
-	m.caches.Set(cfg.Name, cd)
-	m.seedTags(info.ARN, tags)
-
-	// Under AsyncSettle a fresh cluster reports creating until the window elapses,
-	// matching real ElastiCache (CreateCacheCluster → creating → available). With
-	// the default (AsyncSettle off) SettleDuration is 0 → inactive window →
-	// available immediately, so nothing changes for existing callers.
-	m.cacheSettle.Begin(cfg.Name, statusCreating, m.opts.Clock.Now(),
-		m.opts.SettleDuration(settle.DefaultCacheSettle))
-
-	result := info
-	result.Status = m.settleCacheStatus(cfg.Name, result.Status)
-
-	return &result, nil
+	return nil, cacheNotFound(name)
 }
 
 // ModifyCache updates the mutable fields (node type, engine version, node
@@ -388,9 +493,12 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 // change is re-validated against the cluster's engine (Memcached scales 1-40;
 // Redis/Valkey stays at 1).
 func (m *Mock) ModifyCache(_ context.Context, cfg driver.ModifyCacheConfig) (*driver.CacheInfo, error) {
-	cd, ok := m.caches.Get(cfg.Name)
-	if !ok {
-		return nil, errors.Newf(errors.NotFound, "cache %q not found", cfg.Name)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cd, err := m.mutableCache(cfg.Name)
+	if err != nil {
+		return nil, err
 	}
 
 	if cfg.NumCacheNodes != 0 {
@@ -399,23 +507,7 @@ func (m *Mock) ModifyCache(_ context.Context, cfg driver.ModifyCacheConfig) (*dr
 		}
 	}
 
-	if cfg.NodeType != "" {
-		cd.info.NodeType = cfg.NodeType
-	}
-
-	if cfg.EngineVersion != "" {
-		cd.info.EngineVersion = cfg.EngineVersion
-	}
-
-	if cfg.NumCacheNodes > 0 {
-		cd.info.NumCacheNodes = cfg.NumCacheNodes
-	}
-
-	if cfg.AutoMinorVersionUpgrade != nil {
-		cd.info.AutoMinorVersionUpgrade = *cfg.AutoMinorVersionUpgrade
-	}
-
-	m.caches.Set(cfg.Name, cd)
+	applyCacheModify(&cd.info, &cfg)
 
 	// Under AsyncSettle a modified cluster briefly reports modifying before
 	// settling back to available (ModifyCacheCluster → modifying → available); a
@@ -424,67 +516,128 @@ func (m *Mock) ModifyCache(_ context.Context, cfg driver.ModifyCacheConfig) (*dr
 		m.opts.SettleDuration(settle.DefaultCacheModifySettle))
 
 	result := cd.info
+	result.Tags = cloneTags(cd.info.Tags)
 	result.Status = m.settleCacheStatus(cfg.Name, result.Status)
 
 	return &result, nil
 }
 
+// applyCacheModify copies the non-empty fields of a modify request onto info.
+func applyCacheModify(info *driver.CacheInfo, cfg *driver.ModifyCacheConfig) {
+	if cfg.NodeType != "" {
+		info.NodeType = cfg.NodeType
+	}
+
+	if cfg.EngineVersion != "" {
+		info.EngineVersion = cfg.EngineVersion
+	}
+
+	if cfg.NumCacheNodes > 0 {
+		info.NumCacheNodes = cfg.NumCacheNodes
+	}
+
+	if cfg.AutoMinorVersionUpgrade != nil {
+		info.AutoMinorVersionUpgrade = *cfg.AutoMinorVersionUpgrade
+	}
+}
+
 // RebootCache reboots a cache cluster (ElastiCache RebootCacheCluster), the
 // path real deployments use to apply pending parameter-group changes. The
 // cluster stays available in the emulator; a reboot metric is emitted to mirror
-// the lifecycle event.
+// the lifecycle event, after mu is released since monitoring is another service.
 func (m *Mock) RebootCache(_ context.Context, name string) (*driver.CacheInfo, error) {
-	cd, ok := m.caches.Get(name)
-	if !ok {
-		return nil, errors.Newf(errors.NotFound, "cache %q not found", name)
+	m.mu.Lock()
+
+	cd, err := m.mutableCache(name)
+	if err != nil {
+		m.mu.Unlock()
+
+		return nil, err
 	}
 
-	m.emitMetric("Reboots", 1, map[string]string{"CacheClusterId": name})
-
 	result := cd.info
+	result.Tags = cloneTags(cd.info.Tags)
+	m.mu.Unlock()
+
+	m.emitMetric("Reboots", 1, map[string]string{"CacheClusterId": name})
 
 	return &result, nil
 }
 
 // DeleteCache deletes an ElastiCache cluster by name.
+//
+// The cluster is removed under mu and its id is held in the deleting state
+// until the real engine (if any) has been torn down, so a create of the same id
+// cannot provision the engine slot while the old one is still stopping. If the
+// teardown fails the cluster is put back, as it was never deleted.
 func (m *Mock) DeleteCache(ctx context.Context, name string) error {
-	cd, ok := m.caches.Get(name)
-	if !ok {
-		return errors.Newf(errors.NotFound, "cache %q not found", name)
-	}
+	m.mu.Lock()
 
-	// Tear down the real cache server backing the instance, if any.
-	if err := cacheengine.Deprovision(ctx, m.opts.CacheEngine, &cd.info); err != nil {
+	cd, err := m.mutableCache(name)
+	if err != nil {
+		m.mu.Unlock()
+
 		return err
 	}
 
 	m.caches.Delete(name)
 	m.cacheSettle.Clear(name)
 
+	last := cd.info
+	last.Status = statusDeleting
+	m.cacheRes[name] = &reservation[driver.CacheInfo]{state: statusDeleting, record: last}
+	m.mu.Unlock()
+
+	// Tear down the real cache server backing the instance, if any.
+	derr := cacheengine.Deprovision(ctx, m.opts.CacheEngine, &cd.info)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.cacheRes, name)
+
+	if derr != nil {
+		m.caches.Set(name, cd)
+
+		return derr
+	}
+
 	return nil
 }
 
 // GetCache retrieves information about an ElastiCache cluster.
 //
-// A name that is not a standalone cluster may still be a member node of a
-// replication group ("<groupId>-001", …); real ElastiCache describes those as
-// single-node cache clusters, so fall back to synthesizing the member from its
-// group before reporting not-found. IaC that manages a replication group reads
-// each member back this way.
+// A cluster whose real engine is still being provisioned or torn down is
+// reported with status creating or deleting. A name that is not a standalone
+// cluster may still be a member node of a replication group ("<groupId>-001",
+// …); real ElastiCache describes those as single-node cache clusters, so fall
+// back to synthesizing the member from its group before reporting not-found.
+// IaC that manages a replication group reads each member back this way.
 func (m *Mock) GetCache(_ context.Context, name string) (*driver.CacheInfo, error) {
-	cd, ok := m.caches.Get(name)
-	if !ok {
-		if info, found := m.lookupMember(name); found {
-			return &info, nil
-		}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-		return nil, errors.Newf(errors.NotFound, "cache %q not found", name)
+	if cd, ok := m.caches.Get(name); ok {
+		result := cd.info
+		result.Tags = cloneTags(cd.info.Tags)
+		result.Status = m.settleCacheStatus(name, result.Status)
+
+		return &result, nil
 	}
 
-	result := cd.info
-	result.Status = m.settleCacheStatus(name, result.Status)
+	if r, reserved := m.cacheRes[name]; reserved {
+		result := r.record
+		result.Tags = cloneTags(r.record.Tags)
+		result.Status = r.state
 
-	return &result, nil
+		return &result, nil
+	}
+
+	if info, found := m.lookupMember(name); found {
+		return &info, nil
+	}
+
+	return nil, cacheNotFound(name)
 }
 
 // lookupMember returns the synthesized cache-cluster view of a replication-group
@@ -544,11 +697,16 @@ func (m *Mock) memberCacheInfo(rg *driver.ReplicationGroup, memberID string) dri
 // included as individual single-node cache clusters, matching real ElastiCache
 // (DescribeCacheClusters returns them alongside standalone clusters). The result
 // is sorted by cluster id so the wire order is deterministic (no map-iteration
-// randomness) and matches the id-ordered listing AWS returns.
+// randomness) and matches the id-ordered listing AWS returns. A cluster whose
+// real engine is still being provisioned or torn down is listed with status
+// creating or deleting, as AWS lists a cluster in those states.
 func (m *Mock) ListCaches(_ context.Context, filter scope.Scope) ([]driver.CacheInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	all := m.caches.SortedValues()
 
-	caches := make([]driver.CacheInfo, 0, len(all))
+	caches := make([]driver.CacheInfo, 0, len(all)+len(m.cacheRes))
 
 	for _, cd := range all {
 		if !cd.info.Scope.Matches(filter) {
@@ -556,7 +714,19 @@ func (m *Mock) ListCaches(_ context.Context, filter scope.Scope) ([]driver.Cache
 		}
 
 		info := cd.info
+		info.Tags = cloneTags(cd.info.Tags)
 		info.Status = m.settleCacheStatus(info.Name, info.Status)
+		caches = append(caches, info)
+	}
+
+	for _, r := range m.cacheRes {
+		if !r.record.Scope.Matches(filter) {
+			continue
+		}
+
+		info := r.record
+		info.Tags = cloneTags(r.record.Tags)
+		info.Status = r.state
 		caches = append(caches, info)
 	}
 
@@ -583,27 +753,31 @@ func (m *Mock) ListCaches(_ context.Context, filter scope.Scope) ([]driver.Cache
 // CreateOrUpdate-on-existing semantics (node type and tags come from the
 // request; identity, endpoint, and CreatedAt are preserved).
 func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.CacheInfo, error) {
-	cd, ok := m.caches.Get(cfg.Name)
-	if !ok {
-		return nil, errors.Newf(errors.NotFound, "cache %q not found", cfg.Name)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cd, err := m.mutableCache(cfg.Name)
+	if err != nil {
+		return nil, err
 	}
 
 	if cfg.NodeType != "" {
 		cd.info.NodeType = cfg.NodeType
 	}
+
 	if cfg.Tags != nil {
 		cd.info.Tags = maps.Clone(cfg.Tags)
 	}
+
 	if !cfg.Scope.IsZero() {
 		cd.info.Scope = cfg.Scope
 	}
-
-	m.caches.Set(cfg.Name, cd)
 
 	m.cacheSettle.Begin(cfg.Name, statusModifying, m.opts.Clock.Now(),
 		m.opts.SettleDuration(settle.DefaultCacheModifySettle))
 
 	result := cd.info
+	result.Tags = cloneTags(cd.info.Tags)
 	result.Status = m.settleCacheStatus(cfg.Name, result.Status)
 
 	return &result, nil

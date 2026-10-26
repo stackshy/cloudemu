@@ -15,7 +15,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [AppSync](./appsync.md) | `appsync` | 17 |
 | [Athena](./athena.md) | `athena` | 26 |
 | [Backup](./backup.md) | `backup` | 25 |
-| [Batch](./batch.md) | `batch` | 14 |
+| [Batch](./batch.md) | `batch` | 24 |
 | [Bedrock](./bedrock.md) | `bedrock` | 65 |
 | [BedrockAgent](./bedrockagent.md) | `bedrockagent` | 32 |
 | [BedrockAgentRuntime](./bedrockagentruntime.md) | `bedrockagentruntime` | 3 |
@@ -32,7 +32,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [EC2](./ec2.md) | `compute` | 37 |
 | [ECR](./ecr.md) | `containerregistry` | 15 |
 | [ECS](./ecs.md) | `ecs` | 41 |
-| [EFS](./efs.md) | `efs` | 27 |
+| [EFS](./efs.md) | `efs` | 28 |
 | [EKS](./eks.md) | (provider-native) | 40 |
 | [ELB](./elb.md) | `loadbalancer` | 19 |
 | [EMR](./emr.md) | (provider-native) | 22 |
@@ -45,7 +45,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [GuardDuty](./guardduty.md) | `guardduty` | 87 |
 | [HealthLake](./healthlake.md) | `healthlake` | 7 |
 | [IAM](./iam.md) | `iam` | 40 |
-| [KMS](./kms.md) | `kms` | 46 |
+| [KMS](./kms.md) | `kms` | 54 |
 | [Kafka](./kafka.md) | `kafka` | 59 |
 | [Kendra](./kendra.md) | `kendra` | 13 |
 | [Keyspaces](./keyspaces.md) | `keyspaces` | 18 |

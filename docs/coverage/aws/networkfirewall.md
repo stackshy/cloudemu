@@ -31,6 +31,104 @@ AWS's `networkfirewall` service Â· portable interface `driver.NetworkFirewall` Â
 | `UpdateLoggingConfiguration` |  |
 | `UpdateRuleGroup` |  |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### AnalysisReports
+
+AnalysisReports covers the analysis report family.
+
+| Operation | Description |
+| --- | --- |
+| `GetAnalysisReport` | GetAnalysisReport returns one report (its results are always empty). |
+| `ListAnalysisReports` |  |
+| `StartAnalysisReport` |  |
+
+### AvailabilityZones
+
+AvailabilityZones covers the Availability-Zone associations of a transit
+
+| Operation | Description |
+| --- | --- |
+| `AssociateAvailabilityZones` |  |
+| `DisassociateAvailabilityZones` |  |
+
+### FirewallSettings
+
+FirewallSettings covers the firewall-level setters.
+
+| Operation | Description |
+| --- | --- |
+| `UpdateAvailabilityZoneChangeProtection` |  |
+| `UpdateFirewallAnalysisSettings` |  |
+| `UpdateFirewallDescription` |  |
+| `UpdateFirewallPolicyChangeProtection` |  |
+| `UpdateSubnetChangeProtection` |  |
+
+### FlowOperations
+
+FlowOperations covers the flow capture / flush family.
+
+| Operation | Description |
+| --- | --- |
+| `DescribeFlowOperation` |  |
+| `ListFlowOperationResults` | ListFlowOperationResults returns the operation and its (always empty, there is no |
+| `ListFlowOperations` |  |
+| `StartFlowCapture` |  |
+| `StartFlowFlush` |  |
+
+### Metadata
+
+Metadata covers the read-only metadata/summary operations.
+
+| Operation | Description |
+| --- | --- |
+| `DescribeFirewallMetadata` |  |
+| `DescribeRuleGroupMetadata` |  |
+| `DescribeRuleGroupSummary` |  |
+
+### ResourcePolicies
+
+ResourcePolicies covers the resource-sharing IAM policies attached to a rule
+
+| Operation | Description |
+| --- | --- |
+| `DeleteResourcePolicy` |  |
+| `DescribeResourcePolicy` |  |
+| `PutResourcePolicy` |  |
+
+### TLSInspection
+
+TLSInspection covers the TLS inspection configuration family.
+
+| Operation | Description |
+| --- | --- |
+| `CreateTLSInspectionConfiguration` |  |
+| `DeleteTLSInspectionConfiguration` |  |
+| `DescribeTLSInspectionConfiguration` |  |
+| `ListTLSInspectionConfigurations` |  |
+| `UpdateTLSInspectionConfiguration` |  |
+
+### VPCEndpointAssociations
+
+VPCEndpointAssociations covers the VPC endpoint association family.
+
+| Operation | Description |
+| --- | --- |
+| `CreateVpcEndpointAssociation` |  |
+| `DeleteVpcEndpointAssociation` |  |
+| `DescribeVpcEndpointAssociation` |  |
+| `ListVpcEndpointAssociations` |  |
+
 ## Not in scope
 
-_Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
+- Not implemented (the operations answer `InvalidRequestException: unknown operation`): the proxy family (`CreateProxy`, `CreateProxyConfiguration`, `CreateProxyRuleGroup`, `CreateProxyRules`, the matching describe, update, delete and list operations, `AttachRuleGroupsToProxyConfiguration`, `DetachRuleGroupsFromProxyConfiguration`, `UpdateProxyRulePriorities`, `UpdateProxyRuleGroupPriorities`), the container association family (`CreateContainerAssociation` and its describe, update, delete and list operations), the transit gateway attachment operations (`AcceptNetworkFirewallTransitGatewayAttachment`, `RejectNetworkFirewallTransitGatewayAttachment`, `DeleteNetworkFirewallTransitGatewayAttachment`) and `UpdateFirewallEncryptionConfiguration`. `EncryptionConfiguration` on create and update requests is accepted and ignored.
+- There is no packet data plane. Flow capture and flush operations are accepted and complete (immediately, or after the settle window under `--async-settle`) but their results list no flows. Analysis reports complete with no results. Nothing is published to the `AWS/NetworkFirewall` CloudWatch namespace, and the logging configuration is validated and stored but no alert, flow or TLS log is delivered to S3, CloudWatch Logs or Kinesis Data Firehose.
+- Checks that need another service are not made: the VPC, subnet and Availability Zone ids a firewall or VPC endpoint association names are syntax-checked only, and the certificates, certificate authorities, KMS keys, log destinations and IAM principals named in TLS inspection configurations, logging configurations and resource policies are not looked up. Resource policies are validated (JSON, allowed actions per resource kind) and stored but never evaluated; sharing through Resource Access Manager is not modeled.
+- A firewall subnet's Availability Zone is the zone the subnet really sits in when the subnet exists in the emulated VPC (a firewall takes at most one subnet per zone, as in AWS, and refuses a second one). A subnet id the VPC store does not know (a library user who never created it) gets a zone derived from its id instead, so that zone is stable but not real. Each zone has its own endpoint id, fixed while the subnet stays attached, and a VPC endpoint association reports the same zone.
+- A transit gateway-attached firewall can be created, described and have Availability Zones associated and disassociated, but no transit gateway attachment is created, so its status never reports a transit gateway attachment sync state.
+- Firewalls, policies, rule groups and TLS inspection configurations are `READY` or `ACTIVE` as soon as they are created; there is no `PROVISIONING` period, and `DeleteFirewall` removes the record at once while answering `DELETING`, so `--async-settle` never shows those intermediate states for these resources (only flow operations settle). `DryRun` and `AnalyzeRuleGroup` on create and update requests are accepted and ignored, so a dry run really makes the change and no rule group analysis results are produced.
+- Rule content is stored and returned byte for byte. Only the parts needed for capacity and summaries are read: stateful rules (one unit per rule in `RulesString`, `StatefulRules` and `RulesSourceList` targets) and stateless rules (the product of the element counts of the match settings, as the CreateRuleGroup reference describes). Suricata syntax, rule variables and reference sets are not validated, and a rule group whose rules need more than its `Capacity` is rejected with `InvalidRequestException` (the exception real AWS uses for this is unconfirmed).
+- Behaviours the AWS reference does not state were chosen conservatively and are unconfirmed against the live service: a duplicate name answers `InvalidRequestException` (the one exception every Create operation models); deleting a firewall that still has VPC endpoint associations is refused with `InvalidOperationException`; describing or deleting a resource policy that does not exist answers `ResourceNotFoundException`; `DescribeRuleGroupSummary` on a stateless rule group answers `InvalidRequestException` and reports only the options named in the rule group's `SummaryConfiguration`; tagging a resource does not change its update token; a request that gives both a name and an ARN uses the name.
+- List operations take `MaxResults` (1 to 100, default 100) and `NextToken`, an opaque offset over results sorted by name, so it is only stable while the list does not change between pages. `ListRuleGroups` filters on `Type`, `Scope` and `ManagedType`; the emulator holds no AWS-managed rule groups, so `Scope=MANAGED` or any `ManagedType` returns an empty list.

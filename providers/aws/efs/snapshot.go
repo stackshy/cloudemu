@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/services/efs/driver"
@@ -37,6 +39,15 @@ type fsDataSnapshot struct {
 	AccessPts   map[string]*driver.AccessPoint   `json:"accessPts,omitempty"`
 	Lifecycle   []driver.LifecyclePolicy         `json:"lifecycle,omitempty"`
 	Replication *driver.ReplicationConfiguration `json:"replication,omitempty"`
+	// Lifecycle windows (AsyncSettle): a restored "creating"/"deleting" file
+	// system or mount target keeps its transient state until the window ends.
+	ReadyAt    time.Time            `json:"readyAt,omitzero"`
+	DeleteAt   time.Time            `json:"deleteAt,omitzero"`
+	MTReadyAt  map[string]time.Time `json:"mtReadyAt,omitempty"`
+	MTDeleteAt map[string]time.Time `json:"mtDeleteAt,omitempty"`
+	// Metric sample times, so a restore keeps the publishing cadence.
+	StorageSampleAt    time.Time `json:"storageSampleAt,omitzero"`
+	ThroughputSampleAt time.Time `json:"throughputSampleAt,omitzero"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused. EFS holds no bulk
@@ -54,7 +65,7 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 
 	m.ipMu.Lock()
 	if len(m.ipCounters) > 0 {
-		snap.IPCounters = m.ipCounters
+		snap.IPCounters = maps.Clone(m.ipCounters)
 	}
 	m.ipMu.Unlock()
 
@@ -71,14 +82,51 @@ func (m *Mock) snapshotFileSystems() map[string]*fsDataSnapshot {
 
 	for id, d := range m.fileSystems.All() {
 		d.mu.RLock()
-		out[id] = &fsDataSnapshot{
-			FS: d.fs, Policy: d.policy, Backup: d.backup, MountTgts: d.mountTgts,
-			AccessPts: d.accessPts, Lifecycle: d.lifecycle, Replication: d.replication,
-		}
+		out[id] = d.snapshotLocked()
 		d.mu.RUnlock()
 	}
 
 	return out
+}
+
+// snapshotLocked copies d into its exported snapshot form. Everything that is
+// mutated in place after creation (the mount-target and access-point maps and
+// their values, the lifecycle-window maps, and the tag maps) is copied, because
+// the snapshot is marshaled after d.mu is released while requests and Tick keep
+// writing those. The lifecycle policies and the replication configuration are
+// only ever replaced wholesale, so sharing them is safe. Callers hold d.mu.
+func (d *fsData) snapshotLocked() *fsDataSnapshot {
+	fs := d.fs
+	fs.Tags = maps.Clone(d.fs.Tags)
+
+	var mts map[string]*driver.MountTarget
+	if d.mountTgts != nil {
+		mts = make(map[string]*driver.MountTarget, len(d.mountTgts))
+
+		for id, mt := range d.mountTgts {
+			c := *mt
+			mts[id] = &c
+		}
+	}
+
+	var aps map[string]*driver.AccessPoint
+	if d.accessPts != nil {
+		aps = make(map[string]*driver.AccessPoint, len(d.accessPts))
+
+		for id, ap := range d.accessPts {
+			c := *ap
+			c.Tags = maps.Clone(ap.Tags)
+			aps[id] = &c
+		}
+	}
+
+	return &fsDataSnapshot{
+		FS: fs, Policy: d.policy, Backup: d.backup, MountTgts: mts,
+		AccessPts: aps, Lifecycle: d.lifecycle, Replication: d.replication,
+		ReadyAt: d.readyAt, DeleteAt: d.deleteAt,
+		MTReadyAt: maps.Clone(d.mtReadyAt), MTDeleteAt: maps.Clone(d.mtDeleteAt),
+		StorageSampleAt: d.storageSampleAt, ThroughputSampleAt: d.throughputSampleAt,
+	}
 }
 
 func (m *Mock) snapshotIndexes(snap *efsSnapshot) error {
@@ -113,9 +161,21 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	}
 
 	for id, s := range snap.FileSystems {
+		// omitempty drops an empty map, but the live code writes into these
+		// maps without a nil check, so restore them as empty, not nil.
+		if s.MountTgts == nil {
+			s.MountTgts = map[string]*driver.MountTarget{}
+		}
+
+		if s.AccessPts == nil {
+			s.AccessPts = map[string]*driver.AccessPoint{}
+		}
+
 		m.fileSystems.Set(id, &fsData{
 			fs: s.FS, policy: s.Policy, backup: s.Backup, mountTgts: s.MountTgts,
 			accessPts: s.AccessPts, lifecycle: s.Lifecycle, replication: s.Replication,
+			readyAt: s.ReadyAt, deleteAt: s.DeleteAt, mtReadyAt: s.MTReadyAt, mtDeleteAt: s.MTDeleteAt,
+			storageSampleAt: s.StorageSampleAt, throughputSampleAt: s.ThroughputSampleAt,
 		})
 	}
 

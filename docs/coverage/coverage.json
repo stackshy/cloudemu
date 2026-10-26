@@ -2656,6 +2656,9 @@
     "interface": "Batch",
     "operations": [
       {
+        "name": "CancelJob"
+      },
+      {
         "name": "CreateComputeEnvironment",
         "doc": "Compute environments."
       },
@@ -2664,10 +2667,17 @@
         "doc": "Job queues."
       },
       {
+        "name": "CreateSchedulingPolicy",
+        "doc": "Scheduling policies."
+      },
+      {
         "name": "DeleteComputeEnvironment"
       },
       {
         "name": "DeleteJobQueue"
+      },
+      {
+        "name": "DeleteSchedulingPolicy"
       },
       {
         "name": "DeregisterJobDefinition"
@@ -2682,6 +2692,18 @@
         "name": "DescribeJobQueues"
       },
       {
+        "name": "DescribeJobs"
+      },
+      {
+        "name": "DescribeSchedulingPolicies"
+      },
+      {
+        "name": "ListJobs"
+      },
+      {
+        "name": "ListSchedulingPolicies"
+      },
+      {
         "name": "ListTagsForResource"
       },
       {
@@ -2689,8 +2711,15 @@
         "doc": "Job definitions."
       },
       {
+        "name": "SubmitJob",
+        "doc": "Jobs."
+      },
+      {
         "name": "TagResource",
-        "doc": "Tags (by ARN), shared across all three resource kinds."
+        "doc": "Tags (by ARN), shared across every taggable resource kind."
+      },
+      {
+        "name": "TerminateJob"
       },
       {
         "name": "UntagResource"
@@ -2700,6 +2729,9 @@
       },
       {
         "name": "UpdateJobQueue"
+      },
+      {
+        "name": "UpdateSchedulingPolicy"
       }
     ],
     "providers": {
@@ -7478,6 +7510,10 @@
       },
       {
         "name": "UpdateFileSystem"
+      },
+      {
+        "name": "UpdateFileSystemProtection",
+        "doc": "UpdateFileSystemProtection sets the replication-overwrite protection. An"
       }
     ],
     "optionalCapabilities": [
@@ -10669,8 +10705,14 @@
         "name": "CancelKeyDeletion"
       },
       {
+        "name": "ConnectCustomKeyStore"
+      },
+      {
         "name": "CreateAlias",
         "doc": "Aliases."
+      },
+      {
+        "name": "CreateCustomKeyStore"
       },
       {
         "name": "CreateGrant",
@@ -10687,7 +10729,17 @@
         "name": "DeleteAlias"
       },
       {
+        "name": "DeleteCustomKeyStore"
+      },
+      {
         "name": "DeleteImportedKeyMaterial"
+      },
+      {
+        "name": "DeriveSharedSecret"
+      },
+      {
+        "name": "DescribeCustomKeyStores",
+        "doc": "DescribeCustomKeyStores returns every store, or only the one matching id"
       },
       {
         "name": "DescribeKey"
@@ -10697,6 +10749,9 @@
       },
       {
         "name": "DisableKeyRotation"
+      },
+      {
+        "name": "DisconnectCustomKeyStore"
       },
       {
         "name": "EnableKey"
@@ -10725,6 +10780,10 @@
       },
       {
         "name": "GenerateRandom"
+      },
+      {
+        "name": "GenerateRandomInCustomKeyStore",
+        "doc": "GenerateRandomInCustomKeyStore serves GenerateRandom with a CustomKeyStoreId."
       },
       {
         "name": "GetKeyPolicy",
@@ -10798,6 +10857,9 @@
         "name": "UpdateAlias"
       },
       {
+        "name": "UpdateCustomKeyStore"
+      },
+      {
         "name": "UpdateKeyDescription"
       },
       {
@@ -10817,6 +10879,9 @@
         "operations": [
           {
             "name": "Decrypt"
+          },
+          {
+            "name": "DeriveSharedSecret"
           },
           {
             "name": "Encrypt"
@@ -10853,6 +10918,35 @@
           },
           {
             "name": "VerifyMac"
+          }
+        ]
+      },
+      {
+        "name": "CustomKeyStores",
+        "doc": "CustomKeyStores is the custom key store surface of KMS.",
+        "operations": [
+          {
+            "name": "ConnectCustomKeyStore"
+          },
+          {
+            "name": "CreateCustomKeyStore"
+          },
+          {
+            "name": "DeleteCustomKeyStore"
+          },
+          {
+            "name": "DescribeCustomKeyStores",
+            "doc": "DescribeCustomKeyStores returns every store, or only the one matching id"
+          },
+          {
+            "name": "DisconnectCustomKeyStore"
+          },
+          {
+            "name": "GenerateRandomInCustomKeyStore",
+            "doc": "GenerateRandomInCustomKeyStore serves GenerateRandom with a CustomKeyStoreId."
+          },
+          {
+            "name": "UpdateCustomKeyStore"
           }
         ]
       },
@@ -11558,6 +11652,100 @@
       }
     ],
     "optionalCapabilities": [
+      {
+        "name": "AWSLogging",
+        "doc": "AWSLogging is an optional interface implemented by the AWS CloudWatch Logs",
+        "operations": [
+          {
+            "name": "AssociateKmsKey",
+            "doc": "AssociateKmsKey and DisassociateKmsKey target exactly one of a log group"
+          },
+          {
+            "name": "CancelExportTask"
+          },
+          {
+            "name": "CreateAWSLogGroup"
+          },
+          {
+            "name": "CreateExportTask",
+            "doc": "Export tasks write a log group's events to an S3 bucket. A task moves"
+          },
+          {
+            "name": "DeleteAccountPolicy"
+          },
+          {
+            "name": "DeleteDataProtectionPolicy"
+          },
+          {
+            "name": "DeleteRetentionPolicy"
+          },
+          {
+            "name": "DescribeAWSMetricFilters",
+            "doc": "DescribeAWSMetricFilters lists metric filters, sorted by filter name."
+          },
+          {
+            "name": "DescribeAccountPolicies"
+          },
+          {
+            "name": "DescribeExportTasks"
+          },
+          {
+            "name": "DescribeQueries"
+          },
+          {
+            "name": "DisassociateKmsKey"
+          },
+          {
+            "name": "FilterAWSLogEvents"
+          },
+          {
+            "name": "GetAWSLogEvents",
+            "doc": "GetAWSLogEvents and FilterAWSLogEvents are GetLogEvents and"
+          },
+          {
+            "name": "GetDataProtectionPolicy"
+          },
+          {
+            "name": "GetLogGroupFields",
+            "doc": "GetLogGroupFields samples the 8 minutes either side of at, or the last"
+          },
+          {
+            "name": "GetLogRecord",
+            "doc": "GetLogRecord returns the masked record unless unmask is set."
+          },
+          {
+            "name": "GetQueryResults"
+          },
+          {
+            "name": "ListAWSLogGroups"
+          },
+          {
+            "name": "PutAccountPolicy",
+            "doc": "Account policies apply to every log group in the account, or to the"
+          },
+          {
+            "name": "PutDataProtectionPolicy",
+            "doc": "Data protection policies take a log group name or ARN. Masking applies"
+          },
+          {
+            "name": "PutLogEventsWithResult"
+          },
+          {
+            "name": "PutRetentionPolicy"
+          },
+          {
+            "name": "StartQuery",
+            "doc": "Logs Insights. A query is Running until its first GetQueryResults,"
+          },
+          {
+            "name": "StopQuery"
+          },
+          {
+            "name": "TestMetricFilter",
+            "doc": "TestMetricFilter runs a filter pattern over sample log messages."
+          }
+        ]
+      },
       {
         "name": "GCPLogging",
         "doc": "GCPLogging is an optional interface implemented by the GCP logging backend for",
@@ -12529,6 +12717,148 @@
       },
       {
         "name": "UpdateRuleGroup"
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "AnalysisReports",
+        "doc": "AnalysisReports covers the analysis report family.",
+        "operations": [
+          {
+            "name": "GetAnalysisReport",
+            "doc": "GetAnalysisReport returns one report (its results are always empty)."
+          },
+          {
+            "name": "ListAnalysisReports"
+          },
+          {
+            "name": "StartAnalysisReport"
+          }
+        ]
+      },
+      {
+        "name": "AvailabilityZones",
+        "doc": "AvailabilityZones covers the Availability-Zone associations of a transit",
+        "operations": [
+          {
+            "name": "AssociateAvailabilityZones"
+          },
+          {
+            "name": "DisassociateAvailabilityZones"
+          }
+        ]
+      },
+      {
+        "name": "FirewallSettings",
+        "doc": "FirewallSettings covers the firewall-level setters.",
+        "operations": [
+          {
+            "name": "UpdateAvailabilityZoneChangeProtection"
+          },
+          {
+            "name": "UpdateFirewallAnalysisSettings"
+          },
+          {
+            "name": "UpdateFirewallDescription"
+          },
+          {
+            "name": "UpdateFirewallPolicyChangeProtection"
+          },
+          {
+            "name": "UpdateSubnetChangeProtection"
+          }
+        ]
+      },
+      {
+        "name": "FlowOperations",
+        "doc": "FlowOperations covers the flow capture / flush family.",
+        "operations": [
+          {
+            "name": "DescribeFlowOperation"
+          },
+          {
+            "name": "ListFlowOperationResults",
+            "doc": "ListFlowOperationResults returns the operation and its (always empty, there is no"
+          },
+          {
+            "name": "ListFlowOperations"
+          },
+          {
+            "name": "StartFlowCapture"
+          },
+          {
+            "name": "StartFlowFlush"
+          }
+        ]
+      },
+      {
+        "name": "Metadata",
+        "doc": "Metadata covers the read-only metadata/summary operations.",
+        "operations": [
+          {
+            "name": "DescribeFirewallMetadata"
+          },
+          {
+            "name": "DescribeRuleGroupMetadata"
+          },
+          {
+            "name": "DescribeRuleGroupSummary"
+          }
+        ]
+      },
+      {
+        "name": "ResourcePolicies",
+        "doc": "ResourcePolicies covers the resource-sharing IAM policies attached to a rule",
+        "operations": [
+          {
+            "name": "DeleteResourcePolicy"
+          },
+          {
+            "name": "DescribeResourcePolicy"
+          },
+          {
+            "name": "PutResourcePolicy"
+          }
+        ]
+      },
+      {
+        "name": "TLSInspection",
+        "doc": "TLSInspection covers the TLS inspection configuration family.",
+        "operations": [
+          {
+            "name": "CreateTLSInspectionConfiguration"
+          },
+          {
+            "name": "DeleteTLSInspectionConfiguration"
+          },
+          {
+            "name": "DescribeTLSInspectionConfiguration"
+          },
+          {
+            "name": "ListTLSInspectionConfigurations"
+          },
+          {
+            "name": "UpdateTLSInspectionConfiguration"
+          }
+        ]
+      },
+      {
+        "name": "VPCEndpointAssociations",
+        "doc": "VPCEndpointAssociations covers the VPC endpoint association family.",
+        "operations": [
+          {
+            "name": "CreateVpcEndpointAssociation"
+          },
+          {
+            "name": "DeleteVpcEndpointAssociation"
+          },
+          {
+            "name": "DescribeVpcEndpointAssociation"
+          },
+          {
+            "name": "ListVpcEndpointAssociations"
+          }
+        ]
       }
     ],
     "providers": {

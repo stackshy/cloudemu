@@ -103,6 +103,13 @@ var awsExemptions = []exemption{
 			"in production without any aws.go wiring. SetHTTPClient is only an override that " +
 			"swaps in a fake or instrumented client, so New deliberately does not call it.",
 	},
+	{
+		field:  "EventBridge",
+		method: "SetHTTPClient",
+		reason: "eventbridge.New defaults API destination delivery to a real net/http client " +
+			"that does not follow redirects, so targets reach their endpoints without any " +
+			"aws.go wiring. SetHTTPClient only swaps in a fake or instrumented client.",
+	},
 }
 
 // azureExemptions lists Azure's one deliberate non-wiring.

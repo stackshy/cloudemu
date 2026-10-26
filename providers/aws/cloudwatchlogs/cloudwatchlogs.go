@@ -5,16 +5,15 @@ import (
 	"context"
 	"maps"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
-	"github.com/stackshy/cloudemu/v2/internal/regionctx"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs/filterpattern"
 	"github.com/stackshy/cloudemu/v2/services/logging/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -22,26 +21,31 @@ import (
 
 const defaultLogLimit = 100
 
-// putLogEventsMaxBatchSpan bounds how far apart the oldest and newest event
-// timestamps in a single PutLogEvents batch may be. Real CloudWatch Logs: a
-// batch of log events in a single request cannot span more than 24 hours,
-// otherwise the PutLogEvents operation fails.
-const putLogEventsMaxBatchSpan = 24 * time.Hour
-
-// Compile-time check that Mock implements driver.Logging.
-var _ driver.Logging = (*Mock)(nil)
+// Compile-time checks that Mock implements driver.Logging and the
+// CloudWatch Logs-only driver.AWSLogging surface.
+var (
+	_ driver.Logging    = (*Mock)(nil)
+	_ driver.AWSLogging = (*Mock)(nil)
+)
 
 type logStream struct {
 	info   driver.LogStreamInfo
 	events []driver.LogEvent
-	mu     sync.RWMutex
+	// uploads counts accepted PutLogEvents calls; it seeds the (deprecated,
+	// ignored-on-input) nextSequenceToken so the token changes per upload.
+	uploads uint64
+	mu      sync.RWMutex
 }
 
 type logGroup struct {
 	info          driver.LogGroupInfo
+	kmsKeyID      string
+	class         string
 	streams       *memstore.Store[*logStream]
 	metricFilters *memstore.Store[*driver.MetricFilterInfo]
 	subFilters    *memstore.Store[*driver.SubscriptionFilterInfo]
+	// dataProtection is the group's data protection policy, nil when unset.
+	dataProtection atomic.Pointer[groupPolicy]
 }
 
 // LambdaInvoker asynchronously invokes a Lambda function by ARN with a
@@ -57,6 +61,28 @@ type Mock struct {
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 	lambda     LambdaInvoker
+	keys       KeyResolver
+	queries    *memstore.Store[queryRecord]
+	// exports holds export tasks; exportStore is the S3 they write to.
+	exports     *memstore.Store[exportTask]
+	exportStore ExportStore
+
+	// queryResultKmsKey is the account-wide key associated with Logs Insights
+	// query results (AssociateKmsKey on the query-result resource).
+	queryResultKmsKey string
+	// accountPolicies holds account policies by type and name, under mu.
+	accountPolicies map[string]*accountPolicy
+	// periods holds each metric filter's per-period default-value state,
+	// keyed by filterPeriodKey.
+	periods map[string]filterPeriod
+	mu      sync.RWMutex
+	// admitMu makes StartQuery's concurrent-query count and its insert one
+	// step. Settling only moves queries out of Running, so it needs no lock.
+	admitMu sync.Mutex
+	// exportMu makes the one-active-export-task check and the insert one
+	// step, and serializes claiming tasks for writing. It is never held
+	// across an S3 call.
+	exportMu sync.Mutex
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -84,53 +110,25 @@ func (m *Mock) emitMetric(metricName string, value float64, unit string, dims ma
 // New creates a new CloudWatch Logs mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		groups: memstore.New[*logGroup](),
-		opts:   opts,
+		groups:  memstore.New[*logGroup](),
+		queries: memstore.New[queryRecord](),
+		exports: memstore.New[exportTask](),
+		opts:    opts,
+		periods: map[string]filterPeriod{},
+
+		accountPolicies: map[string]*accountPolicy{},
 	}
 }
 
-// CreateLogGroup creates a new CloudWatch log group.
+// CreateLogGroup creates a new CloudWatch log group in the STANDARD class
+// with no KMS key.
 func (m *Mock) CreateLogGroup(ctx context.Context, cfg driver.LogGroupConfig) (*driver.LogGroupInfo, error) {
-	if err := validateLogGroupName(cfg.Name); err != nil {
+	g, err := m.CreateAWSLogGroup(ctx, &cfg, driver.AWSLogGroupOptions{})
+	if err != nil {
 		return nil, err
 	}
 
-	if m.groups.Has(cfg.Name) {
-		return nil, errors.Newf(errors.AlreadyExists, "log group %q already exists", cfg.Name)
-	}
-
-	// A log group created without a retention policy never expires: AWS leaves
-	// retentionInDays unset (nil on the SDK) rather than defaulting to 30 days.
-	// The zero value flows through to DescribeLogGroups, which omits the field.
-	arn := idgen.AWSARN("logs", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, "log-group:"+cfg.Name)
-
-	tags := make(map[string]string, len(cfg.Tags))
-	for k, v := range cfg.Tags {
-		tags[k] = v
-	}
-
-	info := driver.LogGroupInfo{
-		Name:          cfg.Name,
-		Scope:         cfg.Scope,
-		ResourceID:    arn,
-		RetentionDays: cfg.RetentionDays,
-		CreatedAt:     m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		StoredBytes:   0,
-		Tags:          tags,
-	}
-
-	g := &logGroup{
-		info:          info,
-		streams:       memstore.New[*logStream](),
-		metricFilters: memstore.New[*driver.MetricFilterInfo](),
-		subFilters:    memstore.New[*driver.SubscriptionFilterInfo](),
-	}
-
-	m.groups.Set(cfg.Name, g)
-
-	result := info
-
-	return &result, nil
+	return &g.LogGroupInfo, nil
 }
 
 // DeleteLogGroup deletes a CloudWatch log group by name.
@@ -235,194 +233,33 @@ func (m *Mock) ListLogStreams(_ context.Context, logGroup string) ([]driver.LogS
 	return streams, nil
 }
 
-// PutLogEvents writes log events to a stream.
+// PutLogEvents writes log events to a stream. Events outside the ingest
+// window are dropped exactly as PutLogEventsWithResult drops them; the
+// rejection details are discarded.
 func (m *Mock) PutLogEvents(ctx context.Context, groupName, streamName string, events []driver.LogEvent) error {
-	g, ok := m.groups.Get(groupName)
-	if !ok {
-		return errors.Newf(errors.NotFound, "log group %q not found", groupName)
-	}
+	_, err := m.PutLogEventsWithResult(ctx, groupName, streamName, events)
 
-	s, ok := g.streams.Get(streamName)
-	if !ok {
-		return errors.Newf(errors.NotFound, "log stream %q not found in group %q", streamName, groupName)
-	}
-
-	if len(events) == 0 {
-		return errors.New(errors.InvalidArgument, "logEvents cannot be empty")
-	}
-
-	if err := validatePutLogEventsBatch(events); err != nil {
-		return err
-	}
-
-	ingestedAt := m.opts.Clock.Now().UTC()
-
-	copied := make([]driver.LogEvent, len(events))
-	for i := range events {
-		copied[i] = events[i]
-		copied[i].IngestionTime = ingestedAt
-	}
-
-	var totalBytes int64
-	for _, e := range events {
-		totalBytes += int64(len(e.Message))
-	}
-
-	// The stream lock only guards the stream's own events/metadata. It is
-	// released before cross-service delivery (metric filters, subscription
-	// filters) so a delivered handler that writes back into CloudWatch Logs —
-	// re-entering PutLogEvents — cannot deadlock on this same lock.
-	s.mu.Lock()
-
-	s.events = append(s.events, copied...)
-
-	// CloudWatch Logs returns events in timestamp order regardless of the order
-	// they were ingested, so keep the stream's backing slice sorted on insert.
-	// The sort is stable, so equal timestamps retain ingestion order.
-	sortLogEventsAscending(s.events)
-
-	// events is already validated non-empty and chronologically ascending (see
-	// validatePutLogEventsBatch above), so events[0] is this batch's earliest
-	// timestamp and events[len(events)-1] its latest.
-	if s.info.FirstEvent == "" {
-		s.info.FirstEvent = events[0].Timestamp.UTC().Format(time.RFC3339)
-	}
-
-	s.info.LastEvent = events[len(events)-1].Timestamp.UTC().Format(time.RFC3339)
-
-	s.mu.Unlock()
-
-	m.groups.Update(groupName, func(lg *logGroup) *logGroup {
-		lg.info.StoredBytes += totalBytes
-		return lg
-	})
-
-	dims := map[string]string{"LogGroupName": groupName}
-	m.emitMetric("IncomingLogEvents", float64(len(events)), "Count", dims)
-	m.emitMetric("IncomingBytes", float64(totalBytes), "Bytes", dims)
-
-	m.evaluateMetricFilters(g, events)
-	m.deliverToSubscriptions(ctx, g, streamName, copied)
-
-	return nil
+	return err
 }
 
-// validatePutLogEventsBatch enforces the two structural constraints real
-// CloudWatch Logs applies to a PutLogEvents batch before ingesting anything:
-// the events must be in chronological (non-decreasing) timestamp order, and
-// the oldest and newest event in the batch must not be more than 24 hours
-// apart. Both are hard failures — the whole batch is rejected and nothing is
-// written — unlike the per-event too-old/too-new rejection real CloudWatch
-// Logs also applies (surfaced via PutLogEventsOutput.RejectedLogEventsInfo),
-// which this emulator does not model: that check is relative to wall-clock
-// time, and event timestamps here are caller-supplied and not tied to the
-// mock's clock, so silently dropping "future" events would reject events
-// legitimate callers routinely backdate or postdate in tests.
-//
-// It also applies the batch size limits: at most 10,000 events, each message
-// at least 1 character, and at most 1,048,576 bytes in total, where each event
-// counts as its UTF-8 message bytes plus 26.
-func validatePutLogEventsBatch(events []driver.LogEvent) error {
-	if err := validatePutLogEventsSize(events); err != nil {
-		return err
-	}
-
-	for i := 1; i < len(events); i++ {
-		if events[i].Timestamp.Before(events[i-1].Timestamp) {
-			return errors.New(errors.InvalidArgument,
-				"log events in a single PutLogEvents request must be in chronological order")
-		}
-	}
-
-	if events[len(events)-1].Timestamp.Sub(events[0].Timestamp) > putLogEventsMaxBatchSpan {
-		return errors.New(errors.InvalidArgument,
-			"the log events in a single PutLogEvents request cannot span more than 24 hours")
-	}
-
-	return nil
+// GetLogEvents retrieves log events matching the query. Events masked by a
+// data protection policy come back masked.
+func (m *Mock) GetLogEvents(ctx context.Context, input *driver.LogQueryInput) ([]driver.LogEvent, error) {
+	return m.GetAWSLogEvents(ctx, input, false)
 }
 
-// evaluateMetricFilters turns matching log events into CloudWatch metric data.
-// For each metric filter on the group, every event whose message matches the
-// filter pattern contributes the filter's metric value; the total is published
-// to the filter's configured namespace/metric, mirroring how CloudWatch Logs
-// extracts custom metrics from ingested events.
-//
-// Pattern matching only supports plain-substring "count occurrences of a
-// term" matching (strings.Contains). Real CloudWatch Logs filter pattern
-// syntax — quoted phrases, JSON-field patterns (e.g. { $.level = "ERROR" }),
-// ?OR-style alternation, and -exclusion terms — is not parsed, so a more
-// elaborate real filter pattern will not behave like real CloudWatch Logs
-// here.
-func (m *Mock) evaluateMetricFilters(g *logGroup, events []driver.LogEvent) {
-	if m.monitoring == nil {
-		return
-	}
-
-	for _, mf := range g.metricFilters.All() {
-		var (
-			matched int
-			total   float64
-		)
-
-		for i := range events {
-			if mf.FilterPattern == "" || strings.Contains(events[i].Message, mf.FilterPattern) {
-				matched++
-				total += metricFilterValue(mf.MetricValue)
-			}
-		}
-
-		if matched == 0 {
-			continue
-		}
-
-		namespace := mf.MetricNamespace
-		if namespace == "" {
-			namespace = "LogMetrics"
-		}
-
-		_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{{
-			Namespace:  namespace,
-			MetricName: mf.MetricName,
-			Value:      total,
-			Timestamp:  m.opts.Clock.Now(),
-		}})
-	}
-}
-
-// metricFilterValue resolves a metric filter's metricValue to the number each
-// matching event contributes. A literal number is used directly; anything else
-// (an empty value, or a "$field" token this emulator does not extract) counts
-// as 1 per matching event, which is the common "count occurrences" filter.
-func metricFilterValue(raw string) float64 {
-	if raw == "" {
-		return 1
-	}
-
-	if v, err := strconv.ParseFloat(raw, 64); err == nil {
-		return v
-	}
-
-	return 1
-}
-
-// GetLogEvents retrieves log events matching the query.
-func (m *Mock) GetLogEvents(_ context.Context, input *driver.LogQueryInput) ([]driver.LogEvent, error) {
+// GetAWSLogEvents is GetLogEvents with the unmask flag.
+func (m *Mock) GetAWSLogEvents(_ context.Context, input *driver.LogQueryInput, unmask bool) ([]driver.LogEvent, error) {
 	g, ok := m.groups.Get(input.LogGroup)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", input.LogGroup)
 	}
 
+	m.purgeExpired(input.LogGroup, g)
+
 	limit := input.Limit
 	if limit == 0 {
 		limit = defaultLogLimit
-	}
-
-	// Only a configured retention policy drops old events. A group with no
-	// retention (RetentionDays == 0) never expires, so the cutoff stays zero.
-	var retentionCutoff time.Time
-	if g.info.RetentionDays > 0 {
-		retentionCutoff = m.opts.Clock.Now().AddDate(0, 0, -g.info.RetentionDays)
 	}
 
 	var results []driver.LogEvent
@@ -433,10 +270,10 @@ func (m *Mock) GetLogEvents(_ context.Context, input *driver.LogQueryInput) ([]d
 			return nil, errors.Newf(errors.NotFound, "log stream %q not found in group %q", input.LogStream, input.LogGroup)
 		}
 
-		results = append(results, m.filterEvents(s, input, retentionCutoff)...)
+		results = append(results, m.filterEvents(s, input, unmask)...)
 	} else {
 		for _, s := range g.streams.SortedValues() {
-			events := m.filterEvents(s, input, retentionCutoff)
+			events := m.filterEvents(s, input, unmask)
 			results = append(results, events...)
 		}
 
@@ -468,18 +305,15 @@ func sortLogEventsAscending(events []driver.LogEvent) {
 func (*Mock) filterEvents(
 	s *logStream,
 	input *driver.LogQueryInput,
-	retentionCutoff time.Time,
+	unmask bool,
 ) []driver.LogEvent {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var results []driver.LogEvent
 
-	for _, e := range s.events {
-		if !retentionCutoff.IsZero() && e.Timestamp.Before(retentionCutoff) {
-			continue
-		}
-
+	for i := range s.events {
+		e := &s.events[i]
 		if !input.StartTime.IsZero() && e.Timestamp.Before(input.StartTime) {
 			continue
 		}
@@ -492,16 +326,27 @@ func (*Mock) filterEvents(
 			continue
 		}
 
-		results = append(results, e)
+		results = append(results, eventView(e, unmask))
 	}
 
 	return results
 }
 
-// FilterLogEvents filters log events across streams using a pattern.
+// FilterLogEvents filters log events across streams using a pattern. Events
+// masked by a data protection policy come back masked.
 func (m *Mock) FilterLogEvents(
+	ctx context.Context,
+	input *driver.FilterLogEventsInput,
+) ([]driver.FilteredLogEvent, error) {
+	return m.FilterAWSLogEvents(ctx, input, false)
+}
+
+// FilterAWSLogEvents is FilterLogEvents with the unmask flag. The pattern
+// matches the stored (masked) text either way.
+func (m *Mock) FilterAWSLogEvents(
 	_ context.Context,
 	input *driver.FilterLogEventsInput,
+	unmask bool,
 ) ([]driver.FilteredLogEvent, error) {
 	g, ok := m.groups.Get(input.LogGroup)
 	if !ok {
@@ -509,6 +354,13 @@ func (m *Mock) FilterLogEvents(
 			errors.NotFound, "log group %q not found", input.LogGroup,
 		)
 	}
+
+	pattern, err := filterpattern.Parse(input.FilterPattern)
+	if err != nil {
+		return nil, err
+	}
+
+	m.purgeExpired(input.LogGroup, g)
 
 	limit := input.Limit
 	if limit == 0 {
@@ -518,10 +370,10 @@ func (m *Mock) FilterLogEvents(
 	var results []driver.FilteredLogEvent
 
 	if input.LogStream != "" {
-		results = m.filterStreamEvents(g, input.LogStream, input)
+		results = m.filterStreamEvents(g, input.LogStream, input, pattern, unmask)
 	} else {
 		for name, s := range g.streams.All() {
-			results = append(results, m.matchEvents(s, name, input)...)
+			results = append(results, m.matchEvents(s, name, input, pattern, unmask)...)
 		}
 
 		// CloudWatch Logs interleaves matches across streams in ascending
@@ -554,26 +406,31 @@ func (m *Mock) filterStreamEvents(
 	g *logGroup,
 	streamName string,
 	input *driver.FilterLogEventsInput,
+	pattern *filterpattern.Pattern,
+	unmask bool,
 ) []driver.FilteredLogEvent {
 	s, ok := g.streams.Get(streamName)
 	if !ok {
 		return nil
 	}
 
-	return m.matchEvents(s, streamName, input)
+	return m.matchEvents(s, streamName, input, pattern, unmask)
 }
 
 func (*Mock) matchEvents(
 	s *logStream,
 	streamName string,
 	input *driver.FilterLogEventsInput,
+	pattern *filterpattern.Pattern,
+	unmask bool,
 ) []driver.FilteredLogEvent {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var results []driver.FilteredLogEvent
 
-	for _, e := range s.events {
+	for i := range s.events {
+		e := &s.events[i]
 		if !input.StartTime.IsZero() && e.Timestamp.Before(input.StartTime) {
 			continue
 		}
@@ -582,8 +439,7 @@ func (*Mock) matchEvents(
 			continue
 		}
 
-		if input.FilterPattern != "" &&
-			!strings.Contains(e.Message, input.FilterPattern) {
+		if !pattern.Match(e.Message) {
 			continue
 		}
 
@@ -591,47 +447,11 @@ func (*Mock) matchEvents(
 			LogStream:     streamName,
 			Timestamp:     e.Timestamp,
 			IngestionTime: e.IngestionTime,
-			Message:       e.Message,
+			Message:       eventView(e, unmask).Message,
 		})
 	}
 
 	return results
-}
-
-// PutMetricFilter creates or updates a metric filter for a log group.
-func (m *Mock) PutMetricFilter(
-	_ context.Context,
-	cfg *driver.MetricFilterConfig,
-) error {
-	g, ok := m.groups.Get(cfg.LogGroup)
-	if !ok {
-		return errors.Newf(
-			errors.NotFound, "log group %q not found", cfg.LogGroup,
-		)
-	}
-
-	if cfg.Name == "" {
-		return errors.New(
-			errors.InvalidArgument, "metric filter name is required",
-		)
-	}
-
-	info := &driver.MetricFilterInfo{
-		Name:            cfg.Name,
-		LogGroup:        cfg.LogGroup,
-		FilterPattern:   cfg.FilterPattern,
-		MetricName:      cfg.MetricName,
-		MetricNamespace: cfg.MetricNamespace,
-		MetricValue:     cfg.MetricValue,
-		DefaultValue:    cfg.DefaultValue,
-		Unit:            cfg.Unit,
-		Dimensions:      maps.Clone(cfg.Dimensions),
-		CreatedAt:       m.opts.Clock.Now().UTC(),
-	}
-
-	g.metricFilters.Set(cfg.Name, info)
-
-	return nil
 }
 
 // DeleteMetricFilter deletes a metric filter from a log group.
@@ -655,28 +475,6 @@ func (m *Mock) DeleteMetricFilter(
 	}
 
 	return nil
-}
-
-// DescribeMetricFilters lists all metric filters for a log group.
-func (m *Mock) DescribeMetricFilters(
-	_ context.Context,
-	logGroup string,
-) ([]driver.MetricFilterInfo, error) {
-	g, ok := m.groups.Get(logGroup)
-	if !ok {
-		return nil, errors.Newf(
-			errors.NotFound, "log group %q not found", logGroup,
-		)
-	}
-
-	all := g.metricFilters.All()
-	results := make([]driver.MetricFilterInfo, 0, len(all))
-
-	for _, mf := range all {
-		results = append(results, *mf)
-	}
-
-	return results, nil
 }
 
 // UpdateLogGroup replaces the mutable fields of an existing log group —

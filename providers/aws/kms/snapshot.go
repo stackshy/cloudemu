@@ -25,6 +25,9 @@ type kmsSnapshot struct {
 	Keys    map[string]*keySnapshot   `json:"keys,omitempty"`
 	Aliases map[string]*aliasSnapshot `json:"aliases,omitempty"`
 	Grants  json.RawMessage           `json:"grants,omitempty"`
+	// CustomKeyStores holds fully-exported *driver.CustomKeyStore values and
+	// round-trips through the generic memstore helper.
+	CustomKeyStores json.RawMessage `json:"customKeyStores,omitempty"`
 }
 
 // keySnapshot mirrors keyData. The asymmetric private key is serialized as
@@ -67,6 +70,13 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	}
 
 	snap.Grants = grants
+
+	stores, err := m.customKeyStores.Snapshot()
+	if err != nil {
+		return nil, fmt.Errorf("kms: snapshot custom key stores: %w", err)
+	}
+
+	snap.CustomKeyStores = stores
 
 	return json.Marshal(snap)
 }
@@ -138,6 +148,12 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	if len(snap.Grants) > 0 {
 		if err := m.grants.LoadSnapshot(snap.Grants); err != nil {
 			return fmt.Errorf("kms: restore grants: %w", err)
+		}
+	}
+
+	if len(snap.CustomKeyStores) > 0 {
+		if err := m.customKeyStores.LoadSnapshot(snap.CustomKeyStores); err != nil {
+			return fmt.Errorf("kms: restore custom key stores: %w", err)
 		}
 	}
 

@@ -20,14 +20,22 @@ func (m *Mock) snapshotARN(region, name string) string {
 // type, version, port, node count) is copied into the snapshot so a restore can
 // recreate a like-for-like cluster.
 func (m *Mock) CreateSnapshot(ctx context.Context, cfg cachedriver.SnapshotConfig) (*cachedriver.Snapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.createSnapshotLocked(ctx, cfg)
+}
+
+// createSnapshotLocked is CreateSnapshot for a caller that already holds mu,
+// such as DeleteReplicationGroup taking a final snapshot.
+func (m *Mock) createSnapshotLocked(ctx context.Context, cfg cachedriver.SnapshotConfig) (*cachedriver.Snapshot, error) {
 	name := strings.ToLower(cfg.SnapshotName)
 	if name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "SnapshotName is required")
 	}
 
 	if m.snapshots.Has(name) {
-		return nil, cerrors.Newf(cerrors.AlreadyExists,
-			"SnapshotAlreadyExistsFault: snapshot %q already exists", name)
+		return nil, snapshotAlreadyExists(name)
 	}
 
 	// A snapshot is a child of the cluster or replication group it backs up, so
@@ -61,10 +69,9 @@ func (m *Mock) CreateSnapshot(ctx context.Context, cfg cachedriver.SnapshotConfi
 func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedriver.Snapshot, fallbackRegion string) error {
 	switch {
 	case cfg.CacheClusterID != "":
-		cd, ok := m.caches.Get(cfg.CacheClusterID)
-		if !ok {
-			return cerrors.Newf(cerrors.NotFound,
-				"CacheClusterNotFound: cache cluster %q not found", cfg.CacheClusterID)
+		cd, lookupErr := m.mutableCache(cfg.CacheClusterID)
+		if lookupErr != nil {
+			return lookupErr
 		}
 
 		if err := checkSnapshotSupported(cd.info.Engine, cd.info.NodeType); err != nil {
@@ -82,10 +89,9 @@ func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedri
 			snap.NumCacheNodes = cd.info.NumCacheNodes
 		}
 	case cfg.ReplicationGroupID != "":
-		rg, ok := m.replicationGroups.Get(cfg.ReplicationGroupID)
-		if !ok {
-			return cerrors.Newf(cerrors.NotFound,
-				"ReplicationGroupNotFoundFault: replication group %q not found", cfg.ReplicationGroupID)
+		rg, err := m.mutableReplicationGroup(cfg.ReplicationGroupID)
+		if err != nil {
+			return err
 		}
 
 		snap.ReplicationGroupID = cfg.ReplicationGroupID
@@ -112,13 +118,13 @@ func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedri
 // running on a cache.t1.micro node with SnapshotFeatureNotSupportedFault.
 func checkSnapshotSupported(engine, nodeType string) error {
 	if engine == engineMemcached {
-		return cerrors.New(cerrors.FailedPrecondition,
-			"SnapshotFeatureNotSupportedFault: snapshots are not supported for Memcached clusters")
+		return newFault(cerrors.FailedPrecondition, FaultSnapshotFeatureNotSupported,
+			"snapshots are not supported for Memcached clusters")
 	}
 
 	if nodeType == "cache.t1.micro" {
-		return cerrors.New(cerrors.FailedPrecondition,
-			"SnapshotFeatureNotSupportedFault: snapshots are not supported for cache.t1.micro nodes")
+		return newFault(cerrors.FailedPrecondition, FaultSnapshotFeatureNotSupported,
+			"snapshots are not supported for cache.t1.micro nodes")
 	}
 
 	return nil
@@ -148,10 +154,12 @@ func (m *Mock) CopySnapshot(ctx context.Context, cfg cachedriver.CopySnapshotCon
 		return nil, cerrors.New(cerrors.InvalidArgument, "TargetSnapshotName is required")
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	src, ok := m.snapshots.Get(source)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound,
-			"SnapshotNotFoundFault: snapshot %q not found", source)
+		return nil, snapshotNotFound(source)
 	}
 
 	region := regionctx.RegionOr(ctx, m.opts.Region)
@@ -166,8 +174,7 @@ func (m *Mock) CopySnapshot(ctx context.Context, cfg cachedriver.CopySnapshotCon
 	// SetIfAbsent is the atomic create-if-new guard: a concurrent copy to the same
 	// target loses the race and reports the duplicate, never silently overwrites.
 	if !m.snapshots.SetIfAbsent(target, dst) {
-		return nil, cerrors.Newf(cerrors.AlreadyExists,
-			"SnapshotAlreadyExistsFault: snapshot %q already exists", target)
+		return nil, snapshotAlreadyExists(target)
 	}
 
 	return &dst, nil
@@ -179,18 +186,15 @@ func (m *Mock) CopySnapshot(ctx context.Context, cfg cachedriver.CopySnapshotCon
 func (m *Mock) DeleteSnapshot(_ context.Context, name string) (*cachedriver.Snapshot, error) {
 	key := strings.ToLower(name)
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	snap, ok := m.snapshots.Get(key)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound,
-			"SnapshotNotFoundFault: snapshot %q not found", key)
+		return nil, snapshotNotFound(key)
 	}
 
-	// Gate the response on the delete winning: if a concurrent caller removed the
-	// snapshot between the Get and here, report the not-found it now is.
-	if !m.snapshots.Delete(key) {
-		return nil, cerrors.Newf(cerrors.NotFound,
-			"SnapshotNotFoundFault: snapshot %q not found", key)
-	}
+	m.snapshots.Delete(key)
 
 	snap.Status = "deleting"
 
@@ -209,8 +213,7 @@ func (m *Mock) restoreSeed(name string) (*cachedriver.Snapshot, error) {
 
 	snap, ok := m.snapshots.Get(key)
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound,
-			"SnapshotNotFoundFault: snapshot %q not found", key)
+		return nil, snapshotNotFound(key)
 	}
 
 	return &snap, nil
@@ -281,11 +284,13 @@ func (m *Mock) seedReplicationGroupRestore(cfg *cachedriver.ReplicationGroupConf
 func (m *Mock) DescribeSnapshots(
 	_ context.Context, filter cachedriver.SnapshotFilter,
 ) ([]cachedriver.Snapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if name := strings.ToLower(filter.SnapshotName); name != "" {
 		snap, ok := m.snapshots.Get(name)
 		if !ok {
-			return nil, cerrors.Newf(cerrors.NotFound,
-				"SnapshotNotFoundFault: snapshot %q not found", name)
+			return nil, snapshotNotFound(name)
 		}
 
 		return []cachedriver.Snapshot{snap}, nil

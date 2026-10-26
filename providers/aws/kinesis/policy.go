@@ -66,7 +66,7 @@ func (m *Mock) DeleteResourcePolicy(_ context.Context, resourceARN string) error
 func (m *Mock) DescribeLimits(_ context.Context) (*driver.Limits, error) {
 	var open, onDemand int32
 
-	for _, sd := range m.streams.All() {
+	for _, sd := range m.liveStreams() {
 		sd.mu.RLock()
 		open += openShardCount(sd.shards)
 

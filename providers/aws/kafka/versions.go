@@ -92,8 +92,8 @@ func (m *Mock) compatibilitySources(clusterARN string) []string {
 		return all
 	}
 
-	cd, ok := m.clusters.Get(clusterARN)
-	if !ok {
+	cd, err := m.getCluster(clusterARN)
+	if err != nil {
 		return nil
 	}
 

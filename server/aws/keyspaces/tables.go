@@ -60,6 +60,10 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if rejectTagListTooLong(w, len(in.Tags)) {
+		return
+	}
+
 	cfg := ksdriver.CreateTableConfig{
 		KeyspaceName:            aws.ToString(in.KeyspaceName),
 		Name:                    aws.ToString(in.TableName),
@@ -130,10 +134,19 @@ func tableOutput(t *ksdriver.Table) keyspaces.GetTableOutput {
 		EncryptionSpecification: toWireEncryption(t.EncryptionSpecification),
 		DefaultTimeToLive:       aws.Int32(int32(t.DefaultTimeToLive)), //nolint:gosec // mock TTL seconds never overflow int32.
 		PointInTimeRecovery:     &types.PointInTimeRecoverySummary{Status: types.PointInTimeRecoveryStatus(t.PointInTimeRecoveryStatus)},
-		Ttl:                     &types.TimeToLive{Status: types.TimeToLiveStatus(t.TTLStatus)},
-		ClientSideTimestamps:    &types.ClientSideTimestamps{Status: types.ClientSideTimestampsStatus(t.ClientSideTimestamps)},
 		CdcSpecification:        &types.CdcSpecificationSummary{Status: types.CdcStatus(t.CdcStatus)},
 	}
+	// ttl and clientSideTimestamps are reported only once enabled: their enums
+	// hold only ENABLED, and real Keyspaces omits them on a table that never
+	// set them.
+	if t.TTLStatus != "" {
+		out.Ttl = &types.TimeToLive{Status: types.TimeToLiveStatus(t.TTLStatus)}
+	}
+
+	if t.ClientSideTimestamps != "" {
+		out.ClientSideTimestamps = &types.ClientSideTimestamps{Status: types.ClientSideTimestampsStatus(t.ClientSideTimestamps)}
+	}
+
 	if t.Comment != "" {
 		out.Comment = &types.Comment{Message: aws.String(t.Comment)}
 	}
@@ -245,6 +258,10 @@ func (h *Handler) restoreTable(w http.ResponseWriter, r *http.Request) {
 	var in keyspaces.RestoreTableInput
 	if err := json.Unmarshal(body, &in); err != nil {
 		wire.WriteJSONError(w, http.StatusBadRequest, "SerializationException", "invalid JSON: "+err.Error())
+		return
+	}
+
+	if rejectTagListTooLong(w, len(in.TagsOverride)) {
 		return
 	}
 

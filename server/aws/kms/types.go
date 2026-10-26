@@ -75,7 +75,16 @@ type keyMetadataJSON struct {
 	EncryptionAlgorithms     []string               `json:"EncryptionAlgorithms,omitempty"`
 	SigningAlgorithms        []string               `json:"SigningAlgorithms,omitempty"`
 	MacAlgorithms            []string               `json:"MacAlgorithms,omitempty"`
+	KeyAgreementAlgorithms   []string               `json:"KeyAgreementAlgorithms,omitempty"`
 	MultiRegionConfiguration *multiRegionConfigJSON `json:"MultiRegionConfiguration,omitempty"`
+	CustomKeyStoreID         string                 `json:"CustomKeyStoreId,omitempty"`
+	CloudHsmClusterID        string                 `json:"CloudHsmClusterId,omitempty"`
+	XksKeyConfiguration      *xksKeyConfigJSON      `json:"XksKeyConfiguration,omitempty"`
+}
+
+// xksKeyConfigJSON is the KMS XksKeyConfigurationType wire shape.
+type xksKeyConfigJSON struct {
+	ID string `json:"Id"`
 }
 
 func metadataJSON(md *kmsdriver.KeyMetadata) keyMetadataJSON {
@@ -105,6 +114,14 @@ func metadataJSON(md *kmsdriver.KeyMetadata) keyMetadataJSON {
 	out.EncryptionAlgorithms = md.EncryptionAlgorithms
 	out.SigningAlgorithms = md.SigningAlgorithms
 	out.MacAlgorithms = md.MacAlgorithms
+	out.KeyAgreementAlgorithms = md.KeyAgreementAlgorithms
+
+	out.CustomKeyStoreID = md.CustomKeyStoreID
+	out.CloudHsmClusterID = md.CloudHsmClusterID
+
+	if md.XksKeyID != "" {
+		out.XksKeyConfiguration = &xksKeyConfigJSON{ID: md.XksKeyID}
+	}
 
 	if md.MultiRegion {
 		cfg := &multiRegionConfigJSON{MultiRegionKeyType: md.MultiRegionKeyType}
@@ -133,6 +150,8 @@ type createKeyRequest struct {
 	MultiRegion           bool   `json:"MultiRegion"`
 	Policy                string `json:"Policy"`
 	Tags                  []tag  `json:"Tags"`
+	CustomKeyStoreID      string `json:"CustomKeyStoreId"`
+	XksKeyID              string `json:"XksKeyId"`
 }
 
 type keyIDRequest struct {

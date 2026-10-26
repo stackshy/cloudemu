@@ -176,6 +176,10 @@ func (m *Mock) ReplicateKey(_ context.Context, in driver.ReplicateKeyInput) (*dr
 		return nil, errors.New(errors.InvalidArgument, "ReplicaRegion is required")
 	}
 
+	if err := validateTags(in.Tags); err != nil {
+		return nil, err
+	}
+
 	kd, err := m.getKey(in.KeyID)
 	if err != nil {
 		return nil, err

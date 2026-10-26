@@ -84,6 +84,10 @@ func exceptionFor(kind string, err error) (status int, errType string) {
 
 		return http.StatusBadRequest, "BadRequest"
 	case cerrors.IsFailedPrecondition(err):
+		if kind == driver.KindFileSystemState {
+			return http.StatusConflict, "IncorrectFileSystemLifeCycleState"
+		}
+
 		return http.StatusConflict, "FileSystemInUse"
 	default:
 		return http.StatusInternalServerError, "InternalServerError"

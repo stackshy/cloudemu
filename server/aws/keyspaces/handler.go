@@ -14,7 +14,10 @@ import (
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
 )
 
-const targetPrefix = "KeyspacesService."
+const (
+	targetPrefix = "KeyspacesService."
+	iamService   = "cassandra"
+)
 
 // Handler serves Keyspaces requests against a keyspaces driver.
 type Handler struct {
@@ -110,4 +113,4 @@ func wireMessage(err error) string {
 
 // IAMService returns the IAM service prefix of the operations this handler
 // serves.
-func (*Handler) IAMService() string { return "cassandra" }
+func (*Handler) IAMService() string { return iamService }

@@ -117,6 +117,10 @@ func (m *Mock) mutateClusterErr(
 	cd.mu.Lock()
 	defer cd.mu.Unlock()
 
+	if err := m.requireActive(cd); err != nil {
+		return nil, err
+	}
+
 	if currentVersion != "" && cd.cluster.CurrentVersion != currentVersion {
 		return nil, badRequest(
 			"currentVersion %q does not match cluster version %q",

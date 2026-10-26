@@ -99,6 +99,12 @@ func invalidExecutionInput(msg string) error {
 	return &driver.APIError{Exception: driver.ExInvalidExecutionInput, Err: errors.New(errors.InvalidArgument, msg)}
 }
 
+// smTypeNotSupported builds the StateMachineTypeNotSupported error an
+// operation returns for a state machine type it does not support.
+func smTypeNotSupported(msg string) error {
+	return &driver.APIError{Exception: driver.ExStateMachineTypeNotSupported, Err: errors.New(errors.FailedPrecondition, msg)}
+}
+
 // invalidToken builds an InvalidToken-tagged error.
 func invalidToken(format string, args ...any) error {
 	return &driver.APIError{Exception: driver.ExInvalidToken, Err: errors.Newf(errors.InvalidArgument, format, args...)}

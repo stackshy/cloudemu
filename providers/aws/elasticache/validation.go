@@ -142,7 +142,7 @@ func (m *Mock) requireParameterGroup(name string) error {
 	}
 
 	if _, ok := m.lookupParameterGroup(name); !ok {
-		return cerrors.Newf(cerrors.NotFound, "cache parameter group %q not found", name)
+		return parameterGroupNotFound(name)
 	}
 
 	return nil

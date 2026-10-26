@@ -133,6 +133,13 @@ func (a rdsDiscovery) discoverRedshift(ctx context.Context) ([]resourcediscovery
 		c := clusters[i]
 
 		tags, err := a.redshift.DescribeTags(ctx, c.ARN)
+		// NotFound means the cluster was deleted between DescribeClusters and
+		// this tag read. Skip it, the same as one that was never listed. Any
+		// other error propagates.
+		if cerrors.IsNotFound(err) {
+			continue
+		}
+
 		if err != nil {
 			return nil, err
 		}

@@ -28,7 +28,10 @@ func cloneJobDefinition(jd driver.JobDefinition) driver.JobDefinition {
 
 // RegisterJobDefinition registers a new revision. A repeated name yields the
 // next revision (N+1) with a new ARN; prior revisions remain ACTIVE until
-// deregistered. platformCapabilities defaults to [EC2].
+// deregistered. platformCapabilities is stored as sent: real Batch treats an
+// empty list as EC2 but doesn't echo a default, so DescribeJobDefinitions
+// returns none (Terraform's acceptance tests assert platform_capabilities.# = 0
+// for container and multinode definitions registered without it).
 //
 //nolint:gocritic // in is the driver RegisterJobDefinitionInput, taken by value to match the interface
 func (m *Mock) RegisterJobDefinition(
@@ -38,13 +41,16 @@ func (m *Mock) RegisterJobDefinition(
 		return nil, cerrors.New(cerrors.InvalidArgument, "jobDefinitionName is required")
 	}
 
-	if in.Type == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "type is required (container or multinode)")
+	if err := validateTags(in.Tags); err != nil {
+		return nil, err
 	}
 
-	caps := in.PlatformCapabilities
-	if len(caps) == 0 {
-		caps = []string{"EC2"}
+	if err := validateJobDefinitionType(&in); err != nil {
+		return nil, err
+	}
+
+	if err := validateJobDefinitionPlatform(&in); err != nil {
+		return nil, err
 	}
 
 	m.registerMu.Lock()
@@ -65,7 +71,7 @@ func (m *Mock) RegisterJobDefinition(
 		RetryStrategy:        copyRaw(in.RetryStrategy),
 		Timeout:              copyRaw(in.Timeout),
 		Parameters:           copyTags(in.Parameters),
-		PlatformCapabilities: copyStrings(caps),
+		PlatformCapabilities: copyStrings(in.PlatformCapabilities),
 		PropagateTags:        copyBool(in.PropagateTags),
 		SchedulingPriority:   copyInt32(in.SchedulingPriority),
 		Tags:                 copyTags(in.Tags),
@@ -179,4 +185,29 @@ func (m *Mock) sortedJobDefs() []driver.JobDefinition {
 	})
 
 	return out
+}
+
+// validateJobDefinitionType enforces the RegisterJobDefinition type enum
+// (container | multinode) and the properties each type requires: a container
+// job definition needs containerProperties, ecsProperties or eksProperties; a
+// multinode one needs nodeProperties.
+func validateJobDefinitionType(in *driver.RegisterJobDefinitionInput) error {
+	switch in.Type {
+	case "":
+		return cerrors.New(cerrors.InvalidArgument, "type is required (container or multinode)")
+	case driver.JDTypeContainer:
+		if !isSet(in.ContainerProperties) && !isSet(in.EcsProperties) && !isSet(in.EksProperties) {
+			return cerrors.New(cerrors.InvalidArgument,
+				"a container job definition requires containerProperties, ecsProperties or eksProperties")
+		}
+	case driver.JDTypeMultiNode:
+		if !isSet(in.NodeProperties) {
+			return cerrors.New(cerrors.InvalidArgument, "a multinode job definition requires nodeProperties")
+		}
+	default:
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"invalid job definition type %q; valid values are container and multinode", in.Type)
+	}
+
+	return nil
 }

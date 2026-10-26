@@ -24,6 +24,10 @@ func (m *Mock) BatchAssociateScramSecret(
 	cd.mu.Lock()
 	defer cd.mu.Unlock()
 
+	if err := m.requireActive(cd); err != nil {
+		return nil, err
+	}
+
 	var unprocessed []json.RawMessage
 
 	for _, arn := range secretARNs {
@@ -56,6 +60,10 @@ func (m *Mock) BatchDisassociateScramSecret(
 
 	cd.mu.Lock()
 	defer cd.mu.Unlock()
+
+	if err := m.requireActive(cd); err != nil {
+		return nil, err
+	}
 
 	var unprocessed []json.RawMessage
 

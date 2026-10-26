@@ -97,10 +97,18 @@ func (h *Handler) createLogGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.logs.CreateLogGroup(r.Context(), logdriver.LogGroupConfig{
-		Name: req.LogGroupName,
-		Tags: req.Tags,
-	}); err != nil {
+	cfg := logdriver.LogGroupConfig{Name: req.LogGroupName, Tags: req.Tags}
+
+	var err error
+	if ext, ok := h.logs.(logdriver.AWSLogging); ok {
+		_, err = ext.CreateAWSLogGroup(r.Context(), &cfg, logdriver.AWSLogGroupOptions{
+			KmsKeyID: req.KmsKeyID, LogGroupClass: req.LogGroupClass,
+		})
+	} else {
+		_, err = h.logs.CreateLogGroup(r.Context(), cfg)
+	}
+
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -115,13 +123,13 @@ func (h *Handler) describeLogGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	infos, err := h.logs.ListLogGroups(r.Context(), scope.Scope{})
+	infos, err := h.describableLogGroups(r)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	matched := make([]logdriver.LogGroupInfo, 0, len(infos))
+	matched := make([]logdriver.AWSLogGroup, 0, len(infos))
 
 	for i := range infos {
 		if req.LogGroupNamePrefix != "" && !strings.HasPrefix(infos[i].Name, req.LogGroupNamePrefix) {
@@ -144,6 +152,27 @@ func (h *Handler) describeLogGroups(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, resp)
+}
+
+// describableLogGroups lists every log group with its CloudWatch Logs-only
+// attributes, falling back to the portable listing (STANDARD, no key) for a
+// backend without driver.AWSLogging.
+func (h *Handler) describableLogGroups(r *http.Request) ([]logdriver.AWSLogGroup, error) {
+	if ext, ok := h.logs.(logdriver.AWSLogging); ok {
+		return ext.ListAWSLogGroups(r.Context(), logdriver.ListLogGroupsFilter{})
+	}
+
+	infos, err := h.logs.ListLogGroups(r.Context(), scope.Scope{})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]logdriver.AWSLogGroup, 0, len(infos))
+	for i := range infos {
+		out = append(out, logdriver.AWSLogGroup{LogGroupInfo: infos[i], LogGroupClass: logdriver.LogGroupClassStandard})
+	}
+
+	return out, nil
 }
 
 func (h *Handler) deleteLogGroup(w http.ResponseWriter, r *http.Request) {
@@ -281,14 +310,27 @@ func (h *Handler) putLogEvents(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	if err := h.logs.PutLogEvents(r.Context(), req.LogGroupName, req.LogStreamName, events); err != nil {
+	ext, ok := h.awsLogs(w, "PutLogEvents")
+	if !ok {
+		return
+	}
+
+	res, err := ext.PutLogEventsWithResult(r.Context(), req.LogGroupName, req.LogStreamName, events)
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	// The sequence token is deprecated and ignored by the modern SDK, but a
-	// non-empty value keeps older callers happy.
-	wire.WriteJSON(w, putLogEventsResponse{NextSequenceToken: "0"})
+	resp := putLogEventsResponse{NextSequenceToken: res.NextSequenceToken}
+	if rej := res.Rejected; rej != nil {
+		resp.RejectedLogEventsInfo = &rejectedLogEventsInfoJSON{
+			TooOldLogEventEndIndex:   rej.TooOldLogEventEndIndex,
+			ExpiredLogEventEndIndex:  rej.ExpiredLogEventEndIndex,
+			TooNewLogEventStartIndex: rej.TooNewLogEventStartIndex,
+		}
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 // getLogEventsWindow picks the [start,end) slice bounds for a GetLogEvents page
@@ -339,13 +381,13 @@ func (h *Handler) getLogEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch the full ordered slice (Limit -1 = no cap) and page it here so the
 	// forward / backward tokens can carry a real position across all events.
-	events, err := h.logs.GetLogEvents(r.Context(), &logdriver.LogQueryInput{
+	events, err := h.readLogEvents(r, &logdriver.LogQueryInput{
 		LogGroup:  req.LogGroupName,
 		LogStream: req.LogStreamName,
 		StartTime: millisToTime(req.StartTime),
 		EndTime:   millisToTime(req.EndTime),
 		Limit:     -1,
-	})
+	}, req.Unmask)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -400,14 +442,14 @@ func (h *Handler) filterLogEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch every match (Limit -1 = no cap) and page here so a NextToken can be
 	// handed back across all matches.
-	events, err := h.logs.FilterLogEvents(r.Context(), &logdriver.FilterLogEventsInput{
+	events, err := h.filterEvents(r, &logdriver.FilterLogEventsInput{
 		LogGroup:      req.LogGroupName,
 		LogStream:     stream,
 		FilterPattern: req.FilterPattern,
 		StartTime:     millisToTime(req.StartTime),
 		EndTime:       millisToTime(req.EndTime),
 		Limit:         -1,
-	})
+	}, req.Unmask)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -442,6 +484,27 @@ func (h *Handler) filterLogEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, resp)
+}
+
+// readLogEvents reads events with the unmask flag when the backend supports
+// it, and through the portable driver otherwise.
+func (h *Handler) readLogEvents(r *http.Request, in *logdriver.LogQueryInput, unmask bool) ([]logdriver.LogEvent, error) {
+	if ext, ok := h.logs.(logdriver.AWSLogging); ok {
+		return ext.GetAWSLogEvents(r.Context(), in, unmask)
+	}
+
+	return h.logs.GetLogEvents(r.Context(), in)
+}
+
+// filterEvents is readLogEvents for FilterLogEvents.
+func (h *Handler) filterEvents(
+	r *http.Request, in *logdriver.FilterLogEventsInput, unmask bool,
+) ([]logdriver.FilteredLogEvent, error) {
+	if ext, ok := h.logs.(logdriver.AWSLogging); ok {
+		return ext.FilterAWSLogEvents(r.Context(), in, unmask)
+	}
+
+	return h.logs.FilterLogEvents(r.Context(), in)
 }
 
 // scopeFilteredStreams restricts filtered events to the caller's requested

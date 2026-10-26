@@ -82,6 +82,10 @@ type EventBusConfig struct {
 	// Description is the caller-supplied free-text description of the event
 	// bus (EventBridge CreateEventBus's Description). Empty for Azure and GCP.
 	Description string
+	// EventSourceName is the partner event source a partner event bus is
+	// matched to (EventBridge CreateEventBus's EventSourceName). Empty for a
+	// custom event bus, and for Azure and GCP.
+	EventSourceName string
 }
 
 // Rule defines an event routing rule with filtering.
@@ -120,6 +124,10 @@ type Target struct {
 	InputTransformer string // raw JSON InputTransformer block
 	DeadLetterConfig string // raw JSON DeadLetterConfig block
 	RetryPolicy      string // raw JSON RetryPolicy block
+	// HTTPParameters is the raw JSON HttpParameters block (path parameter
+	// values, headers and query string) for API destination and API Gateway
+	// targets. Empty for other targets.
+	HTTPParameters string
 }
 
 // Event represents an event to publish.
@@ -154,6 +162,15 @@ type PublishResult struct {
 	SuccessCount int
 	FailCount    int
 	EventIDs     []string
+}
+
+// PutEventsEntryResult is the outcome of one entry in an EventBridge PutEvents
+// call, aligned by index with the request entries. A published entry carries
+// EventID; a rejected entry carries ErrorCode and ErrorMessage instead.
+type PutEventsEntryResult struct {
+	EventID      string
+	ErrorCode    string
+	ErrorMessage string
 }
 
 // EventBus is the interface that event bus provider implementations must satisfy.

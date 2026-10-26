@@ -27,6 +27,9 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request) {
 		MultiRegion: req.MultiRegion,
 		Policy:      req.Policy,
 		Tags:        tagsToMap(req.Tags),
+
+		CustomKeyStoreID: req.CustomKeyStoreID,
+		XksKeyID:         req.XksKeyID,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -67,7 +70,7 @@ func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request) {
 	// unsorted offset Marker could repeat or skip keys across pages.
 	sort.Slice(keys, func(i, j int) bool { return keys[i].KeyID < keys[j].KeyID })
 
-	start, end, next, truncated, err := pageWindow(req.Marker, req.Limit, len(keys))
+	start, end, next, truncated, err := pageWindow(req.Marker, req.Limit, len(keys), markerInvalid)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -214,7 +217,7 @@ func (h *Handler) listAliases(w http.ResponseWriter, r *http.Request) {
 	// Sort before paging: the provider returns aliases in map-iteration order.
 	sort.Slice(aliases, func(i, j int) bool { return aliases[i].Name < aliases[j].Name })
 
-	start, end, next, truncated, err := pageWindow(req.Marker, req.Limit, len(aliases))
+	start, end, next, truncated, err := pageWindow(req.Marker, req.Limit, len(aliases), markerInvalid)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -277,7 +280,7 @@ func (h *Handler) listResourceTags(w http.ResponseWriter, r *http.Request) {
 	all := mapToTags(tags)
 	sort.Slice(all, func(i, j int) bool { return all[i].TagKey < all[j].TagKey })
 
-	start, end, next, truncated, err := pageWindow(req.Marker, req.Limit, len(all))
+	start, end, next, truncated, err := pageWindow(req.Marker, req.Limit, len(all), markerInvalid)
 	if err != nil {
 		writeErr(w, err)
 		return

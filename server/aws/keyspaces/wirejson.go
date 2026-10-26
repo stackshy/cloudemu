@@ -32,23 +32,27 @@ func writeJSON(w http.ResponseWriter, v any) {
 	wire.WriteJSON(w, lowerCamelKeys(decoded))
 }
 
+// omitEmptyEnum reports whether an empty value should be dropped because real
+// Keyspaces omits the member when it is unset. It covers only
+// cdcSpecification.viewType: the SDK models it as a non-pointer string enum, so
+// encoding/json renders it as "" on a table without a CDC stream. In the
+// Keyspaces SDK, ViewType appears only on CdcSpecification and
+// CdcSpecificationSummary, so matching the key name is enough. This is not a
+// general rule for empty strings: the decoded map no longer carries Go types,
+// so a general rule would also drop non-enum members that are legitimately
+// empty. Add another unset enum here by name if one turns up.
+func omitEmptyEnum(key string, val any) bool {
+	return key == "ViewType" && val == ""
+}
+
 // lowerCamelKeys returns v with the first letter of every map key lowercased,
-// recursively. It also drops null values and the SDK's always-empty
-// resultMetadata envelope so the response carries only meaningful fields.
+// recursively. It also drops null values, an unset cdcSpecification.viewType
+// (see omitEmptyEnum), and the SDK's always-empty resultMetadata envelope so the
+// response carries only meaningful fields.
 func lowerCamelKeys(v any) any {
 	switch t := v.(type) {
 	case map[string]any:
-		out := make(map[string]any, len(t))
-
-		for k, val := range t {
-			if val == nil || k == "ResultMetadata" {
-				continue
-			}
-
-			out[lowerFirst(k)] = lowerCamelKeys(val)
-		}
-
-		return out
+		return lowerCamelMap(t)
 	case []any:
 		for i := range t {
 			t[i] = lowerCamelKeys(t[i])
@@ -67,6 +71,20 @@ func lowerCamelKeys(v any) any {
 	default:
 		return v
 	}
+}
+
+func lowerCamelMap(t map[string]any) map[string]any {
+	out := make(map[string]any, len(t))
+
+	for k, val := range t {
+		if val == nil || k == "ResultMetadata" || omitEmptyEnum(k, val) {
+			continue
+		}
+
+		out[lowerFirst(k)] = lowerCamelKeys(val)
+	}
+
+	return out
 }
 
 func lowerFirst(s string) string {

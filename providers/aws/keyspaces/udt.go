@@ -101,7 +101,7 @@ func cloneUDT(in *ksdriver.UDT) ksdriver.UDT {
 
 // CreateType creates a user-defined type in an existing keyspace.
 func (m *Mock) CreateType(_ context.Context, keyspace, name string, fields []ksdriver.FieldDefinition) (*ksdriver.UDT, error) {
-	if err := validName("type", name); err != nil {
+	if err := validTypeName(name); err != nil {
 		return nil, err
 	}
 
@@ -113,7 +113,7 @@ func (m *Mock) CreateType(_ context.Context, keyspace, name string, fields []ksd
 	defer m.mu.Unlock()
 
 	if !m.keyspaces.Has(keyspace) {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "keyspace %q not found", keyspace)
+		return nil, cerrors.Newf(cerrors.NotFound, "keyspace %q not found", keyspace)
 	}
 
 	key := typeKey(keyspace, name)
