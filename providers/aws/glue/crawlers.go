@@ -81,6 +81,10 @@ func (m *Mock) CreateCrawler(ctx context.Context, c driver.Crawler) error {
 		return invalidInput("crawler name %q is invalid", c.Name)
 	}
 
+	if !hasCrawlerTarget(c.Targets) {
+		return invalidInput("Crawler must have at least one target")
+	}
+
 	now := m.now()
 	c.State = driver.CrawlerReady
 	c.CreationTime = now
@@ -317,4 +321,15 @@ func (m *Mock) BatchGetCrawlers(_ context.Context, names []string) ([]driver.Cra
 	}
 
 	return found, notFound, nil
+}
+
+// hasCrawlerTarget reports whether targets names at least one data store.
+func hasCrawlerTarget(targets map[string]any) bool {
+	for _, v := range targets {
+		if list, ok := v.([]any); !ok || len(list) > 0 {
+			return true
+		}
+	}
+
+	return false
 }

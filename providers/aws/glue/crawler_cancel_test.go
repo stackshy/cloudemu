@@ -30,7 +30,7 @@ func TestStopCrawlerCancelsJustStartedCrawl(t *testing.T) {
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	m := glueprovider.New(config.NewOptions(config.WithClock(fc)))
 
-	if err := m.CreateCrawler(ctx, driver.Crawler{Name: "c", Role: "r", DatabaseName: "db"}); err != nil {
+	if err := m.CreateCrawler(ctx, driver.Crawler{Name: "c", Role: "r", DatabaseName: "db", Targets: s3Target()}); err != nil {
 		t.Fatalf("CreateCrawler: %v", err)
 	}
 

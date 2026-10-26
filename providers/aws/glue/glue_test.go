@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	glueprovider "github.com/stackshy/cloudemu/v2/providers/aws/glue"
 	"github.com/stackshy/cloudemu/v2/services/glue/driver"
 )
@@ -132,7 +133,7 @@ func TestCrawlerLifecycle(t *testing.T) {
 	m := newMock()
 	ctx := context.Background()
 
-	if err := m.CreateCrawler(ctx, driver.Crawler{Name: "c", Role: "r", DatabaseName: "db"}); err != nil {
+	if err := m.CreateCrawler(ctx, driver.Crawler{Name: "c", Role: "r", DatabaseName: "db", Targets: s3Target()}); err != nil {
 		t.Fatalf("CreateCrawler: %v", err)
 	}
 
@@ -376,4 +377,37 @@ func isException(err error, want string) bool {
 	}
 
 	return apiErr != nil && apiErr.Exception == want
+}
+
+func s3Target() map[string]any {
+	return map[string]any{"S3Targets": []any{map[string]any{"Path": "s3://bucket/data"}}}
+}
+
+func TestCreateJobRequiresRole(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateJob(ctx, driver.Job{Name: "j"}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("CreateJob without Role: want InvalidArgument, got %v", err)
+	}
+
+	if _, err := m.CreateJob(ctx, driver.Job{Name: "j", Role: "r"}); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+}
+
+func TestCreateCrawlerRequiresTarget(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	for _, targets := range []map[string]any{nil, {}, {"S3Targets": []any{}, "JdbcTargets": []any{}}} {
+		err := m.CreateCrawler(ctx, driver.Crawler{Name: "c", Role: "r", Targets: targets})
+		if !cerrors.IsInvalidArgument(err) {
+			t.Fatalf("CreateCrawler(Targets=%v): want InvalidArgument, got %v", targets, err)
+		}
+	}
+
+	if err := m.CreateCrawler(ctx, driver.Crawler{Name: "c", Role: "r", Targets: s3Target()}); err != nil {
+		t.Fatalf("CreateCrawler: %v", err)
+	}
 }
