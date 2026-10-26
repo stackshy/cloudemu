@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/ec2"
 	smmock "github.com/stackshy/cloudemu/v2/providers/aws/sagemaker"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ssm"
+	cadriver "github.com/stackshy/cloudemu/v2/services/codeartifact/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	ecsdriver "github.com/stackshy/cloudemu/v2/services/ecs/driver"
@@ -1333,5 +1334,67 @@ func TestSageMakerEvents_UnsetTrainingTimesAreOmitted(t *testing.T) {
 
 	if d["CreationTime"] == nil || d["CreationTime"] == "0" {
 		t.Fatalf("CreationTime = %v, want the creation time in epoch milliseconds", d["CreationTime"])
+	}
+}
+
+// TestCodeArtifactPackageVersionEvents pins that publishing, archiving and
+// deleting a package version reach a rule target through the real EventBridge
+// bus with the documented envelope and detail.
+func TestCodeArtifactPackageVersionEvents(t *testing.T) {
+	p := aws.New()
+	ctx := context.Background()
+	drain := captureEvents(t, p, `{"source":["aws.codeartifact"],"detail-type":["CodeArtifact Package Version State Change"]}`)
+
+	if _, err := p.CodeArtifact.CreateDomain(ctx, &cadriver.CreateDomainInput{Name: "dom"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := p.CodeArtifact.CreateRepository(ctx, &cadriver.CreateRepositoryInput{Domain: "dom", Repository: "repo"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ref := cadriver.PackageRef{Domain: "dom", Repository: "repo", Format: "generic", Namespace: "ns", Package: "pkg"}
+	content := []byte("x")
+
+	if _, err := p.CodeArtifact.PublishPackageVersion(ctx, &cadriver.PublishInput{
+		Ref: ref, Version: "1.0.0", AssetName: "f",
+		SHA256: "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881", Content: content,
+	}); err != nil {
+		t.Fatalf("PublishPackageVersion: %v", err)
+	}
+
+	if _, err := p.CodeArtifact.UpdatePackageVersionsStatus(ctx, &cadriver.UpdateStatusInput{
+		VersionsInput: cadriver.VersionsInput{Ref: ref, Versions: []string{"1.0.0"}}, TargetStatus: cadriver.VersionStatusArchived,
+	}); err != nil {
+		t.Fatalf("UpdatePackageVersionsStatus: %v", err)
+	}
+
+	if _, err := p.CodeArtifact.DeletePackageVersions(ctx, &cadriver.VersionsInput{Ref: ref, Versions: []string{"1.0.0"}}); err != nil {
+		t.Fatalf("DeletePackageVersions: %v", err)
+	}
+
+	evs := drain()
+	if len(evs) != 3 {
+		t.Fatalf("events = %d, want 3", len(evs))
+	}
+
+	requireEnvelope(t, &evs[0], "aws.codeartifact", "CodeArtifact Package Version State Change")
+
+	if want := "arn:aws:codeartifact:us-east-1:" + testAccountID + ":package/dom/repo/generic/ns/pkg"; len(evs[0].Resources) != 1 || evs[0].Resources[0] != want {
+		t.Fatalf("resources = %v, want [%s]", evs[0].Resources, want)
+	}
+
+	wantOps := []struct{ op, state string }{{"Created", "Published"}, {"Updated", "Archived"}, {"Deleted", "Archived"}}
+
+	for i, w := range wantOps {
+		d := detailOf(t, &evs[i])
+		if d["operationType"] != w.op || d["packageVersionState"] != w.state || d["packageName"] != "pkg" ||
+			d["domainOwner"] != testAccountID || d["repositoryAdministrator"] != testAccountID {
+			t.Errorf("event %d detail = %s", i, evs[i].Detail)
+		}
+
+		if seq, _ := d["sequenceNumber"].(float64); int(seq) != i+1 {
+			t.Errorf("event %d sequenceNumber = %v, want %d", i, d["sequenceNumber"], i+1)
+		}
 	}
 }

@@ -605,6 +605,7 @@ func wireLifecycleEvents(p *Provider) {
 	p.CloudWatch.SetEventPublisher(p.EventBridge)
 	p.SageMaker.SetEventPublisher(p.EventBridge)
 	p.Batch.SetEventPublisher(p.EventBridge)
+	p.CodeArtifact.SetEventPublisher(p.EventBridge)
 }
 
 // awsDrivers assembles the resource-discovery driver set from the provider's

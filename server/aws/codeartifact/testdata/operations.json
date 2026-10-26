@@ -1,0 +1,558 @@
+{
+ "AssociateExternalConnection": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ServiceQuotaExceededException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/repository/external-connection"
+ },
+ "CopyPackageVersions": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ServiceQuotaExceededException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/package/versions/copy"
+ },
+ "CreateDomain": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ServiceQuotaExceededException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/domain"
+ },
+ "CreatePackageGroup": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ServiceQuotaExceededException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/package-group"
+ },
+ "CreateRepository": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ServiceQuotaExceededException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/repository"
+ },
+ "DeleteDomain": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "DELETE",
+  "path": "/v1/domain"
+ },
+ "DeleteDomainPermissionsPolicy": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "DELETE",
+  "path": "/v1/domain/permissions/policy"
+ },
+ "DeletePackage": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "DELETE",
+  "path": "/v1/package"
+ },
+ "DeletePackageGroup": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ServiceQuotaExceededException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "DELETE",
+  "path": "/v1/package-group"
+ },
+ "DeletePackageVersions": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/package/versions/delete"
+ },
+ "DeleteRepository": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "DELETE",
+  "path": "/v1/repository"
+ },
+ "DeleteRepositoryPermissionsPolicy": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "DELETE",
+  "path": "/v1/repository/permissions/policies"
+ },
+ "DescribeDomain": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "GET",
+  "path": "/v1/domain"
+ },
+ "DescribePackage": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "GET",
+  "path": "/v1/package"
+ },
+ "DescribePackageGroup": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "GET",
+  "path": "/v1/package-group"
+ },
+ "DescribePackageVersion": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "GET",
+  "path": "/v1/package/version"
+ },
+ "DescribeRepository": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "GET",
+  "path": "/v1/repository"
+ },
+ "DisassociateExternalConnection": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ServiceQuotaExceededException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "DELETE",
+  "path": "/v1/repository/external-connection"
+ },
+ "DisposePackageVersions": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/package/versions/dispose"
+ },
+ "GetAssociatedPackageGroup": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ValidationException"
+  ],
+  "method": "GET",
+  "path": "/v1/get-associated-package-group"
+ },
+ "GetAuthorizationToken": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/authorization-token"
+ },
+ "GetDomainPermissionsPolicy": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "GET",
+  "path": "/v1/domain/permissions/policy"
+ },
+ "GetPackageVersionAsset": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "GET",
+  "path": "/v1/package/version/asset"
+ },
+ "GetPackageVersionReadme": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "GET",
+  "path": "/v1/package/version/readme"
+ },
+ "GetRepositoryEndpoint": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "GET",
+  "path": "/v1/repository/endpoint"
+ },
+ "GetRepositoryPermissionsPolicy": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "GET",
+  "path": "/v1/repository/permissions/policy"
+ },
+ "ListAllowedRepositoriesForGroup": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ServiceQuotaExceededException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "GET",
+  "path": "/v1/package-group-allowed-repositories"
+ },
+ "ListAssociatedPackages": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ValidationException"
+  ],
+  "method": "GET",
+  "path": "/v1/list-associated-packages"
+ },
+ "ListDomains": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/domains"
+ },
+ "ListPackageGroups": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/package-groups"
+ },
+ "ListPackageVersionAssets": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/package/version/assets"
+ },
+ "ListPackageVersionDependencies": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/package/version/dependencies"
+ },
+ "ListPackageVersions": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/package/versions"
+ },
+ "ListPackages": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/packages"
+ },
+ "ListRepositories": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/repositories"
+ },
+ "ListRepositoriesInDomain": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/domain/repositories"
+ },
+ "ListSubPackageGroups": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/package-groups/sub-groups"
+ },
+ "ListTagsForResource": {
+  "errors": [
+   "AccessDeniedException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/tags"
+ },
+ "PublishPackageVersion": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ServiceQuotaExceededException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/package/version/publish"
+ },
+ "PutDomainPermissionsPolicy": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ServiceQuotaExceededException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "PUT",
+  "path": "/v1/domain/permissions/policy"
+ },
+ "PutPackageOriginConfiguration": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/package"
+ },
+ "PutRepositoryPermissionsPolicy": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ServiceQuotaExceededException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "PUT",
+  "path": "/v1/repository/permissions/policy"
+ },
+ "TagResource": {
+  "errors": [
+   "AccessDeniedException",
+   "ResourceNotFoundException",
+   "ServiceQuotaExceededException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/tag"
+ },
+ "UntagResource": {
+  "errors": [
+   "AccessDeniedException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/untag"
+ },
+ "UpdatePackageGroup": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ServiceQuotaExceededException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "PUT",
+  "path": "/v1/package-group"
+ },
+ "UpdatePackageGroupOriginConfiguration": {
+  "errors": [
+   "AccessDeniedException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ServiceQuotaExceededException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "PUT",
+  "path": "/v1/package-group-origin-configuration"
+ },
+ "UpdatePackageVersionsStatus": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "POST",
+  "path": "/v1/package/versions/update_status"
+ },
+ "UpdateRepository": {
+  "errors": [
+   "AccessDeniedException",
+   "ConflictException",
+   "InternalServerException",
+   "ResourceNotFoundException",
+   "ServiceQuotaExceededException",
+   "ThrottlingException",
+   "ValidationException"
+  ],
+  "method": "PUT",
+  "path": "/v1/repository"
+ }
+}

@@ -1,69 +1,94 @@
 // Package codeartifact provides an in-memory mock implementation of the AWS
-// CodeArtifact control plane: domains, repositories (with upstream references
-// and external connections), and resource tagging.
+// CodeArtifact API: domains, repositories (with upstream references and
+// external connections), resource tagging and permissions policies, package
+// records, package versions with real asset bytes, package origin controls and
+// package groups.
 //
-// The mock is control-plane only. It does NOT run a package data plane (no
-// package publish, version resolution or asset storage). A domain and a
+// The mock serves the 48 management-API operations. It does NOT serve the
+// package-manager registry protocols (npm, pip, Maven, ...), so the only
+// packages that can be created through the API are generic ones, which is also
+// what real AWS allows (PublishPackageVersion is generic-only). A domain and a
 // repository are created synchronously in the Active state with stable computed
-// fields (the domain arn/owner/createdTime, the repository
-// arn/administratorAccount/createdTime) minted once at create and stored, so
-// repeated reads never drift. The domain repositoryCount is derived live from
-// the child repositories and assetSizeBytes is always 0.
+// fields minted once at create and stored, so repeated reads never drift.
+//
+// Concurrency: every state change that checks another entity (create with a
+// cap or a unique name, delete with dependents, publish, copy, policy and group
+// edits) runs under one Mock-level lock, and every read deep-copies what it
+// returns. Events are collected under the lock and published after it is
+// released, because delivery may call back into the mock.
 package codeartifact
 
 import (
-	"strconv"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/codeartifact/driver"
 )
 
-// Compile-time check that Mock implements driver.CodeArtifact.
-var _ driver.CodeArtifact = (*Mock)(nil)
-
-// defaultMaxResults caps a page when the caller requests none.
-const defaultMaxResults = 100
+// Compile-time checks that Mock implements the driver and its optional
+// capabilities.
+var (
+	_ driver.CodeArtifact                  = (*Mock)(nil)
+	_ driver.Access                        = (*Mock)(nil)
+	_ driver.RepositoryAdministratorLister = (*Mock)(nil)
+	_ driver.Policies                      = (*Mock)(nil)
+	_ driver.Packages                      = (*Mock)(nil)
+	_ driver.PackageVersions               = (*Mock)(nil)
+	_ driver.PackageGroups                 = (*Mock)(nil)
+)
 
 // ARN resource kinds and the service marker.
 const (
-	kindDomain     = "domain"
-	kindRepository = "repository"
-	serviceName    = "codeartifact"
+	kindDomain       = "domain"
+	kindRepository   = "repository"
+	kindPackageGroup = "package-group"
+	serviceName      = "codeartifact"
 )
 
-// Mock is an in-memory implementation of the AWS CodeArtifact control plane.
-// Domains are keyed by name; repositories are keyed by "<domain>/<repository>".
+// Mock is an in-memory implementation of the AWS CodeArtifact API.
+//
+// The stores are keyed as follows: domains by name; repositories by
+// "<domain>/<repository>"; domain policies by domain; repository policies by
+// "<domain>/<repository>"; packages by "<domain>/<repository>/<format>/
+// <namespace>/<name>"; package groups by "<domain>|<pattern>". Records held by
+// pointer (packages, groups) are read and written only under mu.
 type Mock struct {
-	domains *memstore.Store[driver.Domain]
-	repos   *memstore.Store[driver.Repository]
-	opts    *config.Options
+	mu             sync.RWMutex
+	domains        *memstore.Store[driver.Domain]
+	repos          *memstore.Store[driver.Repository]
+	domainPolicies *memstore.Store[driver.ResourcePolicy]
+	repoPolicies   *memstore.Store[driver.ResourcePolicy]
+	packages       *memstore.Store[*packageRecord]
+	groups         *memstore.Store[*groupRecord]
+	opts           *config.Options
+	events         awsevents.Emitter
 }
 
 // New creates a new CodeArtifact mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		domains: memstore.New[driver.Domain](),
-		repos:   memstore.New[driver.Repository](),
-		opts:    opts,
+		domains:        memstore.New[driver.Domain](),
+		repos:          memstore.New[driver.Repository](),
+		domainPolicies: memstore.New[driver.ResourcePolicy](),
+		repoPolicies:   memstore.New[driver.ResourcePolicy](),
+		packages:       memstore.New[*packageRecord](),
+		groups:         memstore.New[*groupRecord](),
+		opts:           opts,
 	}
+}
+
+// SetEventPublisher wires the EventBridge default bus that package version
+// state changes are published to.
+func (m *Mock) SetEventPublisher(p awsevents.Publisher) {
+	m.events.SetPublisher(p)
 }
 
 func (m *Mock) now() time.Time {
 	return m.opts.Clock.Now().UTC()
-}
-
-// resolveOwner returns the effective domain owner: the caller-supplied owner
-// when present, otherwise the emulator's account id.
-func (m *Mock) resolveOwner(domainOwner string) string {
-	if domainOwner == "" {
-		return m.opts.AccountID
-	}
-
-	return domainOwner
 }
 
 // domainARN mints the stable ARN reported for a domain.
@@ -76,36 +101,52 @@ func (m *Mock) repositoryARN(owner, domain, repo string) string {
 	return idgen.AWSARN(serviceName, m.opts.Region, owner, kindRepository+"/"+domain+"/"+repo)
 }
 
+// groupARN mints the stable ARN reported for a package group. The pattern
+// starts with a slash, so the resource reads package-group/<domain>/<format>/...
+func (m *Mock) groupARN(owner, domain, pattern string) string {
+	return idgen.AWSARN(serviceName, m.opts.Region, owner, kindPackageGroup+"/"+domain+pattern)
+}
+
 // repoKey is the store key for a repository.
 func repoKey(domain, repo string) string {
 	return domain + "/" + repo
 }
 
-// resourceRefFromARN extracts the (kind, key) pair from a CodeArtifact resource
-// ARN. A domain ARN of the form arn:aws:codeartifact:{region}:{acct}:domain/{name}
-// yields (domain, name); a repository ARN of the form
-// arn:aws:codeartifact:{region}:{acct}:repository/{domain}/{repo} yields
-// (repository, "{domain}/{repo}").
-func resourceRefFromARN(arn string) (kind, key string) {
-	const arnParts = 6
-
-	if !strings.Contains(arn, ":"+serviceName+":") {
-		return "", ""
+// domainLocked resolves a domain reference: the name and owner are validated,
+// and a domain that does not exist under that owner is a ResourceNotFound. The
+// caller holds mu.
+func (m *Mock) domainLocked(ref driver.DomainRef) (driver.Domain, error) {
+	if err := validateDomainRef(ref); err != nil {
+		return driver.Domain{}, err
 	}
 
-	parts := strings.SplitN(arn, ":", arnParts)
-	if len(parts) < arnParts {
-		return "", ""
+	d, ok := m.domains.Get(ref.Domain)
+	if !ok || (ref.Owner != "" && ref.Owner != d.Owner) {
+		return driver.Domain{}, notFound(driver.ResourceTypeDomain, ref.Domain, "Domain %s not found", ref.Domain)
 	}
 
-	resource := parts[arnParts-1]
+	return d, nil
+}
 
-	slash := strings.IndexByte(resource, '/')
-	if slash < 0 {
-		return "", ""
+// repositoryLocked resolves a repository reference through its domain. The
+// caller holds mu.
+func (m *Mock) repositoryLocked(ref driver.RepositoryRef) (driver.Domain, driver.Repository, error) {
+	if err := validateRepositoryRef(ref); err != nil {
+		return driver.Domain{}, driver.Repository{}, err
 	}
 
-	return resource[:slash], resource[slash+1:]
+	d, err := m.domainLocked(driver.DomainRef{Domain: ref.Domain, Owner: ref.Owner})
+	if err != nil {
+		return driver.Domain{}, driver.Repository{}, err
+	}
+
+	r, ok := m.repos.Get(repoKey(ref.Domain, ref.Repository))
+	if !ok {
+		return driver.Domain{}, driver.Repository{}, notFound(driver.ResourceTypeRepository, ref.Repository,
+			"Repository %s not found in domain %s", ref.Repository, ref.Domain)
+	}
+
+	return d, r, nil
 }
 
 func copyTags(in map[string]string) map[string]string {
@@ -154,56 +195,4 @@ func copyRepository(r *driver.Repository) driver.Repository {
 	out.ExternalConnections = copyExternalConns(r.ExternalConnections)
 
 	return out
-}
-
-// repositoryCount returns the number of repositories that belong to a domain.
-func (m *Mock) repositoryCount(domain string) int64 {
-	var n int64
-
-	repos := m.repos.SortedValues()
-	for i := range repos {
-		if repos[i].DomainName == domain {
-			n++
-		}
-	}
-
-	return n
-}
-
-// paginate returns the offset window and next token for a slice of length n,
-// honoring an opaque numeric offset token.
-func paginate(n int, page driver.Page) (start, end int, next string) {
-	start = decodeToken(page.NextToken)
-	if start > n {
-		start = n
-	}
-
-	limit := int(page.MaxResults)
-	if limit <= 0 {
-		limit = defaultMaxResults
-	}
-
-	end = start + limit
-	if end >= n {
-		return start, n, ""
-	}
-
-	return start, end, encodeToken(end)
-}
-
-func encodeToken(offset int) string {
-	return strconv.Itoa(offset)
-}
-
-func decodeToken(token string) int {
-	if token == "" {
-		return 0
-	}
-
-	n, err := strconv.Atoi(token)
-	if err != nil || n < 0 {
-		return 0
-	}
-
-	return n
 }

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	codeartifactsrv "github.com/stackshy/cloudemu/v2/server/aws/codeartifact"
 	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	cloudtraildriver "github.com/stackshy/cloudemu/v2/services/cloudtrail/driver"
@@ -23,6 +24,10 @@ func recordManagementEvent(rec cloudtraildriver.EventRecorder, r *http.Request) 
 	// derived from the method and path.
 	if name == "" && svc == vpclatticesrv.SigningName {
 		name = vpclatticesrv.OperationName(r.Method, r.URL.Path)
+	}
+	// CodeArtifact is REST-JSON too, routed on method and path.
+	if name == "" && svc == codeartifactsrv.SigningName {
+		name = codeartifactsrv.OperationName(r.Method, r.URL.Path)
 	}
 
 	if name == "" {
