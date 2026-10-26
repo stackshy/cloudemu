@@ -12,7 +12,11 @@ import (
 )
 
 func newMock() *codeartifact.Mock {
-	return codeartifact.New(config.NewOptions())
+	return newMockWithOptions(config.NewOptions())
+}
+
+func newMockWithOptions(opts *config.Options) *codeartifact.Mock {
+	return codeartifact.New(opts)
 }
 
 func requireNoError(t *testing.T, err error) {
@@ -95,7 +99,7 @@ func TestRepositoryRequiresDomain(t *testing.T) {
 	m := newMock()
 
 	_, err := m.CreateRepository(context.Background(), &driver.CreateRepositoryInput{
-		Domain: "ghost", Repository: "r",
+		Domain: "ghost", Repository: "repo",
 	})
 	if !cerrors.IsNotFound(err) {
 		t.Fatalf("repo without domain: got %v, want NotFound", err)
@@ -104,18 +108,18 @@ func TestRepositoryRequiresDomain(t *testing.T) {
 
 func TestRepositoryComputedAndCount(t *testing.T) {
 	m := newMock()
-	mustDomain(t, m, "d")
-	r := mustRepo(t, m, "d", "repo")
+	mustDomain(t, m, "dom")
+	r := mustRepo(t, m, "dom", "repo")
 
 	if r.AdministratorAccount == "" || r.DomainOwner == "" {
 		t.Fatalf("empty computed field: %+v", r)
 	}
 
-	if !strings.HasSuffix(r.Arn, ":repository/d/repo") {
-		t.Fatalf("arn = %q, want suffix :repository/d/repo", r.Arn)
+	if !strings.HasSuffix(r.Arn, ":repository/dom/repo") {
+		t.Fatalf("arn = %q, want suffix :repository/dom/repo", r.Arn)
 	}
 
-	d, err := m.DescribeDomain(context.Background(), "d", "")
+	d, err := m.DescribeDomain(context.Background(), "dom", "")
 	requireNoError(t, err)
 
 	if d.RepositoryCount != 1 {
@@ -125,13 +129,13 @@ func TestRepositoryComputedAndCount(t *testing.T) {
 
 func TestUpdateRepositoryPreservesIdentity(t *testing.T) {
 	m := newMock()
-	mustDomain(t, m, "d")
-	created := mustRepo(t, m, "d", "repo")
+	mustDomain(t, m, "dom")
+	created := mustRepo(t, m, "dom", "repo")
 
 	desc := "new description"
 
 	upd, err := m.UpdateRepository(context.Background(), &driver.UpdateRepositoryInput{
-		Domain: "d", Repository: "repo", Description: &desc,
+		Domain: "dom", Repository: "repo", Description: &desc,
 	})
 	requireNoError(t, err)
 
@@ -146,17 +150,18 @@ func TestUpdateRepositoryPreservesIdentity(t *testing.T) {
 
 func TestUpdateRepositoryAbsentFieldsUnchanged(t *testing.T) {
 	m := newMock()
-	mustDomain(t, m, "d")
+	mustDomain(t, m, "dom")
+	mustRepo(t, m, "dom", "up")
 
 	_, err := m.CreateRepository(context.Background(), &driver.CreateRepositoryInput{
-		Domain: "d", Repository: "repo", Description: "keep",
+		Domain: "dom", Repository: "repo", Description: "keep",
 		Upstreams: []driver.UpstreamRef{{RepositoryName: "up"}},
 	})
 	requireNoError(t, err)
 
 	// Update with neither description nor upstreams: both preserved.
 	upd, err := m.UpdateRepository(context.Background(), &driver.UpdateRepositoryInput{
-		Domain: "d", Repository: "repo",
+		Domain: "dom", Repository: "repo",
 	})
 	requireNoError(t, err)
 
@@ -167,31 +172,31 @@ func TestUpdateRepositoryAbsentFieldsUnchanged(t *testing.T) {
 
 func TestDeleteDomainWithRepositoriesConflict(t *testing.T) {
 	m := newMock()
-	mustDomain(t, m, "d")
-	mustRepo(t, m, "d", "repo")
+	mustDomain(t, m, "dom")
+	mustRepo(t, m, "dom", "repo")
 
-	_, err := m.DeleteDomain(context.Background(), "d", "")
+	_, err := m.DeleteDomain(context.Background(), "dom", "")
 	if !cerrors.IsAlreadyExists(err) {
 		t.Fatalf("delete non-empty domain: got %v, want conflict", err)
 	}
 
 	// After removing the repo, delete succeeds.
-	_, err = m.DeleteRepository(context.Background(), "d", "", "repo")
+	_, err = m.DeleteRepository(context.Background(), "dom", "", "repo")
 	requireNoError(t, err)
 
-	_, err = m.DeleteDomain(context.Background(), "d", "")
+	_, err = m.DeleteDomain(context.Background(), "dom", "")
 	requireNoError(t, err)
 }
 
 func TestListRepositoriesInDomainFiltered(t *testing.T) {
 	m := newMock()
-	mustDomain(t, m, "d1")
-	mustDomain(t, m, "d2")
-	mustRepo(t, m, "d1", "a")
-	mustRepo(t, m, "d1", "b")
-	mustRepo(t, m, "d2", "c")
+	mustDomain(t, m, "dom1")
+	mustDomain(t, m, "dom2")
+	mustRepo(t, m, "dom1", "aa")
+	mustRepo(t, m, "dom1", "bb")
+	mustRepo(t, m, "dom2", "cc")
 
-	repos, _, err := m.ListRepositoriesInDomain(context.Background(), "d1", "", "", driver.Page{})
+	repos, _, err := m.ListRepositoriesInDomain(context.Background(), "dom1", "", "", driver.Page{})
 	requireNoError(t, err)
 
 	if len(repos) != 2 {
@@ -208,17 +213,17 @@ func TestListRepositoriesInDomainFiltered(t *testing.T) {
 
 func TestExternalConnectionAssociateDisassociate(t *testing.T) {
 	m := newMock()
-	mustDomain(t, m, "d")
-	mustRepo(t, m, "d", "repo")
+	mustDomain(t, m, "dom")
+	mustRepo(t, m, "dom", "repo")
 
-	assoc, err := m.AssociateExternalConnection(context.Background(), "d", "", "repo", "public:pypi")
+	assoc, err := m.AssociateExternalConnection(context.Background(), "dom", "", "repo", "public:pypi")
 	requireNoError(t, err)
 
 	if len(assoc.ExternalConnections) != 1 || assoc.ExternalConnections[0].PackageFormat != "pypi" {
 		t.Fatalf("externalConnections = %+v", assoc.ExternalConnections)
 	}
 
-	dis, err := m.DisassociateExternalConnection(context.Background(), "d", "", "repo", "public:pypi")
+	dis, err := m.DisassociateExternalConnection(context.Background(), "dom", "", "repo", "public:pypi")
 	requireNoError(t, err)
 
 	if len(dis.ExternalConnections) != 0 {
@@ -230,8 +235,8 @@ func TestTagsOnDomainAndRepository(t *testing.T) {
 	m := newMock()
 	ctx := context.Background()
 
-	domainArn := mustDomain(t, m, "d").Arn
-	repoArn := mustRepo(t, m, "d", "repo").Arn
+	domainArn := mustDomain(t, m, "dom").Arn
+	repoArn := mustRepo(t, m, "dom", "repo").Arn
 
 	for _, arn := range []string{domainArn, repoArn} {
 		requireNoError(t, m.TagResource(ctx, arn, map[string]string{"k": "v", "drop": "x"}))
@@ -266,8 +271,8 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	m := newMock()
 	ctx := context.Background()
 
-	created := mustDomain(t, m, "d")
-	repo := mustRepo(t, m, "d", "repo")
+	created := mustDomain(t, m, "dom")
+	repo := mustRepo(t, m, "dom", "repo")
 
 	data, err := m.Snapshot(ctx, false)
 	requireNoError(t, err)
@@ -275,14 +280,14 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	restored := newMock()
 	requireNoError(t, restored.Restore(ctx, data))
 
-	d, err := restored.DescribeDomain(ctx, "d", "")
+	d, err := restored.DescribeDomain(ctx, "dom", "")
 	requireNoError(t, err)
 
 	if d.Arn != created.Arn || d.RepositoryCount != 1 {
 		t.Fatalf("domain not restored with identity/count: %+v", d)
 	}
 
-	r, err := restored.DescribeRepository(ctx, "d", "", "repo")
+	r, err := restored.DescribeRepository(ctx, "dom", "", "repo")
 	requireNoError(t, err)
 
 	if r.Arn != repo.Arn {

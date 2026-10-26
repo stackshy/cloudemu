@@ -6,26 +6,25 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/codeartifact/driver"
 )
 
+// createRepositoryRequest is the CreateRepository body.
+type createRepositoryRequest struct {
+	Description string         `json:"description"`
+	Upstreams   []upstreamPair `json:"upstreams"`
+	Tags        []tagPair      `json:"tags"`
+}
+
 func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request) {
-	raw, ok := decodeBodyMap(w, r)
-	if !ok {
+	var req createRepositoryRequest
+	if !decodeBody(w, r, &req) {
 		return
 	}
 
 	q := r.URL.Query()
 
-	in := &driver.CreateRepositoryInput{
-		Domain:      q.Get("domain"),
-		DomainOwner: q.Get("domain-owner"),
-		Repository:  q.Get("repository"),
-		Description: rawString(raw, "description"),
-		Tags:        tagsFromBody(raw),
-	}
-	if ups := upstreamsFromBody(raw); ups != nil {
-		in.Upstreams = *ups
-	}
-
-	out, err := h.ca.CreateRepository(r.Context(), in)
+	out, err := h.ca.CreateRepository(r.Context(), &driver.CreateRepositoryInput{
+		Domain: q.Get("domain"), DomainOwner: q.Get("domain-owner"), Repository: q.Get("repository"),
+		Description: req.Description, Upstreams: upstreamsFromList(req.Upstreams), Tags: tagsToMap(req.Tags),
+	})
 	if err != nil {
 		writeErr(w, err)
 
@@ -48,21 +47,30 @@ func (h *Handler) describeRepository(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"repository": repositoryToWire(out)})
 }
 
+// updateRepositoryRequest is the UpdateRepository body. A nil field was absent
+// from the request and is left unchanged; an empty upstream list clears them.
+type updateRepositoryRequest struct {
+	Description *string         `json:"description"`
+	Upstreams   *[]upstreamPair `json:"upstreams"`
+}
+
 func (h *Handler) updateRepository(w http.ResponseWriter, r *http.Request) {
-	raw, ok := decodeBodyMap(w, r)
-	if !ok {
+	var req updateRepositoryRequest
+	if !decodeBody(w, r, &req) {
 		return
 	}
 
 	q := r.URL.Query()
+	in := &driver.UpdateRepositoryInput{
+		Domain: q.Get("domain"), DomainOwner: q.Get("domain-owner"), Repository: q.Get("repository"), Description: req.Description,
+	}
 
-	out, err := h.ca.UpdateRepository(r.Context(), &driver.UpdateRepositoryInput{
-		Domain:      q.Get("domain"),
-		DomainOwner: q.Get("domain-owner"),
-		Repository:  q.Get("repository"),
-		Description: stringPtrFromBody(raw, "description"),
-		Upstreams:   upstreamsFromBody(raw),
-	})
+	if req.Upstreams != nil {
+		ups := upstreamsFromList(*req.Upstreams)
+		in.Upstreams = &ups
+	}
+
+	out, err := h.ca.UpdateRepository(r.Context(), in)
 	if err != nil {
 		writeErr(w, err)
 
@@ -88,10 +96,12 @@ func (h *Handler) deleteRepository(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) listRepositories(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
-	repos, next, err := h.ca.ListRepositories(r.Context(), q.Get("repository-prefix"), driver.Page{
-		NextToken:  q.Get("next-token"),
-		MaxResults: atoiDefault(q.Get("max-results")),
-	})
+	page, ok := pageFromQuery(w, q)
+	if !ok {
+		return
+	}
+
+	repos, next, err := h.ca.ListRepositories(r.Context(), q.Get("repository-prefix"), page)
 	if err != nil {
 		writeErr(w, err)
 
@@ -102,19 +112,27 @@ func (h *Handler) listRepositories(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listRepositoriesInDomain(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		methodNotAllowed(w)
+	q := r.URL.Query()
 
+	page, ok := pageFromQuery(w, q)
+	if !ok {
 		return
 	}
 
-	q := r.URL.Query()
+	var (
+		repos []*driver.Repository
+		next  string
+		err   error
+	)
 
-	repos, next, err := h.ca.ListRepositoriesInDomain(r.Context(), q.Get("domain"), q.Get("domain-owner"),
-		q.Get("repository-prefix"), driver.Page{
-			NextToken:  q.Get("next-token"),
-			MaxResults: atoiDefault(q.Get("max-results")),
-		})
+	if admin := q.Get("administrator-account"); admin != "" && h.adminLs != nil {
+		repos, next, err = h.adminLs.ListRepositoriesInDomainByAdministrator(r.Context(), domainRefFromQuery(q), admin,
+			q.Get("repository-prefix"), page)
+	} else {
+		repos, next, err = h.ca.ListRepositoriesInDomain(r.Context(), q.Get("domain"), q.Get("domain-owner"),
+			q.Get("repository-prefix"), page)
+	}
+
 	if err != nil {
 		writeErr(w, err)
 
@@ -161,9 +179,7 @@ func writeRepositorySummaries(w http.ResponseWriter, repos []*driver.Repository,
 	}
 
 	body := map[string]any{"repositories": summaries}
-	if next != "" {
-		body["nextToken"] = next
-	}
+	putNonEmpty(body, "nextToken", next)
 
 	writeJSON(w, body)
 }

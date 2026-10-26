@@ -213,7 +213,7 @@ func TestSDKCreateRepositoryMissingDomain(t *testing.T) {
 	c := newClient(t)
 
 	_, err := c.CreateRepository(ctx, &ca.CreateRepositoryInput{
-		Domain: aws.String("no-such-domain"), Repository: aws.String("r"),
+		Domain: aws.String("no-such-domain"), Repository: aws.String("repo"),
 	})
 
 	var nf *catypes.ResourceNotFoundException

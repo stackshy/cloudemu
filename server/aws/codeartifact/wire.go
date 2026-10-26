@@ -1,8 +1,11 @@
 package codeartifact
 
 import (
-	"encoding/json"
+	"errors"
+	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/services/codeartifact/driver"
@@ -146,15 +149,9 @@ type tagPair struct {
 	Value string `json:"value"`
 }
 
-// tagsFromBody extracts the tags list from a raw request body into a map.
-func tagsFromBody(raw map[string]json.RawMessage) map[string]string {
-	v, ok := raw["tags"]
-	if !ok {
-		return nil
-	}
-
-	var list []tagPair
-	if json.Unmarshal(v, &list) != nil {
+// tagsToMap converts a request's tag list to a map.
+func tagsToMap(list []tagPair) map[string]string {
+	if list == nil {
 		return nil
 	}
 
@@ -166,42 +163,102 @@ func tagsFromBody(raw map[string]json.RawMessage) map[string]string {
 	return out
 }
 
-// upstreamsFromBody extracts the upstreams list from a raw request body, or nil
-// when the field is absent.
-func upstreamsFromBody(raw map[string]json.RawMessage) *[]driver.UpstreamRef {
-	v, ok := raw["upstreams"]
-	if !ok {
-		return nil
-	}
+// upstreamPair mirrors one UpstreamRepository object in a request body.
+type upstreamPair struct {
+	RepositoryName string `json:"repositoryName"`
+}
 
-	var list []struct {
-		RepositoryName string `json:"repositoryName"`
-	}
-
-	if json.Unmarshal(v, &list) != nil {
-		return nil
-	}
-
+// upstreamsFromList converts a request's upstream list to driver references.
+func upstreamsFromList(list []upstreamPair) []driver.UpstreamRef {
 	out := make([]driver.UpstreamRef, 0, len(list))
 	for _, u := range list {
 		out = append(out, driver.UpstreamRef{RepositoryName: u.RepositoryName})
 	}
 
-	return &out
+	return out
 }
 
-// stringPtrFromBody returns a pointer to a string body field when present, or nil
-// when the field is absent (so an update leaves it unchanged).
-func stringPtrFromBody(raw map[string]json.RawMessage, key string) *string {
-	v, ok := raw[key]
+// queryTrue is the value of a boolean query parameter that is set.
+const queryTrue = "true"
+
+// maxQueryInt bounds a parsed query integer so the result fits an int32 without
+// overflow; the driver then rejects anything above the API's own limit.
+const maxQueryInt = 1 << 20
+
+// queryInt32 parses an optional non-negative integer query parameter. An absent
+// parameter is 0; a malformed or negative one is a ValidationException.
+func queryInt32(w http.ResponseWriter, q url.Values, key string) (int32, bool) {
+	s := q.Get(key)
+	if s == "" {
+		return 0, true
+	}
+
+	n, err := strconv.ParseUint(s, 10, 31)
+	if err != nil && !errors.Is(err, strconv.ErrRange) {
+		writeValidation(w, key+" must be a non-negative integer")
+
+		return 0, false
+	}
+
+	// A value beyond 31 bits is clamped: the driver rejects anything above the API's own limit.
+	return int32(min(n, maxQueryInt)), true //nolint:gosec // clamped to maxQueryInt, far below MaxInt32
+}
+
+// pageFromQuery reads the max-results and next-token query parameters.
+func pageFromQuery(w http.ResponseWriter, q url.Values) (driver.Page, bool) {
+	n, ok := queryInt32(w, q, "max-results")
 	if !ok {
-		return nil
+		return driver.Page{}, false
 	}
 
-	var s string
-	if json.Unmarshal(v, &s) != nil {
-		return nil
+	if q.Has("max-results") && n == 0 {
+		writeValidation(w, "max-results must be at least 1")
+
+		return driver.Page{}, false
 	}
 
-	return &s
+	return driver.Page{MaxResults: n, NextToken: q.Get("next-token")}, true
+}
+
+func domainRefFromQuery(q url.Values) driver.DomainRef {
+	return driver.DomainRef{Domain: q.Get("domain"), Owner: q.Get("domain-owner")}
+}
+
+func repoRefFromQuery(q url.Values) driver.RepositoryRef {
+	return driver.RepositoryRef{Domain: q.Get("domain"), Owner: q.Get("domain-owner"), Repository: q.Get("repository")}
+}
+
+func pkgRefFromQuery(q url.Values) driver.PackageRef {
+	return driver.PackageRef{
+		Domain: q.Get("domain"), Owner: q.Get("domain-owner"), Repository: q.Get("repository"),
+		Format: q.Get("format"), Namespace: q.Get("namespace"), Package: q.Get("package"),
+	}
+}
+
+// putNonEmpty sets m[key] = v unless v is empty.
+func putNonEmpty(m map[string]any, key, v string) {
+	if v != "" {
+		m[key] = v
+	}
+}
+
+func newCreateDomainInput(domain string, req *createDomainRequest) *driver.CreateDomainInput {
+	return &driver.CreateDomainInput{Name: domain, EncryptionKey: req.EncryptionKey, Tags: tagsToMap(req.Tags)}
+}
+
+// pageFromBody reads the paging members of a request body. A maxResults that is
+// present but not positive is rejected; an absent one means the default page size.
+func pageFromBody(w http.ResponseWriter, req *listPageRequest) (driver.Page, bool) {
+	if req.MaxResults != nil && *req.MaxResults == 0 {
+		writeValidation(w, "maxResults must be at least 1")
+
+		return driver.Page{}, false
+	}
+
+	page := driver.Page{NextToken: req.NextToken}
+	if req.MaxResults != nil {
+		page.MaxResults = *req.MaxResults
+	}
+
+	return page, true
 }

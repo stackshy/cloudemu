@@ -8,6 +8,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
 	cloudtraildriver "github.com/stackshy/cloudemu/v2/services/cloudtrail/driver"
+	cadriver "github.com/stackshy/cloudemu/v2/services/codeartifact/driver"
 	configservicedriver "github.com/stackshy/cloudemu/v2/services/configservice/driver"
 	ecsdriver "github.com/stackshy/cloudemu/v2/services/ecs/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
@@ -50,7 +51,7 @@ func (d taggedDiscovery) collectors() []func(context.Context) ([]resourcediscove
 		d.discoverSFN, d.discoverSSM, d.discoverKMS, d.discoverKinesis,
 		d.discoverGuardDuty, d.discoverCloudTrail, d.discoverConfig, d.discoverWAFv2,
 		d.discoverNetworkFirewall, d.discoverSESv2, d.discoverVPCLattice, d.discoverMemoryDB,
-		d.discoverKeyspaces, d.discoverResolver, d.discoverEventBridge, d.discoverACM,
+		d.discoverKeyspaces, d.discoverResolver, d.discoverEventBridge, d.discoverACM, d.discoverCodeArtifact,
 	}
 }
 
@@ -318,6 +319,58 @@ func (d taggedDiscovery) discoverACM(ctx context.Context) ([]resourcediscovery.D
 	return project(ctx, certs, func(_ context.Context, c acmdriver.Certificate) (resourcediscovery.DiscoveredResource, error) {
 		return row("acm", "certificate", c.DomainName, c.ARN, c.Tags), nil
 	})
+}
+
+// discoverCodeArtifact lists CodeArtifact domains, repositories and package
+// groups. Each carries its tags in the same store the tagger mutates.
+func (d taggedDiscovery) discoverCodeArtifact(ctx context.Context) ([]resourcediscovery.DiscoveredResource, error) {
+	ca := d.p.CodeArtifact
+
+	domains, _, err := ca.ListDomains(ctx, cadriver.Page{MaxResults: pageLimit})
+	if err != nil {
+		return nil, err
+	}
+
+	out, err := project(ctx, domains, func(_ context.Context, dom *cadriver.Domain) (resourcediscovery.DiscoveredResource, error) {
+		return row("codeartifact", "domain", dom.Name, dom.Arn, dom.Tags), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	repos, _, err := ca.ListRepositories(ctx, "", cadriver.Page{MaxResults: pageLimit})
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := project(ctx, repos, func(_ context.Context, r *cadriver.Repository) (resourcediscovery.DiscoveredResource, error) {
+		return row("codeartifact", "repository", r.Name, r.Arn, r.Tags), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out = append(out, rows...)
+
+	for _, dom := range domains {
+		groups, _, gerr := ca.ListPackageGroups(ctx, cadriver.DomainRef{Domain: dom.Name}, "", cadriver.Page{MaxResults: pageLimit})
+		if gerr != nil {
+			return nil, gerr
+		}
+
+		rows, err = project(ctx, groups, func(ctx context.Context, g *cadriver.PackageGroup) (resourcediscovery.DiscoveredResource, error) {
+			tags, terr := ca.ListTagsForResource(ctx, g.Arn)
+
+			return row("codeartifact", "package-group", g.Pattern, g.Arn, tags), terr
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, rows...)
+	}
+
+	return out, nil
 }
 
 func (d taggedDiscovery) discoverCloudTrail(ctx context.Context) ([]resourcediscovery.DiscoveredResource, error) {

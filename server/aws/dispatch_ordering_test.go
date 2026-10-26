@@ -187,3 +187,50 @@ func TestDescribeEventsRoutedByCredentialScope(t *testing.T) {
 		})
 	}
 }
+
+// TestCodeArtifactWinsBeforeS3AndLeavesSiblingsAlone covers the REST-JSON
+// CodeArtifact paths under /v1/, which share the wire with the permissive S3 REST
+// fallback and with the other /v1/ services (MQ, Batch, AppSync, Kafka). The
+// CodeArtifact routes must answer as CodeArtifact, and every path it does not own
+// must still reach S3 or the sibling service. (A bucket cannot be named v1: S3
+// bucket names have at least three characters.)
+func TestCodeArtifactWinsBeforeS3AndLeavesSiblingsAlone(t *testing.T) {
+	ts := fullAWSServer(t)
+
+	for _, path := range []string{"/v1/domains", "/v1/repositories", "/v1/packages", "/v1/package-groups"} {
+		status, body := doRequest(t, ts, http.MethodPost, path, "{}", nil)
+
+		assert.NotEqual(t, http.StatusNotImplemented, status, "%s: %s", path, body)
+		assert.NotContains(t, body, "<?xml", "%s was answered by S3: %s", path, body)
+		assert.True(t, strings.HasPrefix(body, "{"), "%s: expected a CodeArtifact JSON answer, got %s", path, body)
+	}
+
+	status, body := doRequest(t, ts, http.MethodGet, "/v1/domain?domain=ghost-domain", "", nil)
+	assert.Equal(t, http.StatusNotFound, status)
+	assert.Contains(t, body, `"resourceType":"domain"`, "CodeArtifact error body expected: %s", body)
+
+	// Paths CodeArtifact does not route are not answered by it: the unclaimed sub-paths reach S3 and
+	// the shared tag path reaches its own service.
+	for _, path := range []string{"/v1/domain/unknown", "/v1/package/unknown"} {
+		_, body = doRequest(t, ts, http.MethodGet, path, "", nil)
+		assert.Contains(t, body, "<Error>", "%s must fall through to S3, got %s", path, body)
+	}
+
+	_, body = doRequest(t, ts, http.MethodGet, "/v1/tags", "", nil)
+	assert.Contains(t, body, "__type", "/v1/tags without a CodeArtifact ARN must reach a sibling service, got %s", body)
+
+	// A normal path-style bucket keeps working.
+	status, _ = doRequest(t, ts, http.MethodPut, "/artifact-bucket", "", nil)
+	require.Equal(t, http.StatusOK, status, "create bucket")
+
+	status, _ = doRequest(t, ts, http.MethodPut, "/artifact-bucket/v1/domain", "payload", nil)
+	require.Equal(t, http.StatusOK, status, "put object")
+
+	status, body = doRequest(t, ts, http.MethodGet, "/artifact-bucket/v1/domain", "", nil)
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, "payload", body)
+
+	// The shared tag path with a non-CodeArtifact ARN falls through to its own service, not CodeArtifact.
+	status, body = doRequest(t, ts, http.MethodPost, "/v1/tags?resourceArn=arn:aws:mq:us-east-1:123456789012:broker:b-1", "{}", nil)
+	assert.NotContains(t, body, `"resourceType"`, "non-CodeArtifact tag request answered by CodeArtifact (%d): %s", status, body)
+}

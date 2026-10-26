@@ -4755,6 +4755,180 @@
         "name": "UpdateRepository"
       }
     ],
+    "optionalCapabilities": [
+      {
+        "name": "Access",
+        "doc": "Access is the optional capability behind `aws codeartifact login`.",
+        "operations": [
+          {
+            "name": "GetAuthorizationToken",
+            "doc": "GetAuthorizationToken issues a bearer token for a domain; a zero durationSeconds means the default lifetime."
+          },
+          {
+            "name": "GetRepositoryEndpoint",
+            "doc": "GetRepositoryEndpoint returns the URL of a repository for one package format (\"\", \"ipv4\" or \"dualstack\" endpoint type)."
+          }
+        ]
+      },
+      {
+        "name": "PackageGroups",
+        "doc": "PackageGroups is the optional capability for package groups.",
+        "operations": [
+          {
+            "name": "CreatePackageGroup",
+            "doc": "CreatePackageGroup creates a package group."
+          },
+          {
+            "name": "DeletePackageGroup",
+            "doc": "DeletePackageGroup deletes a group; its children move up to its parent."
+          },
+          {
+            "name": "DescribePackageGroup",
+            "doc": "DescribePackageGroup returns a package group with its parent and effective restrictions."
+          },
+          {
+            "name": "GetAssociatedPackageGroup",
+            "doc": "GetAssociatedPackageGroup returns the group a package coordinate belongs to and how strongly."
+          },
+          {
+            "name": "ListAllowedRepositoriesForGroup",
+            "doc": "ListAllowedRepositoriesForGroup lists the allowed repositories of one restriction type."
+          },
+          {
+            "name": "ListAssociatedPackages",
+            "doc": "ListAssociatedPackages lists the packages whose most specific group is the given one."
+          },
+          {
+            "name": "ListPackageGroups",
+            "doc": "ListPackageGroups lists a domain's package groups."
+          },
+          {
+            "name": "ListSubPackageGroups",
+            "doc": "ListSubPackageGroups lists the direct children of a package group."
+          },
+          {
+            "name": "UpdatePackageGroup",
+            "doc": "UpdatePackageGroup changes the contact info and description of a group."
+          },
+          {
+            "name": "UpdatePackageGroupOriginConfiguration",
+            "doc": "UpdatePackageGroupOriginConfiguration sets restriction modes and edits the allowed repository lists."
+          }
+        ]
+      },
+      {
+        "name": "PackageVersions",
+        "doc": "PackageVersions is the optional capability for package versions and their assets.",
+        "operations": [
+          {
+            "name": "CopyPackageVersions",
+            "doc": "CopyPackageVersions copies versions between two repositories of one domain."
+          },
+          {
+            "name": "DeletePackageVersions",
+            "doc": "DeletePackageVersions removes versions and their assets."
+          },
+          {
+            "name": "DescribePackageVersion",
+            "doc": "DescribePackageVersion returns the description of one package version."
+          },
+          {
+            "name": "DisposePackageVersions",
+            "doc": "DisposePackageVersions deletes the assets of versions and marks them Disposed."
+          },
+          {
+            "name": "GetPackageVersionAsset",
+            "doc": "GetPackageVersionAsset returns the bytes of one asset."
+          },
+          {
+            "name": "GetPackageVersionReadme",
+            "doc": "GetPackageVersionReadme returns the identity of a version; generic versions have no readme text."
+          },
+          {
+            "name": "ListPackageVersionAssets",
+            "doc": "ListPackageVersionAssets lists the assets of a package version."
+          },
+          {
+            "name": "ListPackageVersionDependencies",
+            "doc": "ListPackageVersionDependencies returns the identity of a version; generic versions have no dependencies."
+          },
+          {
+            "name": "ListPackageVersions",
+            "doc": "ListPackageVersions lists the versions of a package, newest published first."
+          },
+          {
+            "name": "PublishPackageVersion",
+            "doc": "PublishPackageVersion adds an asset to a generic package version, creating the version when needed."
+          },
+          {
+            "name": "UpdatePackageVersionsStatus",
+            "doc": "UpdatePackageVersionsStatus moves versions to Archived, Published or Unlisted."
+          }
+        ]
+      },
+      {
+        "name": "Packages",
+        "doc": "Packages is the optional capability for package records and their origin controls.",
+        "operations": [
+          {
+            "name": "DeletePackage",
+            "doc": "DeletePackage deletes a package with all its versions and assets."
+          },
+          {
+            "name": "DescribePackage",
+            "doc": "DescribePackage returns a package record."
+          },
+          {
+            "name": "ListPackages",
+            "doc": "ListPackages lists the packages of a repository."
+          },
+          {
+            "name": "PutPackageOriginConfiguration",
+            "doc": "PutPackageOriginConfiguration sets a package's origin controls, creating an empty record when it does not exist."
+          }
+        ]
+      },
+      {
+        "name": "Policies",
+        "doc": "Policies is the optional capability for domain and repository permissions policies.",
+        "operations": [
+          {
+            "name": "DeleteDomainPermissionsPolicy",
+            "doc": "DeleteDomainPermissionsPolicy removes the resource policy from a domain."
+          },
+          {
+            "name": "DeleteRepositoryPermissionsPolicy",
+            "doc": "DeleteRepositoryPermissionsPolicy removes the resource policy from a repository."
+          },
+          {
+            "name": "GetDomainPermissionsPolicy",
+            "doc": "GetDomainPermissionsPolicy returns the resource policy on a domain."
+          },
+          {
+            "name": "GetRepositoryPermissionsPolicy",
+            "doc": "GetRepositoryPermissionsPolicy returns the resource policy on a repository."
+          },
+          {
+            "name": "PutDomainPermissionsPolicy",
+            "doc": "PutDomainPermissionsPolicy sets the resource policy on a domain."
+          },
+          {
+            "name": "PutRepositoryPermissionsPolicy",
+            "doc": "PutRepositoryPermissionsPolicy sets the resource policy on a repository."
+          }
+        ]
+      },
+      {
+        "name": "RepositoryAdministratorLister",
+        "doc": "RepositoryAdministratorLister is the optional capability behind the administrator-account filter of",
+        "operations": [
+          {
+            "name": "ListRepositoriesInDomainByAdministrator",
+            "doc": "ListRepositoriesInDomainByAdministrator lists a domain's repositories administered by one account."
+          }
+        ]
+      }
+    ],
     "providers": {
       "aws": "CodeArtifact"
     }

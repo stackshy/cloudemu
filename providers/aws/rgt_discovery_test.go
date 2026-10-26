@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"errors"
+	cadriver "github.com/stackshy/cloudemu/v2/services/codeartifact/driver"
 	"strings"
 	"sync"
 	"testing"
@@ -602,6 +603,69 @@ func mustNoErr(t *testing.T, err error) {
 	t.Helper()
 
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCodeArtifactDiscoveryAndTagging(t *testing.T) {
+	ctx := context.Background()
+	p := New()
+	ca := p.CodeArtifact
+
+	dom, err := ca.CreateDomain(ctx, &cadriver.CreateDomainInput{Name: "dom", Tags: map[string]string{"env": "test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo, err := ca.CreateRepository(ctx, &cadriver.CreateRepositoryInput{Domain: "dom", Repository: "repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	group, err := ca.CreatePackageGroup(ctx, &cadriver.CreatePackageGroupInput{
+		Domain: cadriver.DomainRef{Domain: "dom"}, Pattern: "/npm/*", Tags: map[string]string{"team": "a"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := taggedDiscovery{p}.discoverCodeArtifact(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]resourcediscovery.DiscoveredResource{
+		"domain":        {Service: "codeartifact", Type: "domain", ID: "dom", ARN: dom.Arn, Tags: map[string]string{"env": "test"}},
+		"repository":    {Service: "codeartifact", Type: "repository", ID: "repo", ARN: repo.Arn},
+		"package-group": {Service: "codeartifact", Type: "package-group", ID: "/npm/*", ARN: group.Arn, Tags: map[string]string{"team": "a"}},
+	}
+
+	if len(rows) != len(want) {
+		t.Fatalf("rows = %+v", rows)
+	}
+
+	for _, r := range rows {
+		w := want[r.Type]
+		if r.Service != w.Service || r.ID != w.ID || r.ARN != w.ARN || len(r.Tags) != len(w.Tags) {
+			t.Errorf("%s row = %+v, want %+v", r.Type, r, w)
+		}
+	}
+
+	tagger := awsTaggers(p)["codeartifact"]
+	if tagger == nil {
+		t.Fatal("no codeartifact tagger registered")
+	}
+
+	if err = tagger.TagByARN(ctx, repo.Arn, map[string]string{"via": "rgt"}); err != nil {
+		t.Fatal(err)
+	}
+
+	tags, err := ca.ListTagsForResource(ctx, repo.Arn)
+	if err != nil || tags["via"] != "rgt" {
+		t.Fatalf("tags after RGT tagging = %v err=%v", tags, err)
+	}
+
+	if err = tagger.UntagByARN(ctx, repo.Arn, []string{"via"}); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -16,18 +16,23 @@ const (
 )
 
 // errorBody is the restJson1 error body. The SDK reads the X-Amzn-Errortype
-// header to select a typed exception.
+// header to select a typed exception; resourceId, resourceType and reason fill
+// the matching members of ResourceNotFound, Conflict, ServiceQuotaExceeded and
+// Validation exceptions.
 type errorBody struct {
-	Message string `json:"message"`
+	Message      string `json:"message"`
+	ResourceID   string `json:"resourceId,omitempty"`
+	ResourceType string `json:"resourceType,omitempty"`
+	Reason       string `json:"reason,omitempty"`
 }
 
 // writeError writes a restJson1 error response with the given exception type.
-func writeError(w http.ResponseWriter, status int, errType, msg string) {
+func writeError(w http.ResponseWriter, status int, errType string, body errorBody) {
 	w.Header().Set("Content-Type", contentTypeJSON)
 	w.Header().Set("X-Amzn-Errortype", errType)
 	w.WriteHeader(status)
 
-	_ = json.NewEncoder(w).Encode(errorBody{Message: msg})
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // statusForException returns the HTTP status for a CodeArtifact exception name.
@@ -39,6 +44,8 @@ func statusForException(exception string) int {
 		return http.StatusBadRequest
 	case driver.ExConflict:
 		return http.StatusConflict
+	case driver.ExServiceQuota:
+		return http.StatusPaymentRequired
 	default:
 		return http.StatusInternalServerError
 	}
@@ -60,48 +67,62 @@ func exceptionForCode(err error) (status int, errType string) {
 }
 
 // writeErr maps a driver error to the precise CodeArtifact exception. Tagged
-// driver.APIError values are honored first so the exact exception name is
-// preserved; untagged errors fall back to the canonical-code mapping.
+// driver.APIError values are honored first so the exact exception name and its
+// resource identity are preserved; untagged errors fall back to the
+// canonical-code mapping.
 func writeErr(w http.ResponseWriter, err error) {
 	msg := cerrors.Message(err)
 
 	var apiErr *driver.APIError
 	if errors.As(err, &apiErr) {
-		writeError(w, statusForException(apiErr.Exception), apiErr.Exception, msg)
+		writeError(w, statusForException(apiErr.Exception), apiErr.Exception, errorBody{
+			Message: msg, ResourceID: apiErr.ResourceID, ResourceType: apiErr.ResourceType, Reason: apiErr.Reason,
+		})
 
 		return
 	}
 
 	status, errType := exceptionForCode(err)
-	writeError(w, status, errType, msg)
+	writeError(w, status, errType, errorBody{Message: msg})
+}
+
+// writeErrNoNotFound is writeErr for an operation the API does not model
+// ResourceNotFoundException for: a missing resource is reported as a
+// ValidationException instead, the only 4xx such an operation can return.
+func writeErrNoNotFound(w http.ResponseWriter, err error) {
+	if cerrors.IsNotFound(err) {
+		writeValidation(w, cerrors.Message(err))
+
+		return
+	}
+
+	writeErr(w, err)
+}
+
+func writeValidation(w http.ResponseWriter, msg string) {
+	writeError(w, http.StatusBadRequest, driver.ExValidation, errorBody{Message: msg, Reason: driver.ReasonFieldValidationFailed})
 }
 
 func notFoundPath(w http.ResponseWriter, path string) {
-	writeError(w, http.StatusNotFound, driver.ExNotFound, "unsupported path: "+path)
+	writeError(w, http.StatusNotFound, driver.ExNotFound, errorBody{Message: "unsupported path: " + path})
 }
 
 func methodNotAllowed(w http.ResponseWriter) {
-	writeError(w, http.StatusBadRequest, driver.ExValidation, "method not allowed")
+	writeValidation(w, "method not allowed")
 }
 
-// decodeBodyMap reads the request body into a map of raw fields. An empty body
-// yields an empty map.
-func decodeBodyMap(w http.ResponseWriter, r *http.Request) (map[string]json.RawMessage, bool) {
+// decodeBody reads the request body as JSON into v. An empty body leaves v
+// untouched.
+func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
-	out := map[string]json.RawMessage{}
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil && !errors.Is(err, io.EOF) {
+		writeValidation(w, "invalid JSON: "+err.Error())
 
-	if err := json.NewDecoder(r.Body).Decode(&out); err != nil {
-		if errors.Is(err, io.EOF) {
-			return out, true
-		}
-
-		writeError(w, http.StatusBadRequest, driver.ExValidation, "invalid JSON: "+err.Error())
-
-		return nil, false
+		return false
 	}
 
-	return out, true
+	return true
 }
 
 // writeJSON writes a 200 restJson1 success body.

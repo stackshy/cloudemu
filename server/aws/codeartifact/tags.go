@@ -1,22 +1,26 @@
 package codeartifact
 
 import (
-	"encoding/json"
 	"net/http"
 )
 
-// serveTag handles POST /v1/tag?resourceArn= (TagResource).
-func (h *Handler) serveTag(w http.ResponseWriter, r *http.Request, rest []string) {
-	if !okTagShape(w, r, rest) {
+// tagRequest is the TagResource body.
+type tagRequest struct {
+	Tags []tagPair `json:"tags"`
+}
+
+// untagRequest is the UntagResource body.
+type untagRequest struct {
+	TagKeys []string `json:"tagKeys"`
+}
+
+func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request) {
+	var req tagRequest
+	if !decodeBody(w, r, &req) {
 		return
 	}
 
-	raw, ok := decodeBodyMap(w, r)
-	if !ok {
-		return
-	}
-
-	if err := h.ca.TagResource(r.Context(), r.URL.Query().Get("resourceArn"), tagsFromBody(raw)); err != nil {
+	if err := h.ca.TagResource(r.Context(), r.URL.Query().Get("resourceArn"), tagsToMap(req.Tags)); err != nil {
 		writeErr(w, err)
 
 		return
@@ -25,18 +29,13 @@ func (h *Handler) serveTag(w http.ResponseWriter, r *http.Request, rest []string
 	writeJSON(w, map[string]any{})
 }
 
-// serveUntag handles POST /v1/untag?resourceArn= (UntagResource).
-func (h *Handler) serveUntag(w http.ResponseWriter, r *http.Request, rest []string) {
-	if !okTagShape(w, r, rest) {
+func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request) {
+	var req untagRequest
+	if !decodeBody(w, r, &req) {
 		return
 	}
 
-	raw, ok := decodeBodyMap(w, r)
-	if !ok {
-		return
-	}
-
-	if err := h.ca.UntagResource(r.Context(), r.URL.Query().Get("resourceArn"), tagKeysFromBody(raw)); err != nil {
+	if err := h.ca.UntagResource(r.Context(), r.URL.Query().Get("resourceArn"), req.TagKeys); err != nil {
 		writeErr(w, err)
 
 		return
@@ -45,12 +44,7 @@ func (h *Handler) serveUntag(w http.ResponseWriter, r *http.Request, rest []stri
 	writeJSON(w, map[string]any{})
 }
 
-// serveListTags handles POST /v1/tags?resourceArn= (ListTagsForResource).
-func (h *Handler) serveListTags(w http.ResponseWriter, r *http.Request, rest []string) {
-	if !okTagShape(w, r, rest) {
-		return
-	}
-
+func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 	tags, err := h.ca.ListTagsForResource(r.Context(), r.URL.Query().Get("resourceArn"))
 	if err != nil {
 		writeErr(w, err)
@@ -59,37 +53,4 @@ func (h *Handler) serveListTags(w http.ResponseWriter, r *http.Request, rest []s
 	}
 
 	writeJSON(w, map[string]any{"tags": tagsToWire(tags)})
-}
-
-// okTagShape validates a tag request's path and verb, writing the appropriate
-// error and returning false when it is malformed: an unknown sub-path is a 404,
-// a wrong verb on the exact path is a method error.
-func okTagShape(w http.ResponseWriter, r *http.Request, rest []string) bool {
-	switch {
-	case len(rest) != 0:
-		notFoundPath(w, r.URL.Path)
-
-		return false
-	case r.Method != http.MethodPost:
-		methodNotAllowed(w)
-
-		return false
-	default:
-		return true
-	}
-}
-
-// tagKeysFromBody extracts the tagKeys list from a raw request body.
-func tagKeysFromBody(raw map[string]json.RawMessage) []string {
-	v, ok := raw["tagKeys"]
-	if !ok {
-		return nil
-	}
-
-	var keys []string
-	if json.Unmarshal(v, &keys) != nil {
-		return nil
-	}
-
-	return keys
 }

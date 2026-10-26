@@ -24,7 +24,7 @@ import (
 // through GetResources). Split into grouped builders to stay within the
 // per-function length budget.
 func awsTaggers(p *Provider) map[string]resourcediscovery.ARNTagger {
-	const taggerCount = 28
+	const taggerCount = 29
 
 	m := make(map[string]resourcediscovery.ARNTagger, taggerCount)
 	addKeyedTaggers(m, p)
@@ -77,6 +77,7 @@ func (f funcTagger) UntagByARN(ctx context.Context, arn string, keys []string) e
 // the file-system/access-point id and KMS by the key id, so those two supply a
 // key extractor.
 func addKeyedTaggers(m map[string]resourcediscovery.ARNTagger, p *Provider) {
+	m["codeartifact"] = keyedTagger{p.CodeArtifact, fullARN}
 	m["config"] = keyedTagger{p.Config, fullARN}
 	m["ecs"] = keyedTagger{ecsMapStore{p.ECS}, fullARN}
 	m["eks"] = keyedTagger{p.EKS, fullARN}
