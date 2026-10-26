@@ -18,7 +18,7 @@ func mustKB(t *testing.T, m *Mock, name string) *driver.KnowledgeBase {
 	kb, err := m.CreateKnowledgeBase(context.Background(), driver.KnowledgeBaseConfig{
 		Name: name, RoleArn: "arn:aws:iam::123456789012:role/kb",
 		KnowledgeBaseConfiguration: []byte(`{"type":"VECTOR"}`),
-		StorageConfiguration:       []byte(`{"type":"OPENSEARCH_SERVERLESS"}`),
+		StorageConfiguration:       []byte(`{"type":"OPENSEARCH_SERVERLESS","opensearchServerlessConfiguration":{}}`),
 	})
 	require.NoError(t, err)
 

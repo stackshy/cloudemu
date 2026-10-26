@@ -76,7 +76,7 @@ func TestKnowledgeBaseAndDataSource(t *testing.T) {
 		Name:                       "kb1",
 		RoleArn:                    "role",
 		KnowledgeBaseConfiguration: json.RawMessage(`{"type":"VECTOR"}`),
-		StorageConfiguration:       json.RawMessage(`{"type":"OPENSEARCH_SERVERLESS"}`),
+		StorageConfiguration:       json.RawMessage(`{"type":"OPENSEARCH_SERVERLESS","opensearchServerlessConfiguration":{}}`),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, driver.KnowledgeBaseActive, kb.Status)
@@ -113,7 +113,7 @@ func TestDeleteKnowledgeBaseCascade(t *testing.T) {
 		Name:                       "kb1",
 		RoleArn:                    "role",
 		KnowledgeBaseConfiguration: json.RawMessage(`{"type":"VECTOR"}`),
-		StorageConfiguration:       json.RawMessage(`{"type":"OPENSEARCH_SERVERLESS"}`),
+		StorageConfiguration:       json.RawMessage(`{"type":"OPENSEARCH_SERVERLESS","opensearchServerlessConfiguration":{}}`),
 	})
 	require.NoError(t, err)
 
@@ -147,7 +147,7 @@ func TestDeleteDataSourceCascadesJobs(t *testing.T) {
 		Name:                       "kb1",
 		RoleArn:                    "role",
 		KnowledgeBaseConfiguration: json.RawMessage(`{"type":"VECTOR"}`),
-		StorageConfiguration:       json.RawMessage(`{"type":"OPENSEARCH_SERVERLESS"}`),
+		StorageConfiguration:       json.RawMessage(`{"type":"OPENSEARCH_SERVERLESS","opensearchServerlessConfiguration":{}}`),
 	})
 	require.NoError(t, err)
 
@@ -194,7 +194,7 @@ func TestDataSourceCopyOutImmutable(t *testing.T) {
 		Name:                       "kb1",
 		RoleArn:                    "role",
 		KnowledgeBaseConfiguration: json.RawMessage(`{"type":"VECTOR"}`),
-		StorageConfiguration:       json.RawMessage(`{"type":"OPENSEARCH_SERVERLESS"}`),
+		StorageConfiguration:       json.RawMessage(`{"type":"OPENSEARCH_SERVERLESS","opensearchServerlessConfiguration":{}}`),
 	})
 	require.NoError(t, err)
 
