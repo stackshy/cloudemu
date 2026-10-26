@@ -69,7 +69,8 @@ func resourceKinds() map[string]resourceKind {
 
 // IAMChecks names the IAM actions a request needs: codeartifact:<Operation>
 // against the domain, repository, package or package group it names, plus
-// sts:GetServiceBearerToken for GetAuthorizationToken. ok=false means the
+// sts:GetServiceBearerToken for GetAuthorizationToken and codeartifact:ReadFromRepository on the source
+// repository for CopyPackageVersions. ok=false means the
 // request is not a CodeArtifact operation, and ServeHTTP then answers it without
 // side effects.
 func (*Handler) IAMChecks(r *http.Request, s awsauthz.Scope) ([]awsauthz.Check, bool) {
@@ -80,8 +81,13 @@ func (*Handler) IAMChecks(r *http.Request, s awsauthz.Scope) ([]awsauthz.Check, 
 
 	checks := []awsauthz.Check{{Action: "codeartifact:" + op, Resource: resourceARN(op, r, s)}}
 
-	if op == opGetAuthorizationToken {
+	switch op {
+	case opGetAuthorizationToken:
 		checks = append(checks, awsauthz.Check{Action: "sts:GetServiceBearerToken", Resource: "*"})
+	case opCopyPackageVersions:
+		// A copy reads the source repository, so the caller needs read access there as well as
+		// write access to the destination. An unnamed source is left unresolved and fails closed.
+		checks = append(checks, awsauthz.Check{Action: "codeartifact:ReadFromRepository", Resource: sourceRepositoryARN(r.URL.Query(), s)})
 	}
 
 	return checks, true
@@ -129,6 +135,15 @@ func domainARN(op string, r *http.Request, q url.Values, s awsauthz.Scope) strin
 	}
 
 	return s.ARN("codeartifact", "domain/"+domain)
+}
+
+// sourceRepositoryARN names the source repository of a CopyPackageVersions request.
+func sourceRepositoryARN(q url.Values, s awsauthz.Scope) string {
+	if q.Get("domain") == "" || q.Get("source-repository") == "" {
+		return ""
+	}
+
+	return s.ARN("codeartifact", "repository/"+q.Get("domain")+"/"+q.Get("source-repository"))
 }
 
 func repositoryARN(q url.Values, s awsauthz.Scope) string {

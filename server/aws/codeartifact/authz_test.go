@@ -106,3 +106,32 @@ func TestIAMChecksPutPolicyBodyStillReadableByHandler(t *testing.T) {
 		t.Fatalf("handler could not read the body after the resolver: %s", rec.Body.String())
 	}
 }
+
+func TestCopyNeedsReadOnTheSourceRepository(t *testing.T) {
+	h := fullHandler()
+	prefix := "arn:aws:codeartifact:us-east-1:123456789012:"
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/package/versions/copy?"+url.Values{
+		"domain": {"dom"}, "source-repository": {"src"}, "destination-repository": {"dst"}, "format": {"npm"}, "package": {"p"},
+	}.Encode(), strings.NewReader("{}"))
+
+	checks, ok := h.IAMChecks(req, testScope)
+	if !ok || len(checks) != 2 {
+		t.Fatalf("checks = %+v, want the copy action and a read on the source", checks)
+	}
+
+	if checks[0].Action != "codeartifact:CopyPackageVersions" || checks[0].Resource != prefix+"package/dom/dst/npm//p" {
+		t.Errorf("copy check = %+v", checks[0])
+	}
+
+	if checks[1].Action != "codeartifact:ReadFromRepository" || checks[1].Resource != prefix+"repository/dom/src" {
+		t.Errorf("source read check = %+v", checks[1])
+	}
+
+	noSource := httptest.NewRequest(http.MethodPost, "/v1/package/versions/copy?domain=dom&destination-repository=dst&format=npm&package=p", strings.NewReader("{}"))
+
+	checks, _ = h.IAMChecks(noSource, testScope)
+	if len(checks) != 2 || checks[1].Resource != "" {
+		t.Errorf("a copy that names no source must leave the read unresolved (fail closed): %+v", checks)
+	}
+}
