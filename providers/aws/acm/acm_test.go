@@ -140,3 +140,29 @@ func TestAsyncSettleGetCertificateGated(t *testing.T) {
 		t.Fatalf("GetCertificate after settle = %q (err %v), want issued PEM", pem, err)
 	}
 }
+
+func TestListCertificatesRejectsUnknownStatus(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	if _, err := m.RequestCertificate(ctx, driver.RequestCertificateInput{DomainName: "a.example.com"}); err != nil {
+		t.Fatalf("RequestCertificate: %v", err)
+	}
+
+	for _, statuses := range [][]string{{"BOGUS"}, {driver.StatusIssued, "issued"}} {
+		_, err := m.ListCertificates(ctx, driver.ListFilter{Statuses: statuses})
+		if !errors.IsInvalidArgument(err) {
+			t.Fatalf("ListCertificates(%v): want InvalidArgument, got %v", statuses, err)
+		}
+
+		_, err = m.SearchCertificates(ctx, driver.ListFilter{Statuses: statuses})
+		if !errors.IsInvalidArgument(err) {
+			t.Fatalf("SearchCertificates(%v): want InvalidArgument, got %v", statuses, err)
+		}
+	}
+
+	certs, err := m.ListCertificates(ctx, driver.ListFilter{Statuses: []string{driver.StatusIssued, driver.StatusFailed}})
+	if err != nil || len(certs) != 1 {
+		t.Fatalf("ListCertificates(ISSUED, FAILED) = %d certs, %v; want 1, nil", len(certs), err)
+	}
+}
