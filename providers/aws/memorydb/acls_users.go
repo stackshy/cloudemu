@@ -209,6 +209,23 @@ func (m *Mock) DeleteACL(_ context.Context, name string) (*mdbdriver.ACL, error)
 
 const authTypePassword = "password"
 
+// Bounds on a MemoryDB user password's length.
+const (
+	minPasswordLen = 16
+	maxPasswordLen = 128
+)
+
+func validPasswords(passwords []string) error {
+	for _, p := range passwords {
+		if n := len(p); n < minPasswordLen || n > maxPasswordLen {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"Passwords length must be between %d-%d characters.", minPasswordLen, maxPasswordLen)
+		}
+	}
+
+	return nil
+}
+
 func authType(t string) string {
 	if t == "" {
 		return authTypePassword
@@ -227,6 +244,10 @@ func (m *Mock) CreateUser(_ context.Context, cfg mdbdriver.CreateUserConfig) (*m
 
 	if cfg.AccessString == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "accessString is required")
+	}
+
+	if err := validPasswords(cfg.Passwords); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
@@ -261,6 +282,10 @@ func (m *Mock) DescribeUsers(_ context.Context, names []string) ([]mdbdriver.Use
 
 // UpdateUser updates a user's access string and/or authentication.
 func (m *Mock) UpdateUser(_ context.Context, cfg mdbdriver.UpdateUserConfig) (*mdbdriver.User, error) {
+	if err := validPasswords(cfg.Passwords); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
